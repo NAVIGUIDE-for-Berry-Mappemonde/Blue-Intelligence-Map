@@ -21,3 +21,4 @@ naviguide-api/.env
 # OS
 .DS_Store
 Thumbs.db
+naviguide-app/.vite/
