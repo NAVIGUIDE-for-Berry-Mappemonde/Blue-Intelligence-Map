@@ -207,7 +207,6 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
       </div>
       <div className="text-left">
         <div className="text-sm font-semibold leading-tight">{label}</div>
-        <div className="text-xs text-white/60 mt-0.5">{sublabel}</div>
       </div>
       <Download size={14} className="ml-auto opacity-70" />
     </button>
@@ -311,7 +310,7 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
           <ExportButton
             icon={<span className="text-base">📄</span>}
             label={exportStatus === "geojson" ? "Exported!" : "Export GeoJSON"}
-            sublabel="Routes + waypoints · .geojson"
+            sublabel=""
             onClick={handleExportGeoJSON}
             color="blue"
           />
@@ -319,28 +318,11 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
           <ExportButton
             icon={<span className="text-base">🌍</span>}
             label={exportStatus === "kml" ? "Exported!" : "Export KML"}
-            sublabel="Google Earth / Maps · .kml"
+            sublabel=""
             onClick={handleExportKML}
             color="teal"
           />
 
-          {/* ── Format descriptions ─────────────────────────────────────── */}
-          <div className="mt-4 space-y-2">
-            <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/40">
-              <div className="text-xs font-semibold text-blue-400 mb-1">GeoJSON</div>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Open standard for geospatial data. Compatible with QGIS, Mapbox,
-                Leaflet, and most GIS tools.
-              </p>
-            </div>
-            <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/40">
-              <div className="text-xs font-semibold text-teal-400 mb-1">KML</div>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Keyhole Markup Language — opens directly in Google Earth, Google Maps,
-                and many maritime chart apps.
-              </p>
-            </div>
-          </div>
         </div>
 
       </div>
