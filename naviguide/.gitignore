@@ -1,0 +1,23 @@
+# Dependencies
+naviguide-app/node_modules/
+naviguide-api/node_modules/
+naviguide-api/__pycache__/
+naviguide-api/*.pyc
+naviguide-api/.venv/
+
+# Build outputs
+naviguide-app/dist/
+
+# Logs
+logs/
+naviguide-api/logs/
+*.log
+
+# Env files
+.env
+naviguide-app/.env.local
+naviguide-api/.env
+
+# OS
+.DS_Store
+Thumbs.db
