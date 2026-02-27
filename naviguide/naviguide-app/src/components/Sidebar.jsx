@@ -8,8 +8,8 @@ import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X
 import { riskBadgeClass } from "../utils/riskColors";
 
 /* ── Logo image paths (served from /public) ──────────────────────────────── */
-const NAVIGUIDE_LOGO = "/logo-naviguide.svg";
-const BERRY_LOGO     = "/logo-berry-mappemonde.svg";
+const NAVIGUIDE_LOGO = "/logo-naviguide.png";
+const BERRY_LOGO     = "/logo-berry-mappemonde.png";
 
 /* ── File parsers ─────────────────────────────────────────────────────────── */
 
