@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,9 +21,9 @@ except ImportError:
 # ── High-resolution land mask (Natural Earth 1:10m + minor islands) ───────────
 import pathlib, shapely.geometry, shapely.strtree
 
-_NE_TREE: shapely.strtree.STRtree | None = None
+_NE_TREE: Optional[shapely.strtree.STRtree] = None
 
-def _load_ne_land_tree() -> shapely.strtree.STRtree | None:
+def _load_ne_land_tree() -> Optional[shapely.strtree.STRtree]:
     """
     Load Natural Earth 1:10m land + minor-islands shapefiles and build an
     STRtree for fast point-in-polygon queries.  Returns None on failure.
@@ -382,7 +383,7 @@ def avoid_land(coords: list, max_iterations: int = 8) -> list:
     return coords
 
 
-def _snap_to_ocean(lat: float, lon: float, max_radius_deg: float = 1.5) -> list | None:
+def _snap_to_ocean(lat: float, lon: float, max_radius_deg: float = 1.5) -> Optional[list]:
     """
     Given a point classified as land, find and return the nearest ocean cell
     whose centre lies STRICTLY within max_radius_deg of (lat, lon), using
@@ -396,7 +397,7 @@ def _snap_to_ocean(lat: float, lon: float, max_radius_deg: float = 1.5) -> list 
     grid = 0.25   # 1/4° matches global_land_mask resolution
     steps = int(max_radius_deg / grid) + 1
     max_sq = max_radius_deg ** 2        # strict radius² cut-off
-    best_pt: list | None = None
+    best_pt: Optional[list] = None
     best_dist_sq = float("inf")
 
     for di in range(-steps, steps + 1):
@@ -420,7 +421,7 @@ def _snap_to_ocean(lat: float, lon: float, max_radius_deg: float = 1.5) -> list 
 
 def _snap_to_ocean_fine(lat: float, lon: float,
                          radius_deg: float = 0.15,
-                         grid: float = 0.01) -> list | None:
+                         grid: float = 0.01) -> Optional[list]:
     """
     High-resolution version of _snap_to_ocean.
 
@@ -436,7 +437,7 @@ def _snap_to_ocean_fine(lat: float, lon: float,
     steps = int(radius_deg / grid) + 1
     max_sq = radius_deg ** 2
 
-    best_pt: list | None = None
+    best_pt: Optional[list] = None
     best_dist_m = float("inf")
 
     for di in range(-steps, steps + 1):
