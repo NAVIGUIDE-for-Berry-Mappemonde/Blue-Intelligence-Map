@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # NAVIGUIDE — Stop all local services
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$SCRIPT_DIR/logs"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$PROJECT_ROOT/logs"
 
 for SERVICE in naviguide-api orchestrator weather-routing frontend; do
     PID_FILE="$LOG_DIR/$SERVICE.pid"
