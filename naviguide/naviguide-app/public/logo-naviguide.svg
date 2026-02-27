@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Outer ring -->
+  <circle cx="50" cy="50" r="48" fill="#0f172a"/>
+  <circle cx="50" cy="50" r="44" fill="none" stroke="#3b82f6" stroke-width="2.5"/>
+  <circle cx="50" cy="50" r="32" fill="none" stroke="#1d4ed8" stroke-width="1"/>
+  <!-- Cross hairs -->
+  <line x1="50" y1="18" x2="50" y2="82" stroke="#1e40af" stroke-width="1" opacity="0.5"/>
+  <line x1="18" y1="50" x2="82" y2="50" stroke="#1e40af" stroke-width="1" opacity="0.5"/>
+  <!-- Compass needle — North (blue) -->
+  <polygon points="50,12 55,50 50,57 45,50" fill="#60a5fa"/>
+  <!-- Compass needle — South (slate) -->
+  <polygon points="50,88 55,50 50,57 45,50" fill="#475569"/>
+  <!-- East / West nubs -->
+  <polygon points="88,50 50,45 57,50 50,55" fill="#334155"/>
+  <polygon points="12,50 50,45 43,50 50,55" fill="#334155"/>
+  <!-- Centre dot -->
+  <circle cx="50" cy="50" r="3.5" fill="#e2e8f0"/>
+  <!-- Cardinal N -->
+  <text x="50" y="11" text-anchor="middle" font-family="Arial,sans-serif" font-size="7" font-weight="bold" fill="#93c5fd">N</text>
+  <!-- Bottom text -->
+  <text x="50" y="96" text-anchor="middle" font-family="Arial,sans-serif" font-size="5.5" font-weight="bold" letter-spacing="1" fill="#60a5fa">NAVIGUIDE</text>
+</svg>
