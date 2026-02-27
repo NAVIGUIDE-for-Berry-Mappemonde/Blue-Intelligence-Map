@@ -114,8 +114,8 @@ echo [OK] 3 backend services launching in separate windows...
 echo [*] Waiting 20s for backends to initialise...
 timeout /T 20 /NOBREAK >nul
 
-:: ── Service 4: Frontend (Vite - port 5173) ────────────────────────────────────
-start "NAVIGUIDE-FRONTEND [5173]" /D "%FRONT_DIR%" cmd /k "npm run dev -- --host"
+:: ── Service 4: Frontend (Vite - port 3009) ────────────────────────────────────
+start "NAVIGUIDE-FRONTEND [3009]" /D "%FRONT_DIR%" cmd /k "npm run dev -- --host"
 
 echo [OK] Frontend launching...
 timeout /T 5 /NOBREAK >nul
@@ -125,7 +125,7 @@ echo.
 echo  =================================================
 echo    NAVIGUIDE is running locally on Windows!
 echo  =================================================
-echo    Frontend :        http://localhost:5173
+echo    Frontend :        http://localhost:3009   ^<-- open this
 echo    API :             http://localhost:8000
 echo    Orchestrator :    http://localhost:3008
 echo    Weather Routing : http://localhost:3010
@@ -141,6 +141,7 @@ echo    localStorage.removeItem('naviguide_expedition_plan_v1')
 echo    Then press Ctrl+R
 echo.
 echo  To stop: run naviguide_workspace\stop_local.bat
+echo  NOTE: Use port 3009 only. Port 5173 is NOT used.
 echo  =================================================
 echo.
 pause
