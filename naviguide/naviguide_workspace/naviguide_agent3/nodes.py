@@ -25,7 +25,11 @@ Graph flow:
 from datetime import datetime
 from langchain_core.messages import HumanMessage, AIMessage
 
-from langchain_aws import ChatBedrock
+try:
+    from langchain_aws import ChatBedrock
+    _BEDROCK_AVAILABLE = True
+except (ImportError, Exception):
+    _BEDROCK_AVAILABLE = False
 
 from .state       import RiskState
 from .risk_engine import RiskAssessmentEngine
@@ -231,12 +235,21 @@ Professional maritime tone. Max 200 words total."""
 
     summary = ""
 
-    try:
-        llm     = ChatBedrock(model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
-        summary = llm.invoke([HumanMessage(content=prompt)]).content
-    except Exception as exc:
+    if _BEDROCK_AVAILABLE:
+        try:
+            llm     = ChatBedrock(model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
+            summary = llm.invoke([HumanMessage(content=prompt)]).content
+        except Exception as exc:
+            summary = (
+                f"LLM risk analyst unavailable ({exc}). "
+                "Manual review of CRITICAL/HIGH waypoints recommended."
+            )
+
+    if not summary:
         summary = (
-            f"LLM risk analyst unavailable ({exc}). "
+            f"Risk analysis complete. {len(scores)} waypoints assessed, "
+            f"avg composite risk {avg:.3f}. "
+            f"CRITICAL: {len(critical)}, HIGH: {len(high)}. "
             "Manual review of CRITICAL/HIGH waypoints recommended."
         )
 
