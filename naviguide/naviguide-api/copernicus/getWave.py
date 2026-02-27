@@ -62,6 +62,9 @@ def get_wave_data_at_position(latitude, longitude, username=None, password=None)
 
         # Hauteur significative des vagues (m)
         vhm0 = float(point_data['VHM0'].isel(time=-1).values)
+        if math.isnan(vhm0):
+            print("⚠️  VHM0 is NaN — point may be on land or outside dataset coverage")
+            return None
 
         result = {
             "latitude": latitude,

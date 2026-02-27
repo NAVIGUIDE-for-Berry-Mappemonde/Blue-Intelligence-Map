@@ -73,6 +73,11 @@ def get_current_data_at_position(latitude, longitude, username=None, password=No
         u_current = _extract_surface("uo")   # m/s — composante Est
         v_current = _extract_surface("vo")   # m/s — composante Nord
 
+        # Guard: NaN means point is on land or outside dataset coverage
+        if math.isnan(u_current) or math.isnan(v_current):
+            print("⚠️  u/v current is NaN — point may be on land or outside dataset coverage")
+            return None
+
         # Vitesse scalaire (m/s → nœuds)
         speed_ms     = math.sqrt(u_current**2 + v_current**2)
         speed_knots  = speed_ms * 1.94384
