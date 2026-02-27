@@ -462,21 +462,6 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
         {/* ── Scrollable content ──────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
 
-          {/* Critical alerts */}
-          {alerts.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <AlertTriangle size={12} className="text-red-400" />
-                Critical &amp; High Risk Stops
-              </div>
-              <div className="space-y-2">
-                {alerts.slice(0, 8).map((a, i) => (
-                  <AlertItem key={i} alert={a} />
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* AI Skipper Briefing */}
           {briefing && (
             <div>
