@@ -32,10 +32,11 @@ from .climatology import wind_at
 from .bathymetry  import get_all_zones_geojson, get_hazard_zone, SHALLOW_ZONES
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOG_DIR = Path(
-    "/mnt/efs/spaces/ef014a98-8a1c-4b16-8e06-5d2c5b364d08"
-    "/3838ab1e-0224-400b-b357-cd566e2f7d0b/logs"
-)
+# Resolve logs/ relative to project root (works on any machine)
+LOG_DIR = Path(os.environ.get(
+    "NAVIGUIDE_LOG_DIR",
+    str(Path(__file__).resolve().parents[2] / "logs")
+))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
