@@ -11,7 +11,7 @@
 #   http://localhost:8000   — naviguide-api           (FastAPI + searoute)
 #   http://localhost:3008   — naviguide-orchestrator  (LangGraph multi-agent)
 #   http://localhost:3010   — naviguide-weather-routing
-#   http://localhost:3009   — naviguide-app            (Vite React frontend)
+#   http://localhost:5173   — naviguide-app            (Vite React frontend)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,8 +29,8 @@ warn()    { echo -e "${YELLOW}[!]${NC} $1"; }
 err()     { echo -e "${RED}[✗]${NC} $1"; }
 
 # ── Kill any leftover processes on our ports ──────────────────────────────────
-info "Freeing ports 8000, 3008, 3009, 3010..."
-for PORT in 8000 3008 3009 3010; do
+info "Freeing ports 8000, 3008, 3010, 5173..."
+for PORT in 8000 3008 3010 5173; do
     lsof -ti tcp:"$PORT" | xargs kill -9 2>/dev/null || true
 done
 
@@ -110,7 +110,7 @@ check "orchestrator"      "http://localhost:3008/"
 check "weather-routing"   "http://localhost:3010/"
 
 # ── Service 4: Frontend (Vite) ────────────────────────────────────────────────
-info "Starting Vite frontend on :3009..."
+info "Starting Vite frontend on :5173..."
 FRONT_DIR="$PROJECT_ROOT/naviguide-app"
 
 # Override .env to point all URLs to localhost services
@@ -133,7 +133,7 @@ echo ""
 echo -e "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}  NAVIGUIDE is running locally!${NC}"
 echo -e "${GREEN}══════════════════════════════════════════════════${NC}"
-echo -e "  ${CYAN}Frontend :${NC}         http://localhost:3009"
+echo -e "  ${CYAN}Frontend :${NC}         http://localhost:5173"
 echo -e "  ${CYAN}API :${NC}              http://localhost:8000"
 echo -e "  ${CYAN}Orchestrator :${NC}     http://localhost:3008"
 echo -e "  ${CYAN}Weather Routing :${NC}  http://localhost:3010"
