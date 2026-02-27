@@ -1,4 +1,5 @@
 from copernicus.getWind import overWind
+from copernicus.getWave import overWave
 
 def add_wind_properties_to_route(route_geojson, username=None, password=None, sample_rate=10):
     """
@@ -14,75 +15,50 @@ def add_wind_properties_to_route(route_geojson, username=None, password=None, sa
         dict: FeatureCollection avec la route originale + points de vent fort
     """
     
-    high_wind_points = []
-    
-    # Extraire les coordonnées selon le type de GeoJSON
+    alert_points = []
+
+    def _check_point(lon, lat):
+        """Check wind + wave at a sampled coordinate and add alert markers."""
+        if overWind(lat, lon, username, password):
+            alert_points.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"highWind": True, "warning": "Vent fort détecté (>20 kn)"}
+            })
+        if overWave(lat, lon, username, password):
+            alert_points.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"highWave": True, "warning": "Vague significative détectée (>2 m)"}
+            })
+
+    def _scan_coords(coords):
+        for i in range(0, len(coords), sample_rate):
+            lon, lat = coords[i][0], coords[i][1]
+            _check_point(lon, lat)
+
+    # Handle Feature (LineString / MultiLineString)
     if route_geojson.get("type") == "Feature":
         geometry = route_geojson.get("geometry", {})
-        coords = geometry.get("coordinates", [])
-        
+        coords   = geometry.get("coordinates", [])
         if geometry.get("type") == "LineString":
-            for i in range(0, len(coords), sample_rate):
-                lon, lat = coords[i][0], coords[i][1]
-                
-                if overWind(lat, lon, username, password):
-                    high_wind_points.append({
-                        "type": "Feature",
-                        "geometry": {
-                            "type": "Point",
-                            "coordinates": [lon, lat]
-                        },
-                        "properties": {
-                            "highWind": True,
-                            "warning": "Vent supérieur à 35 nœuds"
-                        }
-                    })
-        
+            _scan_coords(coords)
         elif geometry.get("type") == "MultiLineString":
             for line in coords:
-                for i in range(0, len(line), sample_rate):
-                    lon, lat = line[i][0], line[i][1]
-                    
-                    if overWind(lat, lon, username, password):
-                        high_wind_points.append({
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "Point",
-                                "coordinates": [lon, lat]
-                            },
-                            "properties": {
-                                "highWind": True,
-                                "warning": "Vent supérieur à 35 nœuds"
-                            }
-                        })
-    
+                _scan_coords(line)
+
+    # Handle FeatureCollection
     elif route_geojson.get("type") == "FeatureCollection":
         for feature in route_geojson.get("features", []):
             geometry = feature.get("geometry", {})
-            coords = geometry.get("coordinates", [])
-            
+            coords   = geometry.get("coordinates", [])
             if geometry.get("type") == "LineString":
-                for i in range(0, len(coords), sample_rate):
-                    lon, lat = coords[i][0], coords[i][1]
-                    
-                    if overWind(lat, lon, username, password):
-                        high_wind_points.append({
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "Point",
-                                "coordinates": [lon, lat]
-                            },
-                            "properties": {
-                                "highWind": True,
-                                "warning": "Vent supérieur à 35 nœuds"
-                            }
-                        })
-    
-    # Retourner une FeatureCollection avec la route + les points de vent fort
+                _scan_coords(coords)
+            elif geometry.get("type") == "MultiLineString":
+                for line in coords:
+                    _scan_coords(line)
+
     return {
         "type": "FeatureCollection",
-        "features": [
-            route_geojson,
-            *high_wind_points
-        ]
+        "features": [route_geojson, *alert_points]
     }
