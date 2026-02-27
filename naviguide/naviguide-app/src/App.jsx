@@ -446,7 +446,7 @@ export default function App() {
   }, [segments, segProgress]);
 
   // ── Route-click: fetch satellite data for any clicked point on the route ────
-  const handleRouteClick = (e) => {
+  const handleRouteClick = async (e) => {
     const map = mapRef.current?.getMap();
     if (!map) return;
     // Only trigger if click lands on the maritime route line
@@ -458,26 +458,31 @@ export default function App() {
     const lon = e.lngLat.lng;
     const lat = e.lngLat.lat;
 
-    // Open popup immediately — each field updates independently as data arrives
-    setSatelliteLoading(false);
+    setSatelliteLoading(true);
     setSatelliteTab("wind");
-    setSelectedSatellite({ lon, lat, wind: "loading", wave: "loading", current: "loading" });
+    setSelectedSatellite({ lon, lat, wind: null, wave: null, current: null });
 
-    const fetchOne = (endpoint, field) =>
+    const fetchJson = (endpoint) =>
       fetch(`${API_URL}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ latitude: lat, longitude: lon }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null)
-        .then((data) => {
-          setSelectedSatellite((prev) => (prev ? { ...prev, [field]: data } : prev));
-        });
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
-    fetchOne("wind",    "wind");
-    fetchOne("wave",    "wave");
-    fetchOne("current", "current");
+    const [windResult, waveResult, currentResult] = await Promise.allSettled([
+      fetchJson("wind"),
+      fetchJson("wave"),
+      fetchJson("current"),
+    ]);
+
+    setSelectedSatellite({
+      lon,
+      lat,
+      wind:    windResult.status    === "fulfilled" ? windResult.value    : null,
+      wave:    waveResult.status    === "fulfilled" ? waveResult.value    : null,
+      current: currentResult.status === "fulfilled" ? currentResult.value : null,
+    });
+    setSatelliteLoading(false);
   };
 
   // Construction GeoJSON — use customRoute (FeatureCollection) when a file has been imported
@@ -1200,13 +1205,14 @@ export default function App() {
 
               {/* ── Content ───────────────────────────────────────────── */}
               <div className="p-4">
-                {satelliteTab === "wind" ? (
-                  selectedSatellite.wind === "loading" ? (
-                    <div className="flex flex-col items-center py-5">
-                      <div className="w-8 h-8 border-4 border-blue-100 border-t-blue-500 rounded-full animate-spin" />
-                      <div className="mt-3 text-slate-500 text-sm">Fetching wind data…</div>
-                    </div>
-                  ) : selectedSatellite.wind ? (
+                {satelliteLoading ? (
+                  <div className="flex flex-col items-center py-5">
+                    <div className="w-8 h-8 border-4 border-slate-100 border-t-slate-600 rounded-full animate-spin" />
+                    <div className="mt-3 text-slate-500 text-sm">Fetching satellite data…</div>
+                  </div>
+
+                ) : satelliteTab === "wind" ? (
+                  selectedSatellite.wind ? (
                     <div className="space-y-2">
                       {/* Speed row — km/h + knots */}
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
@@ -1243,12 +1249,7 @@ export default function App() {
                   )
 
                 ) : satelliteTab === "wave" ? (
-                  selectedSatellite.wave === "loading" ? (
-                    <div className="flex flex-col items-center py-5">
-                      <div className="w-8 h-8 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin" />
-                      <div className="mt-3 text-slate-500 text-sm">Fetching wave data…</div>
-                    </div>
-                  ) : selectedSatellite.wave ? (
+                  selectedSatellite.wave ? (
                     <div className="space-y-2">
                       {/* Significant wave height */}
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
@@ -1296,12 +1297,7 @@ export default function App() {
 
                 ) : satelliteTab === "current" ? (
                   /* ── Currents tab ─────────────────────────────────── */
-                  selectedSatellite.current === "loading" ? (
-                    <div className="flex flex-col items-center py-5">
-                      <div className="w-8 h-8 border-4 border-emerald-100 border-t-emerald-500 rounded-full animate-spin" />
-                      <div className="mt-3 text-slate-500 text-sm">Fetching current data…</div>
-                    </div>
-                  ) : selectedSatellite.current ? (
+                  selectedSatellite.current ? (
                     <div className="space-y-2">
                       {/* Speed */}
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
