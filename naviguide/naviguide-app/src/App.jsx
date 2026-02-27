@@ -44,6 +44,10 @@ export default function App() {
   const [selectedWave, setSelectedWave] = useState(null);
   const [waveLoading, setWaveLoading] = useState(false);
 
+  // 💨 State pour le vent
+  const [selectedWind, setSelectedWind] = useState(null);
+  const [windLoading, setWindLoading] = useState(false);
+
   // 🌊 State pour les courants
   const [selectedCurrent, setSelectedCurrent] = useState(null);
   const [currentLoading, setCurrentLoading] = useState(false);
@@ -710,15 +714,36 @@ export default function App() {
           </Marker>
         ))}
 
-        {/* Points de vent fort — invisibles par défaut, révélés au survol (CSS :hover) */}
+        {/* 💨 Points de vent fort — cliquables pour popup Copernicus */}
         {segments.flatMap((s, segIdx) =>
           (s.windPoints || []).map((point, i) => {
             const [lon, lat] = point.geometry.coordinates;
             const hasHighWave = point.properties.highWave;
 
+            const handleWindClick = async () => {
+              setWindLoading(true);
+              setSelectedWind({ longitude: lon, latitude: lat, data: null });
+              try {
+                const res = await fetch(`${API_URL}/wind`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ latitude: lat, longitude: lon }),
+                });
+                if (!res.ok) throw new Error("Erreur API vent");
+                const data = await res.json();
+                setSelectedWind({ longitude: lon, latitude: lat, data });
+              } catch (err) {
+                console.error(err);
+                setSelectedWind({ longitude: lon, latitude: lat, error: "Unable to fetch wind data" });
+              } finally {
+                setWindLoading(false);
+              }
+            };
+
             return (
               <Marker key={`wind-${segIdx}-${i}`} longitude={lon} latitude={lat}>
                 <div
+                  onClick={handleWindClick}
                   className={`wind-alert-marker${hasHighWave ? " is-wind-wave" : ""}`}
                   title={hasHighWave ? "Vent fort + Vagues hautes" : "Vent fort"}
                 />
@@ -854,6 +879,85 @@ export default function App() {
               </Marker>
             );
           })
+        )}
+
+        {/* 💨 Popup vent */}
+        {selectedWind && (
+          <Popup
+            longitude={selectedWind.longitude}
+            latitude={selectedWind.latitude}
+            closeButton={false}
+            closeOnClick={false}
+            anchor="top"
+            offset={25}
+            onClose={() => setSelectedWind(null)}
+            className="!bg-transparent !border-none !shadow-none custom-popup"
+          >
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden min-w-[240px] animate-fadeIn">
+              <div className="bg-gradient-to-r from-red-500 to-red-600 px-4 py-3 flex items-center justify-between">
+                <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+                  <span>💨 Wind Data</span>
+                </h4>
+                <button
+                  onClick={() => setSelectedWind(null)}
+                  className="text-white/80 hover:text-white hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center transition-colors font-bold"
+                >
+                  <X />
+                </button>
+              </div>
+              <div className="p-4">
+                {windLoading ? (
+                  <div className="flex flex-col items-center py-5">
+                    <div className="w-8 h-8 border-4 border-red-100 border-t-red-600 rounded-full animate-spin" />
+                    <div className="mt-3 text-slate-500 text-sm">Loading...</div>
+                  </div>
+                ) : selectedWind.error ? (
+                  <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="text-xl">⚠️</span>
+                    <div className="text-red-600 text-sm">{selectedWind.error}</div>
+                  </div>
+                ) : selectedWind.data ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">💨</div>
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">Wind Speed</div>
+                          <div className="text-base font-semibold text-slate-800">
+                            {selectedWind.data.wind_speed_knots} kn
+                            <span className="text-xs text-slate-400 ml-1">({selectedWind.data.wind_speed_kmh} km/h)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {selectedWind.data.wind_direction !== undefined && (
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">🧭</div>
+                          <div>
+                            <div className="text-xs text-slate-500 mb-0.5">Direction (from)</div>
+                            <div className="text-base font-semibold text-slate-800">
+                              {selectedWind.data.wind_direction}°
+                              <span className="text-xs text-slate-400 ml-1">
+                                ({getCardinalDirection(selectedWind.data.wind_direction)})
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {selectedWind.data.timestamp && (
+                      <div className="text-xs text-slate-400 text-center pt-1">
+                        {new Date(selectedWind.data.timestamp).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-5 text-center text-slate-500 text-sm">No data available</div>
+                )}
+              </div>
+            </div>
+          </Popup>
         )}
 
         {/* 🌊 Popup vagues */}
