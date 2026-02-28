@@ -10,6 +10,7 @@ GET  /                                      Health check
 POST /api/v1/polar/upload                   Upload PDF → parse → store 181×61 grid
 GET  /api/v1/polar/{expedition_id}          Retrieve full polar grid (181×61)
 GET  /api/v1/polar/{expedition_id}/summary  VMG summary only (lightweight, for briefing agents)
+POST /api/v1/polar/chat                     Polar agent chat (VMG-aware, Anthropic-backed)
 """
 
 import json
@@ -23,6 +24,20 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load workspace .env (ANTHROPIC_API_KEY)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+# Anthropic client (optional — chat falls back gracefully)
+try:
+    import anthropic as _anthropic
+    _ANTHROPIC_CLIENT    = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    _ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
+except Exception:
+    _ANTHROPIC_CLIENT    = None
+    _ANTHROPIC_AVAILABLE = False
 
 # ── Path setup: import polar_engine from polar_agent/ at repo root ─────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # naviguide-berry-mappemonde/
@@ -247,6 +262,130 @@ def get_polar_summary(expedition_id: str):
     except Exception as exc:
         log.error(f"Summary retrieval error: {exc}")
         raise HTTPException(status_code=500, detail=f"Retrieval error: {exc}")
+
+
+# ── Polar Chat ────────────────────────────────────────────────────────────────
+
+class PolarChatRequest(BaseModel):
+    expedition_id: str
+    message:       str
+    history:       Optional[List[Dict[str, str]]] = []   # [{role, content}]
+
+
+def _build_polar_system_prompt(data: Dict[str, Any]) -> str:
+    """
+    Build a concise system prompt for the polar chat agent,
+    embedding the VMG summary so Claude can answer performance questions.
+    """
+    vmg = data.get("vmg_summary", {})
+    boat = data.get("boat_name", "the boat")
+
+    vmg_lines = []
+    for tws_key in sorted(vmg.keys(), key=lambda x: int(x)):
+        entry = vmg[tws_key]
+        uw = entry.get("upwind",   {})
+        dw = entry.get("downwind", {})
+        vmg_lines.append(
+            f"  TWS {tws_key} kts: upwind {uw.get('vmg',0):.1f}kts VMG @ {uw.get('twa',0)}°, "
+            f"speed {uw.get('speed',0):.1f}kts | "
+            f"downwind {dw.get('vmg',0):.1f}kts VMG @ {dw.get('twa',0)}°, "
+            f"speed {dw.get('speed',0):.1f}kts"
+        )
+
+    vmg_table = "\n".join(vmg_lines) or "  No VMG data available."
+    grid_shape = data.get("grid_shape", [181, 61])
+
+    return f"""You are the NAVIGUIDE polar performance assistant, expert in sailboat polars and offshore racing.
+You have access to the polar performance data for **{boat}** (expedition: {data['expedition_id']}).
+
+POLAR DATA SUMMARY
+══════════════════
+Boat: {boat}
+Grid: {grid_shape[0]} TWA rows × {grid_shape[1]} TWS columns (fully interpolated)
+Loaded: {data.get('created_at', 'unknown')}
+
+VMG OPTIMALS (key TWS values):
+{vmg_table}
+
+Answer questions about:
+- Optimal VMG angles and boat speeds at any wind condition
+- Whether to tack, gybe, or hold course
+- ETA estimates for given distances and wind conditions
+- Comparison between upwind and downwind performance
+
+Be concise (max 120 words), precise, and use nautical terms. Always cite specific values from the polar data above."""
+
+
+@app.post("/api/v1/polar/chat")
+async def polar_chat(request: PolarChatRequest):
+    """
+    Chat with the polar agent about boat polar performance.
+    Loads VMG context for the expedition, answers via Anthropic Claude.
+    Falls back to a structured answer if Anthropic is unavailable.
+    """
+    dest = _polar_path(request.expedition_id)
+    if not dest.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No polar data for '{request.expedition_id}'. Upload a PDF first.",
+        )
+
+    with open(dest, "r", encoding="utf-8") as fh:
+        polar_data = json.load(fh)
+
+    system_prompt = _build_polar_system_prompt(polar_data)
+
+    # Build message list for Anthropic
+    messages = [{"role": m["role"], "content": m["content"]} for m in (request.history or [])]
+    messages.append({"role": "user", "content": request.message})
+
+    log.info(f"Polar chat: expedition={request.expedition_id}, msg='{request.message[:60]}'")
+
+    if _ANTHROPIC_AVAILABLE and _ANTHROPIC_CLIENT:
+        try:
+            resp = _ANTHROPIC_CLIENT.messages.create(
+                model      = "claude-haiku-4-5",
+                max_tokens = 300,
+                system     = system_prompt,
+                messages   = messages,
+            )
+            reply  = resp.content[0].text
+            source = "anthropic"
+        except Exception as exc:
+            log.warning(f"Anthropic unavailable ({exc}) — using fallback")
+            reply  = _polar_fallback_reply(request.message, polar_data)
+            source = "fallback"
+    else:
+        reply  = _polar_fallback_reply(request.message, polar_data)
+        source = "fallback"
+
+    return {
+        "reply":        reply,
+        "source":       source,
+        "expedition_id": request.expedition_id,
+        "boat_name":    polar_data.get("boat_name"),
+    }
+
+
+def _polar_fallback_reply(message: str, data: Dict[str, Any]) -> str:
+    """Structured fallback when LLM is unavailable — picks key VMG values from polar data."""
+    vmg = data.get("vmg_summary", {})
+    boat = data.get("boat_name", "the boat")
+
+    # Find best upwind/downwind at TWS 12
+    entry12 = vmg.get("12", vmg.get("10", {}))
+    uw = entry12.get("upwind",   {})
+    dw = entry12.get("downwind", {})
+
+    return (
+        f"[Polar summary for **{boat}** — AI unavailable]\n\n"
+        f"At TWS 12 kts:\n"
+        f"• Upwind: best VMG **{uw.get('vmg',0):.1f} kts** at **{uw.get('twa',0)}° TWA** "
+        f"(boat speed {uw.get('speed',0):.1f} kts)\n"
+        f"• Downwind: best VMG **{dw.get('vmg',0):.1f} kts** at **{dw.get('twa',0)}° TWA** "
+        f"(boat speed {dw.get('speed',0):.1f} kts)\n\n"
+        f"Use `GET /api/v1/polar/{data['expedition_id']}` for the full 181×61 grid."
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

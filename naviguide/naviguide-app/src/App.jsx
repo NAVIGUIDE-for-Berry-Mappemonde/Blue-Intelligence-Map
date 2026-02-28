@@ -7,6 +7,7 @@ import { WindDirectionArrow } from "./components/map/WindDirectionArrow";
 import { getCardinalDirection } from "./utils/getCardinalDirection";
 import { Sidebar } from "./components/Sidebar";
 import { ExportSidebar } from "./components/ExportSidebar";
+import { PolarSidebar } from "./components/PolarSidebar";
 import { useLang } from "./i18n/LangContext.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -57,6 +58,9 @@ export default function App() {
 
   // Export sidebar (right) — closed by default
   const [exportSidebarOpen, setExportSidebarOpen] = useState(false);
+
+  // Polar sidebar (right, stacked with export) — closed by default
+  const [polarSidebarOpen, setPolarSidebarOpen] = useState(false);
 
   // ── App-wide modes ──────────────────────────────────────────────────────────
   const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
@@ -569,6 +573,11 @@ export default function App() {
         onOffshoreChange={setIsOffshore}
         onCockpitChange={setIsCockpit}
         onLightModeChange={setIsLightMode}
+      />
+      <PolarSidebar
+        open={polarSidebarOpen}
+        onToggle={() => setPolarSidebarOpen((o) => !o)}
+        exportOpen={exportSidebarOpen}
       />
 
       {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
