@@ -440,9 +440,6 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE"
                 className="h-8 w-8 object-contain" />
               <span className="text-white font-bold text-sm tracking-widest flex-1">NAVIGUIDE</span>
-              <span className="text-xs font-semibold text-blue-300 bg-blue-950/40 px-2 py-0.5 rounded-full border border-blue-700/40">
-                🎛️ Cockpit
-              </span>
             </div>
           ) : (
             <div className="flex justify-center mb-3">
@@ -463,15 +460,6 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
             onDrawFinish={onDrawFinish}
           />
         </div>
-
-        {/* ── Offshore banner — prominent high-contrast strip ──────────── */}
-        {isOffshore && (
-          <div className="px-4 py-2.5 flex-shrink-0 bg-sky-950/50 border-b-2 border-sky-500/50">
-            <span className="font-bold text-sky-200 flex items-center gap-2 text-sm">
-              ⚓ OFFSHORE — wind &amp; wave markers active
-            </span>
-          </div>
-        )}
 
         {/*
           ── Stats grid ───────────────────────────────────────────────────
