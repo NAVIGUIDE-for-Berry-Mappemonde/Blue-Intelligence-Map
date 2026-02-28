@@ -1,9 +1,10 @@
 /**
  * NAVIGUIDE v2 — Export Sidebar (right panel)
  * Provides GeoJSON and KML export of the full expedition route + waypoints.
+ * Also hosts mode toggles: Cabotage/Offshore, Onboarding/Cockpit, Dark/Light.
  */
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Map, Anchor } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ChevronLeft, ChevronRight, Download, Anchor } from "lucide-react";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -176,6 +177,33 @@ ${waypointPlacemarks}
 </kml>`;
 }
 
+/* ── iOS-style Toggle ─────────────────────────────────────────────────────── */
+
+function Toggle({ labelLeft, labelRight, active, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className={`text-xs font-medium transition-colors duration-200 ${!active ? "text-white" : "text-slate-500"}`}>
+        {labelLeft}
+      </span>
+      <button
+        onClick={() => onChange(!active)}
+        className={`relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0
+          ${active ? "bg-blue-500" : "bg-slate-600"}`}
+        role="switch"
+        aria-checked={active}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md
+            transition-transform duration-300 ${active ? "translate-x-5" : "translate-x-0"}`}
+        />
+      </button>
+      <span className={`text-xs font-medium transition-colors duration-200 ${active ? "text-white" : "text-slate-500"}`}>
+        {labelRight}
+      </span>
+    </div>
+  );
+}
+
 /* ── Sub-components ───────────────────────────────────────────────────────── */
 
 function StatRow({ icon, label, value }) {
@@ -217,6 +245,23 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
 
 export function ExportSidebar({ segments, points, open, onToggle }) {
   const [exportStatus, setExportStatus] = useState(null); // "geojson" | "kml" | null
+
+  // ── Mode states (false = default/left label, true = alternate/right label) ─
+  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
+  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
+  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
+
+  // Apply dark/light class to <html> element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isLightMode) {
+      root.classList.add("light");
+      root.classList.remove("dark");
+    } else {
+      root.classList.add("dark");
+      root.classList.remove("light");
+    }
+  }, [isLightMode]);
 
   const maritimeSegs  = segments.filter((s) => !s.nonMaritime && s.coords?.length > 0);
   const overlandSegs  = segments.filter((s) =>  s.nonMaritime && s.coords?.length > 0);
@@ -272,17 +317,29 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
         style={{ width: 320 }}
       >
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0">
-          <div className="flex items-center gap-2.5 mb-1">
-            <div className="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center">
-              <Map size={16} className="text-blue-400" />
-            </div>
-            <div>
-              <div className="text-white font-bold text-sm tracking-wide">EXPORT ROUTE</div>
-              <div className="text-slate-500 text-xs">Download in GeoJSON or KML</div>
-            </div>
+        {/* ── Mode Toggles ────────────────────────────────────────────────── */}
+        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0 space-y-3">
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+            Modes
           </div>
+          <Toggle
+            labelLeft="Cabotage"
+            labelRight="Offshore"
+            active={isOffshore}
+            onChange={setIsOffshore}
+          />
+          <Toggle
+            labelLeft="Onboarding"
+            labelRight="Cockpit"
+            active={isCockpit}
+            onChange={setIsCockpit}
+          />
+          <Toggle
+            labelLeft="Dark"
+            labelRight="Light"
+            active={isLightMode}
+            onChange={setIsLightMode}
+          />
         </div>
 
         {/* ── Route statistics ─────────────────────────────────────────────── */}
