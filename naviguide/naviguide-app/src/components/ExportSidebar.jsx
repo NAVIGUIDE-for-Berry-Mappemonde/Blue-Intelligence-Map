@@ -287,45 +287,16 @@ export function ExportSidebar({
 
   return (
     <>
-      {/*
-        Top-right persistent controls:
-        - EN/FR language pills always visible on the map
-        - Toggle button to open/close the export panel
-        All shift left together when the panel is open.
-      */}
-      <div
-        className={`absolute top-4 z-30 flex items-center gap-2 transition-all duration-300
-          ${open ? "right-[330px]" : "right-4"}`}
+      {/* Toggle button — always visible on the map edge */}
+      <button
+        onClick={onToggle}
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
+          rounded-full w-9 h-9 flex items-center justify-center shadow-lg
+          hover:bg-slate-800 transition-all duration-300 ${open ? "right-[322px]" : "right-4"}`}
+        title={open ? t("hideExportPanel") : t("showExportPanel")}
       >
-        {/* Language pills — always visible */}
-        <div className="flex bg-slate-900/95 border border-slate-700 rounded-full p-0.5 gap-0.5 shadow-lg">
-          <button
-            onClick={() => switchLang("en")}
-            className={`px-2.5 py-0.5 rounded-full text-xs font-bold transition-colors
-              ${lang === "en" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
-          >
-            EN
-          </button>
-          <button
-            onClick={() => switchLang("fr")}
-            className={`px-2.5 py-0.5 rounded-full text-xs font-bold transition-colors
-              ${lang === "fr" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
-          >
-            FR
-          </button>
-        </div>
-
-        {/* Panel toggle button */}
-        <button
-          onClick={onToggle}
-          className="naviguide-sidebar-toggle bg-slate-900/95 border border-slate-700 text-white
-            rounded-full w-9 h-9 flex items-center justify-center shadow-lg
-            hover:bg-slate-800 transition-colors"
-          title={open ? t("hideExportPanel") : t("showExportPanel")}
-        >
-          {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
-      </div>
+        {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+      </button>
 
       {/* Sidebar panel */}
       <div
@@ -335,33 +306,33 @@ export function ExportSidebar({
         style={{ width: 320 }}
       >
 
-        {/* ── Mode Toggles + Language switcher ──────────────────────────── */}
-        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0 space-y-3">
-
-          {/* Language switcher — EN / FR pill buttons */}
-          <div className="flex items-center justify-between">
+        {/* ── Header: Language switcher (EN/FR) ─────────────────────────── */}
+        <div className="px-4 pt-4 pb-1 flex-shrink-0">
+          <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
               {t("language")}
             </span>
             <div className="flex bg-slate-800 rounded-full p-0.5 gap-0.5">
               <button
                 onClick={() => switchLang("en")}
-                className={`px-3 py-0.5 rounded-full text-xs font-bold transition-colors
+                className={`px-3 py-1 rounded-full text-xs font-bold transition-colors
                   ${lang === "en" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
               >
                 EN
               </button>
               <button
                 onClick={() => switchLang("fr")}
-                className={`px-3 py-0.5 rounded-full text-xs font-bold transition-colors
+                className={`px-3 py-1 rounded-full text-xs font-bold transition-colors
                   ${lang === "fr" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
               >
                 FR
               </button>
             </div>
           </div>
+        </div>
 
-          {/* Mode toggles */}
+        {/* ── Mode Toggles ───────────────────────────────────────────────── */}
+        <div className="px-4 pb-3 border-b border-slate-700/60 flex-shrink-0 space-y-3">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
             {t("modes")}
           </div>
