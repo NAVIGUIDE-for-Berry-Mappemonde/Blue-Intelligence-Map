@@ -242,6 +242,12 @@ def parse_polar_pdf(pdf_bytes: bytes, boat_name: str = "Boat") -> PolarData:
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
+    # Debug: log first 20 non-empty lines to diagnose parsing issues
+    preview_lines = [l.strip() for l in text.splitlines() if l.strip()][:20]
+    log.info("PDF text preview (first 20 lines):\n" + "\n".join(
+        f"  [{i:02d}] {l}" for i, l in enumerate(preview_lines)
+    ))
+
     return parse_polar_text(text, boat_name)
 
 
