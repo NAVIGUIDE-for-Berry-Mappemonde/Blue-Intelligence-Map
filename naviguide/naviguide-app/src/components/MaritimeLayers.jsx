@@ -30,30 +30,12 @@ const ZEE_LINE_PAINT = {
   "line-dasharray": [5, 3],
   "line-opacity": 0.8,
 };
-// Cluster bubble — rayon proportionnel au nombre de ports groupés
-const PORTS_CLUSTER_PAINT = {
-  "circle-color": ["step", ["get", "point_count"], "#f59e0b", 10, "#f97316", 50, "#ef4444"],
-  "circle-radius": ["step", ["get", "point_count"], 14, 10, 20, 50, 26],
-  "circle-stroke-width": 1.5,
-  "circle-stroke-color": "#fff",
-  "circle-opacity": 0.85,
-};
-// Compteur de ports dans le cluster
-const PORTS_CLUSTER_LABEL_LAYOUT = {
-  "text-field": "{point_count_abbreviated}",
-  "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-  "text-size": 11,
-};
-const PORTS_CLUSTER_LABEL_PAINT = {
-  "text-color": "#fff",
-};
-// Point individuel (visible quand le cluster est dézoomé)
 const PORTS_CIRCLE_PAINT = {
-  "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 4, 12, 7],
+  "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 6, 4, 10, 7],
   "circle-color": "#f59e0b",
   "circle-stroke-width": 1,
   "circle-stroke-color": "#fff",
-  "circle-opacity": 0.9,
+  "circle-opacity": 0.85,
 };
 // OpenSeaMap tiles — raster overlay, opacity controlled via show flag
 const OPENSEAMAP_RASTER_PAINT = {
@@ -172,42 +154,9 @@ export function MaritimeLayers({
         <Layer id="zee-line" type="line"  beforeId="maritime-layer" layout={vis(showZee)} paint={ZEE_LINE_PAINT} />
       </Source>
 
-      {/* ── WPI ports — clustering MapLibre (rendu SOUS la route bleue) ──── */}
-      <Source
-        id="ports-source"
-        type="geojson"
-        data={portsData}
-        cluster={true}
-        clusterMaxZoom={10}
-        clusterRadius={50}
-      >
-        {/* Bulle de cluster */}
-        <Layer
-          id="ports-cluster"
-          type="circle"
-          beforeId="maritime-layer"
-          filter={["has", "point_count"]}
-          layout={vis(showPorts)}
-          paint={PORTS_CLUSTER_PAINT}
-        />
-        {/* Compteur dans la bulle */}
-        <Layer
-          id="ports-cluster-count"
-          type="symbol"
-          beforeId="maritime-layer"
-          filter={["has", "point_count"]}
-          layout={{ ...PORTS_CLUSTER_LABEL_LAYOUT, visibility: showPorts ? "visible" : "none" }}
-          paint={PORTS_CLUSTER_LABEL_PAINT}
-        />
-        {/* Port individuel (zoom > clusterMaxZoom) */}
-        <Layer
-          id="ports-point"
-          type="circle"
-          beforeId="maritime-layer"
-          filter={["!", ["has", "point_count"]]}
-          layout={vis(showPorts)}
-          paint={PORTS_CIRCLE_PAINT}
-        />
+      {/* ── WPI ports circles — rendu SOUS la route bleue ────────────────── */}
+      <Source id="ports-source" type="geojson" data={portsData}>
+        <Layer id="ports-circle" type="circle" beforeId="maritime-layer" layout={vis(showPorts)} paint={PORTS_CIRCLE_PAINT} />
       </Source>
 
       {/* ── OpenSeaMap balisage — raster tile overlay SOUS la route bleue ── */}
