@@ -55,8 +55,8 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expeditionPlan, setExpeditionPlan] = useState(null);
 
-  // Export sidebar (right) — open by default so language toggle is immediately visible
-  const [exportSidebarOpen, setExportSidebarOpen] = useState(true);
+  // Export sidebar (right) — closed by default
+  const [exportSidebarOpen, setExportSidebarOpen] = useState(false);
 
   // ── App-wide modes ──────────────────────────────────────────────────────────
   const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
