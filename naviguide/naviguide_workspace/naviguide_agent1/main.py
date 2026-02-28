@@ -79,9 +79,10 @@ class WaypointIn(BaseModel):
 
 
 class RouteRequestIn(BaseModel):
-    waypoints:    List[WaypointIn]
-    vessel_specs: Dict[str, Any]   = {}
-    constraints:  Dict[str, Any]   = {}
+    waypoints:     List[WaypointIn]
+    vessel_specs:  Dict[str, Any]  = {}
+    constraints:   Dict[str, Any]  = {}
+    expedition_id: Optional[str]   = None  # links to polar data for real VMG-based ETAs
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -115,6 +116,9 @@ async def compute_custom_route(request: RouteRequestIn):
         "waypoints":            [wp.dict() for wp in request.waypoints],
         "vessel_specs":         request.vessel_specs or BerryMappemondeRouter.VESSEL_PROFILE,
         "constraints":          request.constraints,
+        "expedition_id":        request.expedition_id,
+        "polar_vmg":            None,
+        "polar_avg_speed":      None,
         "raw_segments":         [],
         "anti_shipping_scores": [],
         "safety_validations":   [],
@@ -129,6 +133,7 @@ async def compute_custom_route(request: RouteRequestIn):
 
     try:
         result = agent_graph.invoke(initial_state)
+        meta   = result["route_plan"].get("metadata", {})
         log.info(f"Route computed: status={result['status']}")
         return {
             "status":    result["status"],
@@ -136,8 +141,11 @@ async def compute_custom_route(request: RouteRequestIn):
             "errors":    result.get("errors", []),
             "summary": {
                 "segments":            len(result.get("raw_segments", [])),
-                "total_distance_nm":   result["route_plan"].get("metadata", {}).get("total_distance_nm", 0),
-                "anti_shipping_avg":   result["route_plan"].get("metadata", {}).get("anti_shipping_avg_score", 0),
+                "total_distance_nm":   meta.get("total_distance_nm", 0),
+                "total_eta_days":      meta.get("total_eta_days", 0),
+                "avg_speed_knots_used": meta.get("avg_speed_knots_used", 0),
+                "polar_data_used":     meta.get("polar_data_used", False),
+                "anti_shipping_avg":   meta.get("anti_shipping_avg_score", 0),
                 "safety_validations":  result.get("safety_validations", []),
                 "route_advisor_notes": result.get("route_advisor_notes", ""),
             },
@@ -165,6 +173,9 @@ async def compute_berry_mappemonde():
             "panama_canal_to_pacific":     True,
             "spm_decoupled_leg":           True,
         },
+        "expedition_id":        "berry-mappemonde-2026",
+        "polar_vmg":            None,
+        "polar_avg_speed":      None,
         "raw_segments":         [],
         "anti_shipping_scores": [],
         "safety_validations":   [],
@@ -223,7 +234,12 @@ def get_graph_diagram():
     └──────────────┬──────────────┘
                    ▼
     ┌─────────────────────────────┐
-    │  generate_route_plan        │  Enriched GeoJSON FeatureCollection
+    │  fetch_vmg                  │  Polar API → real VMG speeds (optional)
+    │  (graceful fallback)        │  polar_avg_speed replaces 10 kt default
+    └──────────────┬──────────────┘
+                   ▼
+    ┌─────────────────────────────┐
+    │  generate_route_plan        │  Enriched GeoJSON + ETA per segment
     └──────────────┬──────────────┘
                    ▼
                 [END]
