@@ -8,6 +8,11 @@ import { getCardinalDirection } from "./utils/getCardinalDirection";
 import { Sidebar } from "./components/Sidebar";
 import { ExportSidebar } from "./components/ExportSidebar";
 import { useLang } from "./i18n/LangContext.jsx";
+import {
+  useMaritimeLayers,
+  MaritimeLayers,
+  MaritimeLayersPanel,
+} from "./components/MaritimeLayers";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
@@ -65,6 +70,9 @@ export default function App() {
   const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
   const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
   const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
+
+  // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
+  const maritimeLayers = useMaritimeLayers();
 
   // Custom imported route (null = show Berry-Mappemonde default route)
   const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
@@ -635,6 +643,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Maritime layers toggle panel ────────────────────────────────── */}
+      <MaritimeLayersPanel {...maritimeLayers} />
 
       {/* ── Clipboard toast ─────────────────────────────────────────────── */}
       {clipboardToast && (
@@ -1353,6 +1364,16 @@ export default function App() {
             </div>
           </Popup>
         )}
+
+        {/* ── Maritime data layers (ZEE / Ports WPI / Balisage SHOM) ─────── */}
+        <MaritimeLayers
+          showZee={maritimeLayers.showZee}
+          zeeData={maritimeLayers.zeeData}
+          showPorts={maritimeLayers.showPorts}
+          portsData={maritimeLayers.portsData}
+          showBalisage={maritimeLayers.showBalisage}
+          balisageData={maritimeLayers.balisageData}
+        />
 
         {/* Escales obligatoires — drapeaux toujours visibles, tooltip au survol (hidden during drawing) */}
         {!drawingMode && points.map((p, i) =>

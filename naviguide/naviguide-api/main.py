@@ -1,9 +1,12 @@
 import os
+import time
 from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+import httpx
 import searoute as sr
 from geographiclib.geodesic import Geodesic
 from copernicus.getWind import get_wind_data_at_position
@@ -788,6 +791,137 @@ def get_current(request: PositionRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Maritime data proxy routes (CORS bypass) ─────────────────────────────────
+
+# In-memory cache for WPI ports (24 h TTL — data rarely changes)
+_wpi_cache: dict = {"data": None, "ts": 0.0}
+_WPI_CACHE_TTL = 86_400  # seconds
+
+
+@app.get("/proxy/zee", summary="ZEE boundaries proxy (VLIZ WFS)")
+async def proxy_zee(
+    bbox: Optional[str] = Query(
+        None,
+        description="Viewport bounding box as minlon,minlat,maxlon,maxlat (CRS:84)",
+    ),
+    maxFeatures: int = Query(50, ge=1, le=500, description="Max EEZ polygons to return"),
+):
+    """
+    Proxy pour l'API WFS VLIZ Marine Regions — ZEE (Zones Économiques Exclusives).
+    Contourne les restrictions CORS du serveur VLIZ.
+    """
+    params: dict = {
+        "service": "WFS",
+        "version": "1.1.0",
+        "request": "GetFeature",
+        "typeName": "eez",
+        "outputFormat": "application/json",
+        "maxFeatures": maxFeatures,
+    }
+    if bbox:
+        params["bbox"] = bbox
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://geo.vliz.be/geoserver/MarineRegions/wfs",
+                params=params,
+            )
+            resp.raise_for_status()
+            return JSONResponse(content=resp.json())
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"ZEE upstream HTTP error: {exc.response.status_code}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"ZEE upstream error: {exc}")
+
+
+@app.get("/proxy/ports", summary="WPI world ports as GeoJSON (NGA/MSI)")
+async def proxy_ports():
+    """
+    Retourne les ports mondiaux du World Port Index (NGA/MSI) en GeoJSON.
+    Résultat mis en cache 24 h côté serveur.
+    """
+    # Serve from cache if still fresh
+    if _wpi_cache["data"] and (time.time() - _wpi_cache["ts"] < _WPI_CACHE_TTL):
+        return JSONResponse(content=_wpi_cache["data"])
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(
+                "https://msi.nga.mil/api/publications/world-port-index",
+                params={"output": "json"},
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"WPI upstream HTTP error: {exc.response.status_code}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"WPI upstream error: {exc}")
+
+    # Normalise: the API may return a list or {"ports": [...]}
+    ports = raw if isinstance(raw, list) else raw.get("ports", [])
+
+    features = []
+    for p in ports:
+        try:
+            lat = float(p.get("latitude") or p.get("lat") or 0)
+            lon = float(p.get("longitude") or p.get("lon") or 0)
+        except (ValueError, TypeError):
+            continue
+        if lat == 0.0 and lon == 0.0:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "name":    p.get("portName")    or p.get("name",    ""),
+                "country": p.get("countryName") or p.get("country", ""),
+                "region":  p.get("regionName")  or p.get("region",  ""),
+                "wpi_num": p.get("portNumber")  or p.get("indexNo", ""),
+            },
+        })
+
+    geojson = {"type": "FeatureCollection", "features": features}
+    _wpi_cache["data"] = geojson
+    _wpi_cache["ts"]   = time.time()
+    return JSONResponse(content=geojson)
+
+
+@app.get("/proxy/balisage", summary="Balisage maritime proxy (SHOM WFS)")
+async def proxy_balisage(
+    bbox: Optional[str] = Query(
+        None,
+        description="Viewport bounding box as minlon,minlat,maxlon,maxlat,CRS:84",
+    ),
+    count: int = Query(500, ge=1, le=2000, description="Max features"),
+):
+    """
+    Proxy pour le WFS SHOM INSPIRE — couche BALISAGE_BDD_WFS.
+    Contourne les restrictions CORS du serveur SHOM.
+    """
+    params: dict = {
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeNames": "BALISAGE_BDD_WFS",
+        "outputFormat": "application/json",
+        "count": count,
+    }
+    if bbox:
+        params["bbox"] = bbox
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://services.data.shom.fr/INSPIRE/wfs",
+                params=params,
+            )
+            resp.raise_for_status()
+            return JSONResponse(content=resp.json())
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"SHOM upstream HTTP error: {exc.response.status_code}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SHOM upstream error: {exc}")
 
 
 if __name__ == "__main__":
