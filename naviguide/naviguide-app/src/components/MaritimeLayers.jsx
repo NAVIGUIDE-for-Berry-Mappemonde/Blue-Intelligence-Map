@@ -64,9 +64,10 @@ async function fetchPorts() {
  * pour les 3 couches maritimes.
  */
 export function useMaritimeLayers() {
-  const [showZee,      setShowZee]      = useState(false);
-  const [showPorts,    setShowPorts]    = useState(false);
-  const [showBalisage, setShowBalisage] = useState(false);
+  // Couches actives par défaut — chargement différé pour ne pas bloquer le rendu initial
+  const [showZee,      setShowZee]      = useState(true);
+  const [showPorts,    setShowPorts]    = useState(true);
+  const [showBalisage, setShowBalisage] = useState(true);
 
   const [zeeData,   setZeeData]   = useState(EMPTY_FC);
   const [portsData, setPortsData] = useState(EMPTY_FC);
@@ -77,26 +78,32 @@ export function useMaritimeLayers() {
   const [errorZee,   setErrorZee]   = useState(null);
   const [errorPorts, setErrorPorts] = useState(null);
 
-  // Lazy-load ZEE on first activation
+  // Lazy-load ZEE — différé de 3 s pour ne pas concurrencer le chargement des routes
   useEffect(() => {
     if (!showZee || zeeData.features.length > 0) return;
-    setLoadingZee(true);
-    setErrorZee(null);
-    fetchZee()
-      .then(setZeeData)
-      .catch((e) => { console.warn("[MaritimeLayers] ZEE:", e); setErrorZee(e.message); })
-      .finally(() => setLoadingZee(false));
+    const t = setTimeout(() => {
+      setLoadingZee(true);
+      setErrorZee(null);
+      fetchZee()
+        .then(setZeeData)
+        .catch((e) => { console.warn("[MaritimeLayers] ZEE:", e); setErrorZee(e.message); })
+        .finally(() => setLoadingZee(false));
+    }, 3000);
+    return () => clearTimeout(t);
   }, [showZee]);
 
-  // Lazy-load WPI ports on first activation
+  // Lazy-load WPI ports — différé de 5 s (staggeré après ZEE)
   useEffect(() => {
     if (!showPorts || portsData.features.length > 0) return;
-    setLoadingPorts(true);
-    setErrorPorts(null);
-    fetchPorts()
-      .then(setPortsData)
-      .catch((e) => { console.warn("[MaritimeLayers] Ports:", e); setErrorPorts(e.message); })
-      .finally(() => setLoadingPorts(false));
+    const t = setTimeout(() => {
+      setLoadingPorts(true);
+      setErrorPorts(null);
+      fetchPorts()
+        .then(setPortsData)
+        .catch((e) => { console.warn("[MaritimeLayers] Ports:", e); setErrorPorts(e.message); })
+        .finally(() => setLoadingPorts(false));
+    }, 5000);
+    return () => clearTimeout(t);
   }, [showPorts]);
 
   return {

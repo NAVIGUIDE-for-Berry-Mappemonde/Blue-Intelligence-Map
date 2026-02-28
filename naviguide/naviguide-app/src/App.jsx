@@ -569,6 +569,7 @@ export default function App() {
         isCockpit={isCockpit}
         isOffshore={isOffshore}
         polarData={polarData}
+        maritimeLayers={maritimeLayers}
       />
       <ExportSidebar
         segments={segments}
@@ -643,9 +644,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-      {/* ── Maritime layers toggle panel ────────────────────────────────── */}
-      <MaritimeLayersPanel {...maritimeLayers} />
 
       {/* ── Clipboard toast ─────────────────────────────────────────────── */}
       {clipboardToast && (

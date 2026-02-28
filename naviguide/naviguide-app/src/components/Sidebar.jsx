@@ -505,7 +505,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData }) {
+export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers }) {
   const { t } = useLang();
   const stats    = plan?.voyage_statistics || {};
   const alerts   = plan?.critical_alerts   || [];
@@ -577,6 +577,40 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
             onDrawStart={onDrawStart}
             onDrawFinish={onDrawFinish}
           />
+
+          {/* ── Maritime layer toggles — ligne horizontale sous Berry-Mappemonde ── */}
+          {maritimeLayers && (
+            <div className="flex items-center gap-1 mt-2.5">
+              {[
+                { key: "zee",      label: "ZEE",     color: "#0e7490", showKey: "showZee",      toggleKey: "setShowZee",      loadingKey: "loadingZee"      },
+                { key: "ports",    label: "Ports",   color: "#f59e0b", showKey: "showPorts",    toggleKey: "setShowPorts",    loadingKey: "loadingPorts"    },
+                { key: "balisage", label: "Balisage",color: "#10b981", showKey: "showBalisage", toggleKey: "setShowBalisage", loadingKey: "loadingBalisage" },
+              ].map(({ key, label, color, showKey, toggleKey, loadingKey }) => {
+                const active  = maritimeLayers[showKey];
+                const loading = maritimeLayers[loadingKey];
+                return (
+                  <button
+                    key={key}
+                    onClick={() => maritimeLayers[toggleKey]((v) => !v)}
+                    title={label}
+                    className={[
+                      "flex items-center justify-center gap-1 flex-1 px-1.5 py-1 rounded-full",
+                      "text-[10px] font-semibold transition-all duration-150 select-none",
+                      active
+                        ? "bg-slate-700/80 text-white border border-white/10"
+                        : "bg-slate-800/30 text-white/35 border border-white/5 hover:text-white/60",
+                    ].join(" ")}
+                  >
+                    {loading
+                      ? <div className="w-1.5 h-1.5 rounded-full border border-white/30 border-t-white animate-spin flex-shrink-0" />
+                      : <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: active ? color : "transparent", border: `1.5px solid ${color}` }} />
+                    }
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/*
