@@ -113,7 +113,7 @@ class ExpeditionRequestIn(BaseModel):
 
 # ── Helper: build initial OrchestratorState ───────────────────────────────────
 
-def _initial_state(waypoints, vessel_specs, constraints) -> OrchestratorState:
+def _initial_state(waypoints, vessel_specs, constraints, language="en") -> OrchestratorState:
     return {
         "waypoints":             waypoints,
         "vessel_specs":          vessel_specs or BerryMappemondeRouter.VESSEL_PROFILE,
@@ -131,6 +131,7 @@ def _initial_state(waypoints, vessel_specs, constraints) -> OrchestratorState:
         "messages":              [],
         "errors":                [],
         "status":                "init",
+        "language":              language if language in ("en", "fr") else "en",
         "chat_id":               None,
         "access_token":          None,
     }
@@ -195,13 +196,20 @@ async def plan_expedition(request: ExpeditionRequestIn):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+class BerryPlanRequest(BaseModel):
+    language:        Optional[str] = "en"
+    departure_month: Optional[int] = None
+
+
 @app.post("/api/v1/expedition/plan/berry-mappemonde")
-async def plan_berry_mappemonde(departure_month: int = Query(None, ge=1, le=12)):
+async def plan_berry_mappemonde(body: BerryPlanRequest = None):
     """
     Pre-configured Berry-Mappemonde circumnavigation expedition plan.
-    Optionally set departure_month (1-12) for seasonal risk adjustment.
+    Accepts JSON body with optional `language` ("en"|"fr") and `departure_month` (1-12).
     """
-    log.info(f"Berry-Mappemonde plan requested. departure_month={departure_month}")
+    language       = (body.language       if body and body.language       else "en")
+    departure_month = (body.departure_month if body and body.departure_month else None)
+    log.info(f"Berry-Mappemonde plan requested. language={language} departure_month={departure_month}")
 
     constraints = {
         "mandatory_cape_of_good_hope": True,
@@ -216,6 +224,7 @@ async def plan_berry_mappemonde(departure_month: int = Query(None, ge=1, le=12))
         waypoints    = BERRY_MAPPEMONDE_WAYPOINTS,
         vessel_specs = BerryMappemondeRouter.VESSEL_PROFILE,
         constraints  = constraints,
+        language     = language,
     )
 
     try:

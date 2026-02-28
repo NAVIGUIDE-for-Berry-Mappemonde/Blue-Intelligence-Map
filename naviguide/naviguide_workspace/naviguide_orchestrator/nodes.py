@@ -22,13 +22,19 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
 
+# Load .env from workspace root (contains ANTHROPIC_API_KEY)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 try:
-    from langchain_aws import ChatBedrock
-    _BEDROCK_AVAILABLE = True
-except ImportError:
-    _BEDROCK_AVAILABLE = False
+    import anthropic as _anthropic
+    _ANTHROPIC_CLIENT   = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    _ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
+except Exception:
+    _ANTHROPIC_CLIENT    = None
+    _ANTHROPIC_AVAILABLE = False
 
 from .state import OrchestratorState
 
@@ -244,16 +250,19 @@ def run_risk_assessment_node(state: OrchestratorState) -> OrchestratorState:
 def llm_expedition_briefing_node(state: OrchestratorState) -> OrchestratorState:
     """
     Generate unified executive skipper briefing combining Agent 1 + Agent 3 outputs.
-    Uses ChatBedrock (Claude 3.5) if available; falls back to structured static text.
+    Uses Anthropic Claude API; falls back to structured static text.
     """
     route_plan   = state.get("route_plan", {})
     risk_report  = state.get("risk_report", {})
     risk_level   = state.get("expedition_risk_level", "UNKNOWN")
     waypoints    = state.get("waypoints", [])
     anti_avg     = state.get("anti_shipping_avg", 0.0)
+    language     = state.get("language", "en").lower()
+    if language not in ("en", "fr"):
+        language = "en"
 
     # Gather key data for the prompt
-    risk_metadata = risk_report.get("metadata", {})
+    risk_metadata   = risk_report.get("metadata", {})
     critical_alerts = risk_report.get("critical_alerts", [])
     route_metadata  = route_plan.get("metadata", {}) if isinstance(route_plan, dict) else {}
     total_nm        = route_metadata.get("total_distance_nm", 0)
@@ -261,9 +270,37 @@ def llm_expedition_briefing_node(state: OrchestratorState) -> OrchestratorState:
     critical_list = "\n".join(
         f"  • {a['waypoint']} [{a['risk_level']}] — dominant: {a.get('dominant_risk', 'N/A')}"
         for a in critical_alerts[:5]
-    ) or "  Aucune alerte critique détectée."
+    ) or ("  No critical alerts detected." if language == "en" else "  Aucune alerte critique détectée.")
 
-    prompt = f"""Tu es le chef officier de sécurité maritime de NAVIGUIDE, spécialiste en circumnavigations hauturières.
+    if language == "en":
+        prompt = f"""You are the NAVIGUIDE chief maritime safety officer, specialist in offshore circumnavigations.
+
+BERRY-MAPPEMONDE EXPEDITION SUMMARY
+═════════════════════════════════════
+Stopovers: {len(waypoints)}
+Total distance: {total_nm:,.0f} nautical miles
+Expedition risk level: {risk_level}
+Average anti-shipping score: {anti_avg:.3f}  (1.0 = ideal)
+CRITICAL/HIGH alerts: {len(critical_alerts)}
+
+PRIORITY ALERTS:
+{critical_list}
+
+AGENT 3 STATISTICS:
+• Waypoints assessed: {risk_metadata.get('waypoints_assessed', len(waypoints))}
+• Average risk score: {risk_metadata.get('overall_expedition_risk', 0):.3f}
+• CRITICAL alerts: {risk_metadata.get('critical_stops_count', 0)}
+• HIGH alerts: {risk_metadata.get('high_risk_stops_count', 0)}
+
+Write a structured executive skipper briefing with exactly these sections:
+1. EXECUTIVE SUMMARY (2-3 synthesis sentences)
+2. CRITICAL ALERTS (bullet list, max 4 points, with mitigation)
+3. RECOMMENDED WEATHER WINDOWS (per ocean region, 1 sentence each)
+4. NON-NEGOTIABLE SAFETY REQUIREMENTS (3 points)
+
+Tone: professional, concise, confirmed offshore expertise. Max 250 words. Reply in English."""
+    else:
+        prompt = f"""Tu es le chef officier de sécurité maritime de NAVIGUIDE, spécialiste en circumnavigations hauturières.
 
 RÉSUMÉ EXPÉDITION BERRY-MAPPEMONDE
 ═══════════════════════════════════
@@ -292,16 +329,17 @@ Ton : professionnel, concis, expertise hauturière confirmée. Max 250 mots. Ré
 
     briefing = ""
 
-    if _BEDROCK_AVAILABLE:
+    if _ANTHROPIC_AVAILABLE and _ANTHROPIC_CLIENT:
         try:
-            llm = ChatBedrock(
-                model_id    = "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-                region_name = "us-east-1",
+            response = _ANTHROPIC_CLIENT.messages.create(
+                model      = "claude-3-5-haiku-20241022",
+                max_tokens = 600,
+                messages   = [{"role": "user", "content": prompt}],
             )
-            briefing = llm.invoke([HumanMessage(content=prompt)]).content
-            log.info("[orchestrator] LLM briefing generated via Bedrock")
+            briefing = response.content[0].text
+            log.info(f"[orchestrator] LLM briefing generated via Anthropic Claude (lang={language})")
         except Exception as exc:
-            log.warning(f"[orchestrator] Bedrock unavailable ({exc}) — using fallback briefing")
+            log.warning(f"[orchestrator] Anthropic unavailable ({exc}) — using fallback briefing")
 
     if not briefing:
         # Structured fallback briefing

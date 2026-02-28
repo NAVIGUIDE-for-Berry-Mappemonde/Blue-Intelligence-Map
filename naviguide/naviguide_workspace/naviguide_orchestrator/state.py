@@ -33,5 +33,6 @@ class OrchestratorState(TypedDict, total=False):
     messages:              List[Any]
     errors:                List[str]
     status:                str                    # init / running_a1 / running_a3 / briefing / complete / error
+    language:              str                    # "en" | "fr" — briefing output language
     chat_id:               Optional[str]
     access_token:          Optional[str]

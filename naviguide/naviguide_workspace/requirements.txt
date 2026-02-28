@@ -15,8 +15,8 @@ geojson==3.1.0
 langgraph>=0.2.0
 langchain-core>=0.3.0
 
-# LLM provider (optional — agents work without it, LLM text replaced by fallback)
-langchain-aws>=0.2.0
+# LLM provider — Anthropic Claude API
+anthropic>=0.40.0
 
 # Data processing
 numpy>=1.24.0

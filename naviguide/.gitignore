@@ -22,3 +22,4 @@ naviguide-api/.env
 .DS_Store
 Thumbs.db
 naviguide-app/.vite/
+naviguide_workspace/.env
