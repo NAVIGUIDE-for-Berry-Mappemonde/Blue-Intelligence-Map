@@ -387,8 +387,11 @@ export function ExportSidebar({
         style={{ width: 320 }}
       >
 
-        {/* ── Header: Language switcher (EN/FR) ─────────────────────────── */}
-        <div className="px-4 pt-4 pb-1 flex-shrink-0">
+        {/* ── All content scrollable ────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto sidebar-scroll">
+
+        {/* ── Language switcher (EN/FR) ─────────────────────────────────── */}
+        <div className="px-4 pt-4 pb-1">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
               {t("language")}
@@ -413,7 +416,7 @@ export function ExportSidebar({
         </div>
 
         {/* ── Mode Toggles ───────────────────────────────────────────────── */}
-        <div className="px-4 pb-3 border-b border-slate-700/60 flex-shrink-0 space-y-3">
+        <div className="px-4 pb-3 border-b border-slate-700/60 space-y-3">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
             {t("modes")}
           </div>
@@ -438,7 +441,7 @@ export function ExportSidebar({
         </div>
 
         {/* ── Route statistics ─────────────────────────────────────────────── */}
-        <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
+        <div className="px-4 py-3 border-b border-slate-700/60">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Anchor size={11} className="text-blue-400" />
             {t("routeSummary")}
@@ -453,7 +456,7 @@ export function ExportSidebar({
         </div>
 
         {/* ── Export buttons ───────────────────────────────────────────────── */}
-        <div className="flex-1 px-4 py-4 space-y-3 overflow-y-auto sidebar-scroll">
+        <div className="px-4 py-4 space-y-3">
 
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
             {t("download")}
@@ -554,6 +557,8 @@ export function ExportSidebar({
           </div>
 
         </div>
+
+        </div>{/* end flex-1 scroll */}
 
       </div>
     </>

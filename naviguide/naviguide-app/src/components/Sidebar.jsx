@@ -584,8 +584,11 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
           COCKPIT: always visible even without plan (shows dashes).
           ONBOARDING: only appears once the AI plan has loaded.
         */}
+        {/* ── Scrollable content (everything below logos) ────────────────── */}
+        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
+
         {(isCockpit || plan) && (
-          <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
+          <div className="pb-3 border-b border-slate-700/60">
             <div className="grid grid-cols-2 gap-2">
               <StatCard
                 icon={<Navigation size={14} />}
@@ -603,9 +606,6 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
             </div>
           </div>
         )}
-
-        {/* ── Scrollable content ──────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
 
           {/*
             ONBOARDING only: progressive "Getting Started" guide.
