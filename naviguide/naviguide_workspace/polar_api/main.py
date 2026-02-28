@@ -1,0 +1,257 @@
+"""
+NAVIGUIDE — Polar API Service
+==============================
+FastAPI service: upload a polar PDF, parse it with polar_engine,
+persist the 181×61 interpolated grid, and expose it to all agents.
+
+Endpoints
+─────────
+GET  /                                      Health check
+POST /api/v1/polar/upload                   Upload PDF → parse → store 181×61 grid
+GET  /api/v1/polar/{expedition_id}          Retrieve full polar grid (181×61)
+GET  /api/v1/polar/{expedition_id}/summary  VMG summary only (lightweight, for briefing agents)
+"""
+
+import json
+import logging
+import sys
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+
+# ── Path setup: import polar_engine from polar_agent/ at repo root ─────────────
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # naviguide-berry-mappemonde/
+sys.path.insert(0, str(REPO_ROOT / "polar_agent"))
+
+from polar_engine import parse_polar_pdf, PolarData  # noqa: E402
+
+# ── Storage directory for polar JSON files ────────────────────────────────────
+POLAR_DATA_DIR = Path(__file__).resolve().parent.parent / "polar_data"
+POLAR_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOG_DIR = Path(
+    "/mnt/efs/spaces/ef014a98-8a1c-4b16-8e06-5d2c5b364d08"
+    "/872445d0-4688-44c2-bafc-53c3d3a51d57/logs"
+)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler(LOG_DIR / "polar_api.log"),
+        logging.StreamHandler(),
+    ],
+    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+)
+log = logging.getLogger("polar_api")
+
+# ── FastAPI app ───────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="NAVIGUIDE — Polar API",
+    description=(
+        "Upload a polar PDF, parse it into a full 181×61 interpolated grid "
+        "(TWA 0→180° × TWS 0→60 kts), and expose the result to all NAVIGUIDE agents."
+    ),
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _polar_path(expedition_id: str) -> Path:
+    """Return storage path for a given expedition_id."""
+    safe = expedition_id.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    return POLAR_DATA_DIR / f"polar_{safe}.json"
+
+
+def _serialize_polar(polar: PolarData, expedition_id: str) -> Dict[str, Any]:
+    """
+    Serialize a PolarData object to a JSON-serializable dict.
+
+    Stored fields:
+    - expedition_id, boat_name, created_at
+    - raw   : sparse grid as-parsed from the PDF (twa_rows, tws_cols, matrix)
+    - grid  : full 181×61 interpolated grid — grid[twa_deg][tws_kt] = speed (kts)
+    - vmg_summary : optimal VMG angles/speeds for key TWS values
+    """
+    full_grid   = polar.generate_full_grid()   # numpy shape (181, 61)
+    vmg_summary = polar.summary()              # {tws: {upwind, downwind, gybe_angle}}
+
+    return {
+        "expedition_id": expedition_id,
+        "boat_name":     polar.boat_name,
+        "created_at":    datetime.now(timezone.utc).isoformat(),
+        "grid_shape":    [181, 61],
+        # Raw sparse grid extracted from the PDF
+        "raw": {
+            "twa_rows": polar.twa_rows,
+            "tws_cols": polar.tws_cols,
+            "matrix":   polar.matrix.tolist(),
+        },
+        # Full interpolated grid: index by [twa_degree][tws_knot]
+        "grid": full_grid.tolist(),
+        # VMG optimals for standard TWS values (8, 10, 12, 16, 20, 25 kts)
+        "vmg_summary": {
+            str(tws): {
+                "upwind":     d["upwind"],
+                "downwind":   d["downwind"],
+                "gybe_angle": d["gybe_angle"],
+            }
+            for tws, d in vmg_summary.items()
+        },
+    }
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/")
+def health():
+    """Health check — returns service status."""
+    return {
+        "service":    "NAVIGUIDE Polar API",
+        "version":    "1.0.0",
+        "status":     "operational",
+        "storage":    str(POLAR_DATA_DIR),
+        "endpoints": [
+            "POST /api/v1/polar/upload",
+            "GET  /api/v1/polar/{expedition_id}",
+            "GET  /api/v1/polar/{expedition_id}/summary",
+        ],
+    }
+
+
+@app.post("/api/v1/polar/upload")
+async def upload_polar(
+    file:          UploadFile     = File(...,  description="Polar table in PDF format"),
+    expedition_id: str            = Form(...,  description="Unique expedition identifier (e.g. 'berry-mappemonde-2026')"),
+    boat_name:     Optional[str]  = Form(None, description="Boat name (optional, defaults to expedition_id)"),
+):
+    """
+    Upload a polar PDF for an expedition.
+
+    1. Reads the PDF bytes from the multipart form.
+    2. Parses the polar table with `polar_engine.parse_polar_pdf()`.
+    3. Generates the full 181×61 interpolated grid (TWA 0→180°, TWS 0→60 kts).
+    4. Serialises to `polar_data/polar_{expedition_id}.json`.
+    5. Returns metadata + VMG summary. Retrieve the full grid via:
+       GET /api/v1/polar/{expedition_id}
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    bname = boat_name or expedition_id
+    log.info(f"Polar upload: expedition_id={expedition_id}, boat={bname}, file={file.filename}")
+
+    # 1 — Parse PDF
+    try:
+        pdf_bytes = await file.read()
+        polar = parse_polar_pdf(pdf_bytes, boat_name=bname)
+    except Exception as exc:
+        log.error(f"PDF parsing failed: {exc}")
+        raise HTTPException(status_code=422, detail=f"PDF parsing error: {exc}")
+
+    # 2 — Generate grid + serialise
+    try:
+        data = _serialize_polar(polar, expedition_id)
+    except Exception as exc:
+        log.error(f"Grid generation failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Grid generation error: {exc}")
+
+    # 3 — Persist to JSON
+    try:
+        dest = _polar_path(expedition_id)
+        with open(dest, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        log.info(f"Polar stored: {dest} ({dest.stat().st_size:,} bytes)")
+    except Exception as exc:
+        log.error(f"Storage error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+    return {
+        "status":        "ok",
+        "expedition_id": expedition_id,
+        "boat_name":     bname,
+        "grid_shape":    data["grid_shape"],
+        "raw_rows":      len(polar.twa_rows),
+        "raw_cols":      len(polar.tws_cols),
+        "vmg_summary":   data["vmg_summary"],
+        "stored_at":     str(dest),
+        "created_at":    data["created_at"],
+    }
+
+
+@app.get("/api/v1/polar/{expedition_id}")
+def get_polar(expedition_id: str):
+    """
+    Retrieve the full polar dataset for an expedition.
+    Returns: raw sparse grid, full 181×61 interpolated grid, VMG summary.
+    """
+    dest = _polar_path(expedition_id)
+    if not dest.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No polar data found for expedition '{expedition_id}'. "
+                "Upload a PDF via POST /api/v1/polar/upload first."
+            ),
+        )
+
+    try:
+        with open(dest, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        log.info(f"Polar retrieved: expedition_id={expedition_id}")
+        return data
+    except Exception as exc:
+        log.error(f"Retrieval error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Retrieval error: {exc}")
+
+
+@app.get("/api/v1/polar/{expedition_id}/summary")
+def get_polar_summary(expedition_id: str):
+    """
+    Lightweight polar summary for briefing agents.
+    Returns only metadata + VMG optimals — omits the full 181×61 grid.
+    Useful for Agent 1 (ETA calc) and Agent 3 (risk × speed) integrations.
+    """
+    dest = _polar_path(expedition_id)
+    if not dest.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No polar data found for expedition '{expedition_id}'.",
+        )
+
+    try:
+        with open(dest, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {
+            "expedition_id": data["expedition_id"],
+            "boat_name":     data["boat_name"],
+            "created_at":    data["created_at"],
+            "grid_shape":    data["grid_shape"],
+            "vmg_summary":   data["vmg_summary"],
+        }
+    except Exception as exc:
+        log.error(f"Summary retrieval error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Retrieval error: {exc}")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8004))
+    log.info(f"Starting NAVIGUIDE Polar API on port {port}")
+    uvicorn.run("polar_api.main:app", host="0.0.0.0", port=port, reload=False)
