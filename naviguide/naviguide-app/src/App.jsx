@@ -280,7 +280,11 @@ export default function App() {
   // Re-fetches when language changes to get briefing in the selected language.
   useEffect(() => {
     const cached = getCachedPlan(lang);
-    if (cached) setExpeditionPlan(cached);                   // instant render from cache
+    if (cached) {
+      setExpeditionPlan(cached);                             // instant render from cache
+    } else {
+      setExpeditionPlan(null);                              // clear stale plan from previous language
+    }
     if (!ORCHESTRATOR_URL) return;
     fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, {
       method: "POST",
