@@ -478,11 +478,6 @@ export function ExportSidebar({
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Compass size={11} className="text-blue-400" />
               Polaires
-              {polarData?.boat_name && (
-                <span className="ml-auto text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full font-normal normal-case tracking-normal">
-                  {polarData.boat_name}
-                </span>
-              )}
             </div>
 
             {/* Drop zone */}
@@ -526,7 +521,9 @@ export function ExportSidebar({
               }
             </div>
 
-            <PolarStatusBadge status={polarUploadStatus} detail={polarUploadDetail} />
+            {polarUploadStatus === "error" && (
+              <p className="text-xs text-red-400 px-1">Échec — {polarUploadDetail}</p>
+            )}
 
             {/* VMG table */}
             {polarData?.vmg_summary && (

@@ -74,21 +74,14 @@ function PolarChatSection({ polarData }) {
       <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
         <Compass size={12} className="text-blue-400" />
         Chat
-        {polarData?.boat_name && (
-          <span className="ml-auto text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full font-normal normal-case tracking-normal">
-            {polarData.boat_name}
-          </span>
-        )}
       </div>
 
       {/* Messages */}
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
         <div className="max-h-48 overflow-y-auto sidebar-scroll px-3 py-3 space-y-0.5">
-          {messages.length === 0 && (
+          {messages.length === 0 && !polarData && (
             <p className="text-xs text-slate-500 text-center py-3">
-              {polarData
-                ? "Posez une question sur les performances polaires."
-                : "Chargez les polaires (panneau droit) pour activer le chat."}
+              Chargez les polaires (panneau droit) pour activer le chat.
             </p>
           )}
           {messages.map((m, i) => <PolarChatBubble key={i} role={m.role} content={m.content} />)}
