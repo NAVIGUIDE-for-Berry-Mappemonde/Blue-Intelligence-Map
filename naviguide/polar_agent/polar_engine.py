@@ -245,25 +245,49 @@ def parse_polar_pdf(pdf_bytes: bytes, boat_name: str = "Boat") -> PolarData:
     return parse_polar_text(text, boat_name)
 
 
+def _looks_like_tws_header(nums: List[float]) -> bool:
+    """
+    Return True if nums looks like a TWS column header.
+    Criteria:
+    - At least 4 values
+    - All values in plausible TWS range [0, 65] kts
+    - First value is a low wind speed (0–14 kts)
+    - Values are mostly increasing (tolerates 1 non-monotonic step)
+    """
+    if len(nums) < 4:
+        return False
+    if any(n < 0 or n > 65 for n in nums):
+        return False
+    if nums[0] > 14:
+        return False
+    n_increasing = sum(1 for a, b in zip(nums, nums[1:]) if b >= a)
+    return n_increasing >= max(len(nums) - 2, len(nums) // 2)
+
+
 def parse_polar_text(text: str, boat_name: str = "Boat") -> PolarData:
     """
     Parse a polar table from raw text.
     Expected format: first non-empty row = TWS header, remaining = TWA | speeds.
+    Supports Simons Voogd, PolyCurve, and generic polar PDF layouts.
     """
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    # Find header line (contains multiple numbers, first is 0 or small int)
+    # Find header line using flexible TWS detection
     tws_cols = None
     data_start = 0
     for i, line in enumerate(lines):
         nums = _extract_numbers(line)
-        if len(nums) >= 5 and nums[0] in (0, 4, 6, 8, 10):
-            tws_cols  = [int(n) for n in nums]
+        if _looks_like_tws_header(nums):
+            tws_cols  = [int(round(n)) for n in nums]
             data_start = i + 1
             break
 
     if tws_cols is None:
-        raise ValueError("Could not detect TWS header row in the text.")
+        raise ValueError(
+            "Could not detect TWS header row. "
+            "Expected a row with ≥4 increasing wind speeds (0–65 kts) "
+            "starting with a value ≤ 14 kts."
+        )
 
     twa_rows = []
     matrix   = []
@@ -291,7 +315,10 @@ def parse_polar_text(text: str, boat_name: str = "Boat") -> PolarData:
 
 
 def _extract_numbers(line: str) -> List[float]:
-    return [float(x) for x in re.findall(r"\d+\.?\d*", line)]
+    """Extract all numeric values from a line, handling decimals and comma separators."""
+    # Normalize: replace commas used as decimal separators (e.g. French locale "6,5" → "6.5")
+    normalized = re.sub(r"(\d),(\d)", r"\1.\2", line)
+    return [float(x) for x in re.findall(r"\d+\.?\d*", normalized)]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
