@@ -13,6 +13,7 @@ import {
   MaritimeLayers,
   MaritimeLayersPanel,
 } from "./components/MaritimeLayers";
+import { useMarkerOffsets } from "./hooks/useMarkerOffsets";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
@@ -73,6 +74,9 @@ export default function App() {
 
   // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
   const maritimeLayers = useMaritimeLayers();
+
+  // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
+  const markerOffsets = useMarkerOffsets(points, mapRef);
 
   // Custom imported route (null = show Berry-Mappemonde default route)
   const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
@@ -1376,7 +1380,7 @@ export default function App() {
         {/* Escales obligatoires — drapeaux toujours visibles, tooltip au survol (hidden during drawing) */}
         {!drawingMode && points.map((p, i) =>
           p.flag !== "" ? (
-            <Marker key={i} longitude={p.lon} latitude={p.lat} anchor="bottom">
+            <Marker key={i} longitude={p.lon} latitude={p.lat} anchor="bottom" offset={markerOffsets[i]}>
               <div
                 onMouseEnter={() => setHoveredPoint(i)}
                 onMouseLeave={() => setHoveredPoint(null)}
@@ -1420,7 +1424,7 @@ export default function App() {
             </Marker>
           ) : (
             /* Waypoints intermédiaires — point bleu toujours visible, tooltip au survol */
-            <Marker key={i} longitude={p.lon} latitude={p.lat}>
+            <Marker key={i} longitude={p.lon} latitude={p.lat} offset={markerOffsets[i]}>
               <div
                 onMouseEnter={() => setHoveredPoint(i)}
                 onMouseLeave={() => setHoveredPoint(null)}
