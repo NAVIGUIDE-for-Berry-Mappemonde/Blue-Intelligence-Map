@@ -388,7 +388,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish }) {
+export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore }) {
   const stats    = plan?.voyage_statistics || {};
   const alerts   = plan?.critical_alerts   || [];
   const briefing = plan?.executive_briefing || "";
@@ -402,7 +402,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
       */}
       <button
         onClick={onToggle}
-        className={`absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
           rounded-full w-9 h-9 flex items-center justify-center shadow-lg
           hover:bg-slate-800 transition-all duration-300 ${open ? "left-[322px]" : "left-4"}`}
         title={open ? "Hide sidebar" : "Show expedition panel"}
@@ -412,7 +412,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
 
       {/* Sidebar panel */}
       <div
-        className={`absolute top-0 left-0 h-full z-20 flex flex-col bg-slate-900/97
+        className={`naviguide-sidebar-panel absolute top-0 left-0 h-full z-20 flex flex-col bg-slate-900/97
           border-r border-slate-700/60 shadow-2xl transition-transform duration-300
           ${open ? "translate-x-0" : "-translate-x-full"}`}
         style={{ width: 320 }}
@@ -440,29 +440,65 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
           />
         </div>
 
-        {/* ── Stats grid ─────────────────────────────────────────────────── */}
-        <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
-          <div className="grid grid-cols-2 gap-2">
-            <StatCard
-              icon={<Navigation size={14} />}
-              label="Total Distance"
-              value={stats.total_distance_nm ? `${stats.total_distance_nm.toLocaleString()} nm` : "—"}
-              sub={`${stats.total_segments || "—"} segments`}
-            />
-            <div className="bg-slate-800/70 rounded-xl p-3 flex flex-col gap-1">
-              <div className="text-xs text-slate-500">Expedition Risk</div>
-              <RiskBadge level={stats.expedition_risk_level} />
-              <div className="text-xs text-slate-500 mt-0.5">
-                Score: {stats.overall_expedition_risk?.toFixed(2) ?? "—"}
+        {/* ── Mode indicator strip ────────────────────────────────────────── */}
+        {(isCockpit || isOffshore) && (
+          <div className="px-4 py-1.5 flex gap-2 flex-shrink-0 bg-blue-950/40 border-b border-blue-700/30">
+            {isCockpit && (
+              <span className="text-xs font-semibold text-blue-300 flex items-center gap-1">
+                🎛️ Cockpit
+              </span>
+            )}
+            {isOffshore && (
+              <span className="text-xs font-semibold text-teal-300 flex items-center gap-1">
+                ⚓ Offshore
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* ── Stats grid — always in Cockpit, only with data in Onboarding ── */}
+        {(isCockpit || plan) && (
+          <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
+            <div className="grid grid-cols-2 gap-2">
+              <StatCard
+                icon={<Navigation size={14} />}
+                label="Total Distance"
+                value={stats.total_distance_nm ? `${stats.total_distance_nm.toLocaleString()} nm` : "—"}
+                sub={`${stats.total_segments || "—"} segments`}
+              />
+              <div className="bg-slate-800/70 rounded-xl p-3 flex flex-col gap-1">
+                <div className="text-xs text-slate-500">Expedition Risk</div>
+                <RiskBadge level={stats.expedition_risk_level} />
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Score: {stats.overall_expedition_risk?.toFixed(2) ?? "—"}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* ── Scrollable content ──────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
 
-          {/* AI Skipper Briefing */}
+          {/* Onboarding welcome — shown when NOT in Cockpit mode and no plan loaded */}
+          {!isCockpit && !plan && (
+            <div className="rounded-xl border border-blue-700/30 bg-blue-950/20 p-3">
+              <div className="text-xs font-semibold text-blue-300 mb-1.5 flex items-center gap-1.5">
+                🧭 Getting Started
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Click any point on the route to get wind, wave & current data.
+                Use the <strong className="text-slate-300">›</strong> button (top right) to switch modes or export your route.
+              </p>
+              {isOffshore && (
+                <p className="text-xs text-teal-400 mt-2 leading-relaxed">
+                  ⚓ <strong>Offshore mode</strong>: wind, wave & current markers are now visible on the map.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* AI Skipper Briefing — shown in Cockpit or when plan is loaded */}
           {briefing && (
             <div>
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -473,6 +509,19 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
                   {briefing}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Critical alerts — shown in Cockpit mode or when alerts exist */}
+          {isCockpit && alerts.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <AlertTriangle size={12} className="text-orange-400" />
+                Critical Alerts
+              </div>
+              <div className="space-y-2">
+                {alerts.map((alert, i) => <AlertItem key={i} alert={alert} />)}
               </div>
             </div>
           )}

@@ -55,6 +55,11 @@ export default function App() {
   // Export sidebar (right)
   const [exportSidebarOpen, setExportSidebarOpen] = useState(false);
 
+  // ── App-wide modes ──────────────────────────────────────────────────────────
+  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
+  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
+  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
+
   // Custom imported route (null = show Berry-Mappemonde default route)
   const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
 
@@ -525,7 +530,7 @@ export default function App() {
         };
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+    <div style={{ height: "100vh", width: "100vw", position: "relative" }} className={isLightMode ? "light-mode" : ""}>
       <Sidebar
         plan={expeditionPlan}
         open={sidebarOpen}
@@ -535,12 +540,20 @@ export default function App() {
         isDrawing={drawingMode}
         onDrawStart={handleDrawStart}
         onDrawFinish={handleDrawFinish}
+        isCockpit={isCockpit}
+        isOffshore={isOffshore}
       />
       <ExportSidebar
         segments={segments}
         points={points}
         open={exportSidebarOpen}
         onToggle={() => setExportSidebarOpen((o) => !o)}
+        isOffshore={isOffshore}
+        isCockpit={isCockpit}
+        isLightMode={isLightMode}
+        onOffshoreChange={setIsOffshore}
+        onCockpitChange={setIsCockpit}
+        onLightModeChange={setIsLightMode}
       />
 
       {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
@@ -710,8 +723,8 @@ export default function App() {
           </Marker>
         ))}
 
-        {/* Points de vent fort — invisibles par défaut, révélés au survol (CSS :hover) */}
-        {segments.flatMap((s, segIdx) =>
+        {/* Points de vent fort — visibles uniquement en mode Offshore */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.windPoints || []).map((point, i) => {
             const [lon, lat] = point.geometry.coordinates;
             const hasHighWave = point.properties.highWave;
@@ -727,8 +740,8 @@ export default function App() {
           })
         )}
 
-        {/* 🌊 Points de vagues hautes uniquement (orange) */}
-        {segments.flatMap((s, segIdx) =>
+        {/* 🌊 Points de vagues hautes uniquement (orange) — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.wavePoints || [])
             .filter((point) => !point.properties.highWind) // Seulement ceux sans vent fort
             .map((point, i) => {
@@ -794,7 +807,8 @@ export default function App() {
             })
         )}
 
-        {segments.flatMap((s, segIdx) =>
+        {/* 🔀 Courants — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.currentPoints || []).map((point, i) => {
             const [lon, lat] = point.geometry.coordinates;
             const currentData = point.properties.currents;

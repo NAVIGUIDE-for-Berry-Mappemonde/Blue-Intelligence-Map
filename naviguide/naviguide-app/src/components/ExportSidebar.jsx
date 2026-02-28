@@ -2,8 +2,9 @@
  * NAVIGUIDE v2 — Export Sidebar (right panel)
  * Provides GeoJSON and KML export of the full expedition route + waypoints.
  * Also hosts mode toggles: Cabotage/Offshore, Onboarding/Cockpit, Dark/Light.
+ * Mode states are lifted to App.jsx — received as props.
  */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ChevronLeft, ChevronRight, Download, Anchor } from "lucide-react";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -243,25 +244,13 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function ExportSidebar({ segments, points, open, onToggle }) {
+export function ExportSidebar({
+  segments, points, open, onToggle,
+  // Mode props (state lives in App.jsx)
+  isOffshore, isCockpit, isLightMode,
+  onOffshoreChange, onCockpitChange, onLightModeChange,
+}) {
   const [exportStatus, setExportStatus] = useState(null); // "geojson" | "kml" | null
-
-  // ── Mode states (false = default/left label, true = alternate/right label) ─
-  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
-  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
-  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
-
-  // Apply dark/light class to <html> element
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isLightMode) {
-      root.classList.add("light");
-      root.classList.remove("dark");
-    } else {
-      root.classList.add("dark");
-      root.classList.remove("light");
-    }
-  }, [isLightMode]);
 
   const maritimeSegs  = segments.filter((s) => !s.nonMaritime && s.coords?.length > 0);
   const overlandSegs  = segments.filter((s) =>  s.nonMaritime && s.coords?.length > 0);
@@ -301,7 +290,7 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
       */}
       <button
         onClick={onToggle}
-        className={`absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
           rounded-full w-9 h-9 flex items-center justify-center shadow-lg
           hover:bg-slate-800 transition-all duration-300 ${open ? "right-[322px]" : "right-4"}`}
         title={open ? "Hide export panel" : "Show export panel"}
@@ -311,7 +300,7 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
 
       {/* Sidebar panel */}
       <div
-        className={`absolute top-0 right-0 h-full z-20 flex flex-col bg-slate-900/97
+        className={`naviguide-sidebar-panel absolute top-0 right-0 h-full z-20 flex flex-col bg-slate-900/97
           border-l border-slate-700/60 shadow-2xl transition-transform duration-300
           ${open ? "translate-x-0" : "translate-x-full"}`}
         style={{ width: 320 }}
@@ -326,19 +315,19 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
             labelLeft="Cabotage"
             labelRight="Offshore"
             active={isOffshore}
-            onChange={setIsOffshore}
+            onChange={onOffshoreChange}
           />
           <Toggle
             labelLeft="Onboarding"
             labelRight="Cockpit"
             active={isCockpit}
-            onChange={setIsCockpit}
+            onChange={onCockpitChange}
           />
           <Toggle
             labelLeft="Dark"
             labelRight="Light"
             active={isLightMode}
-            onChange={setIsLightMode}
+            onChange={onLightModeChange}
           />
         </div>
 
