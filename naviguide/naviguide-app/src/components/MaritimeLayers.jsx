@@ -153,6 +153,9 @@ export function MaritimeLayers({
       </Source>
 
       {/* ── OpenSeaMap balisage — raster tile overlay ─────────────────────── */}
+      {/* NOTE: on utilise raster-opacity (paint) plutôt que layout.visibility
+          car MapLibre ne charge pas les tuiles des layers "none" et ne les
+          charge pas non plus quand on repasse à "visible" via react-map-gl. */}
       <Source
         id="openseamap-source"
         type="raster"
@@ -163,8 +166,7 @@ export function MaritimeLayers({
         <Layer
           id="openseamap-layer"
           type="raster"
-          layout={vis(showBalisage)}
-          paint={OPENSEAMAP_RASTER_PAINT}
+          paint={{ "raster-opacity": showBalisage ? 0.85 : 0 }}
         />
       </Source>
     </>
