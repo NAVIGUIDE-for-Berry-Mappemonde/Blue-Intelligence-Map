@@ -208,14 +208,16 @@ const LAYER_CONFIG = [
  */
 export function MaritimeLayersPanel(props) {
   return (
+    /* Centré en bas, entre les deux sidebars (chacune 320px) — toujours visible */
     <div
-      className="absolute bottom-6 left-4 z-20 flex flex-col gap-1.5"
-      style={{ pointerEvents: "auto" }}
+      className="absolute bottom-5 left-1/2 -translate-x-1/2 z-25 flex flex-row items-center gap-1.5
+                 bg-slate-900/80 backdrop-blur-sm border border-white/10 rounded-full px-3 py-1.5 shadow-xl"
+      style={{ pointerEvents: "auto", zIndex: 25 }}
     >
-      {/* Section label */}
-      <div className="text-white/40 text-[10px] font-semibold uppercase tracking-widest px-1 mb-0.5 select-none">
+      {/* Label */}
+      <span className="text-white/35 text-[9px] font-semibold uppercase tracking-widest mr-1 select-none">
         Couches
-      </div>
+      </span>
 
       {LAYER_CONFIG.map(({ key, label, title, color, showKey, toggleKey, loadingKey, errorKey }) => {
         const active  = props[showKey];
@@ -228,29 +230,28 @@ export function MaritimeLayersPanel(props) {
             onClick={() => props[toggleKey]((v) => !v)}
             title={title}
             className={[
-              "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold",
-              "shadow-lg transition-all duration-150 select-none",
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold",
+              "transition-all duration-150 select-none",
               active
-                ? "bg-slate-800/95 text-white border border-white/20"
-                : "bg-slate-900/70 text-white/50 border border-white/10 hover:bg-slate-800/80 hover:text-white/80",
+                ? "bg-slate-700/90 text-white border border-white/20"
+                : "bg-transparent text-white/45 border border-white/10 hover:text-white/80 hover:bg-slate-700/50",
               error ? "border-red-500/50" : "",
             ].join(" ")}
           >
-            {/* Status dot / spinner */}
             {loading ? (
-              <div className="w-2.5 h-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin flex-shrink-0" />
+              <div className="w-2 h-2 rounded-full border-2 border-white/30 border-t-white animate-spin flex-shrink-0" />
             ) : (
               <div
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0 transition-colors"
+                className="w-2 h-2 rounded-full flex-shrink-0 transition-colors"
                 style={{
                   backgroundColor: active ? color : "transparent",
-                  border: `2px solid ${error ? "#ef4444" : color}`,
+                  border: `1.5px solid ${error ? "#ef4444" : color}`,
                 }}
               />
             )}
             <span>{label}</span>
             {error && !loading && (
-              <span className="ml-0.5 text-red-400" title={error}>⚠</span>
+              <span className="text-red-400 text-[10px]" title={error}>⚠</span>
             )}
           </button>
         );
