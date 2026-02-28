@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from typing import Optional
 from dotenv import load_dotenv
@@ -799,6 +800,39 @@ def get_current(request: PositionRequest):
 _wpi_cache: dict = {"data": None, "ts": 0.0}
 _WPI_CACHE_TTL = 86_400  # seconds
 
+# DMS coordinate pattern: e.g. "30°20'00\"N" or "48°17'00\"E"
+_DMS_RE = re.compile(
+    r"""(\d+)\s*[°d]\s*(\d+)\s*[''′]\s*(\d+(?:\.\d+)?)\s*[""″]?\s*([NSEW]?)""",
+    re.IGNORECASE,
+)
+
+def _parse_coord(value: str | float | int | None) -> float | None:
+    """
+    Parse a coordinate value that may be decimal or DMS format.
+    Returns float decimal degrees, or None if unparseable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return None
+    # Try plain float first
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    # Try DMS
+    m = _DMS_RE.search(s)
+    if m:
+        deg, mins, secs, hemi = m.groups()
+        decimal = float(deg) + float(mins) / 60.0 + float(secs) / 3600.0
+        if hemi.upper() in ("S", "W"):
+            decimal = -decimal
+        return decimal
+    return None
+
 
 @app.get("/proxy/zee", summary="ZEE boundaries proxy (VLIZ WFS)")
 async def proxy_zee(
@@ -864,10 +898,9 @@ async def proxy_ports():
 
     features = []
     for p in ports:
-        try:
-            lat = float(p.get("latitude") or p.get("lat") or 0)
-            lon = float(p.get("longitude") or p.get("lon") or 0)
-        except (ValueError, TypeError):
+        lat = _parse_coord(p.get("latitude") or p.get("lat"))
+        lon = _parse_coord(p.get("longitude") or p.get("lon"))
+        if lat is None or lon is None:
             continue
         if lat == 0.0 and lon == 0.0:
             continue
@@ -888,40 +921,8 @@ async def proxy_ports():
     return JSONResponse(content=geojson)
 
 
-@app.get("/proxy/balisage", summary="Balisage maritime proxy (SHOM WFS)")
-async def proxy_balisage(
-    bbox: Optional[str] = Query(
-        None,
-        description="Viewport bounding box as minlon,minlat,maxlon,maxlat,CRS:84",
-    ),
-    count: int = Query(500, ge=1, le=2000, description="Max features"),
-):
-    """
-    Proxy pour le WFS SHOM INSPIRE — couche BALISAGE_BDD_WFS.
-    Contourne les restrictions CORS du serveur SHOM.
-    """
-    params: dict = {
-        "service": "WFS",
-        "version": "2.0.0",
-        "request": "GetFeature",
-        "typeNames": "BALISAGE_BDD_WFS",
-        "outputFormat": "application/json",
-        "count": count,
-    }
-    if bbox:
-        params["bbox"] = bbox
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                "https://services.data.shom.fr/INSPIRE/wfs",
-                params=params,
-            )
-            resp.raise_for_status()
-            return JSONResponse(content=resp.json())
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"SHOM upstream HTTP error: {exc.response.status_code}")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"SHOM upstream error: {exc}")
+# NOTE: SHOM WFS /proxy/balisage removed — endpoint requires authentication (401).
+# Balisage is now served client-side via OpenSeaMap raster tiles (no proxy needed).
 
 
 if __name__ == "__main__":

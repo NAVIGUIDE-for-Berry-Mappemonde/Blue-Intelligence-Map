@@ -1,13 +1,14 @@
 /**
  * MaritimeLayers — 3 couches de données maritimes pour MapLibre GL JS
  *
- *  1. ZEE       — Zones Économiques Exclusives (VLIZ / Marine Regions, via WFS proxy)
- *  2. Ports WPI — World Port Index (NGA/MSI REST, via proxy)
- *  3. Balisage  — Balisage maritime SHOM (INSPIRE WFS proxy)
+ *  1. ZEE         — Zones Économiques Exclusives (VLIZ / Marine Regions, via WFS proxy)
+ *  2. Ports WPI   — World Port Index (NGA/MSI REST, via proxy, coords DMS→decimal)
+ *  3. Balisage    — Balisage maritime via OpenSeaMap raster tiles (public, no auth)
+ *                   NOTE: SHOM WFS remplacé car nécessite authentification (401).
  *
  * Exports:
  *  - useMaritimeLayers()        → hook (state + data fetching)
- *  - MaritimeLayers(props)      → Source/Layer à placer DANS <Map>
+ *  - MaritimeLayers(props)      → Sources/Layers à placer DANS <Map>
  *  - MaritimeLayersPanel(props) → Panneau flottant de bascule (HORS <Map>)
  */
 
@@ -27,7 +28,7 @@ const ZEE_LINE_PAINT = {
   "line-color": "#0e7490",
   "line-width": 1.5,
   "line-dasharray": [5, 3],
-  "line-opacity": 0.75,
+  "line-opacity": 0.8,
 };
 const PORTS_CIRCLE_PAINT = {
   "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 6, 4, 10, 7],
@@ -36,20 +37,9 @@ const PORTS_CIRCLE_PAINT = {
   "circle-stroke-color": "#fff",
   "circle-opacity": 0.85,
 };
-const BALISAGE_CIRCLE_PAINT = {
-  "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 2, 10, 4, 14, 6],
-  "circle-color": [
-    "match",
-    ["get", "couleur"],          // SHOM attribute for buoy colour
-    "ROUGE",   "#ef4444",
-    "VERT",    "#22c55e",
-    "BLANC",   "#f8fafc",
-    "JAUNE",   "#eab308",
-    "#10b981", // default teal
-  ],
-  "circle-stroke-width": 0.8,
-  "circle-stroke-color": "#fff",
-  "circle-opacity": 0.9,
+// OpenSeaMap tiles — raster overlay, opacity controlled via show flag
+const OPENSEAMAP_RASTER_PAINT = {
+  "raster-opacity": 0.85,
 };
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
@@ -66,12 +56,6 @@ async function fetchPorts() {
   return res.json();
 }
 
-async function fetchBalisage() {
-  const res = await fetch(`${API_URL}/proxy/balisage?count=800`);
-  if (!res.ok) throw new Error(`Balisage HTTP ${res.status}`);
-  return res.json();
-}
-
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -84,19 +68,16 @@ export function useMaritimeLayers() {
   const [showPorts,    setShowPorts]    = useState(false);
   const [showBalisage, setShowBalisage] = useState(false);
 
-  const [zeeData,      setZeeData]      = useState(EMPTY_FC);
-  const [portsData,    setPortsData]    = useState(EMPTY_FC);
-  const [balisageData, setBalisageData] = useState(EMPTY_FC);
+  const [zeeData,   setZeeData]   = useState(EMPTY_FC);
+  const [portsData, setPortsData] = useState(EMPTY_FC);
 
-  const [loadingZee,      setLoadingZee]      = useState(false);
-  const [loadingPorts,    setLoadingPorts]     = useState(false);
-  const [loadingBalisage, setLoadingBalisage]  = useState(false);
+  const [loadingZee,   setLoadingZee]   = useState(false);
+  const [loadingPorts, setLoadingPorts] = useState(false);
 
-  const [errorZee,      setErrorZee]      = useState(null);
-  const [errorPorts,    setErrorPorts]    = useState(null);
-  const [errorBalisage, setErrorBalisage] = useState(null);
+  const [errorZee,   setErrorZee]   = useState(null);
+  const [errorPorts, setErrorPorts] = useState(null);
 
-  // Lazy load on first activation
+  // Lazy-load ZEE on first activation
   useEffect(() => {
     if (!showZee || zeeData.features.length > 0) return;
     setLoadingZee(true);
@@ -107,6 +88,7 @@ export function useMaritimeLayers() {
       .finally(() => setLoadingZee(false));
   }, [showZee]);
 
+  // Lazy-load WPI ports on first activation
   useEffect(() => {
     if (!showPorts || portsData.features.length > 0) return;
     setLoadingPorts(true);
@@ -117,27 +99,22 @@ export function useMaritimeLayers() {
       .finally(() => setLoadingPorts(false));
   }, [showPorts]);
 
-  useEffect(() => {
-    if (!showBalisage || balisageData.features.length > 0) return;
-    setLoadingBalisage(true);
-    setErrorBalisage(null);
-    fetchBalisage()
-      .then(setBalisageData)
-      .catch((e) => { console.warn("[MaritimeLayers] Balisage:", e); setErrorBalisage(e.message); })
-      .finally(() => setLoadingBalisage(false));
-  }, [showBalisage]);
-
   return {
     // Toggles
     showZee,      setShowZee,
     showPorts,    setShowPorts,
     showBalisage, setShowBalisage,
     // Data
-    zeeData, portsData, balisageData,
+    zeeData,
+    portsData,
     // Loading flags
-    loadingZee, loadingPorts, loadingBalisage,
+    loadingZee,
+    loadingPorts,
+    loadingBalisage: false,   // OpenSeaMap tiles load automatically
     // Error messages
-    errorZee, errorPorts, errorBalisage,
+    errorZee,
+    errorPorts,
+    errorBalisage: null,
   };
 }
 
@@ -145,12 +122,16 @@ export function useMaritimeLayers() {
 
 /**
  * MaritimeLayers
- * Place les <Source> / <Layer> MapLibre GL JS dans l'arbre du composant <Map>.
+ * Place les Sources/Layers MapLibre GL JS dans l'arbre du composant <Map>.
+ *
+ *  - ZEE       : polygones GeoJSON via proxy backend
+ *  - Ports WPI : points GeoJSON via proxy backend
+ *  - Balisage  : tuiles raster OpenSeaMap (chargées directement depuis le navigateur)
  */
 export function MaritimeLayers({
   showZee, zeeData,
   showPorts, portsData,
-  showBalisage, balisageData,
+  showBalisage,
 }) {
   return (
     <>
@@ -160,15 +141,27 @@ export function MaritimeLayers({
         <Layer id="zee-line" type="line" paint={ZEE_LINE_PAINT} />
       </Source>
 
-      {/* ── WPI ports ─────────────────────────────────────────────────────── */}
+      {/* ── WPI ports circles ─────────────────────────────────────────────── */}
       <Source id="ports-source" type="geojson" data={showPorts ? portsData : EMPTY_FC}>
         <Layer id="ports-circle" type="circle" paint={PORTS_CIRCLE_PAINT} />
       </Source>
 
-      {/* ── SHOM balisage ─────────────────────────────────────────────────── */}
-      <Source id="balisage-source" type="geojson" data={showBalisage ? balisageData : EMPTY_FC}>
-        <Layer id="balisage-circle" type="circle" paint={BALISAGE_CIRCLE_PAINT} />
-      </Source>
+      {/* ── OpenSeaMap balisage — raster tile overlay ─────────────────────── */}
+      {showBalisage && (
+        <Source
+          id="openseamap-source"
+          type="raster"
+          tiles={["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"]}
+          tileSize={256}
+          attribution="© <a href='https://www.openseamap.org' target='_blank'>OpenSeaMap</a>"
+        >
+          <Layer
+            id="openseamap-layer"
+            type="raster"
+            paint={OPENSEAMAP_RASTER_PAINT}
+          />
+        </Source>
+      )}
     </>
   );
 }
@@ -199,7 +192,7 @@ const LAYER_CONFIG = [
   {
     key: "balisage",
     label: "Balisage",
-    title: "Balisage maritime SHOM (France)",
+    title: "Balisage maritime (OpenSeaMap)",
     color: "#10b981",
     showKey: "showBalisage",
     toggleKey: "setShowBalisage",
@@ -245,9 +238,7 @@ export function MaritimeLayersPanel(props) {
           >
             {/* Status dot / spinner */}
             {loading ? (
-              <div
-                className="w-2.5 h-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin flex-shrink-0"
-              />
+              <div className="w-2.5 h-2.5 rounded-full border-2 border-white/30 border-t-white animate-spin flex-shrink-0" />
             ) : (
               <div
                 className="w-2.5 h-2.5 rounded-full flex-shrink-0 transition-colors"
@@ -257,11 +248,7 @@ export function MaritimeLayersPanel(props) {
                 }}
               />
             )}
-
-            {/* Label */}
             <span>{label}</span>
-
-            {/* Error badge */}
             {error && !loading && (
               <span className="ml-0.5 text-red-400" title={error}>⚠</span>
             )}
