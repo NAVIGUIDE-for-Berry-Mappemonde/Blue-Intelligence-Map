@@ -232,7 +232,9 @@ class PolarData:
 def parse_polar_pdf(pdf_bytes: bytes, boat_name: str = "Boat") -> PolarData:
     """
     Extract polar table from a PDF file.
-    Handles common layouts: first row = TWS headers, subsequent rows = TWA + speeds.
+    Strategy:
+      1. Try extract_text() (selectable-text PDFs)
+      2. Fallback to extract_tables() (vector/structured PDFs without selectable text)
     """
     try:
         import pdfplumber
@@ -240,13 +242,36 @@ def parse_polar_pdf(pdf_bytes: bytes, boat_name: str = "Boat") -> PolarData:
         raise RuntimeError("pdfplumber not installed")
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        # ── Strategy 1: plain text extraction ─────────────────────────────────
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        text_lines = [l.strip() for l in text.splitlines() if l.strip()]
+        log.info(f"extract_text() yielded {len(text_lines)} non-empty lines")
 
-    # Debug: log first 20 non-empty lines to diagnose parsing issues
-    preview_lines = [l.strip() for l in text.splitlines() if l.strip()][:20]
-    log.info("PDF text preview (first 20 lines):\n" + "\n".join(
-        f"  [{i:02d}] {l}" for i, l in enumerate(preview_lines)
-    ))
+        if text_lines:
+            log.info("PDF text preview (first 20 lines):\n" + "\n".join(
+                f"  [{i:02d}] {l}" for i, l in enumerate(text_lines[:20])
+            ))
+
+        # ── Strategy 2: table extraction fallback ─────────────────────────────
+        if not text_lines:
+            log.info("No text found — attempting extract_tables() fallback")
+            all_rows: List[List[str]] = []
+            for page in pdf.pages:
+                for table in page.extract_tables() or []:
+                    for row in table:
+                        cleaned = [str(cell).strip() if cell else "" for cell in row]
+                        if any(cleaned):
+                            all_rows.append(cleaned)
+
+            if all_rows:
+                log.info(f"extract_tables() found {len(all_rows)} rows")
+                log.info("Table preview (first 20 rows):\n" + "\n".join(
+                    f"  [{i:02d}] {row}" for i, row in enumerate(all_rows[:20])
+                ))
+                # Convert table rows to text lines for parse_polar_text
+                text = "\n".join(" ".join(row) for row in all_rows)
+            else:
+                log.warning("extract_tables() also returned no data — PDF may be a raster scan")
 
     return parse_polar_text(text, boat_name)
 
