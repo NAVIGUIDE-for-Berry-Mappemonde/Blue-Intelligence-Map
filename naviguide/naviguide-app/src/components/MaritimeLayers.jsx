@@ -148,21 +148,20 @@ export function MaritimeLayers({
 
   return (
     <>
-      {/* ── ZEE polygons ──────────────────────────────────────────────────── */}
+      {/* ── ZEE polygons — rendu SOUS la route bleue (beforeId) ─────────── */}
       <Source id="zee-source" type="geojson" data={zeeData}>
-        <Layer id="zee-fill" type="fill"  layout={vis(showZee)} paint={ZEE_FILL_PAINT} />
-        <Layer id="zee-line" type="line"  layout={vis(showZee)} paint={ZEE_LINE_PAINT} />
+        <Layer id="zee-fill" type="fill"  beforeId="maritime-layer" layout={vis(showZee)} paint={ZEE_FILL_PAINT} />
+        <Layer id="zee-line" type="line"  beforeId="maritime-layer" layout={vis(showZee)} paint={ZEE_LINE_PAINT} />
       </Source>
 
-      {/* ── WPI ports circles ─────────────────────────────────────────────── */}
+      {/* ── WPI ports circles — rendu SOUS la route bleue ────────────────── */}
       <Source id="ports-source" type="geojson" data={portsData}>
-        <Layer id="ports-circle" type="circle" layout={vis(showPorts)} paint={PORTS_CIRCLE_PAINT} />
+        <Layer id="ports-circle" type="circle" beforeId="maritime-layer" layout={vis(showPorts)} paint={PORTS_CIRCLE_PAINT} />
       </Source>
 
-      {/* ── OpenSeaMap balisage — raster tile overlay ─────────────────────── */}
-      {/* NOTE: on utilise raster-opacity (paint) plutôt que layout.visibility
-          car MapLibre ne charge pas les tuiles des layers "none" et ne les
-          charge pas non plus quand on repasse à "visible" via react-map-gl. */}
+      {/* ── OpenSeaMap balisage — raster tile overlay SOUS la route bleue ── */}
+      {/* NOTE: raster-opacity (paint) plutôt que layout.visibility car MapLibre
+          ne charge pas les tuiles des layers "none". */}
       <Source
         id="openseamap-source"
         type="raster"
@@ -173,6 +172,7 @@ export function MaritimeLayers({
         <Layer
           id="openseamap-layer"
           type="raster"
+          beforeId="maritime-layer"
           paint={{ "raster-opacity": showBalisage ? 0.85 : 0 }}
         />
       </Source>
