@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 import uvicorn
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -150,7 +152,8 @@ EXPEDITION_PLAN = {
         },
     ],
 
-    "executive_briefing": (
+    # Briefing is language-keyed — resolved at request time
+    "executive_briefing_fr": (
         "BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
         "Commandant, voici l'évaluation stratégique de votre circumnavigation de 28 842 milles "
         "nautiques à travers les territoires français d'outre-mer.\n\n"
@@ -181,6 +184,38 @@ EXPEDITION_PLAN = {
         "Saint-Martin, Saint-Pierre-et-Miquelon, Nouméa, La Réunion présentent toutes un "
         "niveau de risque FAIBLE à MOYEN avec infrastructures portuaires et médicales adéquates.\n\n"
         "Bonne route, Commandant. NAVIGUIDE surveille votre expédition."
+    ),
+    "executive_briefing_en": (
+        "BERRY-MAPPEMONDE EXPEDITION BRIEFING — CIRCUMNAVIGATION OF FRENCH TERRITORIES\n\n"
+        "Captain, here is the strategic assessment of your 28,842-nautical-mile circumnavigation "
+        "through France's overseas territories.\n\n"
+        "⚠️  CRITICAL ALERTS (2 stopovers):\n"
+        "• Europa (TAAF): CRITICAL cyclone risk (0.91). This isolated island in the Mozambique "
+        "Channel is exposed to tropical cyclones from November to April. Schedule the stopover "
+        "outside cyclone season (May–October recommended). Medical infrastructure is virtually "
+        "non-existent — helicopter evacuation only.\n"
+        "• Dzaoudzi (Mayotte): CRITICAL medical risk (0.88). Limited hospital capacity, endemic "
+        "dengue and malaria. Mandatory vaccinations and antimalarial prophylaxis essential "
+        "before arrival.\n\n"
+        "🌪️  HIGH WEATHER VIGILANCE ZONES:\n"
+        "• Tromelin: Frequently rough to very rough seas — 4 to 6 m swells possible. Precarious "
+        "anchorage; stopover should only be attempted in favourable weather conditions.\n"
+        "• Halifax: Dense fog and fast-moving Atlantic depressions from October to March. "
+        "Ensure active radar and AIS equipment.\n"
+        "• Wallis-et-Futuna: South Pacific cyclones (November–April), fringing reefs on approach "
+        "— night coastal navigation strongly discouraged.\n\n"
+        "🗺️  STRATEGIC RECOMMENDATIONS:\n"
+        "1. Optimal departure from La Rochelle: May–June for trade-wind Atlantic crossing.\n"
+        "2. Transpacific crossing (Cayenne → Papeete): 4,200 nm — plan fuel resupply at the "
+        "Marquesas if draft permits.\n"
+        "3. Cape of Good Hope return: round to the south (latitude 42°S recommended) to avoid "
+        "intensive fishing zones and commercial shipping lanes.\n"
+        "4. Mozambique Channel passage: hug the east Madagascar coast to avoid the shallow "
+        "waters on the Mozambican side.\n\n"
+        "✅  SAFE STOPOVERS: La Rochelle, Ajaccio, Canary Islands, Guadeloupe, Saint-Barthélemy, "
+        "Saint-Martin, Saint-Pierre-et-Miquelon, Nouméa, and La Réunion all present LOW to "
+        "MEDIUM risk levels with adequate port and medical infrastructure.\n\n"
+        "Fair winds, Captain. NAVIGUIDE is monitoring your expedition."
     ),
 
     "full_route_intelligence": {
@@ -228,18 +263,36 @@ def health():
     }
 
 
+class PlanRequest(BaseModel):
+    language: Optional[str] = "en"
+    departure_month: Optional[int] = None
+
+
 @app.post("/api/v1/expedition/plan/berry-mappemonde")
-async def plan_berry_mappemonde(departure_month: int = Query(None, ge=1, le=12)):
+async def plan_berry_mappemonde(body: PlanRequest = None):
     """
     Returns pre-computed Berry-Mappemonde circumnavigation expedition plan.
-    departure_month (1-12) can be passed but is ignored in mock mode.
+    Accepts optional JSON body with `language` ("en" | "fr", default "en").
     """
-    log.info(f"Berry-Mappemonde plan requested (mock). departure_month={departure_month}")
+    lang = (body.language if body and body.language else "en").lower()
+    if lang not in ("en", "fr"):
+        lang = "en"
+
+    log.info(f"Berry-Mappemonde plan requested (mock). language={lang}")
+
+    # Build a language-specific copy of the plan with the correct briefing
+    plan = dict(EXPEDITION_PLAN)
+    plan["executive_briefing"] = EXPEDITION_PLAN[f"executive_briefing_{lang}"]
+    # Remove the internal keyed variants from the response
+    plan.pop("executive_briefing_en", None)
+    plan.pop("executive_briefing_fr", None)
+
     return {
         "status":          "complete",
-        "expedition_plan": EXPEDITION_PLAN,
+        "expedition_plan": plan,
         "errors":          [],
         "source":          "mock",
+        "language":        lang,
     }
 
 
