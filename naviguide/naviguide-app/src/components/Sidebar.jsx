@@ -73,7 +73,7 @@ function PolarChatSection({ polarData }) {
     <div>
       <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
         <Compass size={12} className="text-blue-400" />
-        Polaires
+        Chat
         {polarData?.boat_name && (
           <span className="ml-auto text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full font-normal normal-case tracking-normal">
             {polarData.boat_name}
