@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from typing import Optional
+from typing import Optional, Union
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -806,7 +806,7 @@ _DMS_RE = re.compile(
     re.IGNORECASE,
 )
 
-def _parse_coord(value: str | float | int | None) -> float | None:
+def _parse_coord(value: Optional[Union[str, float, int]]) -> Optional[float]:
     """
     Parse a coordinate value that may be decimal or DMS format.
     Returns float decimal degrees, or None if unparseable.
