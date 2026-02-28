@@ -19,10 +19,8 @@ from typing import Optional
 import uvicorn
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOG_DIR = Path(
-    "/mnt/efs/spaces/ef014a98-8a1c-4b16-8e06-5d2c5b364d08"
-    "/3838ab1e-0224-400b-b357-cd566e2f7d0b/logs"
-)
+# Use a local logs/ folder next to the script (works on any machine)
+LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
