@@ -3,10 +3,132 @@
  * Shows voyage statistics, LLM executive briefing, and critical alerts.
  * The Berry-Mappemonde card is an interactive route switcher with file import.
  */
-import { useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X, Pencil, CheckCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X, Pencil, CheckCircle, Send, Loader2, Compass } from "lucide-react";
 import { riskBadgeClass } from "../utils/riskColors";
 import { useLang } from "../i18n/LangContext.jsx";
+
+const POLAR_API_URL = import.meta.env.VITE_POLAR_API_URL ?? "http://localhost:8004";
+
+/* ── Polar Chat bubble ───────────────────────────────────────────────────── */
+function PolarChatBubble({ role, content }) {
+  const isUser = role === "user";
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-1.5`}>
+      <div className={`max-w-[88%] px-3 py-2 rounded-xl text-xs leading-relaxed whitespace-pre-wrap
+        ${isUser
+          ? "bg-blue-600 text-white rounded-br-none"
+          : "bg-slate-700/80 text-slate-200 rounded-bl-none border border-slate-600/40"
+        }`}>
+        {content}
+      </div>
+    </div>
+  );
+}
+
+/* ── Polar Chat section (rendered inside Sidebar above briefing) ────────── */
+function PolarChatSection({ polarData }) {
+  const [messages,    setMessages]    = useState([]);
+  const [chatInput,   setChatInput]   = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef                    = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSend = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading || !polarData?.expedition_id) return;
+    const userMsg     = { role: "user", content: msg };
+    const nextHistory = [...messages, userMsg];
+    setMessages(nextHistory);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      const res  = await fetch(`${POLAR_API_URL}/api/v1/polar/chat`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          expedition_id: polarData.expedition_id,
+          message:       msg,
+          history:       messages.slice(-6),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? `HTTP ${res.status}`);
+      setMessages([...nextHistory, { role: "assistant", content: data.reply }]);
+    } catch (err) {
+      setMessages([...nextHistory, { role: "assistant", content: `⚠️ ${err.message}` }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  return (
+    <div>
+      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <Compass size={12} className="text-blue-400" />
+        Polaires
+        {polarData?.boat_name && (
+          <span className="ml-auto text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full font-normal normal-case tracking-normal">
+            {polarData.boat_name}
+          </span>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+        <div className="max-h-48 overflow-y-auto sidebar-scroll px-3 py-3 space-y-0.5">
+          {messages.length === 0 && (
+            <p className="text-xs text-slate-500 text-center py-3">
+              {polarData
+                ? "Posez une question sur les performances polaires."
+                : "Chargez les polaires (panneau droit) pour activer le chat."}
+            </p>
+          )}
+          {messages.map((m, i) => <PolarChatBubble key={i} role={m.role} content={m.content} />)}
+          {chatLoading && (
+            <div className="flex justify-start mb-1.5">
+              <div className="bg-slate-700/60 border border-slate-600/40 px-3 py-2 rounded-xl rounded-bl-none">
+                <Loader2 size={11} className="animate-spin text-blue-400" />
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* Input */}
+        <div className="border-t border-slate-700/50 px-3 py-2 flex gap-2 items-end">
+          <textarea
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={polarData ? "Question sur les polaires…" : "Chargez les polaires d'abord"}
+            disabled={!polarData}
+            rows={1}
+            className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 resize-none
+              focus:outline-none leading-relaxed disabled:opacity-40"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!chatInput.trim() || chatLoading || !polarData}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all
+              ${(!chatInput.trim() || chatLoading || !polarData)
+                ? "text-slate-600 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-500 text-white active:scale-95"}`}
+          >
+            <Send size={12} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ── Logo image paths (served from /public) ──────────────────────────────── */
 const NAVIGUIDE_LOGO = "/logo-naviguide.png";
@@ -390,7 +512,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore }) {
+export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData }) {
   const { t } = useLang();
   const stats    = plan?.voyage_statistics || {};
   const alerts   = plan?.critical_alerts   || [];
@@ -506,6 +628,9 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               </p>
             </div>
           )}
+
+          {/* Polar Chat — always shown above briefing */}
+          <PolarChatSection polarData={polarData} />
 
           {/*
             AI Skipper Briefing.

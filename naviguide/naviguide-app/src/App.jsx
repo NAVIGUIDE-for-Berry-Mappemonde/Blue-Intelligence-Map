@@ -61,6 +61,8 @@ export default function App() {
 
   // Polar sidebar (right, stacked with export) — closed by default
   const [polarSidebarOpen, setPolarSidebarOpen] = useState(false);
+  // Polar data shared between PolarSidebar (upload/VMG) and Sidebar (chat)
+  const [polarData, setPolarData] = useState(null);
 
   // ── App-wide modes ──────────────────────────────────────────────────────────
   const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
@@ -561,6 +563,7 @@ export default function App() {
         onDrawFinish={handleDrawFinish}
         isCockpit={isCockpit}
         isOffshore={isOffshore}
+        polarData={polarData}
       />
       <ExportSidebar
         segments={segments}
@@ -578,6 +581,8 @@ export default function App() {
         open={polarSidebarOpen}
         onToggle={() => setPolarSidebarOpen((o) => !o)}
         exportOpen={exportSidebarOpen}
+        polarData={polarData}
+        onPolarDataLoaded={setPolarData}
       />
 
       {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
