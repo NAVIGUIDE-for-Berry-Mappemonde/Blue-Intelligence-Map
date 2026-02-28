@@ -124,6 +124,10 @@ export function useMaritimeLayers() {
  * MaritimeLayers
  * Place les Sources/Layers MapLibre GL JS dans l'arbre du composant <Map>.
  *
+ * IMPORTANT: toutes les sources sont TOUJOURS montées (pas de rendu conditionnel).
+ * La visibilité est contrôlée via layout.visibility pour éviter les erreurs
+ * MapLibre au mount/unmount des sources ("Source already exists", race conditions).
+ *
  *  - ZEE       : polygones GeoJSON via proxy backend
  *  - Ports WPI : points GeoJSON via proxy backend
  *  - Balisage  : tuiles raster OpenSeaMap (chargées directement depuis le navigateur)
@@ -133,35 +137,36 @@ export function MaritimeLayers({
   showPorts, portsData,
   showBalisage,
 }) {
+  const vis = (flag) => ({ visibility: flag ? "visible" : "none" });
+
   return (
     <>
       {/* ── ZEE polygons ──────────────────────────────────────────────────── */}
-      <Source id="zee-source" type="geojson" data={showZee ? zeeData : EMPTY_FC}>
-        <Layer id="zee-fill" type="fill" paint={ZEE_FILL_PAINT} />
-        <Layer id="zee-line" type="line" paint={ZEE_LINE_PAINT} />
+      <Source id="zee-source" type="geojson" data={zeeData}>
+        <Layer id="zee-fill" type="fill"  layout={vis(showZee)} paint={ZEE_FILL_PAINT} />
+        <Layer id="zee-line" type="line"  layout={vis(showZee)} paint={ZEE_LINE_PAINT} />
       </Source>
 
       {/* ── WPI ports circles ─────────────────────────────────────────────── */}
-      <Source id="ports-source" type="geojson" data={showPorts ? portsData : EMPTY_FC}>
-        <Layer id="ports-circle" type="circle" paint={PORTS_CIRCLE_PAINT} />
+      <Source id="ports-source" type="geojson" data={portsData}>
+        <Layer id="ports-circle" type="circle" layout={vis(showPorts)} paint={PORTS_CIRCLE_PAINT} />
       </Source>
 
       {/* ── OpenSeaMap balisage — raster tile overlay ─────────────────────── */}
-      {showBalisage && (
-        <Source
-          id="openseamap-source"
+      <Source
+        id="openseamap-source"
+        type="raster"
+        tiles={["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"]}
+        tileSize={256}
+        attribution="© <a href='https://www.openseamap.org' target='_blank'>OpenSeaMap</a>"
+      >
+        <Layer
+          id="openseamap-layer"
           type="raster"
-          tiles={["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"]}
-          tileSize={256}
-          attribution="© <a href='https://www.openseamap.org' target='_blank'>OpenSeaMap</a>"
-        >
-          <Layer
-            id="openseamap-layer"
-            type="raster"
-            paint={OPENSEAMAP_RASTER_PAINT}
-          />
-        </Source>
-      )}
+          layout={vis(showBalisage)}
+          paint={OPENSEAMAP_RASTER_PAINT}
+        />
+      </Source>
     </>
   );
 }
