@@ -25,6 +25,54 @@
   --color-white:     oklch(0.129 0.042 264.695);
 }
 
+/* ── Offshore mode — optimized for use with wet gloves at sea ───────────────
+ * Applied when .offshore-mode wraps the root div in App.jsx.
+ * Goals: larger touch targets, high contrast, bigger readable text.
+ * Map area and popups are intentionally NOT affected.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Sidebar toggle buttons — bigger tap target */
+.offshore-mode .naviguide-sidebar-toggle {
+  width:  3rem !important;   /* 48 px */
+  height: 3rem !important;
+}
+
+/* All tappable buttons inside sidebar panels */
+.offshore-mode .naviguide-sidebar-panel button:not([role="switch"]) {
+  min-height: 44px;
+  padding-top:    0.625rem !important;
+  padding-bottom: 0.625rem !important;
+}
+
+/* Slightly larger baseline text throughout sidebars */
+.offshore-mode .naviguide-sidebar-panel {
+  font-size: 1rem; /* up from ~0.875 rem default */
+}
+
+/* Scale up "xs" labels to remain readable without glasses in spray */
+.offshore-mode .naviguide-sidebar-panel .text-xs {
+  font-size: 0.8125rem !important; /* 13 px instead of 12 px */
+  line-height: 1.3rem  !important;
+}
+.offshore-mode .naviguide-sidebar-panel .text-sm {
+  font-size: 0.9375rem !important; /* 15 px instead of 14 px */
+  line-height: 1.45rem !important;
+}
+
+/* iOS-style toggles: keep their own size, but make the track slightly larger */
+.offshore-mode .naviguide-sidebar-panel [role="switch"] {
+  transform: scale(1.15);
+  transform-origin: center;
+}
+
+/* Export / action buttons: taller hit area */
+.offshore-mode .naviguide-sidebar-panel .export-btn {
+  padding-top:    1rem  !important;
+  padding-bottom: 1rem  !important;
+}
+
+/* ── End offshore mode ──────────────────────────────────────────────────── */
+
 .maplibregl-popup-content {
   background: transparent !important;
   box-shadow: none !important;

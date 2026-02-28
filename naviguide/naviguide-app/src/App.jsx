@@ -530,7 +530,10 @@ export default function App() {
         };
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }} className={isLightMode ? "light-mode" : ""}>
+    <div
+      style={{ height: "100vh", width: "100vw", position: "relative" }}
+      className={[isLightMode ? "light-mode" : "", isOffshore ? "offshore-mode" : ""].filter(Boolean).join(" ")}
+    >
       <Sidebar
         plan={expeditionPlan}
         open={sidebarOpen}

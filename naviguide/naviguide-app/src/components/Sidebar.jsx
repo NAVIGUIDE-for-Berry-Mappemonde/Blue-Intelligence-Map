@@ -396,39 +396,63 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
   return (
     <>
       {/*
-        Toggle button — when open it sits just outside the right edge of the
-        sidebar (left-[322px], 2 px gap after the 320 px panel) so it never
-        overlaps logos or content.  When closed it sits at left-4 on the map.
+        Toggle button.
+        Offshore: larger (w-12 h-12, brighter border) for gloved use.
+        Normal:   w-9 h-9.
       */}
       <button
         onClick={onToggle}
-        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
-          rounded-full w-9 h-9 flex items-center justify-center shadow-lg
-          hover:bg-slate-800 transition-all duration-300 ${open ? "left-[322px]" : "left-4"}`}
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 text-white
+          rounded-full flex items-center justify-center shadow-lg
+          hover:bg-slate-800 transition-all duration-300
+          ${isOffshore
+            ? "w-12 h-12 border-2 border-sky-400/70 shadow-sky-900/40"
+            : "w-9 h-9 border border-slate-700"}
+          ${open ? "left-[322px]" : "left-4"}`}
         title={open ? "Hide sidebar" : "Show expedition panel"}
       >
-        {open ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        {open
+          ? <ChevronLeft  size={isOffshore ? 22 : 16} />
+          : <ChevronRight size={isOffshore ? 22 : 16} />}
       </button>
 
       {/* Sidebar panel */}
       <div
         className={`naviguide-sidebar-panel absolute top-0 left-0 h-full z-20 flex flex-col bg-slate-900/97
-          border-r border-slate-700/60 shadow-2xl transition-transform duration-300
+          shadow-2xl transition-transform duration-300
+          ${isOffshore
+            ? "border-r-2 border-sky-400/40"
+            : "border-r border-slate-700/60"}
           ${open ? "translate-x-0" : "-translate-x-full"}`}
         style={{ width: 320 }}
       >
 
         {/* ── Brand header ─────────────────────────────────────────────── */}
-        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0">
+        <div className={`px-4 ${isCockpit ? "pt-3 pb-2" : "pt-4 pb-3"} border-b border-slate-700/60 flex-shrink-0`}>
 
-          {/* NAVIGUIDE logo — centred, full-width */}
-          <div className="flex justify-center mb-3">
-            <img
-              src={NAVIGUIDE_LOGO}
-              alt="NAVIGUIDE for Berry-Mappemonde"
-              className="h-24 w-24 object-contain drop-shadow-lg"
-            />
-          </div>
+          {/*
+            COCKPIT: compact horizontal header — saves vertical space so all
+            data panels can be visible simultaneously without scrolling.
+            ONBOARDING: centred large logo with progressive guidance feel.
+          */}
+          {isCockpit ? (
+            <div className="flex items-center gap-2 mb-2">
+              <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE"
+                className="h-8 w-8 object-contain" />
+              <span className="text-white font-bold text-sm tracking-widest flex-1">NAVIGUIDE</span>
+              <span className="text-xs font-semibold text-blue-300 bg-blue-950/40 px-2 py-0.5 rounded-full border border-blue-700/40">
+                🎛️ Cockpit
+              </span>
+            </div>
+          ) : (
+            <div className="flex justify-center mb-3">
+              <img
+                src={NAVIGUIDE_LOGO}
+                alt="NAVIGUIDE for Berry-Mappemonde"
+                className="h-24 w-24 object-contain drop-shadow-lg"
+              />
+            </div>
+          )}
 
           {/* Berry-Mappemonde interactive route card */}
           <BerryCard
@@ -440,23 +464,20 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
           />
         </div>
 
-        {/* ── Mode indicator strip ────────────────────────────────────────── */}
-        {(isCockpit || isOffshore) && (
-          <div className="px-4 py-1.5 flex gap-2 flex-shrink-0 bg-blue-950/40 border-b border-blue-700/30">
-            {isCockpit && (
-              <span className="text-xs font-semibold text-blue-300 flex items-center gap-1">
-                🎛️ Cockpit
-              </span>
-            )}
-            {isOffshore && (
-              <span className="text-xs font-semibold text-teal-300 flex items-center gap-1">
-                ⚓ Offshore
-              </span>
-            )}
+        {/* ── Offshore banner — prominent high-contrast strip ──────────── */}
+        {isOffshore && (
+          <div className="px-4 py-2.5 flex-shrink-0 bg-sky-950/50 border-b-2 border-sky-500/50">
+            <span className="font-bold text-sky-200 flex items-center gap-2 text-sm">
+              ⚓ OFFSHORE — wind &amp; wave markers active
+            </span>
           </div>
         )}
 
-        {/* ── Stats grid — always in Cockpit, only with data in Onboarding ── */}
+        {/*
+          ── Stats grid ───────────────────────────────────────────────────
+          COCKPIT: always visible even without plan (shows dashes).
+          ONBOARDING: only appears once the AI plan has loaded.
+        */}
         {(isCockpit || plan) && (
           <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
             <div className="grid grid-cols-2 gap-2">
@@ -480,26 +501,28 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
         {/* ── Scrollable content ──────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
 
-          {/* Onboarding welcome — shown when NOT in Cockpit mode and no plan loaded */}
+          {/*
+            ONBOARDING only: progressive "Getting Started" guide.
+            Hidden in Cockpit — the user already knows the app.
+          */}
           {!isCockpit && !plan && (
             <div className="rounded-xl border border-blue-700/30 bg-blue-950/20 p-3">
               <div className="text-xs font-semibold text-blue-300 mb-1.5 flex items-center gap-1.5">
                 🧭 Getting Started
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Click any point on the route to get wind, wave & current data.
+                Click any point on the route to get wind, wave &amp; current data.
                 Use the <strong className="text-slate-300">›</strong> button (top right) to switch modes or export your route.
               </p>
-              {isOffshore && (
-                <p className="text-xs text-teal-400 mt-2 leading-relaxed">
-                  ⚓ <strong>Offshore mode</strong>: wind, wave & current markers are now visible on the map.
-                </p>
-              )}
             </div>
           )}
 
-          {/* AI Skipper Briefing — shown in Cockpit or when plan is loaded */}
-          {briefing && (
+          {/*
+            AI Skipper Briefing.
+            COCKPIT: always visible — shows placeholder when not yet loaded.
+            ONBOARDING: shown only when plan data is available.
+          */}
+          {(isCockpit || briefing) && (
             <div>
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Shield size={12} className="text-blue-400" />
@@ -507,24 +530,35 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               </div>
               <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
-                  {briefing}
+                  {briefing || "Connect to the NAVIGUIDE orchestrator to generate your expedition briefing."}
                 </p>
               </div>
             </div>
           )}
 
-          {/* Critical alerts — shown in Cockpit mode or when alerts exist */}
-          {isCockpit && alerts.length > 0 && (
+          {/*
+            Critical Alerts.
+            COCKPIT: always shown (with "no alerts" state for peace of mind).
+            ONBOARDING: shown only when alerts exist.
+          */}
+          {(isCockpit || alerts.length > 0) && (
             <div>
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <AlertTriangle size={12} className="text-orange-400" />
                 Critical Alerts
               </div>
-              <div className="space-y-2">
-                {alerts.map((alert, i) => <AlertItem key={i} alert={alert} />)}
-              </div>
+              {alerts.length > 0 ? (
+                <div className="space-y-2">
+                  {alerts.map((alert, i) => <AlertItem key={i} alert={alert} />)}
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 py-2 px-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
+                  ✅ No critical alerts — route appears safe.
+                </div>
+              )}
             </div>
           )}
+
         </div>
       </div>
     </>

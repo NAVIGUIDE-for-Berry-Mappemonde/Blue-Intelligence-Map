@@ -227,7 +227,7 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl
+      className={`export-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl
         bg-gradient-to-r ${colors[color] || colors.blue}
         text-white shadow-lg transition-all duration-200 active:scale-[0.98]`}
     >
