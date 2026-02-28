@@ -1,9 +1,13 @@
 /**
  * NAVIGUIDE v2 — Export Sidebar (right panel)
  * Provides GeoJSON and KML export of the full expedition route + waypoints.
+ * Also hosts mode toggles: Cabotage/Offshore, Onboarding/Cockpit, Dark/Light.
+ * Language switcher (EN / FR) via LangContext.
+ * Mode states are lifted to App.jsx — received as props.
  */
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Map, Anchor } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Anchor } from "lucide-react";
+import { useLang } from "../i18n/LangContext.jsx";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -176,6 +180,33 @@ ${waypointPlacemarks}
 </kml>`;
 }
 
+/* ── iOS-style Toggle ─────────────────────────────────────────────────────── */
+
+function Toggle({ labelLeft, labelRight, active, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className={`text-xs font-medium transition-colors duration-200 ${!active ? "text-white" : "text-slate-500"}`}>
+        {labelLeft}
+      </span>
+      <button
+        onClick={() => onChange(!active)}
+        className={`relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0
+          ${active ? "bg-blue-500" : "bg-slate-600"}`}
+        role="switch"
+        aria-checked={active}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md
+            transition-transform duration-300 ${active ? "translate-x-5" : "translate-x-0"}`}
+        />
+      </button>
+      <span className={`text-xs font-medium transition-colors duration-200 ${active ? "text-white" : "text-slate-500"}`}>
+        {labelRight}
+      </span>
+    </div>
+  );
+}
+
 /* ── Sub-components ───────────────────────────────────────────────────────── */
 
 function StatRow({ icon, label, value }) {
@@ -190,7 +221,7 @@ function StatRow({ icon, label, value }) {
   );
 }
 
-function ExportButton({ icon, label, sublabel, onClick, color }) {
+function ExportButton({ icon, label, onClick, color }) {
   const colors = {
     blue:   "from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 shadow-blue-900/40",
     teal:   "from-teal-600 to-teal-700 hover:from-teal-500 hover:to-teal-600 shadow-teal-900/40",
@@ -198,7 +229,7 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl
+      className={`export-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl
         bg-gradient-to-r ${colors[color] || colors.blue}
         text-white shadow-lg transition-all duration-200 active:scale-[0.98]`}
     >
@@ -215,7 +246,13 @@ function ExportButton({ icon, label, sublabel, onClick, color }) {
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function ExportSidebar({ segments, points, open, onToggle }) {
+export function ExportSidebar({
+  segments, points, open, onToggle,
+  // Mode props (state lives in App.jsx)
+  isOffshore, isCockpit, isLightMode,
+  onOffshoreChange, onCockpitChange, onLightModeChange,
+}) {
+  const { lang, switchLang, t } = useLang();
   const [exportStatus, setExportStatus] = useState(null); // "geojson" | "kml" | null
 
   const maritimeSegs  = segments.filter((s) => !s.nonMaritime && s.coords?.length > 0);
@@ -256,47 +293,84 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
       */}
       <button
         onClick={onToggle}
-        className={`absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
           rounded-full w-9 h-9 flex items-center justify-center shadow-lg
           hover:bg-slate-800 transition-all duration-300 ${open ? "right-[322px]" : "right-4"}`}
-        title={open ? "Hide export panel" : "Show export panel"}
+        title={open ? t("hideExportPanel") : t("showExportPanel")}
       >
         {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
       </button>
 
       {/* Sidebar panel */}
       <div
-        className={`absolute top-0 right-0 h-full z-20 flex flex-col bg-slate-900/97
+        className={`naviguide-sidebar-panel absolute top-0 right-0 h-full z-20 flex flex-col bg-slate-900/97
           border-l border-slate-700/60 shadow-2xl transition-transform duration-300
           ${open ? "translate-x-0" : "translate-x-full"}`}
         style={{ width: 320 }}
       >
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0">
-          <div className="flex items-center gap-2.5 mb-1">
-            <div className="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center">
-              <Map size={16} className="text-blue-400" />
-            </div>
-            <div>
-              <div className="text-white font-bold text-sm tracking-wide">EXPORT ROUTE</div>
-              <div className="text-slate-500 text-xs">Download in GeoJSON or KML</div>
+        {/* ── Mode Toggles + Language switcher ──────────────────────────── */}
+        <div className="px-4 pt-4 pb-3 border-b border-slate-700/60 flex-shrink-0 space-y-3">
+
+          {/* Language switcher — EN / FR pill buttons */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              {t("language")}
+            </span>
+            <div className="flex bg-slate-800 rounded-full p-0.5 gap-0.5">
+              <button
+                onClick={() => switchLang("en")}
+                className={`px-3 py-0.5 rounded-full text-xs font-bold transition-colors
+                  ${lang === "en" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+              >
+                EN
+              </button>
+              <button
+                onClick={() => switchLang("fr")}
+                className={`px-3 py-0.5 rounded-full text-xs font-bold transition-colors
+                  ${lang === "fr" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+              >
+                FR
+              </button>
             </div>
           </div>
+
+          {/* Mode toggles */}
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            {t("modes")}
+          </div>
+          <Toggle
+            labelLeft={t("cabotage")}
+            labelRight={t("offshore")}
+            active={isOffshore}
+            onChange={onOffshoreChange}
+          />
+          <Toggle
+            labelLeft={t("onboarding")}
+            labelRight={t("cockpit")}
+            active={isCockpit}
+            onChange={onCockpitChange}
+          />
+          <Toggle
+            labelLeft={t("dark")}
+            labelRight={t("light")}
+            active={isLightMode}
+            onChange={onLightModeChange}
+          />
         </div>
 
         {/* ── Route statistics ─────────────────────────────────────────────── */}
         <div className="px-4 py-3 border-b border-slate-700/60 flex-shrink-0">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Anchor size={11} className="text-blue-400" />
-            Route Summary
+            {t("routeSummary")}
           </div>
           <div className="bg-slate-800/60 rounded-xl px-3 py-1 border border-slate-700/40">
-            <StatRow icon="🗺️" label="Total segments"    value={totalSegments} />
-            <StatRow icon="⚓" label="Maritime legs"     value={maritimeSegs.length} />
-            <StatRow icon="🛣️" label="Overland legs"     value={overlandSegs.length} />
-            <StatRow icon="📍" label="Waypoints"         value={points.length} />
-            <StatRow icon="🔢" label="Route points"      value={totalPoints.toLocaleString()} />
+            <StatRow icon="🗺️" label={t("totalSegments")}  value={totalSegments} />
+            <StatRow icon="⚓" label={t("maritimeLegs")}   value={maritimeSegs.length} />
+            <StatRow icon="🛣️" label={t("overlandLegs")}   value={overlandSegs.length} />
+            <StatRow icon="📍" label={t("waypoints")}      value={points.length} />
+            <StatRow icon="🔢" label={t("routePoints")}    value={totalPoints.toLocaleString()} />
           </div>
         </div>
 
@@ -304,21 +378,19 @@ export function ExportSidebar({ segments, points, open, onToggle }) {
         <div className="flex-1 px-4 py-4 space-y-3 overflow-y-auto sidebar-scroll">
 
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
-            Download
+            {t("download")}
           </div>
 
           <ExportButton
             icon={<span className="text-base">📄</span>}
-            label={exportStatus === "geojson" ? "Exported!" : "Export GeoJSON"}
-            sublabel=""
+            label={exportStatus === "geojson" ? t("exported") : t("exportGeoJSON")}
             onClick={handleExportGeoJSON}
             color="blue"
           />
 
           <ExportButton
             icon={<span className="text-base">🌍</span>}
-            label={exportStatus === "kml" ? "Exported!" : "Export KML"}
-            sublabel=""
+            label={exportStatus === "kml" ? t("exported") : t("exportKML")}
             onClick={handleExportKML}
             color="teal"
           />

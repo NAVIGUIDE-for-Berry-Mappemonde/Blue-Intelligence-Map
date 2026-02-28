@@ -7,31 +7,34 @@ import { WindDirectionArrow } from "./components/map/WindDirectionArrow";
 import { getCardinalDirection } from "./utils/getCardinalDirection";
 import { Sidebar } from "./components/Sidebar";
 import { ExportSidebar } from "./components/ExportSidebar";
+import { useLang } from "./i18n/LangContext.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
 
-// ── Orchestrator plan cache (localStorage, 24 h TTL) ─────────────────────────
-const PLAN_CACHE_KEY = "naviguide_expedition_plan_v1";
+// ── Orchestrator plan cache (localStorage, 24 h TTL, per language) ───────────
 const PLAN_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-function getCachedPlan() {
+function planCacheKey(lang) { return `naviguide_expedition_plan_v1_${lang}`; }
+
+function getCachedPlan(lang) {
   try {
-    const raw = localStorage.getItem(PLAN_CACHE_KEY);
+    const raw = localStorage.getItem(planCacheKey(lang));
     if (!raw) return null;
     const { data, ts } = JSON.parse(raw);
-    if (Date.now() - ts > PLAN_CACHE_TTL) { localStorage.removeItem(PLAN_CACHE_KEY); return null; }
+    if (Date.now() - ts > PLAN_CACHE_TTL) { localStorage.removeItem(planCacheKey(lang)); return null; }
     return data;
   } catch { return null; }
 }
 
-function setCachedPlan(data) {
-  try { localStorage.setItem(PLAN_CACHE_KEY, JSON.stringify({ data, ts: Date.now() })); } catch {}
+function setCachedPlan(lang, data) {
+  try { localStorage.setItem(planCacheKey(lang), JSON.stringify({ data, ts: Date.now() })); } catch {}
 }
 
 const SEGMENT_BATCH_SIZE = 4; // legs fetched in parallel per batch
 
 export default function App() {
+  const { lang, t } = useLang();
   const mapRef = useRef(null);
   const [segments, setSegments] = useState([]);
   const [points, setPoints] = useState([]);
@@ -54,6 +57,11 @@ export default function App() {
 
   // Export sidebar (right)
   const [exportSidebarOpen, setExportSidebarOpen] = useState(false);
+
+  // ── App-wide modes ──────────────────────────────────────────────────────────
+  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
+  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
+  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
 
   // Custom imported route (null = show Berry-Mappemonde default route)
   const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
@@ -200,9 +208,9 @@ export default function App() {
   };
 
   const drawingMessage =
-    drawnPoints.length === 0 ? "Choose your starting point" :
-    drawnPoints.length === 1 ? "Choose your first stop" :
-    "Choose your next stop";
+    drawnPoints.length === 0 ? t("drawStart") :
+    drawnPoints.length === 1 ? t("drawFirstStop") :
+    t("drawNextStop");
 
   // Hover state for itinerary stop markers
   const [hoveredPoint, setHoveredPoint] = useState(null);
@@ -268,21 +276,26 @@ export default function App() {
     setSelectedSatellite(null);
   };
 
-  // Fetch orchestrator plan — serve from localStorage cache instantly, refresh in background
+  // Fetch orchestrator plan — serve from localStorage cache instantly, refresh in background.
+  // Re-fetches when language changes to get briefing in the selected language.
   useEffect(() => {
-    const cached = getCachedPlan();
+    const cached = getCachedPlan(lang);
     if (cached) setExpeditionPlan(cached);                   // instant render from cache
     if (!ORCHESTRATOR_URL) return;
-    fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, { method: "POST" })
+    fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: lang }),
+    })
       .then((r) => r.json())
       .then((data) => {
         if (data?.expedition_plan) {
           setExpeditionPlan(data.expedition_plan);
-          setCachedPlan(data.expedition_plan);               // persist for next visit
+          setCachedPlan(lang, data.expedition_plan);         // persist per language
         }
       })
       .catch((err) => console.warn("Orchestrator unavailable:", err));
-  }, []);
+  }, [lang]);
 
   // Points d'intérêt
   useEffect(() => {
@@ -525,7 +538,10 @@ export default function App() {
         };
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+    <div
+      style={{ height: "100vh", width: "100vw", position: "relative" }}
+      className={[isLightMode ? "light-mode" : "", isOffshore ? "offshore-mode" : ""].filter(Boolean).join(" ")}
+    >
       <Sidebar
         plan={expeditionPlan}
         open={sidebarOpen}
@@ -535,12 +551,20 @@ export default function App() {
         isDrawing={drawingMode}
         onDrawStart={handleDrawStart}
         onDrawFinish={handleDrawFinish}
+        isCockpit={isCockpit}
+        isOffshore={isOffshore}
       />
       <ExportSidebar
         segments={segments}
         points={points}
         open={exportSidebarOpen}
         onToggle={() => setExportSidebarOpen((o) => !o)}
+        isOffshore={isOffshore}
+        isCockpit={isCockpit}
+        isLightMode={isLightMode}
+        onOffshoreChange={setIsOffshore}
+        onCockpitChange={setIsCockpit}
+        onLightModeChange={setIsLightMode}
       />
 
       {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
@@ -548,7 +572,7 @@ export default function App() {
         <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 pointer-events-none">
           <div className="w-10 h-10 border-4 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
           <div className="mt-4 text-white/90 text-sm font-medium tracking-wide">
-            Calculating routes…
+            {t("calculatingRoutes")}
           </div>
         </div>
       )}
@@ -557,7 +581,7 @@ export default function App() {
       {!loading && segProgress.done < segProgress.total && (
         <div className="absolute bottom-5 right-5 z-20 flex items-center gap-2 bg-slate-900/90 text-white text-xs font-medium px-3 py-2 rounded-full shadow-lg pointer-events-none">
           <div className="w-3.5 h-3.5 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />
-          <span>Routes {segProgress.done}/{segProgress.total}</span>
+          <span>{t("routesProgress", { done: segProgress.done, total: segProgress.total })}</span>
           {/* slim progress bar */}
           <div className="w-20 h-1.5 bg-white/20 rounded-full overflow-hidden">
             <div
@@ -584,7 +608,7 @@ export default function App() {
                 disabled={drawnPoints.length === 0}
                 className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/10 transition-colors
                   ${drawnPoints.length === 0 ? "opacity-30 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
-                title="Undo last point"
+                title={t("undoLastPoint")}
               >
                 <Undo2 size={13} />
               </button>
@@ -593,7 +617,7 @@ export default function App() {
                 disabled={!canRedo}
                 className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/10 transition-colors
                   ${!canRedo ? "opacity-30 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
-                title="Redo"
+                title={t("redo")}
               >
                 <Redo2 size={13} />
               </button>
@@ -606,7 +630,7 @@ export default function App() {
       {clipboardToast && (
         <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-slate-900/95 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg pointer-events-none animate-fadeIn">
           <span>📋</span>
-          <span>{clipboardToast} copié</span>
+          <span>{clipboardToast} {t("copied")}</span>
         </div>
       )}
 
@@ -706,12 +730,12 @@ export default function App() {
               boxShadow:       i === 0
                 ? "0 0 6px rgba(34,197,94,0.7)"
                 : "0 0 4px rgba(96,165,250,0.6)",
-            }} title={i === 0 ? "Starting point" : `Stop ${i}`} />
+            }} title={i === 0 ? t("startingPoint") : `${t("stop")} ${i}`} />
           </Marker>
         ))}
 
-        {/* Points de vent fort — invisibles par défaut, révélés au survol (CSS :hover) */}
-        {segments.flatMap((s, segIdx) =>
+        {/* Points de vent fort — visibles uniquement en mode Offshore */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.windPoints || []).map((point, i) => {
             const [lon, lat] = point.geometry.coordinates;
             const hasHighWave = point.properties.highWave;
@@ -720,15 +744,15 @@ export default function App() {
               <Marker key={`wind-${segIdx}-${i}`} longitude={lon} latitude={lat}>
                 <div
                   className={`wind-alert-marker${hasHighWave ? " is-wind-wave" : ""}`}
-                  title={hasHighWave ? "Vent fort + Vagues hautes" : "Vent fort"}
+                  title={hasHighWave ? t("strongWindWave") : t("strongWind")}
                 />
               </Marker>
             );
           })
         )}
 
-        {/* 🌊 Points de vagues hautes uniquement (orange) */}
-        {segments.flatMap((s, segIdx) =>
+        {/* 🌊 Points de vagues hautes uniquement (orange) — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.wavePoints || [])
             .filter((point) => !point.properties.highWind) // Seulement ceux sans vent fort
             .map((point, i) => {
@@ -749,7 +773,7 @@ export default function App() {
                     body: JSON.stringify({ latitude: lat, longitude: lon }),
                   });
 
-                  if (!res.ok) throw new Error("Erreur API vague");
+                  if (!res.ok) throw new Error(t("waveApiError"));
 
                   const data = await res.json();
 
@@ -763,7 +787,7 @@ export default function App() {
                   setSelectedWave({
                     longitude: lon,
                     latitude: lat,
-                    error: "Impossible to get wave data",
+                    error: t("waveDataError"),
                   });
                 } finally {
                   setWaveLoading(false);
@@ -787,14 +811,15 @@ export default function App() {
                       boxShadow: "0 0 5px rgba(255,165,0,0.5)",
                       cursor: "pointer",
                     }}
-                    title="Vagues hautes"
+                    title={t("highWaves")}
                   />
                 </Marker>
               );
             })
         )}
 
-        {segments.flatMap((s, segIdx) =>
+        {/* 🔀 Courants — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
           (s.currentPoints || []).map((point, i) => {
             const [lon, lat] = point.geometry.coordinates;
             const currentData = point.properties.currents;
@@ -834,9 +859,7 @@ export default function App() {
                     transform: `rotate(${rotation}deg)`,
                     filter: "drop-shadow(0 0 3px rgba(34,197,94,0.5))",
                   }}
-                  title={`Courant: ${currentData?.speed_knots?.toFixed(
-                    2
-                  )} nœuds`}
+                  title={t("currentSpeed", { speed: currentData?.speed_knots?.toFixed(2) })}
                 >
                   <svg
                     width="100"
@@ -1063,7 +1086,7 @@ export default function App() {
               {/* Header */}
               <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-4 py-3 flex items-center justify-between">
                 <div>
-                  <div className="text-white font-semibold text-sm">🛰️ Satellite Data</div>
+                  <div className="text-white font-semibold text-sm">{t("satelliteData")}</div>
                   <div className="text-slate-400 text-xs mt-0.5">
                     {selectedSatellite.lat.toFixed(3)}°, {selectedSatellite.lon.toFixed(3)}°
                   </div>
@@ -1080,11 +1103,11 @@ export default function App() {
               {/* ── Tabs ──────────────────────────────────────────────── */}
               <div className="flex border-b border-slate-200">
                 {[
-                  { key: "wind",    label: "💨 Wind",     active: "text-blue-600 border-b-2 border-blue-600 bg-blue-50" },
-                  { key: "wave",    label: "🌊 Waves",    active: "text-orange-500 border-b-2 border-orange-500 bg-orange-50" },
-                  { key: "current", label: "🔀 Currents", active: "text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50" },
+                  { key: "wind",    label: t("windTab"),     active: "text-blue-600 border-b-2 border-blue-600 bg-blue-50" },
+                  { key: "wave",    label: t("wavesTab"),    active: "text-orange-500 border-b-2 border-orange-500 bg-orange-50" },
+                  { key: "current", label: t("currentsTab"), active: "text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50" },
                   ...(selectedSatellite?.drawPointIndex != null
-                    ? [{ key: "point", label: "📍 Point", active: "text-violet-600 border-b-2 border-violet-600 bg-violet-50" }]
+                    ? [{ key: "point", label: t("pointTab"), active: "text-violet-600 border-b-2 border-violet-600 bg-violet-50" }]
                     : []),
                 ].map(({ key, label, active }) => (
                   <button
@@ -1104,7 +1127,7 @@ export default function App() {
                 {satelliteLoading ? (
                   <div className="flex flex-col items-center py-5">
                     <div className="w-8 h-8 border-4 border-slate-100 border-t-slate-600 rounded-full animate-spin" />
-                    <div className="mt-3 text-slate-500 text-sm">Fetching satellite data…</div>
+                    <div className="mt-3 text-slate-500 text-sm">{t("fetchingSatellite")}</div>
                   </div>
 
                 ) : satelliteTab === "wind" ? (
@@ -1114,7 +1137,7 @@ export default function App() {
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                         <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">💨</div>
                         <div>
-                          <div className="text-xs text-slate-500">Speed</div>
+                          <div className="text-xs text-slate-500">{t("windSpeed")}</div>
                           <div className="text-sm font-semibold text-slate-800">
                             {selectedSatellite.wind.wind_speed_kmh} km/h
                             <span className="ml-2 text-xs text-slate-400 font-normal">
@@ -1127,7 +1150,7 @@ export default function App() {
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                         <WindDirectionArrow direction={selectedSatellite.wind.wind_direction} />
                         <div>
-                          <div className="text-xs text-slate-500">Direction (from)</div>
+                          <div className="text-xs text-slate-500">{t("windDirection")}</div>
                           <div className="text-sm font-semibold text-slate-800">
                             {selectedSatellite.wind.wind_direction}° {getCardinalDirection(selectedSatellite.wind.wind_direction)}
                           </div>
@@ -1141,7 +1164,7 @@ export default function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="py-4 text-center text-slate-500 text-sm">No wind data available</div>
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noWindData")}</div>
                   )
 
                 ) : satelliteTab === "wave" ? (
@@ -1151,7 +1174,7 @@ export default function App() {
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                         <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🌊</div>
                         <div>
-                          <div className="text-xs text-slate-500">Significant Height</div>
+                          <div className="text-xs text-slate-500">{t("waveHeight")}</div>
                           <div className="text-sm font-semibold text-slate-800">
                             {selectedSatellite.wave.significant_wave_height_m} m
                           </div>
@@ -1162,7 +1185,7 @@ export default function App() {
                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                           <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">⏱️</div>
                           <div>
-                            <div className="text-xs text-slate-500">Mean Period</div>
+                            <div className="text-xs text-slate-500">{t("wavePeriod")}</div>
                             <div className="text-sm font-semibold text-slate-800">
                               {selectedSatellite.wave.mean_wave_period} s
                             </div>
@@ -1174,7 +1197,7 @@ export default function App() {
                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                           <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🧭</div>
                           <div>
-                            <div className="text-xs text-slate-500">Wave Direction (to)</div>
+                            <div className="text-xs text-slate-500">{t("waveDirection")}</div>
                             <div className="text-sm font-semibold text-slate-800">
                               {selectedSatellite.wave.mean_wave_direction}° {getCardinalDirection(selectedSatellite.wave.mean_wave_direction)}
                             </div>
@@ -1188,7 +1211,7 @@ export default function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="py-4 text-center text-slate-500 text-sm">No wave data available</div>
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noWaveData")}</div>
                   )
 
                 ) : satelliteTab === "current" ? (
@@ -1199,7 +1222,7 @@ export default function App() {
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                         <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">⚡</div>
                         <div>
-                          <div className="text-xs text-slate-500">Surface Speed</div>
+                          <div className="text-xs text-slate-500">{t("currentSurfaceSpeed")}</div>
                           <div className="text-sm font-semibold text-slate-800">
                             {selectedSatellite.current.speed_knots} kn
                             <span className="ml-2 text-xs text-slate-400 font-normal">
@@ -1212,7 +1235,7 @@ export default function App() {
                       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
                         <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🧭</div>
                         <div>
-                          <div className="text-xs text-slate-500">Direction (toward)</div>
+                          <div className="text-xs text-slate-500">{t("currentDirection")}</div>
                           <div className="text-sm font-semibold text-slate-800">
                             {selectedSatellite.current.direction_deg}° {getCardinalDirection(selectedSatellite.current.direction_deg)}
                           </div>
@@ -1221,11 +1244,11 @@ export default function App() {
                       {/* U/V components */}
                       <div className="flex gap-2">
                         <div className="flex-1 p-2.5 bg-slate-50 rounded-lg">
-                          <div className="text-xs text-slate-500">U (East)</div>
+                          <div className="text-xs text-slate-500">{t("currentEast")}</div>
                           <div className="text-sm font-semibold text-slate-800">{selectedSatellite.current.u_component} m/s</div>
                         </div>
                         <div className="flex-1 p-2.5 bg-slate-50 rounded-lg">
-                          <div className="text-xs text-slate-500">V (North)</div>
+                          <div className="text-xs text-slate-500">{t("currentNorth")}</div>
                           <div className="text-sm font-semibold text-slate-800">{selectedSatellite.current.v_component} m/s</div>
                         </div>
                       </div>
@@ -1236,7 +1259,7 @@ export default function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="py-4 text-center text-slate-500 text-sm">No current data available</div>
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noCurrentData")}</div>
                   )
 
                 ) : satelliteTab === "point" ? (
@@ -1244,12 +1267,12 @@ export default function App() {
                   <div className="space-y-3">
                     {/* Name field */}
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Waypoint Name</label>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">{t("waypointName")}</label>
                       <input
                         type="text"
                         value={pointInfoName}
                         onChange={(e) => setPointInfoName(e.target.value)}
-                        placeholder="e.g. Dakar, Tenerife…"
+                        placeholder={t("waypointNamePlaceholder")}
                         className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
                       />
                     </div>
@@ -1258,7 +1281,7 @@ export default function App() {
                     {[0, 1].map((idx) => (
                       <div key={idx}>
                         <label className="block text-xs font-semibold text-slate-600 mb-1">
-                          Flag {idx + 1}
+                          {t("flag")} {idx + 1}
                         </label>
                         {pointInfoFlags[idx] ? (
                           <div className="flex items-center gap-2">
@@ -1275,14 +1298,14 @@ export default function App() {
                               }
                               className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
                             >
-                              Remove
+                              {t("removeFlag")}
                             </button>
                           </div>
                         ) : (
                           <label className="flex items-center gap-2 cursor-pointer bg-slate-50
                             border border-dashed border-slate-300 rounded-lg px-3 py-2 text-xs
                             text-slate-500 hover:bg-slate-100 transition-colors">
-                            <span>📁 Upload flag image</span>
+                            <span>{t("uploadFlag")}</span>
                             <input
                               type="file"
                               accept="image/*"
@@ -1311,7 +1334,7 @@ export default function App() {
                       className="w-full py-2 bg-violet-600 hover:bg-violet-700 text-white
                         text-sm font-semibold rounded-lg transition-colors"
                     >
-                      Save &amp; Close
+                      {t("saveClose")}
                     </button>
                   </div>
 
