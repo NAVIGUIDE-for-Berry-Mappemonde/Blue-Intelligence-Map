@@ -140,7 +140,8 @@ export function PolarSidebar({ open, onToggle, exportOpen }) {
     e.preventDefault();
     setIsDragging(false);
     const f = e.dataTransfer.files?.[0];
-    if (f?.name?.endsWith(".pdf")) setFile(f);
+    const allowed = [".pdf", ".csv", ".xlsx", ".xls"];
+    if (f && allowed.some(ext => f.name.toLowerCase().endsWith(ext))) setFile(f);
   };
 
   /* ── Upload ─────────────────────────────────────────────────────────────── */
@@ -329,7 +330,7 @@ export function PolarSidebar({ open, onToggle, exportOpen }) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf"
+                accept=".pdf,.csv,.xlsx,.xls"
                 className="hidden"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />

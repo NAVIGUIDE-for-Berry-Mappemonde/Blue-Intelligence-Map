@@ -226,6 +226,52 @@ class PolarData:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CSV / Excel Parser
+# ══════════════════════════════════════════════════════════════════════════════
+
+def parse_polar_csv(file_bytes: bytes, boat_name: str = "Boat") -> PolarData:
+    """
+    Parse a polar table from a CSV file.
+    Expected format: first row = TWS headers, subsequent rows = TWA + speeds.
+    Accepts comma, semicolon, or tab delimiters.
+    """
+    import pandas as pd
+
+    # Try common delimiters
+    for sep in (",", ";", "\t"):
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes), sep=sep, header=None)
+            if df.shape[1] >= 4:
+                break
+        except Exception:
+            continue
+
+    text = df.to_csv(sep=" ", header=False, index=False)
+    log.info(f"CSV parsed: {df.shape[0]} rows × {df.shape[1]} cols")
+    return parse_polar_text(text, boat_name)
+
+
+def parse_polar_excel(file_bytes: bytes, boat_name: str = "Boat") -> PolarData:
+    """
+    Parse a polar table from an Excel file (.xlsx / .xls).
+    Reads the first sheet, converts all cells to space-separated text.
+    """
+    import pandas as pd
+
+    df = pd.read_excel(io.BytesIO(file_bytes), header=None, sheet_name=0)
+    # Drop fully-empty rows/cols
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+    # Fill NaN with 0 for numeric cells, empty string for others
+    df = df.fillna("")
+    text = "\n".join(
+        " ".join(str(cell) for cell in row if str(cell).strip())
+        for _, row in df.iterrows()
+    )
+    log.info(f"Excel parsed: {df.shape[0]} rows × {df.shape[1]} cols")
+    return parse_polar_text(text, boat_name)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PDF Parser
 # ══════════════════════════════════════════════════════════════════════════════
 

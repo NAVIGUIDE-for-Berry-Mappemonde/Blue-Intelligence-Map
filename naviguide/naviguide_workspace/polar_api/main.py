@@ -43,7 +43,7 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # naviguide-berry-mappemonde/
 sys.path.insert(0, str(REPO_ROOT / "polar_agent"))
 
-from polar_engine import parse_polar_pdf, PolarData  # noqa: E402
+from polar_engine import parse_polar_pdf, parse_polar_csv, parse_polar_excel, PolarData  # noqa: E402
 
 # ── Storage directory for polar JSON files ────────────────────────────────────
 POLAR_DATA_DIR = Path(__file__).resolve().parent.parent / "polar_data"
@@ -163,19 +163,26 @@ async def upload_polar(
     5. Returns metadata + VMG summary. Retrieve the full grid via:
        GET /api/v1/polar/{expedition_id}
     """
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+    fname = file.filename.lower()
+    allowed = (".pdf", ".csv", ".xlsx", ".xls")
+    if not any(fname.endswith(ext) for ext in allowed):
+        raise HTTPException(status_code=400, detail="Accepted formats: PDF, CSV, XLSX, XLS.")
 
     bname = boat_name or expedition_id
     log.info(f"Polar upload: expedition_id={expedition_id}, boat={bname}, file={file.filename}")
 
-    # 1 — Parse PDF
+    # 1 — Parse file (PDF / CSV / Excel)
     try:
-        pdf_bytes = await file.read()
-        polar = parse_polar_pdf(pdf_bytes, boat_name=bname)
+        raw_bytes = await file.read()
+        if fname.endswith(".pdf"):
+            polar = parse_polar_pdf(raw_bytes, boat_name=bname)
+        elif fname.endswith(".csv"):
+            polar = parse_polar_csv(raw_bytes, boat_name=bname)
+        else:  # .xlsx / .xls
+            polar = parse_polar_excel(raw_bytes, boat_name=bname)
     except Exception as exc:
-        log.error(f"PDF parsing failed: {exc}")
-        raise HTTPException(status_code=422, detail=f"PDF parsing error: {exc}")
+        log.error(f"File parsing failed: {exc}")
+        raise HTTPException(status_code=422, detail=f"Parsing error: {exc}")
 
     # 2 — Generate grid + serialise
     try:
