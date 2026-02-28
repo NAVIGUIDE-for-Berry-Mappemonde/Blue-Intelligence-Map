@@ -50,10 +50,8 @@ POLAR_DATA_DIR = Path(__file__).resolve().parent.parent / "polar_data"
 POLAR_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOG_DIR = Path(
-    "/mnt/efs/spaces/ef014a98-8a1c-4b16-8e06-5d2c5b364d08"
-    "/872445d0-4688-44c2-bafc-53c3d3a51d57/logs"
-)
+_DEFAULT_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR = Path(os.getenv("LOG_DIR", str(_DEFAULT_LOG_DIR)))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
