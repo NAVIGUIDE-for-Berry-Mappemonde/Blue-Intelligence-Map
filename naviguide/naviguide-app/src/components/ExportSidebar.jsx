@@ -5,9 +5,51 @@
  * Language switcher (EN / FR) via LangContext.
  * Mode states are lifted to App.jsx — received as props.
  */
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Anchor } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Anchor, Upload, Compass, CheckCircle2, TriangleAlert, Loader2 } from "lucide-react";
 import { useLang } from "../i18n/LangContext.jsx";
+
+/* ── Polar constants ──────────────────────────────────────────────────────── */
+const POLAR_API_URL      = import.meta.env.VITE_POLAR_API_URL ?? "http://localhost:8004";
+const POLAR_EXPEDITION   = "berry-mappemonde-2026";
+const POLAR_VMG_TWS_KEYS = ["8", "10", "12", "16", "20", "25"];
+
+function kts(v) { return v != null ? `${Number(v).toFixed(1)} kt` : "—"; }
+function deg(v) { return v != null ? `${Math.round(v)}°`          : "—"; }
+
+function PolarStatusBadge({ status, detail }) {
+  const cfg = {
+    uploading: { icon: <Loader2 size={12} className="animate-spin" />, color: "text-blue-400",  bg: "bg-blue-900/30",  text: "Analyse…" },
+    success:   { icon: <CheckCircle2 size={12} />,                     color: "text-green-400", bg: "bg-green-900/30", text: "Polaires chargées" },
+    error:     { icon: <TriangleAlert size={12} />,                    color: "text-red-400",   bg: "bg-red-900/30",   text: "Échec" },
+  };
+  if (!status) return null;
+  const c = cfg[status] ?? cfg.error;
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${c.bg} ${c.color} text-xs`}>
+      {c.icon}
+      <span className="font-medium">{c.text}</span>
+      {detail && <span className="text-slate-400 truncate ml-1">— {detail}</span>}
+    </div>
+  );
+}
+
+function PolarVmgRow({ tws, entry }) {
+  const uw = entry?.upwind   ?? {};
+  const dw = entry?.downwind ?? {};
+  return (
+    <tr className="border-b border-slate-700/40 hover:bg-slate-800/40 transition-colors">
+      <td className="py-1 pl-2 pr-1 text-center font-bold text-blue-300 text-xs w-8">{tws}</td>
+      <td className="py-1 px-1 text-center text-xs text-green-300">{deg(uw.twa)}</td>
+      <td className="py-1 px-1 text-center text-xs text-slate-200">{kts(uw.speed)}</td>
+      <td className="py-1 px-1 text-center text-xs font-semibold text-green-400">{kts(uw.vmg)}</td>
+      <td className="py-1 px-0.5 text-slate-600 text-center text-xs">│</td>
+      <td className="py-1 px-1 text-center text-xs text-amber-300">{deg(dw.twa)}</td>
+      <td className="py-1 px-1 text-center text-xs text-slate-200">{kts(dw.speed)}</td>
+      <td className="py-1 pr-2 pl-1 text-center text-xs font-semibold text-amber-400">{kts(dw.vmg)}</td>
+    </tr>
+  );
+}
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -251,9 +293,48 @@ export function ExportSidebar({
   // Mode props (state lives in App.jsx)
   isOffshore, isCockpit, isLightMode,
   onOffshoreChange, onCockpitChange, onLightModeChange,
+  // Polar props (state lives in App.jsx)
+  polarData, onPolarDataLoaded,
 }) {
   const { lang, switchLang, t } = useLang();
   const [exportStatus, setExportStatus] = useState(null); // "geojson" | "kml" | null
+
+  /* ── Polar upload state ──────────────────────────────────────────────────── */
+  const [polarFile,         setPolarFile]         = useState(null);
+  const [polarUploadStatus, setPolarUploadStatus] = useState(null);
+  const [polarUploadDetail, setPolarUploadDetail] = useState("");
+  const [isDragging,        setIsDragging]        = useState(false);
+  const polarFileInputRef                         = useRef(null);
+
+  useEffect(() => {
+    if (polarFile) handlePolarUpload(polarFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [polarFile]);
+
+  const handlePolarUpload = async (f) => {
+    setPolarUploadStatus("uploading");
+    setPolarUploadDetail("");
+    const form = new FormData();
+    form.append("file",          f);
+    form.append("expedition_id", POLAR_EXPEDITION);
+    try {
+      const res  = await fetch(`${POLAR_API_URL}/api/v1/polar/upload`, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? `HTTP ${res.status}`);
+      onPolarDataLoaded({
+        expedition_id: data.expedition_id,
+        boat_name:     data.boat_name,
+        grid_shape:    data.grid_shape,
+        vmg_summary:   data.vmg_summary,
+        created_at:    data.created_at,
+      });
+      setPolarUploadStatus("success");
+      setPolarUploadDetail(data.boat_name);
+    } catch (err) {
+      setPolarUploadStatus("error");
+      setPolarUploadDetail(String(err.message ?? err));
+    }
+  };
 
   const maritimeSegs  = segments.filter((s) => !s.nonMaritime && s.coords?.length > 0);
   const overlandSegs  = segments.filter((s) =>  s.nonMaritime && s.coords?.length > 0);
@@ -391,6 +472,89 @@ export function ExportSidebar({
             onClick={handleExportKML}
             color="teal"
           />
+
+          {/* ── Polar Upload ───────────────────────────────────────────── */}
+          <div className="pt-2 border-t border-slate-700/60 mt-2 space-y-3">
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Compass size={11} className="text-blue-400" />
+              Polaires
+              {polarData?.boat_name && (
+                <span className="ml-auto text-xs text-green-400 bg-green-900/30 px-2 py-0.5 rounded-full font-normal normal-case tracking-normal">
+                  {polarData.boat_name}
+                </span>
+              )}
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault(); setIsDragging(false);
+                const f = e.dataTransfer.files?.[0];
+                const ok = [".pdf",".csv",".xlsx",".xls"];
+                if (f && ok.some(ext => f.name.toLowerCase().endsWith(ext))) setPolarFile(f);
+              }}
+              onClick={() => polarFileInputRef.current?.click()}
+              className={`flex flex-col items-center justify-center gap-1.5 p-4
+                border-2 border-dashed rounded-xl cursor-pointer transition-colors
+                ${isDragging
+                  ? "border-blue-400 bg-blue-900/20"
+                  : polarUploadStatus === "success"
+                    ? "border-green-500/60 bg-green-900/10"
+                    : polarUploadStatus === "uploading"
+                      ? "border-blue-500/40 bg-blue-900/10"
+                      : "border-slate-600 hover:border-slate-500 bg-slate-800/40"}`}
+            >
+              <input
+                ref={polarFileInputRef}
+                type="file"
+                accept=".pdf,.csv,.xlsx,.xls"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) setPolarFile(f); }}
+              />
+              {polarUploadStatus === "uploading"
+                ? <Loader2 size={18} className="animate-spin text-blue-400" />
+                : <Upload size={18} className={polarUploadStatus === "success" ? "text-green-400" : "text-slate-500"} />
+              }
+              {polarFile
+                ? <span className="text-xs font-medium text-green-300 text-center break-all">{polarFile.name}</span>
+                : <>
+                    <span className="text-xs text-slate-400">Glissez un fichier polaire</span>
+                    <span className="text-xs text-slate-600">PDF · CSV · XLSX</span>
+                  </>
+              }
+            </div>
+
+            <PolarStatusBadge status={polarUploadStatus} detail={polarUploadDetail} />
+
+            {/* VMG table */}
+            {polarData?.vmg_summary && (
+              <div className="overflow-x-auto rounded-xl border border-slate-700/40 bg-slate-800/40">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-800/80 border-b border-slate-700/60">
+                      <th rowSpan={2} className="py-1.5 px-1.5 text-center text-blue-300 font-bold align-middle text-xs">
+                        TWS<br /><span className="text-slate-500 font-normal">kt</span>
+                      </th>
+                      <th colSpan={3} className="py-1 px-1 text-center text-green-400 font-semibold text-xs border-r border-slate-700/40">↑ Près</th>
+                      <th colSpan={3} className="py-1 px-1 text-center text-amber-400 font-semibold text-xs">↓ Portant</th>
+                    </tr>
+                    <tr className="bg-slate-800/60 border-b border-slate-700/60">
+                      {["TWA","BS","VMG","TWA","BS","VMG"].map((h, i) => (
+                        <th key={i} className={`py-1 px-1 font-medium text-slate-400 text-xs ${i===2?"border-r border-slate-700/40":""}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {POLAR_VMG_TWS_KEYS.map((tws) => (
+                      <PolarVmgRow key={tws} tws={tws} entry={polarData.vmg_summary[tws]} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
         </div>
 
