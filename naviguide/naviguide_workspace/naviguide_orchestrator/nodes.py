@@ -332,7 +332,7 @@ Ton : professionnel, concis, expertise hauturière confirmée. Max 250 mots. Ré
     if _ANTHROPIC_AVAILABLE and _ANTHROPIC_CLIENT:
         try:
             response = _ANTHROPIC_CLIENT.messages.create(
-                model      = "claude-3-5-haiku-20241022",
+                model      = "claude-opus-4-5",
                 max_tokens = 600,
                 messages   = [{"role": "user", "content": prompt}],
             )
