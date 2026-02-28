@@ -106,22 +106,29 @@ class WaypointIn(BaseModel):
 
 
 class ExpeditionRequestIn(BaseModel):
-    waypoints:    List[WaypointIn]
-    vessel_specs: Dict[str, Any] = {}
-    constraints:  Dict[str, Any] = {}
+    waypoints:     List[WaypointIn]
+    vessel_specs:  Dict[str, Any] = {}
+    constraints:   Dict[str, Any] = {}
+    expedition_id: Optional[str]  = None  # links to polar data for real VMG-based ETAs
 
 
 # ── Helper: build initial OrchestratorState ───────────────────────────────────
 
-def _initial_state(waypoints, vessel_specs, constraints, language="en") -> OrchestratorState:
+def _initial_state(
+    waypoints, vessel_specs, constraints, language="en", expedition_id=None
+) -> OrchestratorState:
     return {
         "waypoints":             waypoints,
         "vessel_specs":          vessel_specs or BerryMappemondeRouter.VESSEL_PROFILE,
         "constraints":           constraints,
+        "expedition_id":         expedition_id,
         "agent1_status":         "pending",
         "agent1_errors":         [],
         "route_plan":            {},
         "anti_shipping_avg":     0.0,
+        "polar_vmg":             None,
+        "polar_avg_speed":       None,
+        "total_eta_days":        None,
         "agent3_status":         "pending",
         "agent3_errors":         [],
         "risk_report":           {},
@@ -170,13 +177,15 @@ async def plan_expedition(request: ExpeditionRequestIn):
     log.info(f"Expedition plan request: {len(request.waypoints)} waypoints")
 
     state = _initial_state(
-        waypoints    = [wp.dict() for wp in request.waypoints],
-        vessel_specs = request.vessel_specs,
-        constraints  = request.constraints,
+        waypoints     = [wp.dict() for wp in request.waypoints],
+        vessel_specs  = request.vessel_specs,
+        constraints   = request.constraints,
+        expedition_id = request.expedition_id,
     )
 
     try:
-        result = orchestrator.invoke(state)
+        result  = orchestrator.invoke(state)
+        vs      = result.get("expedition_plan", {}).get("voyage_statistics", {})
         log.info(f"Expedition plan complete: status={result['status']}, risk={result['expedition_risk_level']}")
         return {
             "status":           result["status"],
@@ -185,7 +194,10 @@ async def plan_expedition(request: ExpeditionRequestIn):
             "summary": {
                 "agent1_status":         result.get("agent1_status"),
                 "agent3_status":         result.get("agent3_status"),
-                "total_distance_nm":     result.get("expedition_plan", {}).get("voyage_statistics", {}).get("total_distance_nm"),
+                "total_distance_nm":     vs.get("total_distance_nm"),
+                "total_eta_days":        vs.get("total_eta_days"),
+                "polar_avg_speed_knots": vs.get("polar_avg_speed_knots"),
+                "polar_data_used":       vs.get("polar_data_used", False),
                 "anti_shipping_avg":     result.get("anti_shipping_avg"),
                 "expedition_risk_level": result.get("expedition_risk_level"),
                 "critical_alerts_count": len(result.get("expedition_plan", {}).get("critical_alerts", [])),
@@ -199,6 +211,7 @@ async def plan_expedition(request: ExpeditionRequestIn):
 class BerryPlanRequest(BaseModel):
     language:        Optional[str] = "en"
     departure_month: Optional[int] = None
+    expedition_id:   Optional[str] = "berry-mappemonde-2026"  # default polar dataset
 
 
 @app.post("/api/v1/expedition/plan/berry-mappemonde")
@@ -221,10 +234,11 @@ async def plan_berry_mappemonde(body: BerryPlanRequest = None):
         constraints["departure_month"] = departure_month
 
     state = _initial_state(
-        waypoints    = BERRY_MAPPEMONDE_WAYPOINTS,
-        vessel_specs = BerryMappemondeRouter.VESSEL_PROFILE,
-        constraints  = constraints,
-        language     = language,
+        waypoints     = BERRY_MAPPEMONDE_WAYPOINTS,
+        vessel_specs  = BerryMappemondeRouter.VESSEL_PROFILE,
+        constraints   = constraints,
+        language      = language,
+        expedition_id = body.expedition_id if body else "berry-mappemonde-2026",
     )
 
     try:
