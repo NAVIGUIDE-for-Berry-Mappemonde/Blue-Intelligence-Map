@@ -288,18 +288,44 @@ export function ExportSidebar({
   return (
     <>
       {/*
-        Toggle button — when open it sits just outside the left edge of the
-        panel (right-[322px]); when closed it stays at right-4 on the map.
+        Top-right persistent controls:
+        - EN/FR language pills always visible on the map
+        - Toggle button to open/close the export panel
+        All shift left together when the panel is open.
       */}
-      <button
-        onClick={onToggle}
-        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
-          rounded-full w-9 h-9 flex items-center justify-center shadow-lg
-          hover:bg-slate-800 transition-all duration-300 ${open ? "right-[322px]" : "right-4"}`}
-        title={open ? t("hideExportPanel") : t("showExportPanel")}
+      <div
+        className={`absolute top-4 z-30 flex items-center gap-2 transition-all duration-300
+          ${open ? "right-[330px]" : "right-4"}`}
       >
-        {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-      </button>
+        {/* Language pills — always visible */}
+        <div className="flex bg-slate-900/95 border border-slate-700 rounded-full p-0.5 gap-0.5 shadow-lg">
+          <button
+            onClick={() => switchLang("en")}
+            className={`px-2.5 py-0.5 rounded-full text-xs font-bold transition-colors
+              ${lang === "en" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+          >
+            EN
+          </button>
+          <button
+            onClick={() => switchLang("fr")}
+            className={`px-2.5 py-0.5 rounded-full text-xs font-bold transition-colors
+              ${lang === "fr" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+          >
+            FR
+          </button>
+        </div>
+
+        {/* Panel toggle button */}
+        <button
+          onClick={onToggle}
+          className="naviguide-sidebar-toggle bg-slate-900/95 border border-slate-700 text-white
+            rounded-full w-9 h-9 flex items-center justify-center shadow-lg
+            hover:bg-slate-800 transition-colors"
+          title={open ? t("hideExportPanel") : t("showExportPanel")}
+        >
+          {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+      </div>
 
       {/* Sidebar panel */}
       <div
