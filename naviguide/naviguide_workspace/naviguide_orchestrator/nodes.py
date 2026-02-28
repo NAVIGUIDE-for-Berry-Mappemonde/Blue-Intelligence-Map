@@ -253,42 +253,80 @@ def llm_expedition_briefing_node(state: OrchestratorState) -> OrchestratorState:
     anti_avg     = state.get("anti_shipping_avg", 0.0)
 
     # Gather key data for the prompt
-    risk_metadata = risk_report.get("metadata", {})
+    risk_metadata   = risk_report.get("metadata", {})
     critical_alerts = risk_report.get("critical_alerts", [])
+    risk_matrix     = risk_report.get("risk_matrix", [])
+    detail          = risk_report.get("detail", {})
     route_metadata  = route_plan.get("metadata", {}) if isinstance(route_plan, dict) else {}
     total_nm        = route_metadata.get("total_distance_nm", 0)
 
+    # Build compact per-waypoint risk table (sorted by risk descending)
+    sorted_matrix = sorted(risk_matrix, key=lambda x: x.get("overall", 0), reverse=True)
+    risk_rows = "\n".join(
+        f"  {s['name'][:28]:<28} {s['level']:<8} "
+        f"ovr={s['overall']:.2f} "
+        f"wx={s['components'].get('weather_score',0):.2f} "
+        f"pir={s['components'].get('piracy_score',0):.2f} "
+        f"med={s['components'].get('medical_score',0):.2f} "
+        f"cyc={s['components'].get('cyclone_score',0):.2f}"
+        for s in sorted_matrix
+    ) or "  Aucune donnée de risque disponible."
+
+    # Medical details for isolated stops (medevac ≥ 48h)
+    medical_list = detail.get("medical_access", [])
+    isolated = [
+        f"  • {m['name']}: {m['medevac_hours']}h medevac — {m.get('notes','')[:60]}"
+        for m in medical_list if m.get("medevac_hours", 0) >= 48
+    ]
+    medical_detail = "\n".join(isolated) or "  Aucun isolement médical critique."
+
+    # Cyclone basins active
+    cyclone_list = detail.get("cyclone_exposure", [])
+    active_cyclone = list({
+        c["basin"] for c in cyclone_list
+        if c.get("season_active") or c.get("in_peak")
+    })
+    cyclone_str = ", ".join(active_cyclone) or "Aucun bassin actif au départ prévu"
+
+    # Piracy zones hit
+    piracy_list = detail.get("piracy_zones", [])
+    piracy_zones = list({
+        p["zone"] for p in piracy_list if p.get("score", 0) >= 0.30
+    })
+    piracy_str = ", ".join(piracy_zones) or "Aucune zone à risque élevé"
+
     critical_list = "\n".join(
-        f"  • {a['waypoint']} [{a['risk_level']}] — dominant: {a.get('dominant_risk', 'N/A')}"
-        for a in critical_alerts[:5]
+        f"  • {a['waypoint']} [{a['risk_level']}] — risque dominant: {a.get('dominant_risk','N/A')}"
+        for a in critical_alerts
     ) or "  Aucune alerte critique détectée."
 
     prompt = f"""Tu es le chef officier de sécurité maritime de NAVIGUIDE, spécialiste en circumnavigations hauturières.
 
-RÉSUMÉ EXPÉDITION BERRY-MAPPEMONDE
-═══════════════════════════════════
-Escales : {len(waypoints)}
-Distance totale : {total_nm:,.0f} milles nautiques
-Niveau de risque expédition : {risk_level}
-Score anti-trafic maritime moyen : {anti_avg:.3f}  (1.0 = idéal)
-Alertes CRITICAL/HIGH : {len(critical_alerts)}
+EXPÉDITION BERRY-MAPPEMONDE — PROFIL DE RISQUE COMPLET
+═══════════════════════════════════════════════════════
+Escales: {len(waypoints)} | Distance: {total_nm:,.0f} nm | Risque global: {risk_level}
+Anti-trafic moy: {anti_avg:.3f} | CRITICAL: {risk_metadata.get('critical_stops_count',0)} | HIGH: {risk_metadata.get('high_risk_stops_count',0)}
 
-ALERTES PRIORITAIRES :
+MATRICE DE RISQUE PAR ESCALE (triée par risque décroissant):
+Escale                       Niveau   Ovr   Météo Pir.  Méd.  Cyc.
+{risk_rows}
+
+ALERTES CRITIQUES/HIGH:
 {critical_list}
 
-STATISTIQUES AGENT 3 :
-• Waypoints évalués : {risk_metadata.get('waypoints_assessed', len(waypoints))}
-• Score moyen : {risk_metadata.get('overall_expedition_risk', 0):.3f}
-• Alertes CRITICAL : {risk_metadata.get('critical_stops_count', 0)}
-• Alertes HIGH : {risk_metadata.get('high_risk_stops_count', 0)}
+ACCÈS MÉDICAL CRITIQUE (medevac ≥48h):
+{medical_detail}
 
-Rédige un briefing skipper exécutif structuré avec exactement ces sections :
-1. RÉSUMÉ EXÉCUTIF (2-3 phrases de synthèse)
-2. ALERTES CRITIQUES (liste à puces, max 4 points, avec mitigation)
-3. FENÊTRES MÉTÉO RECOMMANDÉES (par région océanique, 1 phrase chacune)
-4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES (3 points)
+ZONES PIRATERIE ACTIVES (score≥0.30): {piracy_str}
+BASSINS CYCLONIQUES ACTIFS: {cyclone_str}
 
-Ton : professionnel, concis, expertise hauturière confirmée. Max 250 mots. Répondre en français."""
+Rédige un briefing skipper avec EXACTEMENT ces 4 sections:
+1. RÉSUMÉ EXÉCUTIF (2-3 phrases)
+2. TOP RISQUES CRITIQUES (max 4 bullets, chacun avec mitigation concrète)
+3. FENÊTRES MÉTÉO PAR BASSIN (1 phrase/bassin)
+4. EXIGENCES NON NÉGOCIABLES (3 bullets)
+
+Ton: professionnel hauturier, concis. Max 280 mots. En français."""
 
     briefing = ""
 
@@ -304,9 +342,10 @@ Ton : professionnel, concis, expertise hauturière confirmée. Max 250 mots. Ré
             log.warning(f"[orchestrator] Bedrock unavailable ({exc}) — using fallback briefing")
 
     if not briefing:
-        # Structured fallback briefing
+        # Structured fallback briefing (includes critical alerts from full risk matrix)
         briefing = _build_fallback_briefing(
-            risk_level, critical_alerts, total_nm, len(waypoints)
+            risk_level, critical_alerts, total_nm, len(waypoints),
+            sorted_matrix, isolated
         )
 
     msg = AIMessage(content=f"[llm_briefing] ✅ Executive briefing generated ({len(briefing)} chars)")
@@ -323,12 +362,25 @@ def _build_fallback_briefing(
     critical_alerts: list,
     total_nm: float,
     waypoint_count: int,
+    sorted_matrix: list = None,
+    isolated_medical: list = None,
 ) -> str:
     """Structured fallback when LLM is unavailable."""
+    sorted_matrix    = sorted_matrix    or []
+    isolated_medical = isolated_medical or []
+
+    # Use critical_alerts; if empty, pull top-risk entries from matrix
+    top_alerts = critical_alerts[:4] if critical_alerts else [
+        {"waypoint": s["name"], "risk_level": s["level"],
+         "dominant_risk": max(s["components"], key=s["components"].get)}
+        for s in sorted_matrix[:4] if s.get("level") in ("CRITICAL", "HIGH", "MODERATE")
+    ]
     alerts_text = "\n".join(
         f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'risque composite')}"
-        for a in critical_alerts[:4]
+        for a in top_alerts
     ) or "• Aucune alerte critique sur le tracé."
+
+    medical_text = "\n".join(isolated_medical[:3]) or "• Accès médical acceptable sur l'ensemble du tracé."
 
     return (
         f"BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
@@ -340,12 +392,14 @@ def _build_fallback_briefing(
         f"saisonnières sont impératifs.\n\n"
         f"2. ALERTES CRITIQUES\n"
         f"{alerts_text}\n\n"
-        f"3. FENÊTRES MÉTÉO RECOMMANDÉES\n"
+        f"3. ISOLEMENT MÉDICAL\n"
+        f"{medical_text}\n\n"
+        f"4. FENÊTRES MÉTÉO RECOMMANDÉES\n"
         f"• Atlantique N (La Rochelle → Canaries) : mai–juin (alizés établis)\n"
         f"• Atlantique tropical (Canaries → Caraïbes) : novembre–janvier\n"
         f"• Pacifique S (Cayenne → Papeete) : avril–juin (hors cyclone)\n"
         f"• Océan Indien S (Nouméa → Réunion) : mai–septembre\n\n"
-        f"4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
+        f"5. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
         f"• Balise EPIRB 406 MHz homologuée + AIS classe B actif permanent\n"
         f"• Trousse médicale hauturière complète + formation premiers secours en mer\n"
         f"• Éviter les zones cycloniques en saison active (voir alertes ci-dessus)\n\n"
