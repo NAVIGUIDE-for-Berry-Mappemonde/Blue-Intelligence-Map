@@ -25,3 +25,9 @@ numpy>=1.24.0
 pdfplumber>=0.11.0
 python-multipart>=0.0.9
 openpyxl>=3.1.0
+pandas>=2.0.0
+
+# Polar API — OCR fallback for raster-scan PDFs (requires: brew install tesseract poppler)
+pytesseract>=0.3.10
+pdf2image>=1.17.0
+Pillow>=10.0.0

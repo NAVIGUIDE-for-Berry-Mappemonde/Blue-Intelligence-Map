@@ -314,12 +314,58 @@ def parse_polar_pdf(pdf_bytes: bytes, boat_name: str = "Boat") -> PolarData:
                 log.info("Table preview (first 20 rows):\n" + "\n".join(
                     f"  [{i:02d}] {row}" for i, row in enumerate(all_rows[:20])
                 ))
-                # Convert table rows to text lines for parse_polar_text
                 text = "\n".join(" ".join(row) for row in all_rows)
             else:
-                log.warning("extract_tables() also returned no data — PDF may be a raster scan")
+                log.warning("extract_tables() returned no data — trying OCR (Strategy 3)")
+
+    # ── Strategy 3: OCR for raster-scan PDFs ──────────────────────────────────
+    if not [l for l in text.splitlines() if l.strip()]:
+        text = _ocr_pdf(pdf_bytes)
 
     return parse_polar_text(text, boat_name)
+
+
+def _ocr_pdf(pdf_bytes: bytes) -> str:
+    """
+    Convert each PDF page to an image and run Tesseract OCR.
+    Requires: pdf2image (poppler), pytesseract, Pillow, and tesseract binary.
+    """
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except ImportError as e:
+        raise RuntimeError(
+            f"OCR dependencies missing ({e}). "
+            "Run: pip3 install pdf2image pytesseract Pillow  "
+            "and: brew install tesseract poppler"
+        )
+
+    log.info("OCR: converting PDF pages to images…")
+    try:
+        images = convert_from_bytes(pdf_bytes, dpi=300)
+    except Exception as exc:
+        raise RuntimeError(
+            f"pdf2image failed: {exc}. "
+            "Make sure poppler is installed: brew install poppler"
+        )
+
+    log.info(f"OCR: running Tesseract on {len(images)} page(s)…")
+    pages_text = []
+    for i, img in enumerate(images):
+        # Use --psm 6 (uniform block of text) — best for tabular polar data
+        ocr_text = pytesseract.image_to_string(
+            img,
+            config="--psm 6 -c tessedit_char_whitelist=0123456789. "
+        )
+        log.info(f"OCR page {i+1}: {len(ocr_text.splitlines())} lines extracted")
+        pages_text.append(ocr_text)
+
+    full_text = "\n".join(pages_text)
+    preview = [l.strip() for l in full_text.splitlines() if l.strip()][:20]
+    log.info("OCR preview (first 20 lines):\n" + "\n".join(
+        f"  [{i:02d}] {l}" for i, l in enumerate(preview)
+    ))
+    return full_text
 
 
 def _looks_like_tws_header(nums: List[float]) -> bool:
