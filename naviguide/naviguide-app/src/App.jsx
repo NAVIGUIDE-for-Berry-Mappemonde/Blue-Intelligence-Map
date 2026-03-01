@@ -14,6 +14,8 @@ import {
   MaritimeLayersPanel,
 } from "./components/MaritimeLayers";
 import { useMarkerOffsets } from "./hooks/useMarkerOffsets";
+import { CatamaranMarker } from "./components/CatamaranMarker";
+import { useLegContext } from "./hooks/useLegContext";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
@@ -74,6 +76,25 @@ export default function App() {
 
   // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
   const maritimeLayers = useMaritimeLayers();
+
+  // ── Simulation mode — catamaran draggable ────────────────────────────────────
+  const [simulationMode, setSimulationMode] = useState(false);
+  const [catamaranPos,   setCatamaranPos]   = useState(null); // { lat, lon }
+
+  // Position initiale du catamaran = premier point maritime de la route
+  const initialCatamaranPos = segments.length > 0 && segments[0].coords?.length > 0
+    ? { lat: segments[0].coords[0][1], lon: segments[0].coords[0][0] }
+    : { lat: 46.154, lon: -1.167 }; // La Rochelle fallback
+
+  const activeCatamaranPos = catamaranPos ?? initialCatamaranPos;
+
+  // Leg context : snap géométrique + métriques
+  const legContext = useLegContext(
+    simulationMode ? activeCatamaranPos.lat : null,
+    simulationMode ? activeCatamaranPos.lon : null,
+    segments,
+    ITINERARY_POINTS,
+  );
 
   // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
   const markerOffsets = useMarkerOffsets(points, mapRef);
@@ -574,6 +595,12 @@ export default function App() {
         isOffshore={isOffshore}
         polarData={polarData}
         maritimeLayers={maritimeLayers}
+        simulationMode={simulationMode}
+        onSimulationToggle={() => {
+          setSimulationMode((v) => !v);
+          if (!simulationMode) setCatamaranPos(null);
+        }}
+        legContext={legContext}
       />
       <ExportSidebar
         segments={segments}
@@ -1376,6 +1403,16 @@ export default function App() {
           showBalisage={maritimeLayers.showBalisage}
           balisageData={maritimeLayers.balisageData}
         />
+
+        {/* ── Catamaran simulation marker ────────────────────────────────── */}
+        {simulationMode && (
+          <CatamaranMarker
+            latitude={legContext ? legContext.snappedPosition[1] : activeCatamaranPos.lat}
+            longitude={legContext ? legContext.snappedPosition[0] : activeCatamaranPos.lon}
+            bearing={legContext?.bearing ?? 0}
+            onDragEnd={(pos) => setCatamaranPos(pos)}
+          />
+        )}
 
         {/* Escales obligatoires — drapeaux toujours visibles, tooltip au survol (hidden during drawing) */}
         {!drawingMode && points.map((p, i) =>

@@ -4,9 +4,11 @@
  * The Berry-Mappemonde card is an interactive route switcher with file import.
  */
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X, Pencil, CheckCircle, Send, Loader2, Compass } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X, Pencil, CheckCircle, Send, Loader2, Compass, Play, Square } from "lucide-react";
 import { riskBadgeClass } from "../utils/riskColors";
 import { useLang } from "../i18n/LangContext.jsx";
+import { SimulationPanel } from "./SimulationPanel";
+import { AgentPanel } from "./AgentPanel";
 
 const POLAR_API_URL = import.meta.env.VITE_POLAR_API_URL ?? "http://localhost:8004";
 
@@ -505,7 +507,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers }) {
+export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers, simulationMode, onSimulationToggle, legContext }) {
   const { t } = useLang();
   const stats    = plan?.voyage_statistics || {};
   const alerts   = plan?.critical_alerts   || [];
@@ -611,6 +613,26 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               })}
             </div>
           )}
+
+          {/* ── Bouton Mode Simulation ─────────────────────────────────────── */}
+          {onSimulationToggle && (
+            <button
+              onClick={onSimulationToggle}
+              title={simulationMode ? "Quitter la simulation" : "Mode Simulation — déplacer le catamaran sur la route"}
+              className={[
+                "flex items-center justify-center gap-1.5 w-full mt-2 px-2 py-1.5 rounded-lg",
+                "text-[10px] font-semibold transition-all duration-150 select-none border",
+                simulationMode
+                  ? "bg-blue-600/80 text-white border-blue-500/60 shadow-lg shadow-blue-900/30"
+                  : "bg-slate-800/40 text-white/50 border-white/8 hover:text-white/80 hover:bg-slate-700/50",
+              ].join(" ")}
+            >
+              {simulationMode
+                ? <><Square size={9} className="fill-current" /><span>Quitter simulation</span></>
+                : <><Play  size={9} className="fill-current" /><span>Mode Simulation</span></>
+              }
+            </button>
+          )}
         </div>
 
         {/*
@@ -620,6 +642,20 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
         */}
         {/* ── Scrollable content (everything below logos) ────────────────── */}
         <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
+
+          {/* ── Mode Simulation — panneau métriques + agents IA ─────────── */}
+          {simulationMode && (
+            <>
+              <SimulationPanel
+                legContext={legContext}
+                onClose={onSimulationToggle}
+              />
+              <AgentPanel
+                legContext={legContext}
+                language={t ? (t("_lang") === "fr" ? "fr" : "en") : "fr"}
+              />
+            </>
+          )}
 
         {(isCockpit || plan) && (
           <div className="pb-3 border-b border-slate-700/60">

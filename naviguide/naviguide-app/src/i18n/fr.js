@@ -74,6 +74,30 @@ export default {
   noAlerts:           "✅ Aucune alerte critique — la route semble sûre.",
   dominantRisk:       "Dominant",
 
+  // ── Mode Simulation ────────────────────────────────────────────────────────
+  simulationMarkerTitle: "Catamaran — cliquez pour les métriques",
+  simulationDragPrompt:  "Faites glisser le catamaran sur la route…",
+  exitSimulation:        "Quitter la simulation",
+  nmRemaining:           "Restants",
+  nmCovered:             "Parcourus",
+  eta:                   "ETA",
+  bearing:               "Cap",
+  // Agents IA
+  agentCustomLabel:      "Ports",
+  agentCustomTitle:      "Intelligence Portuaire",
+  agentGuardLabel:       "Sécurité",
+  agentGuardTitle:       "Sécurité Maritime",
+  agentMeteoLabel:       "Météo",
+  agentMeteoTitle:       "Météorologie",
+  agentPirateLabel:      "Cruisers",
+  agentPirateTitle:      "Intelligence Communautaire",
+  agentNeedsCatamaran:   "Positionnez le catamaran sur la route pour activer les agents IA.",
+  agentLoading:          "Analyse en cours…",
+  agentError:            "Erreur de connexion à l'agent.",
+  refreshAgent:          "Actualiser",
+  // Internal lang tag used by AgentPanel
+  _lang:                 "fr",
+
   // ── ExportSidebar ──────────────────────────────────────────────────────────
   hideExportPanel:  "Masquer le panneau",
   showExportPanel:  "Afficher le panneau",

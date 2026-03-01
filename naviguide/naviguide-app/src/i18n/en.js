@@ -74,6 +74,29 @@ export default {
   noAlerts:           "✅ No critical alerts — route appears safe.",
   dominantRisk:       "Dominant",
 
+  // ── Simulation Mode ────────────────────────────────────────────────────────
+  simulationMarkerTitle: "Catamaran — click for metrics",
+  simulationDragPrompt:  "Drag the catamaran along the route…",
+  exitSimulation:        "Exit simulation",
+  nmRemaining:           "Remaining",
+  nmCovered:             "Covered",
+  eta:                   "ETA",
+  bearing:               "Bearing",
+  // AI Agents
+  agentCustomLabel:      "Ports",
+  agentCustomTitle:      "Port Intelligence",
+  agentGuardLabel:       "Security",
+  agentGuardTitle:       "Maritime Security",
+  agentMeteoLabel:       "Weather",
+  agentMeteoTitle:       "Meteorology",
+  agentPirateLabel:      "Cruisers",
+  agentPirateTitle:      "Community Intel",
+  agentNeedsCatamaran:   "Position the catamaran on the route to activate AI agents.",
+  agentLoading:          "Analyzing…",
+  agentError:            "Could not connect to agent.",
+  refreshAgent:          "Refresh",
+  _lang:                 "en",
+
   // ── ExportSidebar ──────────────────────────────────────────────────────────
   hideExportPanel:  "Hide panel",
   showExportPanel:  "Show panel",
