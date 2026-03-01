@@ -6,6 +6,12 @@ Berry-Mappemonde circumnavigation expedition data.
 Replaces the full LangGraph orchestrator while source files are
 being reconstructed. Serves on port 3008 (mapped to
 https://y1dxs0s0.run.complete.dev).
+
+Waypoints support:
+  The frontend sends the full ITINERARY_POINTS list in every request,
+  with each point typed as "escale_obligatoire" or "point_intermediaire".
+  The orchestrator logs and stores them so future agent logic can
+  process the complete route: escale → intermédiaire → intermédiaire → escale.
 """
 
 import os
@@ -15,7 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import uvicorn
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -261,22 +267,50 @@ def health():
     }
 
 
+class WaypointItem(BaseModel):
+    """Un point de la route — escale obligatoire ou point intermédiaire."""
+    name: str
+    lat: float
+    lon: float
+    type: str  # "escale_obligatoire" | "point_intermediaire"
+
+
 class PlanRequest(BaseModel):
     language: Optional[str] = "en"
     departure_month: Optional[int] = None
+    # Liste complète des waypoints transmis par le frontend :
+    # escales obligatoires (ports d'arrêt) ET points intermédiaires (waypoints de navigation).
+    # Permet aux agents de traiter la route complète :
+    #   escale → intermédiaire → intermédiaire → escale suivante
+    waypoints: Optional[List[WaypointItem]] = None
 
 
 @app.post("/api/v1/expedition/plan/berry-mappemonde")
 async def plan_berry_mappemonde(body: PlanRequest = None):
     """
     Returns pre-computed Berry-Mappemonde circumnavigation expedition plan.
-    Accepts optional JSON body with `language` ("en" | "fr", default "en").
+    Accepts optional JSON body with:
+      - `language`  : "en" | "fr" (default "en")
+      - `waypoints` : full list of ITINERARY_POINTS with type classification
     """
     lang = (body.language if body and body.language else "en").lower()
     if lang not in ("en", "fr"):
         lang = "en"
 
-    log.info(f"Berry-Mappemonde plan requested (mock). language={lang}")
+    # ── Log waypoints received from frontend ──────────────────────────────────
+    if body and body.waypoints:
+        escales = [w for w in body.waypoints if w.type == "escale_obligatoire"]
+        intermediates = [w for w in body.waypoints if w.type == "point_intermediaire"]
+        log.info(
+            f"Waypoints reçus : {len(escales)} escales_obligatoires, "
+            f"{len(intermediates)} points_intermédiaires — "
+            f"route complète : {len(body.waypoints)} points transmis aux agents"
+        )
+        log.info(
+            f"Escales : {[w.name for w in escales]}"
+        )
+    else:
+        log.info(f"Berry-Mappemonde plan requested (mock, no waypoints). language={lang}")
 
     # Build a language-specific copy of the plan with the correct briefing
     plan = dict(EXPEDITION_PLAN)
@@ -291,6 +325,7 @@ async def plan_berry_mappemonde(body: PlanRequest = None):
         "errors":          [],
         "source":          "mock",
         "language":        lang,
+        "waypoints_received": len(body.waypoints) if body and body.waypoints else 0,
     }
 
 
