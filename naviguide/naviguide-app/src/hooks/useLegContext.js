@@ -4,13 +4,17 @@
  * Snap-to-route : projection haversine manuelle sur chaque segment de la polyligne.
  * Aucun appel API, aucune dépendance externe (pas de @turf).
  *
+ * Tous les points ITINERARY_POINTS sont utilisés (escales obligatoires ET points
+ * intermédiaires) pour un suivi segment par segment de la route complète :
+ *   escale → intermédiaire → intermédiaire → escale suivante
+ *
  * Returns LegContext :
- *   fromStopIndex     — index de l'escale obligatoire d'origine
- *   fromStop          — nom de l'escale d'origine
- *   toStop            — nom de la prochaine escale obligatoire
- *   toStopIndex       — index de la prochaine escale
+ *   fromStopIndex     — index du point d'origine (escale ou intermédiaire)
+ *   fromStop          — nom du point d'origine
+ *   toStop            — nom du prochain point (escale ou intermédiaire)
+ *   toStopIndex       — index du prochain point
  *   nmCovered         — miles nautiques parcourus depuis le départ (total route)
- *   nmRemainingToStop — miles nautiques restants jusqu'à la prochaine escale
+ *   nmRemainingToStop — miles nautiques restants jusqu'au prochain point
  *   etaHours          — ETA estimée (vitesse constante par défaut)
  *   bearing           — cap actuel en degrés (0–360)
  *   snappedPosition   — [lon, lat] — position projetée sur la route
@@ -80,7 +84,7 @@ function projectOnSegment(pLat, pLon, aLat, aLon, bLat, bLon) {
  * @param {number|null} catamaranLat   — latitude du catamaran (null si non activé)
  * @param {number|null} catamaranLon   — longitude du catamaran
  * @param {Array}       routeSegments  — segments calculés par App.jsx [ {coords: [[lon,lat],...], nonMaritime?} ]
- * @param {Array}       itineraryPoints — ITINERARY_POINTS (escales avec flag)
+ * @param {Array}       itineraryPoints — ITINERARY_POINTS (escales + points intermédiaires)
  * @param {number}      speedKnots     — vitesse en nœuds (optionnel)
  */
 export function useLegContext(
@@ -141,10 +145,12 @@ export function useLegContext(
     nmCoveredTotal += bestT * haversineNm(aLat, aLon, bLat, bLon);
 
     // ── 4. Identify active leg (fromStop → toStop) ──────────────────────────
-    // Build cumulative distances to each itinerary stop
-    const stops = (itineraryPoints || []).filter((p) => p.flag !== "");
+    // Inclure TOUS les points (escales obligatoires ET points intermédiaires)
+    // pour que les agents traitent la route complète :
+    //   escale → intermédiaire → intermédiaire → escale suivante
+    const stops = (itineraryPoints || []);
 
-    // For each stop (with flag), find its nearest polyline index
+    // For each point, find its nearest polyline index
     function nearestPolylineIdx(stopLat, stopLon) {
       let best = 0; let bestD = Infinity;
       for (let i = 0; i < polyline.length; i++) {
