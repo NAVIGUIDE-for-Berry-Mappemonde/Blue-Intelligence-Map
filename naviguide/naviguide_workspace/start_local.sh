@@ -54,6 +54,8 @@ info "Node: $(node --version)"
 info "Checking Python dependencies..."
 $PYTHON -m pip install -q -r "$PROJECT_ROOT/naviguide-api/requirements.txt" --user 2>/dev/null || true
 $PYTHON -m pip install -q -r "$SCRIPT_DIR/requirements.txt" --user 2>/dev/null || true
+# polar_engine dependencies (numpy, scipy, pdfplumber for polar PDF parsing)
+$PYTHON -m pip install -q numpy scipy pdfplumber openpyxl --user 2>/dev/null || true
 success "Python dependencies ready"
 
 # ── Install frontend dependencies (first run only) ───────────────────────────
@@ -104,9 +106,10 @@ echo "$WEATHER_PID" > "$LOG_DIR/weather-routing.pid"
 success "weather-routing started (PID $WEATHER_PID)"
 
 # ── Service 4: Polar API (port 8001) ──────────────────────────────────────────
+# polar_api/ lives inside naviguide_workspace/ (= SCRIPT_DIR), NOT at PROJECT_ROOT
 info "Starting polar-api on :8001..."
 POLAR_LOG="$LOG_DIR/polar_api.log"
-(cd "$PROJECT_ROOT/polar_api" && nohup $PYTHON -m uvicorn main:app --port 8001 --reload > "$POLAR_LOG" 2>&1) &
+(cd "$SCRIPT_DIR/polar_api" && nohup $PYTHON -m uvicorn main:app --port 8001 --reload > "$POLAR_LOG" 2>&1) &
 POLAR_PID=$!
 echo "$POLAR_PID" > "$LOG_DIR/polar_api.pid"
 success "polar-api started (PID $POLAR_PID)"
