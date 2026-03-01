@@ -507,7 +507,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers, simulationMode, onSimulationToggle, legContext }) {
+export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers, simulationMode, onSimulationToggle, legContext, onAdvance, canAdvance }) {
   const { t } = useLang();
   const stats    = plan?.voyage_statistics || {};
   const alerts   = plan?.critical_alerts   || [];
@@ -649,6 +649,8 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               <SimulationPanel
                 legContext={legContext}
                 onClose={onSimulationToggle}
+                onAdvance={onAdvance}
+                canAdvance={canAdvance}
               />
               <AgentPanel
                 legContext={legContext}
