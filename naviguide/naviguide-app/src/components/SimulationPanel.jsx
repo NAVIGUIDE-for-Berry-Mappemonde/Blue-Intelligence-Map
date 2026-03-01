@@ -7,6 +7,8 @@
  * Props:
  *   legContext   — objet LegContext depuis useLegContext hook
  *   onClose      — callback pour désactiver le mode simulation
+ *   onAdvance    — callback pour avancer au milieu du prochain segment
+ *   canAdvance   — boolean, désactive le bouton si fin de route atteinte
  */
 
 import { Navigation, Clock, Compass, Map as MapIcon, X } from "lucide-react";
@@ -35,9 +37,35 @@ function formatBearing(deg) {
   return `${Math.round(deg)}° ${dirs[idx]}`;
 }
 
-// ── Composant ────────────────────────────────────────────────────────────────
+// ── Bouton Avancer ───────────────────────────────────────────────────────────
 
-export function SimulationPanel({ legContext, onClose }) {
+function AdvanceButton({ onAdvance, canAdvance, t }) {
+  return (
+    <div className="px-2 pb-2 pt-1">
+      <button
+        onClick={onAdvance}
+        disabled={!canAdvance}
+        className={[
+          "flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-lg",
+          "text-[10px] font-semibold transition-all duration-150 select-none border",
+          canAdvance
+            ? "bg-cyan-700/60 text-white border-cyan-500/50 hover:bg-cyan-600/70 cursor-pointer"
+            : "bg-slate-700/30 text-white/25 border-white/5 cursor-not-allowed",
+        ].join(" ")}
+        title={canAdvance ? "Avancer au milieu du prochain segment" : "Fin de route atteinte"}
+      >
+        <Navigation size={9} />
+        <span>
+          {t ? t("advanceToNextPoint") : "Avancer vers le prochain point"}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// ── Composant principal ──────────────────────────────────────────────────────
+
+export function SimulationPanel({ legContext, onClose, onAdvance, canAdvance }) {
   const { t } = useLang();
 
   if (!legContext) {
@@ -46,6 +74,12 @@ export function SimulationPanel({ legContext, onClose }) {
         <div className="text-xs text-slate-400 text-center">
           {t ? t("simulationDragPrompt") : "Faites glisser le catamaran sur la route…"}
         </div>
+        {/* Bouton avancer visible même sans legContext (catamaran sur La Rochelle) */}
+        {onAdvance && (
+          <div className="mt-2">
+            <AdvanceButton onAdvance={onAdvance} canAdvance={canAdvance} t={t} />
+          </div>
+        )}
       </div>
     );
   }
@@ -131,6 +165,12 @@ export function SimulationPanel({ legContext, onClose }) {
         </div>
 
       </div>
+
+      {/* Bouton Avancer vers le prochain point (escale ou intermédiaire) */}
+      {onAdvance && (
+        <AdvanceButton onAdvance={onAdvance} canAdvance={canAdvance} t={t} />
+      )}
+
     </div>
   );
 }
