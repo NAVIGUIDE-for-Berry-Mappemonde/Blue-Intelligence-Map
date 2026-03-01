@@ -69,14 +69,14 @@ if [ ! -f "$API_DIR/.env" ]; then
 COPERNICUS_USERNAME=berrymappemonde@gmail.com
 COPERNICUS_PASSWORD=Hackmyroute2027
 PORT=8000
-# ── Simulation agents — Deploy AI LLM (optionnel) ─────────────────────────
-# Renseigner ces 3 variables pour activer les agents IA en mode simulation.
-# Sans ces credentials, les agents utilisent un contenu de fallback statique.
-DEPLOY_AI_CLIENT_ID=
-DEPLOY_AI_CLIENT_SECRET=
-DEPLOY_AI_ORG_ID=
+# ── Agents IA simulation — Anthropic Claude (obligatoire pour les agents) ─
+# Renseigner ANTHROPIC_API_KEY pour activer les 4 agents IA en mode simulation.
+# Sans cette clé, les agents affichent un contenu de fallback statique.
+ANTHROPIC_API_KEY=
+# Modèle optionnel (défaut : claude-opus-4-5)
+ANTHROPIC_MODEL=claude-opus-4-5
 # ── Agent météo — StormGlass (optionnel) ──────────────────────────────────
-# Données météo live. Sans clé, l'agent utilise la climatologie LLM.
+# Données météo live. Sans clé, l'agent météo utilise la climatologie LLM.
 STORMGLASS_API_KEY=
 ENVEOF
 fi
