@@ -1,99 +1,66 @@
 """
-NAVIGUIDE Simulation Agents — Deploy AI Communication Module
-Shared OAuth2 client for LLM calls via Deploy AI core API.
-Degrades gracefully when credentials are not configured.
+NAVIGUIDE Simulation Agents — Anthropic Claude LLM Client
+Shared client for LLM calls via the Anthropic API (claude-opus-4-5 by default).
+Degrades gracefully when ANTHROPIC_API_KEY is not configured.
 """
 
 import os
-import requests
-from typing import Optional, Tuple
+from typing import Tuple
 from dotenv import load_dotenv
 
 load_dotenv()
 
-AUTH_URL = os.getenv("AUTH_URL", "https://api-auth.deploy.ai/oauth2/token")
-API_URL  = os.getenv("API_URL",  "https://core-api.deploy.ai")
-ORG_ID   = os.getenv("ORG_ID",   "")
-AGENT_ID = os.getenv("DEPLOY_AI_AGENT_ID", "gpt_4o")
+# Model to use — overridable via env var
+_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-5")
+
+# Lazy-initialised Anthropic client (avoids import error if SDK not installed)
+_client = None
 
 
-def get_access_token() -> Optional[str]:
-    """Retrieve OAuth2 client_credentials token from Deploy AI."""
-    client_id     = os.getenv("CLIENT_ID")
-    client_secret = os.getenv("CLIENT_SECRET")
-    if not client_id or not client_secret:
+def _get_client():
+    """Return a cached Anthropic client, or None if SDK / key is unavailable."""
+    global _client
+    if _client is not None:
+        return _client
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
         return None
     try:
-        resp = requests.post(
-            AUTH_URL,
-            data={
-                "grant_type":    "client_credentials",
-                "client_id":     client_id,
-                "client_secret": client_secret,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json().get("access_token")
+        from anthropic import Anthropic
+        _client = Anthropic(api_key=api_key)
+        return _client
     except Exception:
         return None
 
 
-def create_chat(access_token: str) -> Optional[str]:
-    """Create a new Deploy AI chat session and return the chat ID."""
-    try:
-        resp = requests.post(
-            f"{API_URL}/chats",
-            headers={
-                "accept":        "application/json",
-                "Content-Type":  "application/json",
-                "Authorization": f"Bearer {access_token}",
-                "X-Org":         ORG_ID,
-            },
-            json={"agentId": AGENT_ID, "stream": False},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json().get("id")
-    except Exception:
-        return None
-
-
-def call_llm(prompt: str) -> Tuple[str, str]:
+def call_llm(prompt: str, system: str = "") -> Tuple[str, str]:
     """
-    Send a prompt to the Deploy AI LLM.
+    Send a prompt to the Anthropic Claude API.
+
+    Args:
+        prompt  — user message content
+        system  — optional system prompt (defaults to empty)
 
     Returns:
         (content, data_freshness) where data_freshness is one of:
-            'live'          — external API data was fetched and merged
-            'training_only' — response generated from LLM training data only
+            'training_only' — response generated from LLM training data
     Falls back to ("", "training_only") when the service is unavailable.
     """
-    token = get_access_token()
-    if not token:
-        return "", "training_only"
-
-    chat_id = create_chat(token)
-    if not chat_id:
+    client = _get_client()
+    if client is None:
         return "", "training_only"
 
     try:
-        resp = requests.post(
-            f"{API_URL}/messages",
-            headers={
-                "X-Org":         ORG_ID,
-                "Authorization": f"Bearer {token}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "chatId": chat_id,
-                "stream": False,
-                "content": [{"type": "text", "value": prompt}],
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        content = resp.json()["content"][0]["value"]
+        kwargs = {
+            "model":      _MODEL,
+            "max_tokens": 1024,
+            "messages":   [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+
+        message = client.messages.create(**kwargs)
+        content = message.content[0].text
         return content, "training_only"
     except Exception:
         return "", "training_only"
