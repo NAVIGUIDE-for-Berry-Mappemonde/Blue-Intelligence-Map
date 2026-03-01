@@ -1126,28 +1126,28 @@ def simulation_position(req: SimulationPositionRequest):
 
 
 # ── Simulation Mode — Agent Endpoints ────────────────────────────────────────
-# All 4 agents run as LangGraph StateGraphs and respond via SSE text/event-stream
-# for progressive display in the frontend AgentPanel.
-
-def _sse_stream(payload: dict):
-    """Wrap a response payload as a minimal SSE generator."""
-    async def generator():
-        yield f"data: {json.dumps(payload)}\n\n"
-        yield "data: [DONE]\n\n"
-    return generator()
+# All 4 agents stream token-by-token via Anthropic SSE for progressive display
+# in the frontend AgentPanel. Each endpoint:
+#   1. Runs the agent's data-fetch pipeline synchronously (in threadpool)
+#   2. Builds the LLM prompt from the fetched context
+#   3. Streams Anthropic tokens as SSE  data: {"token": "..."}  events
+#   4. Terminates with  data: [DONE]
 
 
 @app.post("/agents/custom", summary="Agent Custom — Port & Customs Intelligence (SSE)")
 async def agent_custom(req: AgentRequest):
     """
     Invoke the Custom LangGraph agent for port entry intelligence.
-    Streams: AgentResponse as SSE text/event-stream.
+    Streams token-by-token as SSE data: {"token": "..."} events.
     """
-    try:
-        from agents.custom_agent import run_custom_agent
-        response = await asyncio.get_event_loop().run_in_executor(
+    async def generator():
+        from agents.custom_agent import get_streaming_prompt
+        from agents.deploy_ai import stream_llm
+
+        # Build prompt (sync — no I/O, runs in current thread)
+        prompt = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: run_custom_agent(
+            lambda: get_streaming_prompt(
                 from_stop=req.from_stop,
                 to_stop=req.to_stop,
                 lat=req.lat,
@@ -1156,28 +1156,48 @@ async def agent_custom(req: AgentRequest):
                 language=req.language,
             ),
         )
-    except Exception as exc:
-        response = {
-            "agent":          "custom",
-            "content":        f"⚠️ Agent unavailable: {exc}",
-            "data_sources":   [],
-            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "data_freshness": "training_only",
-        }
-    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+        has_content = False
+        try:
+            async for token in stream_llm(prompt):
+                if token:
+                    has_content = True
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception:
+            pass
+
+        if not has_content:
+            fallback = (
+                f"## {req.to_stop} — Port Intelligence\n\n"
+                f"⚠️ **LLM service temporarily unavailable.**\n\n"
+                f"**Recommended resources:**\n"
+                f"- 🌐 [Noonsite](https://www.noonsite.com) — search for {req.to_stop}\n"
+                f"- 📖 Local pilot charts & sailing almanac\n"
+                f"- 📡 VHF Ch 16 → harbour authority on arrival\n\n"
+                f"Distance remaining: **{req.nm_remaining:.0f} nm**."
+            )
+            yield f"data: {json.dumps({'token': fallback})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @app.post("/agents/guard", summary="Agent Guard — Maritime Security (SSE)")
 async def agent_guard(req: AgentRequest):
     """
     Invoke the Guard LangGraph agent for maritime security intelligence.
-    Streams: AgentResponse as SSE text/event-stream.
+    Streams token-by-token as SSE data: {"token": "..."} events.
+    Includes live IMB piracy-data fetch before streaming LLM output.
     """
-    try:
-        from agents.guard_agent import run_guard_agent
-        response = await asyncio.get_event_loop().run_in_executor(
+    async def generator():
+        from agents.guard_agent import get_streaming_prompt
+        from agents.deploy_ai import stream_llm
+
+        # Build prompt — includes live IMB piracy-data fetch (sync, in threadpool)
+        prompt = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: run_guard_agent(
+            lambda: get_streaming_prompt(
                 from_stop=req.from_stop,
                 to_stop=req.to_stop,
                 lat=req.lat,
@@ -1186,28 +1206,47 @@ async def agent_guard(req: AgentRequest):
                 language=req.language,
             ),
         )
-    except Exception as exc:
-        response = {
-            "agent":          "guard",
-            "content":        f"⚠️ Agent unavailable: {exc}",
-            "data_sources":   [],
-            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "data_freshness": "training_only",
-        }
-    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+        has_content = False
+        try:
+            async for token in stream_llm(prompt):
+                if token:
+                    has_content = True
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception:
+            pass
+
+        if not has_content:
+            fallback = (
+                f"## {req.to_stop} — Maritime Security\n\n"
+                f"⚠️ **LLM service temporarily unavailable.**\n\n"
+                f"**Recommended resources:**\n"
+                f"- 🌐 [IMB Piracy Reporting Centre](https://www.icc-ccs.org/piracy-reporting-centre)\n"
+                f"- 📡 VHF Ch 16 on arrival\n\n"
+                f"Distance remaining: **{req.nm_remaining:.0f} nm**."
+            )
+            yield f"data: {json.dumps({'token': fallback})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @app.post("/agents/meteo", summary="Agent Meteo — Weather & Routing Windows (SSE)")
 async def agent_meteo(req: AgentRequest):
     """
     Invoke the Meteo LangGraph agent for weather and routing windows.
-    Streams: AgentResponse as SSE text/event-stream.
+    Streams token-by-token as SSE data: {"token": "..."} events.
+    Includes StormGlass weather fetch before streaming LLM output.
     """
-    try:
-        from agents.meteo_agent import run_meteo_agent
-        response = await asyncio.get_event_loop().run_in_executor(
+    async def generator():
+        from agents.meteo_agent import get_streaming_prompt
+        from agents.deploy_ai import stream_llm
+
+        # Build prompt — includes StormGlass weather fetch (sync, in threadpool)
+        prompt = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: run_meteo_agent(
+            lambda: get_streaming_prompt(
                 from_stop=req.from_stop,
                 to_stop=req.to_stop,
                 lat=req.lat,
@@ -1216,28 +1255,47 @@ async def agent_meteo(req: AgentRequest):
                 language=req.language,
             ),
         )
-    except Exception as exc:
-        response = {
-            "agent":          "meteo",
-            "content":        f"⚠️ Agent unavailable: {exc}",
-            "data_sources":   [],
-            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "data_freshness": "training_only",
-        }
-    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+        has_content = False
+        try:
+            async for token in stream_llm(prompt):
+                if token:
+                    has_content = True
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception:
+            pass
+
+        if not has_content:
+            fallback = (
+                f"## {req.to_stop} — Weather Briefing\n\n"
+                f"⚠️ **LLM service temporarily unavailable.**\n\n"
+                f"**Recommended resources:**\n"
+                f"- 🌐 [Windy](https://www.windy.com) — real-time weather\n"
+                f"- 📡 NavTex / SSB weatherfax\n\n"
+                f"Distance remaining: **{req.nm_remaining:.0f} nm**."
+            )
+            yield f"data: {json.dumps({'token': fallback})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @app.post("/agents/pirate", summary="Agent Pirate — Community Intelligence (SSE)")
 async def agent_pirate(req: AgentRequest):
     """
     Invoke the Pirate LangGraph agent for cruiser community intelligence.
-    Streams: AgentResponse as SSE text/event-stream.
+    Streams token-by-token as SSE data: {"token": "..."} events.
+    Includes Noonsite RSS fetch before streaming LLM output.
     """
-    try:
-        from agents.pirate_agent import run_pirate_agent
-        response = await asyncio.get_event_loop().run_in_executor(
+    async def generator():
+        from agents.pirate_agent import get_streaming_prompt
+        from agents.deploy_ai import stream_llm
+
+        # Build prompt — includes Noonsite RSS fetch (sync, in threadpool)
+        prompt = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: run_pirate_agent(
+            lambda: get_streaming_prompt(
                 from_stop=req.from_stop,
                 to_stop=req.to_stop,
                 lat=req.lat,
@@ -1246,15 +1304,30 @@ async def agent_pirate(req: AgentRequest):
                 language=req.language,
             ),
         )
-    except Exception as exc:
-        response = {
-            "agent":          "pirate",
-            "content":        f"⚠️ Agent unavailable: {exc}",
-            "data_sources":   [],
-            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "data_freshness": "training_only",
-        }
-    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+        has_content = False
+        try:
+            async for token in stream_llm(prompt):
+                if token:
+                    has_content = True
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception:
+            pass
+
+        if not has_content:
+            fallback = (
+                f"## {req.to_stop} — Community Intelligence\n\n"
+                f"⚠️ **LLM service temporarily unavailable.**\n\n"
+                f"**Recommended resources:**\n"
+                f"- 🌐 [Noonsite Forums](https://www.noonsite.com)\n"
+                f"- 🌐 [Cruisers Forum](https://www.cruisersforum.com)\n\n"
+                f"Distance remaining: **{req.nm_remaining:.0f} nm**."
+            )
+            yield f"data: {json.dumps({'token': fallback})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
