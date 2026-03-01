@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from .deploy_ai import call_llm
 
 
-# ── State ──────────────────────────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────────────────────
 
 class CustomAgentState(TypedDict):
     # Inputs
@@ -42,7 +42,7 @@ class CustomAgentState(TypedDict):
     error:        Optional[str]
 
 
-# ── Node 1: prepare_context ────────────────────────────────────────────────
+# ── Node 1: prepare_context ────────────────────────────────────────────────────
 
 def prepare_context_node(state: CustomAgentState) -> CustomAgentState:
     """Build the structured prompt for the Port Intelligence LLM."""
@@ -124,7 +124,7 @@ def build_custom_agent():
     return graph.compile()
 
 
-# ── Convenience runner ─────────────────────────────────────────────────────
+# ── Convenience runner ──────────────────────────────────────────────────────────
 
 def run_custom_agent(
     from_stop:    str,
@@ -159,3 +159,36 @@ def run_custom_agent(
         "generated_at":  datetime.now(timezone.utc).isoformat(),
         "data_freshness": state["data_freshness"],
     }
+
+
+# ── Streaming helper ──────────────────────────────────────────────────────────
+
+def get_streaming_prompt(
+    from_stop:    str,
+    to_stop:      str,
+    lat:          float,
+    lon:          float,
+    nm_remaining: float,
+    language:     str = "fr",
+) -> str:
+    """
+    Build and return the LLM prompt for the Custom agent without calling the LLM.
+    Used by the /agents/custom SSE endpoint to enable true token-by-token streaming:
+    the endpoint fetches this prompt synchronously (in a threadpool), then streams
+    tokens via deploy_ai.stream_llm().
+    """
+    state = prepare_context_node({
+        "from_stop":    from_stop,
+        "to_stop":      to_stop,
+        "lat":          lat,
+        "lon":          lon,
+        "nm_remaining": nm_remaining,
+        "language":     language,
+        "prompt":       "",
+        "messages":     [],
+        "content":      "",
+        "data_sources": [],
+        "data_freshness": "training_only",
+        "error":        None,
+    })
+    return state.get("prompt", "")

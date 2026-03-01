@@ -27,7 +27,7 @@ _IMB_FEED_URL = "https://www.icc-ccs.org/index.php/piracy-reporting-centre/live-
 _IMB_TIMEOUT  = 8.0  # seconds
 
 
-# ── State ──────────────────────────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────────────────────
 
 class GuardAgentState(TypedDict):
     from_stop:     str
@@ -47,7 +47,7 @@ class GuardAgentState(TypedDict):
     error:         Optional[str]
 
 
-# ── Node 1: prepare_context ────────────────────────────────────────────────
+# ── Node 1: prepare_context ────────────────────────────────────────────────────
 
 def prepare_context_node(state: GuardAgentState) -> GuardAgentState:
     msg = HumanMessage(
@@ -56,7 +56,7 @@ def prepare_context_node(state: GuardAgentState) -> GuardAgentState:
     return {**state, "piracy_alerts": [], "messages": [msg], "error": None}
 
 
-# ── Node 2: fetch_piracy_data ──────────────────────────────────────────────
+# ── Node 2: fetch_piracy_data ──────────────────────────────────────────────────
 
 def fetch_piracy_data_node(state: GuardAgentState) -> GuardAgentState:
     """
@@ -95,14 +95,16 @@ def fetch_piracy_data_node(state: GuardAgentState) -> GuardAgentState:
     return {**state, "piracy_alerts": alerts, "data_freshness": freshness, "messages": [msg]}
 
 
-# ── Node 3: llm_generate ──────────────────────────────────────────────────
+# ── Prompt builder (shared by llm_generate_node and get_streaming_prompt) ─────────
 
-def llm_generate_node(state: GuardAgentState) -> GuardAgentState:
+def _build_guard_prompt(state: GuardAgentState) -> str:
+    """
+    Build the LLM prompt from guard agent state.
+    Requires prepare_context_node + fetch_piracy_data_node to have run first.
+    """
     lang_full = "French" if state["language"] == "fr" else "English"
     alerts    = state["piracy_alerts"]
-    freshness = state.get("data_freshness", "training_only")
 
-    alert_block = ""
     if alerts:
         lines = [
             f"  • {a['date']} — {a['type']}: {a['details'][:120]}"
@@ -112,7 +114,7 @@ def llm_generate_node(state: GuardAgentState) -> GuardAgentState:
     else:
         alert_block = "IMB live feed: no recent incidents retrieved near this position.\n\n"
 
-    prompt = (
+    return (
         f"You are NAVIGUIDE's maritime security advisor for the Berry-Mappemonde "
         f"circumnavigation expedition (French offshore catamaran).\n\n"
         f"NAVIGATION CONTEXT:\n"
@@ -132,6 +134,13 @@ def llm_generate_node(state: GuardAgentState) -> GuardAgentState:
         f"Format in **Markdown**, fact-dense, max 350 words. "
         f"Mark any IMB-sourced data with [IMB Live]."
     )
+
+
+# ── Node 3: llm_generate ──────────────────────────────────────────────────
+
+def llm_generate_node(state: GuardAgentState) -> GuardAgentState:
+    freshness = state.get("data_freshness", "training_only")
+    prompt    = _build_guard_prompt(state)
 
     content, llm_freshness = call_llm(prompt)
 
@@ -155,7 +164,7 @@ def llm_generate_node(state: GuardAgentState) -> GuardAgentState:
 
     msg = AIMessage(
         content=f"[guard_agent] ✅ Security brief generated "
-                f"({len(alerts)} live incidents, freshness={final_freshness})"
+                f"({len(state['piracy_alerts'])} live incidents, freshness={final_freshness})"
     )
     return {
         **state,
@@ -181,7 +190,7 @@ def build_guard_agent():
     return graph.compile()
 
 
-# ── Convenience runner ─────────────────────────────────────────────────────
+# ── Convenience runner ──────────────────────────────────────────────────────────
 
 def run_guard_agent(
     from_stop:    str,
@@ -215,3 +224,38 @@ def run_guard_agent(
         "generated_at":   datetime.now(timezone.utc).isoformat(),
         "data_freshness": state["data_freshness"],
     }
+
+
+# ── Streaming helper ──────────────────────────────────────────────────────────
+
+def get_streaming_prompt(
+    from_stop:    str,
+    to_stop:      str,
+    lat:          float,
+    lon:          float,
+    nm_remaining: float,
+    language:     str = "fr",
+) -> str:
+    """
+    Run the data-fetch pipeline and return the built LLM prompt without calling the LLM.
+    Used by the /agents/guard SSE endpoint: fetch runs synchronously in a threadpool,
+    then the prompt is streamed token-by-token via deploy_ai.stream_llm().
+    """
+    initial = {
+        "from_stop":     from_stop,
+        "to_stop":       to_stop,
+        "lat":           lat,
+        "lon":           lon,
+        "nm_remaining":  nm_remaining,
+        "language":      language,
+        "piracy_alerts": [],
+        "prompt":        "",
+        "messages":      [],
+        "content":       "",
+        "data_sources":  [],
+        "data_freshness": "training_only",
+        "error":         None,
+    }
+    state = prepare_context_node(initial)
+    state = fetch_piracy_data_node(state)
+    return _build_guard_prompt(state)

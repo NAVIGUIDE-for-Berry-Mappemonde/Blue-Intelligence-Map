@@ -26,7 +26,7 @@ _NOONSITE_RSS_URL = "https://www.noonsite.com/feed/"
 _NS_TIMEOUT       = 8.0
 
 
-# ── State ──────────────────────────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────────────────────
 
 class PirateAgentState(TypedDict):
     from_stop:    str
@@ -46,7 +46,7 @@ class PirateAgentState(TypedDict):
     error:        Optional[str]
 
 
-# ── Node 1: prepare_context ────────────────────────────────────────────────
+# ── Node 1: prepare_context ────────────────────────────────────────────────────
 
 def prepare_context_node(state: PirateAgentState) -> PirateAgentState:
     msg = HumanMessage(
@@ -55,7 +55,7 @@ def prepare_context_node(state: PirateAgentState) -> PirateAgentState:
     return {**state, "noonsite_items": [], "messages": [msg], "error": None}
 
 
-# ── Node 2: fetch_noonsite_rss ─────────────────────────────────────────────
+# ── Node 2: fetch_noonsite_rss ───────────────────────────────────────────────────
 
 def fetch_noonsite_rss_node(state: PirateAgentState) -> PirateAgentState:
     """
@@ -107,15 +107,17 @@ def fetch_noonsite_rss_node(state: PirateAgentState) -> PirateAgentState:
     return {**state, "noonsite_items": items, "data_freshness": freshness, "messages": [msg]}
 
 
-# ── Node 3: llm_generate ──────────────────────────────────────────────────
+# ── Prompt builder (shared by llm_generate_node and get_streaming_prompt) ─────────
 
-def llm_generate_node(state: PirateAgentState) -> PirateAgentState:
+def _build_pirate_prompt(state: PirateAgentState) -> str:
+    """
+    Build the LLM prompt from pirate agent state.
+    Requires prepare_context_node + fetch_noonsite_rss_node to have run first.
+    """
     lang_full = "French" if state["language"] == "fr" else "English"
     items     = state["noonsite_items"]
-    freshness = state.get("data_freshness", "training_only")
     now_month = datetime.now().strftime("%B")
 
-    noonsite_block = ""
     if items:
         entries = "\n".join(
             f"  • [{i['pub_date'][:16]}] {i['title']}: {i['summary'][:150]}"
@@ -128,7 +130,7 @@ def llm_generate_node(state: PirateAgentState) -> PirateAgentState:
             "Using cruiser community knowledge from training data.\n\n"
         )
 
-    prompt = (
+    return (
         f"You are NAVIGUIDE's cruiser community intelligence advisor for the Berry-Mappemonde "
         f"circumnavigation expedition (French crew, offshore catamaran, open ocean passage).\n\n"
         f"NAVIGATION CONTEXT:\n"
@@ -152,6 +154,14 @@ def llm_generate_node(state: PirateAgentState) -> PirateAgentState:
         f"and sailing blogs. Format in **Markdown**, conversational tone, max 350 words. "
         f"Mark Noonsite-sourced items with [Noonsite]."
     )
+
+
+# ── Node 3: llm_generate ──────────────────────────────────────────────────
+
+def llm_generate_node(state: PirateAgentState) -> PirateAgentState:
+    items     = state["noonsite_items"]
+    freshness = state.get("data_freshness", "training_only")
+    prompt    = _build_pirate_prompt(state)
 
     content, llm_freshness = call_llm(prompt)
 
@@ -190,17 +200,17 @@ def llm_generate_node(state: PirateAgentState) -> PirateAgentState:
 def build_pirate_agent():
     """Compile and return the Pirate (Community Intelligence) LangGraph."""
     graph = StateGraph(PirateAgentState)
-    graph.add_node("prepare_context",   prepare_context_node)
-    graph.add_node("fetch_noonsite_rss", fetch_noonsite_rss_node)
-    graph.add_node("llm_generate",      llm_generate_node)
+    graph.add_node("prepare_context",    prepare_context_node)
+    graph.add_node("fetch_noonsite_rss",  fetch_noonsite_rss_node)
+    graph.add_node("llm_generate",        llm_generate_node)
     graph.set_entry_point("prepare_context")
-    graph.add_edge("prepare_context",    "fetch_noonsite_rss")
-    graph.add_edge("fetch_noonsite_rss", "llm_generate")
-    graph.add_edge("llm_generate",       END)
+    graph.add_edge("prepare_context",     "fetch_noonsite_rss")
+    graph.add_edge("fetch_noonsite_rss",  "llm_generate")
+    graph.add_edge("llm_generate",        END)
     return graph.compile()
 
 
-# ── Convenience runner ─────────────────────────────────────────────────────
+# ── Convenience runner ──────────────────────────────────────────────────────────
 
 def run_pirate_agent(
     from_stop:    str,
@@ -234,3 +244,38 @@ def run_pirate_agent(
         "generated_at":   datetime.now(timezone.utc).isoformat(),
         "data_freshness": state["data_freshness"],
     }
+
+
+# ── Streaming helper ──────────────────────────────────────────────────────────
+
+def get_streaming_prompt(
+    from_stop:    str,
+    to_stop:      str,
+    lat:          float,
+    lon:          float,
+    nm_remaining: float,
+    language:     str = "fr",
+) -> str:
+    """
+    Run the data-fetch pipeline and return the built LLM prompt without calling the LLM.
+    Used by the /agents/pirate SSE endpoint: Noonsite RSS fetch runs synchronously in a
+    threadpool, then the prompt is streamed token-by-token via deploy_ai.stream_llm().
+    """
+    initial = {
+        "from_stop":      from_stop,
+        "to_stop":        to_stop,
+        "lat":            lat,
+        "lon":            lon,
+        "nm_remaining":   nm_remaining,
+        "language":       language,
+        "noonsite_items": [],
+        "prompt":         "",
+        "messages":       [],
+        "content":        "",
+        "data_sources":   [],
+        "data_freshness": "training_only",
+        "error":          None,
+    }
+    state = prepare_context_node(initial)
+    state = fetch_noonsite_rss_node(state)
+    return _build_pirate_prompt(state)

@@ -27,7 +27,7 @@ _STORMGLASS_KEY  = os.getenv("STORMGLASS_API_KEY", "")
 _SG_TIMEOUT      = 10.0
 
 
-# ── State ──────────────────────────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────────────────────
 
 class MeteoAgentState(TypedDict):
     from_stop:    str
@@ -47,7 +47,7 @@ class MeteoAgentState(TypedDict):
     error:        Optional[str]
 
 
-# ── Node 1: prepare_context ────────────────────────────────────────────────
+# ── Node 1: prepare_context ────────────────────────────────────────────────────
 
 def prepare_context_node(state: MeteoAgentState) -> MeteoAgentState:
     msg = HumanMessage(
@@ -56,7 +56,7 @@ def prepare_context_node(state: MeteoAgentState) -> MeteoAgentState:
     return {**state, "weather_obs": None, "messages": [msg], "error": None}
 
 
-# ── Node 2: fetch_stormglass ───────────────────────────────────────────────
+# ── Node 2: fetch_stormglass ───────────────────────────────────────────────────
 
 def fetch_stormglass_node(state: MeteoAgentState) -> MeteoAgentState:
     """
@@ -118,15 +118,17 @@ def fetch_stormglass_node(state: MeteoAgentState) -> MeteoAgentState:
     return {**state, "weather_obs": None, "data_freshness": "training_only", "messages": []}
 
 
-# ── Node 3: llm_generate ──────────────────────────────────────────────────
+# ── Prompt builder (shared by llm_generate_node and get_streaming_prompt) ─────────
 
-def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
+def _build_meteo_prompt(state: MeteoAgentState) -> str:
+    """
+    Build the LLM prompt from meteo agent state.
+    Requires prepare_context_node + fetch_stormglass_node to have run first.
+    """
     lang_full = "French" if state["language"] == "fr" else "English"
     obs       = state.get("weather_obs")
-    freshness = state.get("data_freshness", "training_only")
     now_month = datetime.now().strftime("%B")
 
-    obs_block = ""
     if obs:
         ws_kts = round(obs["wind_speed_ms"] * 1.944, 1) if obs.get("wind_speed_ms") else "N/A"
         obs_block = (
@@ -139,7 +141,7 @@ def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
     else:
         obs_block = f"Live weather data: not available — using climatological knowledge for {now_month}.\n\n"
 
-    prompt = (
+    return (
         f"You are NAVIGUIDE's meteorological routing advisor for the Berry-Mappemonde "
         f"circumnavigation expedition (French offshore catamaran, beam reach performance).\n\n"
         f"NAVIGATION CONTEXT:\n"
@@ -163,6 +165,14 @@ def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
         f"Mark live data with [Live] and forecast data with [Fcst]."
     )
 
+
+# ── Node 3: llm_generate ──────────────────────────────────────────────────
+
+def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
+    obs       = state.get("weather_obs")
+    freshness = state.get("data_freshness", "training_only")
+    prompt    = _build_meteo_prompt(state)
+
     content, llm_freshness = call_llm(prompt)
 
     if not content:
@@ -172,7 +182,7 @@ def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
             f"**Ressources de secours :**\n"
             f"- 🌐 [Passage Weather](https://passageweather.com)\n"
             f"- 🌐 [Windy.com](https://www.windy.com/?{state['lat']},{state['lon']},7)\n"
-            f"- 📻 Bulletins GRIB via Saildocs (gribs@saildocs.com)\n"
+            f"- 💻 Bulletins GRIB via Saildocs (gribs@saildocs.com)\n"
             f"- 📡 NAVTEX pour zones côtières\n\n"
             f"Distance restante : **{state['nm_remaining']:.0f} nm**."
         )
@@ -210,7 +220,7 @@ def build_meteo_agent():
     return graph.compile()
 
 
-# ── Convenience runner ─────────────────────────────────────────────────────
+# ── Convenience runner ──────────────────────────────────────────────────────────
 
 def run_meteo_agent(
     from_stop:    str,
@@ -244,3 +254,38 @@ def run_meteo_agent(
         "generated_at":   datetime.now(timezone.utc).isoformat(),
         "data_freshness": state["data_freshness"],
     }
+
+
+# ── Streaming helper ──────────────────────────────────────────────────────────
+
+def get_streaming_prompt(
+    from_stop:    str,
+    to_stop:      str,
+    lat:          float,
+    lon:          float,
+    nm_remaining: float,
+    language:     str = "fr",
+) -> str:
+    """
+    Run the data-fetch pipeline and return the built LLM prompt without calling the LLM.
+    Used by the /agents/meteo SSE endpoint: StormGlass fetch runs synchronously in a
+    threadpool, then the prompt is streamed token-by-token via deploy_ai.stream_llm().
+    """
+    initial = {
+        "from_stop":    from_stop,
+        "to_stop":      to_stop,
+        "lat":          lat,
+        "lon":          lon,
+        "nm_remaining": nm_remaining,
+        "language":     language,
+        "weather_obs":  None,
+        "prompt":       "",
+        "messages":     [],
+        "content":      "",
+        "data_sources": [],
+        "data_freshness": "training_only",
+        "error":        None,
+    }
+    state = prepare_context_node(initial)
+    state = fetch_stormglass_node(state)
+    return _build_meteo_prompt(state)
