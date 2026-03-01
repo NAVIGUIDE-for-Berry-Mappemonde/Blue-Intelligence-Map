@@ -48,47 +48,37 @@ export default function App() {
   const { lang, t } = useLang();
   const mapRef = useRef(null);
   const [segments, setSegments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [points, setPoints] = useState([]);
+  const [loading, setLoading] = useState(true);
+  // Progress: { done: number, total: number }
+  const [segProgress, setSegProgress] = useState({ done: 0, total: 0 });
+  const boundsApplied = useRef(false);
 
-  // ── Export sidebar ────────────────────────────────────────────────────────────
-  const [showExport, setShowExport] = useState(false);
+  // 🌊 Nouveau state pour les vagues
+  const [selectedWave, setSelectedWave] = useState(null);
+  const [waveLoading, setWaveLoading] = useState(false);
 
-  // ── Map viewport ──────────────────────────────────────────────────────────────
-  const [viewport, setViewport] = useState({
-    longitude: 0,
-    latitude: 20,
-    zoom: 2,
-  });
+  // 🌊 State pour les courants
+  const [selectedCurrent, setSelectedCurrent] = useState(null);
+  const [currentLoading, setCurrentLoading] = useState(false);
 
-  // ── Maritime layers toggle ────────────────────────────────────────────────────
+  // Sidebar + orchestrator plan
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [expeditionPlan, setExpeditionPlan] = useState(null);
+
+  // Export sidebar (right) — closed by default
+  const [exportSidebarOpen, setExportSidebarOpen] = useState(false);
+
+  // Polar data shared between ExportSidebar (upload/VMG) and Sidebar (chat)
+  const [polarData, setPolarData] = useState(null);
+
+  // ── App-wide modes ──────────────────────────────────────────────────────────
+  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
+  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
+  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
+
+  // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
   const maritimeLayers = useMaritimeLayers();
-
-  // ── Marker offsets (dynamic, collision-aware) ─────────────────────────────────
-  const markerOffsets = useMarkerOffsets(ITINERARY_POINTS, viewport.zoom);
-
-  // ── Popup state ───────────────────────────────────────────────────────────────
-  const [selectedPoint, setSelectedPoint] = useState(null);
-  const [hoveredPoint,  setHoveredPoint]  = useState(null);
-
-  // ── Expedition plan (orchestrator) ────────────────────────────────────────────
-  const [expeditionPlan,        setExpeditionPlan]        = useState(null);
-  const [expeditionPlanLoading, setExpeditionPlanLoading] = useState(false);
-  const [expeditionPlanError,   setExpeditionPlanError]   = useState(null);
-
-  // ── Undo / Redo history ───────────────────────────────────────────────────────
-  const [history,      setHistory]      = useState([[]]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-
-  // ── Waypoint drawing mode ─────────────────────────────────────────────────────
-  const [drawingMode,    setDrawingMode]    = useState(false);
-  const [drawnWaypoints, setDrawnWaypoints] = useState([]);
-
-  // ── Active drawn-waypoint popup ───────────────────────────────────────────────
-  const [activeDrawnWpt, setActiveDrawnWpt] = useState(null); // index | null
-
-  // ── Wind widget ───────────────────────────────────────────────────────────────
-  const [windData, setWindData] = useState(null);
 
   // ── Simulation mode — catamaran draggable ────────────────────────────────────
   const [simulationMode, setSimulationMode] = useState(false);
@@ -111,42 +101,239 @@ export default function App() {
 
   // Leg context : snap géométrique + métriques
   const legContext = useLegContext(
-    simulationMode ? activeCatamaranPos : null,
-    segments
+    simulationMode ? activeCatamaranPos.lat : null,
+    simulationMode ? activeCatamaranPos.lon : null,
+    segments,
+    ITINERARY_POINTS,
   );
 
-  // ── Route fetch ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
+  // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
+  const markerOffsets = useMarkerOffsets(points, mapRef);
 
-    const points = ITINERARY_POINTS.map((p) => [p.lon, p.lat]);
+  // Custom imported route (null = show Berry-Mappemonde default route)
+  const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
 
-    fetch(`${API_URL}/route`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints: points }),
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        setSegments(data.segments || []);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const handleRouteImport = (geojson) => setCustomRoute(geojson);
+  const handleRouteSwitchToBerry = () => setCustomRoute(null);
 
-  // ── Expedition plan fetch (orchestrator) ─────────────────────────────────────
+  // ── Drawing mode ────────────────────────────────────────────────────────────
+  const [drawingMode, setDrawingMode] = useState(false);
+  const [drawnPoints, setDrawnPoints] = useState([]);     // [{lat, lon}, ...]
+  const [drawnSegments, setDrawnSegments] = useState([]); // [{coords: [[lon,lat],...]}]
+  const [drawingLoading, setDrawingLoading] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);           // drives Redo button enable state
+  // Refs to avoid stale closures on rapid clicks
+  const drawnPointsRef    = useRef([]);
+  const drawnSegmentsRef  = useRef([]);
+  // Undo/redo stacks
+  const undonePointsRef   = useRef([]);
+  const undoneSegmentsRef = useRef([]);
+  // Fetch-id prevents stale async segments from landing after an undo
+  const fetchIdRef        = useRef(0);
+
+  const _resetDrawState = () => {
+    setDrawnPoints([]);
+    setDrawnSegments([]);
+    setCanRedo(false);
+    drawnPointsRef.current    = [];
+    drawnSegmentsRef.current  = [];
+    undonePointsRef.current   = [];
+    undoneSegmentsRef.current = [];
+    fetchIdRef.current        = 0;
+  };
+
+  const handleDrawStart = () => {
+    setDrawingMode(true);
+    _resetDrawState();
+  };
+
+  // Called from BerryCard "Finish" — returns FeatureCollection to BerryCard
+  const handleDrawFinish = () => {
+    // Route segments as LineStrings
+    const lineFeatures = drawnSegmentsRef.current
+      .filter((s) => s.coords?.length > 0)
+      .map((s) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: s.coords },
+      }));
+    // Drawn waypoints with metadata as Point features (only if name or flags set)
+    const pointFeatures = drawnPointsRef.current
+      .filter((p) => p.name || (p.flags && p.flags.length > 0))
+      .map((p) => ({
+        type: "Feature",
+        properties: { name: p.name || "", flags: p.flags || [], naviguide_type: "drawn_waypoint" },
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+      }));
+    const geojson = { type: "FeatureCollection", features: [...lineFeatures, ...pointFeatures] };
+    setDrawingMode(false);
+    _resetDrawState();
+    return geojson;
+  };
+
+  const fetchDrawnSegment = async (from, to) => {
+    const myFetchId = ++fetchIdRef.current;
+    setDrawingLoading(true);
+    try {
+      const params = new URLSearchParams({
+        start_lat: from.lat, start_lon: from.lon,
+        end_lat:   to.lat,   end_lon:   to.lon,
+      });
+      const res  = await fetch(`${API_URL}/route?${params}`);
+      const data = await res.json();
+      let coords = [];
+      if (data.type === "FeatureCollection" && data.features?.length > 0) {
+        coords = data.features[0].geometry?.coordinates || [];
+      } else if (data.geometry?.coordinates) {
+        coords = data.geometry.coordinates;
+      }
+      // Only apply result if this fetch wasn't superseded by an undo
+      if (coords.length > 0 && fetchIdRef.current === myFetchId) {
+        const updated = [...drawnSegmentsRef.current, { coords }];
+        drawnSegmentsRef.current = updated;
+        setDrawnSegments([...updated]);
+      }
+    } catch (err) {
+      console.warn("Draw segment fetch error:", err);
+    } finally {
+      if (fetchIdRef.current === myFetchId) setDrawingLoading(false);
+    }
+  };
+
+  const handleDrawingClick = (e) => {
+    const { lng: lon, lat } = e.lngLat;
+    const newPoint = { lat, lon };
+    const updated = [...drawnPointsRef.current, newPoint];
+    const newIdx  = updated.length - 1;
+    drawnPointsRef.current    = updated;
+    // New action clears the redo stack
+    undonePointsRef.current   = [];
+    undoneSegmentsRef.current = [];
+    setCanRedo(false);
+    setDrawnPoints([...updated]);
+    if (updated.length >= 2) {
+      fetchDrawnSegment(updated[updated.length - 2], newPoint);
+    }
+    // Auto-open satellite popup on the Point Info tab for this waypoint
+    openSatelliteForDrawnPoint(lon, lat, newIdx);
+  };
+
+  const handleDrawUndo = () => {
+    if (drawnPointsRef.current.length === 0) return;
+    fetchIdRef.current++; // cancel any in-flight fetch for the removed point
+    // Pop last point → undo stack
+    const poppedPoint = drawnPointsRef.current[drawnPointsRef.current.length - 1];
+    drawnPointsRef.current = drawnPointsRef.current.slice(0, -1);
+    undonePointsRef.current = [...undonePointsRef.current, poppedPoint];
+    // Pop last segment (if any) → undo stack
+    if (drawnSegmentsRef.current.length > 0) {
+      const poppedSeg = drawnSegmentsRef.current[drawnSegmentsRef.current.length - 1];
+      drawnSegmentsRef.current = drawnSegmentsRef.current.slice(0, -1);
+      undoneSegmentsRef.current = [...undoneSegmentsRef.current, poppedSeg];
+    }
+    setDrawnPoints([...drawnPointsRef.current]);
+    setDrawnSegments([...drawnSegmentsRef.current]);
+    setDrawingLoading(false);
+    setCanRedo(true);
+  };
+
+  const handleDrawRedo = () => {
+    if (undonePointsRef.current.length === 0) return;
+    // Restore last undone point
+    const restoredPoint = undonePointsRef.current[undonePointsRef.current.length - 1];
+    undonePointsRef.current = undonePointsRef.current.slice(0, -1);
+    drawnPointsRef.current = [...drawnPointsRef.current, restoredPoint];
+    // Restore last undone segment (if any)
+    if (undoneSegmentsRef.current.length > 0) {
+      const restoredSeg = undoneSegmentsRef.current[undoneSegmentsRef.current.length - 1];
+      undoneSegmentsRef.current = undoneSegmentsRef.current.slice(0, -1);
+      drawnSegmentsRef.current = [...drawnSegmentsRef.current, restoredSeg];
+    }
+    setDrawnPoints([...drawnPointsRef.current]);
+    setDrawnSegments([...drawnSegmentsRef.current]);
+    setCanRedo(undonePointsRef.current.length > 0);
+  };
+
+  const drawingMessage =
+    drawnPoints.length === 0 ? t("drawStart") :
+    drawnPoints.length === 1 ? t("drawFirstStop") :
+    t("drawNextStop");
+
+  // Hover state for itinerary stop markers
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
+  // Clipboard toast
+  const [clipboardToast, setClipboardToast] = useState(null);
+
+  // Route-click satellite data popup
+  const [selectedSatellite, setSelectedSatellite] = useState(null);
+  const [satelliteLoading, setSatelliteLoading] = useState(false);
+  const [satelliteTab, setSatelliteTab] = useState("wind");
+  const [routeCursor, setRouteCursor] = useState("crosshair");
+
+  // ── Point Info state (for drawn waypoints) ─────────────────────────────────
+  const [pointInfoName, setPointInfoName]   = useState("");
+  const [pointInfoFlags, setPointInfoFlags] = useState([null, null]);
+
+  /** Open satellite popup + Point Info tab for a newly placed drawn waypoint */
+  const openSatelliteForDrawnPoint = async (lon, lat, drawPointIndex) => {
+    const existing = drawnPointsRef.current[drawPointIndex];
+    setPointInfoName(existing?.name  || "");
+    setPointInfoFlags([existing?.flags?.[0] ?? null, existing?.flags?.[1] ?? null]);
+    setSatelliteLoading(true);
+    setSatelliteTab("point");
+    setSelectedSatellite({ lon, lat, wind: null, wave: null, current: null, drawPointIndex });
+
+    const fetchJson = (endpoint) =>
+      fetch(`${API_URL}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: lat, longitude: lon }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
+    const [windResult, waveResult, currentResult] = await Promise.allSettled([
+      fetchJson("wind"),
+      fetchJson("wave"),
+      fetchJson("current"),
+    ]);
+
+    setSelectedSatellite({
+      lon, lat,
+      wind:    windResult.status    === "fulfilled" ? windResult.value    : null,
+      wave:    waveResult.status    === "fulfilled" ? waveResult.value    : null,
+      current: currentResult.status === "fulfilled" ? currentResult.value : null,
+      drawPointIndex,
+    });
+    setSatelliteLoading(false);
+  };
+
+  /** Save Point Info metadata (name + flags) to the drawn waypoint */
+  const handleSaveDrawPointMeta = () => {
+    if (selectedSatellite?.drawPointIndex != null) {
+      const idx = selectedSatellite.drawPointIndex;
+      const updated = [...drawnPointsRef.current];
+      updated[idx] = {
+        ...updated[idx],
+        name:  pointInfoName.trim() || undefined,
+        flags: pointInfoFlags.filter(Boolean),
+      };
+      drawnPointsRef.current = updated;
+      setDrawnPoints([...updated]);
+    }
+    setSelectedSatellite(null);
+  };
+
+  // Fetch orchestrator plan — serve from localStorage cache instantly, refresh in background.
+  // Re-fetches when language changes to get briefing in the selected language.
   useEffect(() => {
     const cached = getCachedPlan(lang);
-    if (cached) { setExpeditionPlan(cached); return; }
-
-    setExpeditionPlanLoading(true);
-    setExpeditionPlanError(null);
-
-    fetch(`${ORCHESTRATOR_URL}/plan`, {
+    if (cached) {
+      setExpeditionPlan(cached);                             // instant render from cache
+    } else {
+      setExpeditionPlan(null);                              // clear stale plan from previous language
+    }
+    if (!ORCHESTRATOR_URL) return;
+    fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -159,140 +346,274 @@ export default function App() {
         })),
       }),
     })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Orchestrator HTTP ${r.status}`);
-        return r.json();
-      })
+      .then((r) => r.json())
       .then((data) => {
-        setExpeditionPlan(data);
-        setCachedPlan(lang, data);
+        if (data?.expedition_plan) {
+          setExpeditionPlan(data.expedition_plan);
+          setCachedPlan(lang, data.expedition_plan);         // persist per language
+        }
       })
-      .catch((e) => setExpeditionPlanError(e.message))
-      .finally(() => setExpeditionPlanLoading(false));
+      .catch((err) => console.warn("Orchestrator unavailable:", err));
   }, [lang]);
 
-  // ── Wind data fetch ───────────────────────────────────────────────────────────
+  // Points d'intérêt
   useEffect(() => {
-    fetch(`${API_URL}/wind?lat=46.15&lon=-1.17`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => data && setWindData(data))
-      .catch(() => {});
+    setPoints(ITINERARY_POINTS);
   }, []);
 
-  // ── GeoJSON layers ────────────────────────────────────────────────────────────
-  const routeGeoJSON = {
-    type: "FeatureCollection",
-    features: segments.map((seg) => ({
-      type: "Feature",
-      geometry: { type: "LineString", coordinates: seg.coords || [] },
-      properties: { mode: seg.mode },
-    })),
+  // Fetch des segments
+  useEffect(() => {
+    if (points.length === 0) return;
+
+    // Helper: find a point by name (robust to index changes)
+    const byName = (name) => points.find((p) => p.name === name);
+
+    // Non-maritime segments identified by point names (road/air legs)
+    const nonMaritimeNames = new Set([
+      "Saint-Maur (Berry, Indre)|La Rochelle",
+      "La Rochelle|Saint-Maur (Berry, Indre)",
+    ]);
+
+    // Points whose sequential leg (i → i+1) is replaced by a custom leg below
+    const skipFromNames = new Set([
+      "Marigot (Saint-Martin)",
+      "Saint-Pierre (Saint-Pierre-et-Miquelon)",
+    ]);
+
+    const legs = [];
+
+    for (let i = 0; i < points.length - 1; i++) {
+      if (skipFromNames.has(points[i].name)) continue;
+      const a = points[i];
+      const b = points[i + 1];
+      legs.push({ from: a, to: b });
+    }
+
+    // Insert Marigot → Cayenne right after the leg that arrives at Marigot,
+    // so it is fetched and rendered in itinerary order (before Cayenne → Papeete…).
+    const marigotIdx = legs.findIndex((l) => l.to.name === "Marigot (Saint-Martin)");
+    legs.splice(marigotIdx + 1, 0, {
+      from: byName("Marigot (Saint-Martin)"),
+      to: byName("Cayenne (Guyane)"),
+    });
+
+    // Insert Halifax → Saint-Pierre right after the leg that arrives at Halifax.
+    const halifaxIdx = legs.findIndex((l) => l.to.name === "Halifax (Nouvelle-Écosse)");
+    legs.splice(halifaxIdx + 1, 0, {
+      from: byName("Halifax (Nouvelle-Écosse)"),
+      to: byName("Saint-Pierre (Saint-Pierre-et-Miquelon)"),
+    });
+
+    const fetchLeg = async (leg) => {
+      const legKey = `${leg.from.name}|${leg.to.name}`;
+      const isNonMaritime = nonMaritimeNames.has(legKey);
+
+      if (isNonMaritime) {
+        return {
+          ...leg,
+          coords: [
+            [leg.from.lon, leg.from.lat],
+            [leg.to.lon, leg.to.lat],
+          ],
+          nonMaritime: true,
+        };
+      }
+
+      try {
+        const params = new URLSearchParams({
+          start_lat: leg.from.lat,
+          start_lon: leg.from.lon,
+          end_lat: leg.to.lat,
+          end_lon: leg.to.lon,
+          check_wind: true,
+        });
+        const res = await fetch(`${API_URL}/route?${params}`);
+        const data = await res.json();
+
+        if (data.type === "FeatureCollection" && data.features.length > 0) {
+          const routeFeature = data.features[0];
+          const alertPoints = data.features.slice(1);
+
+          const windPoints = alertPoints.filter((p) => p.properties.highWind);
+          const wavePoints = alertPoints.filter((p) => p.properties.highWave);
+          const currentPoints = alertPoints.filter(
+            (p) => p.properties.currents
+          ); // 👈 ICI
+
+          if (routeFeature.geometry && routeFeature.geometry.coordinates) {
+            return {
+              ...leg,
+              coords: routeFeature.geometry.coordinates,
+              windPoints,
+              wavePoints,
+              currentPoints, // 👈 Et on les ajoute ici
+              nonMaritime: false,
+            };
+          }
+        } else if (data.geometry && data.geometry.coordinates) {
+          return {
+            ...leg,
+            coords: data.geometry.coordinates,
+            windPoints: [],
+            wavePoints: [],
+            nonMaritime: false,
+          };
+        }
+      } catch (e) {
+        return {
+          ...leg,
+          coords: [],
+          windPoints: [],
+          wavePoints: [],
+          error: e.message,
+        };
+      }
+    };
+
+    (async () => {
+      boundsApplied.current = false;
+      setLoading(true);
+      setSegProgress({ done: 0, total: legs.length });
+
+      const accumulated = [];
+
+      for (let i = 0; i < legs.length; i += SEGMENT_BATCH_SIZE) {
+        const batch = legs.slice(i, i + SEGMENT_BATCH_SIZE);
+        const batchResults = await Promise.all(batch.map(fetchLeg));
+        accumulated.push(...batchResults);
+
+        const valid = accumulated.filter((r) => r && r.coords && r.coords.length > 0);
+        setSegments([...valid]);
+        setSegProgress({ done: Math.min(i + SEGMENT_BATCH_SIZE, legs.length), total: legs.length });
+
+        // Reveal the map after the first batch so the screen unlocks immediately
+        if (i === 0) setLoading(false);
+      }
+
+      setLoading(false);
+    })();
+  }, [points]);
+
+  // Fit bounds — once, when all segments have arrived
+  useEffect(() => {
+    if (!mapRef.current || segments.length === 0) return;
+    // Only fit once per full load (not on every progressive batch update)
+    if (boundsApplied.current) return;
+    if (segProgress.done < segProgress.total && segProgress.total > 0) return;
+    boundsApplied.current = true;
+
+    const map = mapRef.current.getMap();
+    const allCoords = segments.flatMap((s) => s.coords);
+    const lons = allCoords.map((c) => c[0]);
+    const lats = allCoords.map((c) => c[1]);
+
+    map.fitBounds(
+      [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+      { padding: 80, duration: 1200 }
+    );
+  }, [segments, segProgress]);
+
+  // ── Route-click: fetch satellite data for any clicked point on the route ────
+  const handleRouteClick = async (e) => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    // Only trigger if click lands on the maritime route line
+    const features = map.queryRenderedFeatures(e.point, {
+      layers: ["maritime-layer"],
+    });
+    if (features.length === 0) return;
+
+    const lon = e.lngLat.lng;
+    const lat = e.lngLat.lat;
+
+    setSatelliteLoading(true);
+    setSatelliteTab("wind");
+    setSelectedSatellite({ lon, lat, wind: null, wave: null, current: null });
+
+    const fetchJson = (endpoint) =>
+      fetch(`${API_URL}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: lat, longitude: lon }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
+    const [windResult, waveResult, currentResult] = await Promise.allSettled([
+      fetchJson("wind"),
+      fetchJson("wave"),
+      fetchJson("current"),
+    ]);
+
+    setSelectedSatellite({
+      lon,
+      lat,
+      wind:    windResult.status    === "fulfilled" ? windResult.value    : null,
+      wave:    waveResult.status    === "fulfilled" ? waveResult.value    : null,
+      current: currentResult.status === "fulfilled" ? currentResult.value : null,
+    });
+    setSatelliteLoading(false);
   };
 
-  // Drawn waypoints with metadata as Point features (only if name or flags set)
-  const drawnWaypointsGeoJSON = {
+  // Construction GeoJSON — use customRoute (FeatureCollection) when a file has been imported
+  // Live drawn route (green) shown during drawing mode
+  const drawnLines = {
     type: "FeatureCollection",
-    features: drawnWaypoints
-      .filter(wp => wp.name || wp.flag)
-      .map((wp, i) => ({
+    features: drawnSegments
+      .filter((s) => s.coords?.length > 0)
+      .map((s) => ({
         type: "Feature",
-        geometry: { type: "Point", coordinates: [wp.lon, wp.lat] },
-        properties: { index: i, name: wp.name || "", flag: !!wp.flag },
+        geometry: { type: "LineString", coordinates: s.coords },
       })),
   };
 
-  // ── Layer paint styles ────────────────────────────────────────────────────────
-  const seaLayerPaint = {
-    "line-color": ["match", ["get", "mode"], "sea", "#3b82f6", "#f59e0b"],
-    "line-width": 2,
-    "line-opacity": 0.85,
-  };
+  const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
-  const seaLayerLayout = { "line-join": "round", "line-cap": "round" };
+  // Hide all existing routes while the user is actively drawing (segments stay in memory)
+  const maritimeLines = drawingMode
+    ? EMPTY_FC
+    : customRoute
+      ? customRoute
+      : {
+          type: "FeatureCollection",
+          features: segments
+            .filter((s) => !s.nonMaritime)
+            .map((s) => ({
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: s.coords },
+            })),
+        };
 
-  // ── Map click handler ─────────────────────────────────────────────────────────
-  const handleMapClick = (e) => {
-    if (!drawingMode) return;
-    const { lng, lat } = e.lngLat;
-    const newWp = { lat, lon: lng, name: "", flag: false };
-    const newWaypoints = [...drawnWaypoints, newWp];
-    setDrawnWaypoints(newWaypoints);
-    // Push to history
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newWaypoints);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-    setActiveDrawnWpt(newWaypoints.length - 1);
-  };
+  const nonMaritimeLines = drawingMode
+    ? EMPTY_FC
+    : customRoute
+      ? EMPTY_FC
+      : {
+          type: "FeatureCollection",
+          features: segments
+            .filter((s) => s.nonMaritime)
+            .map((s) => ({
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: s.coords },
+            })),
+        };
 
-  // ── Undo / Redo handlers ──────────────────────────────────────────────────────
-  const handleUndo = () => {
-    if (historyIndex === 0) return;
-    const newIndex = historyIndex - 1;
-    setHistoryIndex(newIndex);
-    setDrawnWaypoints(history[newIndex]);
-    setActiveDrawnWpt(null);
-  };
-
-  const handleRedo = () => {
-    if (historyIndex >= history.length - 1) return;
-    const newIndex = historyIndex + 1;
-    setHistoryIndex(newIndex);
-    setDrawnWaypoints(history[newIndex]);
-    setActiveDrawnWpt(null);
-  };
-
-  // ── Point Info state (for drawn waypoints) ─────────────────────────────────────
-  const [pointInfoPos, setPointInfoPos] = useState(null); // { lat, lon }
-  const [pointInfoData, setPointInfoData] = useState(null); // { depth, ... }
-  const [pointInfoLoading, setPointInfoLoading] = useState(false);
-
-  const fetchPointInfo = async (lat, lon) => {
-    setPointInfoPos({ lat, lon });
-    setPointInfoData(null);
-    setPointInfoLoading(true);
-    try {
-      const r = await fetch(`${API_URL}/point-info?lat=${lat}&lon=${lon}`);
-      if (r.ok) {
-        const data = await r.json();
-        setPointInfoData(data);
-      }
-    } catch {}
-    setPointInfoLoading(false);
-  };
-
-  // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", width: "100vw", height: "100vh" }}>
-
-      {/* ── Sidebar ── */}
+    <div
+      style={{ height: "100vh", width: "100vw", position: "relative" }}
+      className={[isLightMode ? "light-mode" : "", isOffshore ? "offshore-mode" : ""].filter(Boolean).join(" ")}
+    >
       <Sidebar
-        segments={segments}
-        loading={loading}
-        error={error}
-        drawingMode={drawingMode}
-        onToggleDrawing={() => setDrawingMode((v) => !v)}
-        drawnWaypoints={drawnWaypoints}
-        onWaypointUpdate={(i, updates) => {
-          const updated = drawnWaypoints.map((wp, idx) =>
-            idx === i ? { ...wp, ...updates } : wp
-          );
-          setDrawnWaypoints(updated);
-        }}
-        onWaypointDelete={(i) => {
-          const updated = drawnWaypoints.filter((_, idx) => idx !== i);
-          setDrawnWaypoints(updated);
-          const newHistory = history.slice(0, historyIndex + 1);
-          newHistory.push(updated);
-          setHistory(newHistory);
-          setHistoryIndex(newHistory.length - 1);
-          setActiveDrawnWpt(null);
-        }}
-        activeDrawnWpt={activeDrawnWpt}
-        onSelectDrawnWpt={setActiveDrawnWpt}
-        expeditionPlan={expeditionPlan}
-        expeditionPlanLoading={expeditionPlanLoading}
-        expeditionPlanError={expeditionPlanError}
+        plan={expeditionPlan}
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((o) => !o)}
+        onRouteImport={handleRouteImport}
+        onRouteSwitchToBerry={handleRouteSwitchToBerry}
+        isDrawing={drawingMode}
+        onDrawStart={handleDrawStart}
+        onDrawFinish={handleDrawFinish}
+        isCockpit={isCockpit}
+        isOffshore={isOffshore}
+        polarData={polarData}
+        maritimeLayers={maritimeLayers}
         simulationMode={simulationMode}
         onSimulationToggle={() => {
           const entering = !simulationMode;
@@ -308,410 +629,909 @@ export default function App() {
         onAdvance={advanceCatamaranToNextMidpoint}
         canAdvance={simulationMode && simPointIndex < ITINERARY_POINTS.length - 1}
         legContext={legContext}
-        onShowExport={() => setShowExport(true)}
+      />
+      <ExportSidebar
+        segments={segments}
+        points={points}
+        open={exportSidebarOpen}
+        onToggle={() => setExportSidebarOpen((o) => !o)}
+        isOffshore={isOffshore}
+        isCockpit={isCockpit}
+        isLightMode={isLightMode}
+        onOffshoreChange={setIsOffshore}
+        onCockpitChange={setIsCockpit}
+        onLightModeChange={setIsLightMode}
+        polarData={polarData}
+        onPolarDataLoaded={setPolarData}
       />
 
-      {/* ── Export Sidebar ── */}
-      {showExport && (
-        <ExportSidebar
-          segments={segments}
-          drawnWaypoints={drawnWaypoints}
-          onClose={() => setShowExport(false)}
-        />
+      {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
+      {loading && (
+        <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-10 pointer-events-none">
+          <div className="w-10 h-10 border-4 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+          <div className="mt-4 text-white/90 text-sm font-medium tracking-wide">
+            {t("calculatingRoutes")}
+          </div>
+        </div>
       )}
 
-      {/* ── Map ── */}
-      <div style={{ flex: 1, position: "relative" }}>
-
-        {/* Wind widget */}
-        {windData && (
-          <div style={{
-            position: "absolute",
-            top: 12,
-            right: 12,
-            zIndex: 10,
-            background: "rgba(15,23,42,0.82)",
-            backdropFilter: "blur(6px)",
-            borderRadius: 10,
-            padding: "8px 13px",
-            color: "#e2e8f0",
-            fontSize: 13,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            boxShadow: "0 2px 12px rgba(0,0,0,0.3)",
-            border: "1px solid rgba(255,255,255,0.08)",
-          }}>
-            <WindDirectionArrow deg={windData.wind_direction_10m ?? 0} size={22} color="#93c5fd" />
-            <span style={{ fontWeight: 600, color: "#93c5fd" }}>
-              {windData.wind_speed_10m != null ? `${windData.wind_speed_10m} km/h` : "—"}
-            </span>
-            <span style={{ color: "#94a3b8", fontSize: 11 }}>
-              {windData.wind_direction_10m != null
-                ? getCardinalDirection(windData.wind_direction_10m)
-                : ""}
-            </span>
+      {/* ── Progress pill — stays visible while remaining batches load ─────── */}
+      {!loading && segProgress.done < segProgress.total && (
+        <div className="absolute bottom-5 right-5 z-20 flex items-center gap-2 bg-slate-900/90 text-white text-xs font-medium px-3 py-2 rounded-full shadow-lg pointer-events-none">
+          <div className="w-3.5 h-3.5 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />
+          <span>{t("routesProgress", { done: segProgress.done, total: segProgress.total })}</span>
+          {/* slim progress bar */}
+          <div className="w-20 h-1.5 bg-white/20 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-400 rounded-full transition-all duration-500"
+              style={{ width: `${(segProgress.done / segProgress.total) * 100}%` }}
+            />
           </div>
+        </div>
+      )}
+
+      {/* ── Drawing mode prompt + Undo/Redo ────────────────────────────── */}
+      {drawingMode && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+          <div className="flex items-center gap-2 bg-slate-900/95 border border-green-500/50 text-white text-sm font-semibold px-4 py-2.5 rounded-full shadow-2xl">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
+            <span className="mr-1">{drawingMessage}</span>
+            {drawingLoading && (
+              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            {/* Undo / Redo — pointer-events-auto so clicks reach these buttons */}
+            <div className="flex gap-1 ml-1 pointer-events-auto">
+              <button
+                onClick={handleDrawUndo}
+                disabled={drawnPoints.length === 0}
+                className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/10 transition-colors
+                  ${drawnPoints.length === 0 ? "opacity-30 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
+                title={t("undoLastPoint")}
+              >
+                <Undo2 size={13} />
+              </button>
+              <button
+                onClick={handleDrawRedo}
+                disabled={!canRedo}
+                className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/10 transition-colors
+                  ${!canRedo ? "opacity-30 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
+                title={t("redo")}
+              >
+                <Redo2 size={13} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Clipboard toast ─────────────────────────────────────────────── */}
+      {clipboardToast && (
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-slate-900/95 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg pointer-events-none animate-fadeIn">
+          <span>📋</span>
+          <span>{clipboardToast} {t("copied")}</span>
+        </div>
+      )}
+
+      <Map
+        ref={mapRef}
+        initialViewState={{ latitude: 0, longitude: 10, zoom: 1.5 }}
+        style={{ width: "100%", height: "100%" }}
+        mapStyle="https://demotiles.maplibre.org/style.json"
+        doubleClickZoom={false}
+        dragRotate={false}
+        touchZoomRotate={false}
+        cursor={drawingMode ? "crosshair" : routeCursor}
+        interactiveLayerIds={drawingMode ? [] : ["maritime-layer"]}
+        onClick={(e) => { if (drawingMode) { handleDrawingClick(e); } else { handleRouteClick(e); } }}
+        onMouseEnter={() => { if (!drawingMode) setRouteCursor("pointer"); }}
+        onMouseLeave={() => { if (!drawingMode) setRouteCursor("crosshair"); }}
+        onLoad={(event) => {
+          const map = event.target;
+          const arrowSvg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0077ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right-icon lucide-chevron-right"><path d="m9 18 6-6-6-6"/></svg>          `;
+
+          const img = new Image(30, 30);
+          img.onload = () => {
+            if (!map.hasImage("arrow")) {
+              map.addImage("arrow", img);
+            }
+          };
+          img.src = "data:image/svg+xml;base64," + btoa(arrowSvg);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          const { lng, lat } = e.lngLat;
+          const text = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          navigator.clipboard.writeText(text).then(() => {
+            setClipboardToast(text);
+            setTimeout(() => setClipboardToast(null), 2000);
+          });
+        }}
+      >
+        {/* Lignes maritimes */}
+        <Source id="maritime" type="geojson" data={maritimeLines}>
+          <Layer
+            id="maritime-layer"
+            type="line"
+            paint={{
+              "line-color": "#0077ff",
+              "line-width": 3,
+              "line-opacity": 0.9,
+            }}
+          />
+          <Layer
+            id="maritime-arrows"
+            type="symbol"
+            layout={{
+              "symbol-placement": "line",
+              "symbol-spacing": 100,
+              "icon-image": "arrow",
+              "icon-size": 0.8,
+              "icon-rotation-alignment": "map",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            }}
+          />
+        </Source>
+
+        {/* Lignes non maritimes */}
+        <Source id="non-maritime" type="geojson" data={nonMaritimeLines}>
+          <Layer
+            id="non-maritime-layer"
+            type="line"
+            paint={{
+              "line-color": "orange",
+              "line-width": 4,
+              "line-dasharray": [2, 2],
+            }}
+          />
+        </Source>
+
+        {/* ── Drawn route — live green line during drawing mode ────────── */}
+        <Source id="drawn-route" type="geojson" data={drawnLines}>
+          <Layer
+            id="drawn-route-layer"
+            type="line"
+            paint={{ "line-color": "#22c55e", "line-width": 3, "line-opacity": 0.95 }}
+          />
+        </Source>
+
+        {/* ── Drawn waypoint markers ────────────────────────────────────── */}
+        {drawingMode && drawnPoints.map((p, i) => (
+          <Marker key={`draw-pt-${i}`} longitude={p.lon} latitude={p.lat}>
+            <div style={{
+              width:           i === 0 ? 14 : 11,
+              height:          i === 0 ? 14 : 11,
+              borderRadius:    "50%",
+              backgroundColor: i === 0 ? "#22c55e" : "#60a5fa",
+              border:          `${i === 0 ? "2.5px" : "2px"} solid white`,
+              boxShadow:       i === 0
+                ? "0 0 6px rgba(34,197,94,0.7)"
+                : "0 0 4px rgba(96,165,250,0.6)",
+            }} title={i === 0 ? t("startingPoint") : `${t("stop")} ${i}`} />
+          </Marker>
+        ))}
+
+        {/* Points de vent fort — visibles uniquement en mode Offshore */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
+          (s.windPoints || []).map((point, i) => {
+            const [lon, lat] = point.geometry.coordinates;
+            const hasHighWave = point.properties.highWave;
+
+            return (
+              <Marker key={`wind-${segIdx}-${i}`} longitude={lon} latitude={lat}>
+                <div
+                  className={`wind-alert-marker${hasHighWave ? " is-wind-wave" : ""}`}
+                  title={hasHighWave ? t("strongWindWave") : t("strongWind")}
+                />
+              </Marker>
+            );
+          })
         )}
 
-        {/* Undo / Redo toolbar */}
-        {drawingMode && (
-          <div style={{
-            position: "absolute",
-            top: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 10,
-            display: "flex",
-            gap: 8,
-          }}>
-            <button
-              onClick={handleUndo}
-              disabled={historyIndex === 0}
-              title="Undo"
-              style={{
-                background: "rgba(15,23,42,0.85)",
-                border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 8,
-                padding: "6px 10px",
-                color: historyIndex === 0 ? "#475569" : "#e2e8f0",
-                cursor: historyIndex === 0 ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <Undo2 size={16} />
-            </button>
-            <button
-              onClick={handleRedo}
-              disabled={historyIndex >= history.length - 1}
-              title="Redo"
-              style={{
-                background: "rgba(15,23,42,0.85)",
-                border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 8,
-                padding: "6px 10px",
-                color: historyIndex >= history.length - 1 ? "#475569" : "#e2e8f0",
-                cursor: historyIndex >= history.length - 1 ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <Redo2 size={16} />
-            </button>
-          </div>
+        {/* 🌊 Points de vagues hautes uniquement (orange) — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
+          (s.wavePoints || [])
+            .filter((point) => !point.properties.highWind) // Seulement ceux sans vent fort
+            .map((point, i) => {
+              const [lon, lat] = point.geometry.coordinates;
+
+              const handleWaveClick = async () => {
+                setWaveLoading(true);
+                setSelectedWave({
+                  longitude: lon,
+                  latitude: lat,
+                  data: null,
+                });
+
+                try {
+                  const res = await fetch(`${API_URL}/wave`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ latitude: lat, longitude: lon }),
+                  });
+
+                  if (!res.ok) throw new Error(t("waveApiError"));
+
+                  const data = await res.json();
+
+                  setSelectedWave({
+                    longitude: lon,
+                    latitude: lat,
+                    data,
+                  });
+                } catch (err) {
+                  console.error(err);
+                  setSelectedWave({
+                    longitude: lon,
+                    latitude: lat,
+                    error: t("waveDataError"),
+                  });
+                } finally {
+                  setWaveLoading(false);
+                }
+              };
+
+              return (
+                <Marker
+                  key={`wave-${segIdx}-${i}`}
+                  longitude={lon}
+                  latitude={lat}
+                >
+                  <div
+                    onClick={handleWaveClick}
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: "50%",
+                      backgroundColor: "orange",
+                      border: "2px solid white",
+                      boxShadow: "0 0 5px rgba(255,165,0,0.5)",
+                      cursor: "pointer",
+                    }}
+                    title={t("highWaves")}
+                  />
+                </Marker>
+              );
+            })
         )}
 
-        <Map
-          ref={mapRef}
-          {...viewport}
-          onMove={(evt) => setViewport(evt.viewState)}
-          style={{ width: "100%", height: "100%" }}
-          mapStyle="https://demotiles.maplibre.org/style.json"
-          onClick={handleMapClick}
-          cursor={drawingMode ? "crosshair" : "grab"}
-        >
-          <MaritimeLayers {...maritimeLayers} />
+        {/* 🔀 Courants — mode Offshore seulement */}
+        {isOffshore && segments.flatMap((s, segIdx) =>
+          (s.currentPoints || []).map((point, i) => {
+            const [lon, lat] = point.geometry.coordinates;
+            const currentData = point.properties.currents;
+            const waveData = point.properties.highWave;
+            const windData = point.properties.highWind;
 
-          {/* Route layer */}
-          <Source id="route" type="geojson" data={routeGeoJSON}>
-            <Layer
-              id="route-line"
-              type="line"
-              paint={seaLayerPaint}
-              layout={seaLayerLayout}
-            />
-          </Source>
+            // 👉 Ne rien afficher si un point de vent ou de vague existe
+            if (waveData || windData) return null;
 
-          {/* Drawn waypoints layer */}
-          {drawnWaypoints.length > 0 && (
-            <Source id="drawn-waypoints" type="geojson" data={drawnWaypointsGeoJSON}>
-              <Layer
-                id="drawn-waypoints-layer"
-                type="circle"
-                paint={{
-                  "circle-radius": 6,
-                  "circle-color": "#f59e0b",
-                  "circle-stroke-width": 2,
-                  "circle-stroke-color": "#ffffff",
-                }}
-              />
-            </Source>
-          )}
+            const rotation = currentData?.direction_deg || 0;
 
-          {/* Catamaran marker (simulation mode) */}
-          {simulationMode && (
-            <CatamaranMarker
-              position={activeCatamaranPos}
-              onDrag={(pos) => setCatamaranPos(pos)}
-            />
-          )}
+            const handleCurrentClick = async () => {
+              setCurrentLoading(true);
+              setSelectedCurrent({
+                longitude: lon,
+                latitude: lat,
+                data: currentData,
+              });
+              setTimeout(() => setCurrentLoading(false), 300);
+            };
 
-          {/* Maritime layers panel (toggle buttons) */}
-          <MaritimeLayersPanel {...maritimeLayers} />
-
-          {/* ── ITINERARY POINT MARKERS ── */}
-          {ITINERARY_POINTS.map((p, i) => {
-            const offset = markerOffsets[i] || [0, 0];
             return (
               <Marker
-                key={p.name}
-                longitude={p.lon}
-                latitude={p.lat}
-                anchor="bottom"
-                onClick={(e) => {
-                  e.originalEvent.stopPropagation();
-                  setSelectedPoint(selectedPoint?.name === p.name ? null : p);
-                }}
+                key={`current-${segIdx}-${i}`}
+                longitude={lon}
+                latitude={lat}
               >
                 <div
-                  style={{ cursor: "pointer", userSelect: "none" }}
-                  onMouseEnter={() => setHoveredPoint(i)}
-                  onMouseLeave={() => setHoveredPoint(null)}
+                  onClick={handleCurrentClick}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    transform: `rotate(${rotation}deg)`,
+                    filter: "drop-shadow(0 0 3px rgba(34,197,94,0.5))",
+                  }}
+                  title={t("currentSpeed", { speed: currentData?.speed_knots?.toFixed(2) })}
                 >
-                  {p.flag ? (
-                    <span style={{ fontSize: 22, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}>
-                      {p.flag}
-                    </span>
-                  ) : (
-                    <div style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: "50%",
-                      backgroundColor: "#0077ff",
-                      border: "2px solid white",
-                      boxShadow: "0 0 4px rgba(0,119,255,0.6)",
-                    }} />
-                  )}
-                  {hoveredPoint === i && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: "calc(100% + 7px)",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        background: "rgba(15,23,42,0.95)",
-                        color: "#fff",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "4px 9px",
-                        borderRadius: "6px",
-                        whiteSpace: "nowrap",
-                        pointerEvents: "none",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-                        letterSpacing: "0.02em",
-                      }}
-                    >
-                      {p.name}
-                    </div>
-                  )}
+                  <svg
+                    width="100"
+                    height="100"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#22c55e"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 5v14M19 12l-7 7-7-7" />
+                  </svg>
                 </div>
               </Marker>
-            )
-          })}
+            );
+          })
+        )}
 
-          {/* ── DRAWN WAYPOINT MARKERS ── */}
-          {drawnWaypoints.map((wp, i) => (
-            <Marker
-              key={`drawn-${i}`}
-              longitude={wp.lon}
-              latitude={wp.lat}
-              anchor="center"
-              onClick={(e) => {
-                e.originalEvent.stopPropagation();
-                setActiveDrawnWpt(activeDrawnWpt === i ? null : i);
-                fetchPointInfo(wp.lat, wp.lon);
-              }}
-            >
-              <div
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: "50%",
-                  backgroundColor: wp.flag ? "#f59e0b" : "#6366f1",
-                  border: "2px solid white",
-                  cursor: "pointer",
-                  boxShadow: "0 0 5px rgba(0,0,0,0.4)",
-                }}
-              />
-            </Marker>
-          ))}
-
-          {/* ── DRAWN WAYPOINT POPUP ── */}
-          {activeDrawnWpt !== null && drawnWaypoints[activeDrawnWpt] && (
-            <Popup
-              longitude={drawnWaypoints[activeDrawnWpt].lon}
-              latitude={drawnWaypoints[activeDrawnWpt].lat}
-              anchor="top"
-              onClose={() => setActiveDrawnWpt(null)}
-              closeOnClick={false}
-            >
-              <div style={{ minWidth: 180, padding: "4px 2px" }}>
-                <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>
-                  Waypoint #{activeDrawnWpt + 1}
-                </div>
-                <input
-                  type="text"
-                  placeholder="Nom du point…"
-                  value={drawnWaypoints[activeDrawnWpt].name}
-                  onChange={(e) => {
-                    const updated = drawnWaypoints.map((wp, idx) =>
-                      idx === activeDrawnWpt ? { ...wp, name: e.target.value } : wp
-                    );
-                    setDrawnWaypoints(updated);
-                  }}
-                  style={{
-                    width: "100%",
-                    padding: "4px 6px",
-                    borderRadius: 5,
-                    border: "1px solid #cbd5e1",
-                    fontSize: 12,
-                    marginBottom: 6,
-                    boxSizing: "border-box",
-                  }}
-                />
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!drawnWaypoints[activeDrawnWpt].flag}
-                    onChange={(e) => {
-                      const updated = drawnWaypoints.map((wp, idx) =>
-                        idx === activeDrawnWpt ? { ...wp, flag: e.target.checked } : wp
-                      );
-                      setDrawnWaypoints(updated);
-                    }}
-                  />
-                  Escale obligatoire
-                </label>
-                {/* Point info */}
-                {pointInfoPos && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: "#475569" }}>
-                    {pointInfoLoading ? (
-                      <span>Chargement…</span>
-                    ) : pointInfoData ? (
-                      <span>Profondeur : {pointInfoData.depth != null ? `${pointInfoData.depth} m` : "—"}</span>
-                    ) : null}
-                  </div>
-                )}
+        {/* 🌊 Popup vagues */}
+        {selectedWave && (
+          <Popup
+            longitude={selectedWave.longitude}
+            latitude={selectedWave.latitude}
+            closeButton={false}
+            closeOnClick={false}
+            anchor="top"
+            offset={25}
+            onClose={() => setSelectedWave(null)}
+            className="!bg-transparent !border-none !shadow-none custom-popup"
+          >
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden min-w-[240px] animate-fadeIn">
+              <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-3 flex items-center justify-between">
+                <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+                  <span>Wave Data</span>
+                </h4>
                 <button
-                  onClick={() => {
-                    const updated = drawnWaypoints.filter((_, idx) => idx !== activeDrawnWpt);
-                    setDrawnWaypoints(updated);
-                    const newHistory = history.slice(0, historyIndex + 1);
-                    newHistory.push(updated);
-                    setHistory(newHistory);
-                    setHistoryIndex(newHistory.length - 1);
-                    setActiveDrawnWpt(null);
-                  }}
-                  style={{
-                    marginTop: 8,
-                    width: "100%",
-                    padding: "4px 0",
-                    borderRadius: 5,
-                    border: "none",
-                    background: "#fee2e2",
-                    color: "#dc2626",
-                    fontSize: 12,
-                    cursor: "pointer",
-                    fontWeight: 600,
-                  }}
+                  onClick={() => setSelectedWave(null)}
+                  className="text-white/80 hover:text-white hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center transition-colors font-bold"
                 >
-                  Supprimer
+                  <X />
                 </button>
               </div>
-            </Popup>
-          )}
 
-          {/* ── ITINERARY POINT POPUP ── */}
-          {selectedPoint && (
-            <Popup
-              longitude={selectedPoint.lon}
-              latitude={selectedPoint.lat}
-              anchor="top"
-              onClose={() => setSelectedPoint(null)}
-              closeOnClick={false}
-            >
-              <div style={{ minWidth: 180, padding: "6px 4px" }}>
+              <div className="p-4">
+                {waveLoading ? (
+                  <div className="flex flex-col items-center py-5">
+                    <div className="w-8 h-8 border-4 border-orange-100 border-t-orange-600 rounded-full animate-spin" />
+                    <div className="mt-3 text-slate-500 text-sm">
+                      Loading...
+                    </div>
+                  </div>
+                ) : selectedWave.error ? (
+                  <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="text-xl">⚠️</span>
+                    <div className="text-red-600 text-sm">
+                      {selectedWave.error}
+                    </div>
+                  </div>
+                ) : selectedWave.data ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">
+                          🌊
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">
+                            Significant Height
+                          </div>
+                          <div className="text-base font-semibold text-slate-800">
+                            {selectedWave.data.significant_wave_height_m} m
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {selectedWave.data.mean_wave_period && (
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">
+                            ⏱️
+                          </div>
+                          <div>
+                            <div className="text-xs text-slate-500 mb-0.5">
+                              Period
+                            </div>
+                            <div className="text-base font-semibold text-slate-800">
+                              {selectedWave.data.mean_wave_period} s
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedWave.data.mean_wave_direction && (
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">
+                            🧭
+                          </div>
+                          <div>
+                            <div className="text-xs text-slate-500 mb-0.5">
+                              Direction
+                            </div>
+                            <div className="text-base font-semibold text-slate-800">
+                              {selectedWave.data.mean_wave_direction}°
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-5 text-center text-slate-500 text-sm">
+                    No data available
+                  </div>
+                )}
+              </div>
+            </div>
+          </Popup>
+        )}
+
+        {selectedCurrent && (
+          <Popup
+            longitude={selectedCurrent.longitude}
+            latitude={selectedCurrent.latitude}
+            closeButton={false}
+            closeOnClick={false}
+            anchor="top"
+            offset={25}
+            onClose={() => setSelectedCurrent(null)}
+            className="!bg-transparent !border-none !shadow-none custom-popup"
+          >
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden min-w-[240px] animate-fadeIn">
+              <div className="bg-gradient-to-r from-green-500 to-green-600 px-4 py-3 flex items-center justify-between">
+                <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+                  <span>Current Data</span>
+                </h4>
                 <button
-                  onClick={() => setSelectedPoint(null)}
-                  style={{
-                    position: "absolute",
-                    top: 6,
-                    right: 6,
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "#64748b",
-                    padding: 2,
-                  }}
+                  onClick={() => setSelectedCurrent(null)}
+                  className="text-white/80 hover:text-white hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center transition-colors font-bold"
+                >
+                  <X />
+                </button>
+              </div>
+
+              <div className="p-4">
+                {currentLoading ? (
+                  <div className="flex flex-col items-center py-5">
+                    <div className="w-8 h-8 border-4 border-green-100 border-t-green-600 rounded-full animate-spin" />
+                    <div className="mt-3 text-slate-500 text-sm">
+                      Loading...
+                    </div>
+                  </div>
+                ) : selectedCurrent.error ? (
+                  <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="text-xl">⚠️</span>
+                    <div className="text-red-600 text-sm">
+                      {selectedCurrent.error}
+                    </div>
+                  </div>
+                ) : selectedCurrent.data ? (
+                  <div className="space-y-3">
+                    {/* 💨 Vitesse */}
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">
+                          🌊
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">
+                            Speed
+                          </div>
+                          <div className="text-base font-semibold text-slate-800">
+                            {selectedCurrent.data.speed_knots.toFixed(2)} kn
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 🧭 Direction */}
+                    {selectedCurrent.data.direction_deg && (
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg">
+                            🧭
+                          </div>
+                          <div>
+                            <div className="text-xs text-slate-500 mb-0.5">
+                              Direction
+                            </div>
+                            <div className="text-base font-semibold text-slate-800">
+                              {selectedCurrent.data.direction_deg.toFixed(1)}°
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-5 text-center text-slate-500 text-sm">
+                    No data available
+                  </div>
+                )}
+              </div>
+            </div>
+          </Popup>
+        )}
+
+        {/* ── Satellite data popup — triggered by clicking the route ─────── */}
+        {selectedSatellite && (
+          <Popup
+            longitude={selectedSatellite.lon}
+            latitude={selectedSatellite.lat}
+            closeButton={false}
+            closeOnClick={false}
+            anchor="top"
+            offset={20}
+            onClose={() => setSelectedSatellite(null)}
+            className="!bg-transparent !border-none !shadow-none custom-popup"
+          >
+            <div className="bg-white rounded-xl shadow-2xl overflow-hidden animate-fadeIn" style={{ minWidth: 270 }}>
+              {/* Header */}
+              <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-4 py-3 flex items-center justify-between">
+                <div>
+                  <div className="text-white font-semibold text-sm">{t("satelliteData")}</div>
+                  <div className="text-slate-400 text-xs mt-0.5">
+                    {selectedSatellite.lat.toFixed(3)}°, {selectedSatellite.lon.toFixed(3)}°
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedSatellite(null)}
+                  className="text-white/80 hover:text-white hover:bg-white/20 rounded w-6 h-6 flex items-center justify-center transition-colors"
                 >
                   <X size={14} />
                 </button>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, paddingRight: 20 }}>
-                  {selectedPoint.flag} {selectedPoint.name}
-                </div>
-                {selectedPoint.description && (
-                  <p style={{ fontSize: 12, color: "#475569", margin: 0, lineHeight: 1.4 }}>
-                    {selectedPoint.description}
-                  </p>
-                )}
               </div>
-            </Popup>
-          )}
 
-          {/* ── ITINERARY POINT MARKERS (dots only, no labels) ── */}
-          {ITINERARY_POINTS.map((p, i) => {
-            const offset = markerOffsets[i] || [0, 0];
-            return (
-              <Marker
-                key={`dot-${p.name}`}
-                longitude={p.lon}
-                latitude={p.lat}
-                anchor="center"
+              {/* Tabs */}
+              {/* ── Tabs ──────────────────────────────────────────────── */}
+              <div className="flex border-b border-slate-200">
+                {[
+                  { key: "wind",    label: t("windTab"),     active: "text-blue-600 border-b-2 border-blue-600 bg-blue-50" },
+                  { key: "wave",    label: t("wavesTab"),    active: "text-orange-500 border-b-2 border-orange-500 bg-orange-50" },
+                  { key: "current", label: t("currentsTab"), active: "text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50" },
+                  ...(selectedSatellite?.drawPointIndex != null
+                    ? [{ key: "point", label: t("pointTab"), active: "text-violet-600 border-b-2 border-violet-600 bg-violet-50" }]
+                    : []),
+                ].map(({ key, label, active }) => (
+                  <button
+                    key={key}
+                    onClick={() => setSatelliteTab(key)}
+                    className={`flex-1 py-2 text-xs font-semibold transition-colors ${
+                      satelliteTab === key ? active : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Content ───────────────────────────────────────────── */}
+              <div className="p-4">
+                {satelliteLoading ? (
+                  <div className="flex flex-col items-center py-5">
+                    <div className="w-8 h-8 border-4 border-slate-100 border-t-slate-600 rounded-full animate-spin" />
+                    <div className="mt-3 text-slate-500 text-sm">{t("fetchingSatellite")}</div>
+                  </div>
+
+                ) : satelliteTab === "wind" ? (
+                  selectedSatellite.wind ? (
+                    <div className="space-y-2">
+                      {/* Speed row — km/h + knots */}
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">💨</div>
+                        <div>
+                          <div className="text-xs text-slate-500">{t("windSpeed")}</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {selectedSatellite.wind.wind_speed_kmh} km/h
+                            <span className="ml-2 text-xs text-slate-400 font-normal">
+                              ({selectedSatellite.wind.wind_speed_knots} kn)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Direction */}
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <WindDirectionArrow direction={selectedSatellite.wind.wind_direction} />
+                        <div>
+                          <div className="text-xs text-slate-500">{t("windDirection")}</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {selectedSatellite.wind.wind_direction}° {getCardinalDirection(selectedSatellite.wind.wind_direction)}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Timestamp */}
+                      {selectedSatellite.wind.timestamp && (
+                        <div className="text-xs text-slate-400 text-right pt-1">
+                          🕐 {new Date(selectedSatellite.wind.timestamp).toUTCString().slice(0, 25)} UTC
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noWindData")}</div>
+                  )
+
+                ) : satelliteTab === "wave" ? (
+                  selectedSatellite.wave ? (
+                    <div className="space-y-2">
+                      {/* Significant wave height */}
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🌊</div>
+                        <div>
+                          <div className="text-xs text-slate-500">{t("waveHeight")}</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {selectedSatellite.wave.significant_wave_height_m} m
+                          </div>
+                        </div>
+                      </div>
+                      {/* Period */}
+                      {selectedSatellite.wave.mean_wave_period && (
+                        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">⏱️</div>
+                          <div>
+                            <div className="text-xs text-slate-500">{t("wavePeriod")}</div>
+                            <div className="text-sm font-semibold text-slate-800">
+                              {selectedSatellite.wave.mean_wave_period} s
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Direction */}
+                      {selectedSatellite.wave.mean_wave_direction && (
+                        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                          <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🧭</div>
+                          <div>
+                            <div className="text-xs text-slate-500">{t("waveDirection")}</div>
+                            <div className="text-sm font-semibold text-slate-800">
+                              {selectedSatellite.wave.mean_wave_direction}° {getCardinalDirection(selectedSatellite.wave.mean_wave_direction)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {selectedSatellite.wave.timestamp && (
+                        <div className="text-xs text-slate-400 text-right pt-1">
+                          🕐 {new Date(selectedSatellite.wave.timestamp).toUTCString().slice(0, 25)} UTC
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noWaveData")}</div>
+                  )
+
+                ) : satelliteTab === "current" ? (
+                  /* ── Currents tab ─────────────────────────────────── */
+                  selectedSatellite.current ? (
+                    <div className="space-y-2">
+                      {/* Speed */}
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">⚡</div>
+                        <div>
+                          <div className="text-xs text-slate-500">{t("currentSurfaceSpeed")}</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {selectedSatellite.current.speed_knots} kn
+                            <span className="ml-2 text-xs text-slate-400 font-normal">
+                              ({selectedSatellite.current.speed_kmh} km/h)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Direction */}
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-lg shadow-sm">🧭</div>
+                        <div>
+                          <div className="text-xs text-slate-500">{t("currentDirection")}</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {selectedSatellite.current.direction_deg}° {getCardinalDirection(selectedSatellite.current.direction_deg)}
+                          </div>
+                        </div>
+                      </div>
+                      {/* U/V components */}
+                      <div className="flex gap-2">
+                        <div className="flex-1 p-2.5 bg-slate-50 rounded-lg">
+                          <div className="text-xs text-slate-500">{t("currentEast")}</div>
+                          <div className="text-sm font-semibold text-slate-800">{selectedSatellite.current.u_component} m/s</div>
+                        </div>
+                        <div className="flex-1 p-2.5 bg-slate-50 rounded-lg">
+                          <div className="text-xs text-slate-500">{t("currentNorth")}</div>
+                          <div className="text-sm font-semibold text-slate-800">{selectedSatellite.current.v_component} m/s</div>
+                        </div>
+                      </div>
+                      {selectedSatellite.current.timestamp && (
+                        <div className="text-xs text-slate-400 text-right pt-1">
+                          🕐 {new Date(selectedSatellite.current.timestamp).toUTCString().slice(0, 25)} UTC
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="py-4 text-center text-slate-500 text-sm">{t("noCurrentData")}</div>
+                  )
+
+                ) : satelliteTab === "point" ? (
+                  /* ── Point Info tab ───────────────────────────────── */
+                  <div className="space-y-3">
+                    {/* Name field */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">{t("waypointName")}</label>
+                      <input
+                        type="text"
+                        value={pointInfoName}
+                        onChange={(e) => setPointInfoName(e.target.value)}
+                        placeholder={t("waypointNamePlaceholder")}
+                        className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                      />
+                    </div>
+
+                    {/* Flag slots */}
+                    {[0, 1].map((idx) => (
+                      <div key={idx}>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          {t("flag")} {idx + 1}
+                        </label>
+                        {pointInfoFlags[idx] ? (
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={pointInfoFlags[idx]}
+                              alt={`flag-${idx + 1}`}
+                              className="h-8 w-12 object-cover rounded border border-slate-200"
+                            />
+                            <button
+                              onClick={() =>
+                                setPointInfoFlags((f) => {
+                                  const n = [...f]; n[idx] = null; return n;
+                                })
+                              }
+                              className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
+                            >
+                              {t("removeFlag")}
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="flex items-center gap-2 cursor-pointer bg-slate-50
+                            border border-dashed border-slate-300 rounded-lg px-3 py-2 text-xs
+                            text-slate-500 hover:bg-slate-100 transition-colors">
+                            <span>{t("uploadFlag")}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                  setPointInfoFlags((f) => {
+                                    const n = [...f]; n[idx] = ev.target.result; return n;
+                                  });
+                                };
+                                reader.readAsDataURL(file);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Save & Close */}
+                    <button
+                      onClick={handleSaveDrawPointMeta}
+                      className="w-full py-2 bg-violet-600 hover:bg-violet-700 text-white
+                        text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      {t("saveClose")}
+                    </button>
+                  </div>
+
+                ) : null}
+              </div>
+            </div>
+          </Popup>
+        )}
+
+        {/* ── Maritime data layers (ZEE / Ports WPI / Balisage SHOM) ─────── */}
+        <MaritimeLayers
+          showZee={maritimeLayers.showZee}
+          zeeData={maritimeLayers.zeeData}
+          showPorts={maritimeLayers.showPorts}
+          portsData={maritimeLayers.portsData}
+          showBalisage={maritimeLayers.showBalisage}
+          balisageData={maritimeLayers.balisageData}
+        />
+
+        {/* ── Catamaran simulation marker ────────────────────────────────── */}
+        {simulationMode && (
+          <CatamaranMarker
+            latitude={legContext ? legContext.snappedPosition[1] : activeCatamaranPos.lat}
+            longitude={legContext ? legContext.snappedPosition[0] : activeCatamaranPos.lon}
+            bearing={legContext?.bearing ?? 0}
+            onDragEnd={(pos) => setCatamaranPos(pos)}
+          />
+        )}
+
+        {/* Escales obligatoires — drapeaux toujours visibles, tooltip au survol (hidden during drawing) */}
+        {!drawingMode && points.map((p, i) =>
+          p.flag !== "" ? (
+            <Marker key={i} longitude={p.lon} latitude={p.lat} anchor="bottom" offset={markerOffsets[i]}>
+              <div
+                onMouseEnter={() => setHoveredPoint(i)}
+                onMouseLeave={() => setHoveredPoint(null)}
+                style={{ position: "relative", cursor: "default" }}
               >
-                <div
-                  onMouseEnter={() => setHoveredPoint(i)}
-                  onMouseLeave={() => setHoveredPoint(null)}
-                  style={{ position: "relative" }}
-                >
+                <img
+                  src={p.flag}
+                  alt={p.name}
+                  style={{
+                    width: 36,
+                    height: 26,
+                    borderRadius: 4,
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+                    display: "block",
+                  }}
+                />
+                {/* Tooltip — nom de l'escale au survol */}
+                {hoveredPoint === i && (
                   <div
                     style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: "50%",
-                      backgroundColor: "#0077ff",
-                      border: "2px solid white",
-                      boxShadow: "0 0 4px rgba(0,119,255,0.6)",
+                      position: "absolute",
+                      bottom: "calc(100% + 7px)",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      background: "rgba(15,23,42,0.95)",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "4px 9px",
+                      borderRadius: "6px",
+                      whiteSpace: "nowrap",
+                      pointerEvents: "none",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+                      letterSpacing: "0.02em",
                     }}
-                  />
-                  {hoveredPoint === i && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: "calc(100% + 7px)",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        background: "rgba(15,23,42,0.95)",
-                        color: "#fff",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "4px 9px",
-                        borderRadius: "6px",
-                        whiteSpace: "nowrap",
-                        pointerEvents: "none",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-                        letterSpacing: "0.02em",
-                      }}
-                    >
-                      {p.name}
-                    </div>
-                  )}
-                </div>
-              </Marker>
-            )
-          })}
-        </Map>
-      </div>
+                  >
+                    {p.name}
+                  </div>
+                )}
+              </div>
+            </Marker>
+          ) : (
+            /* Waypoints intermédiaires — point bleu toujours visible, tooltip au survol */
+            <Marker key={i} longitude={p.lon} latitude={p.lat} offset={markerOffsets[i]}>
+              <div
+                onMouseEnter={() => setHoveredPoint(i)}
+                onMouseLeave={() => setHoveredPoint(null)}
+                style={{ position: "relative", cursor: "default" }}
+              >
+                <div
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    backgroundColor: "#0077ff",
+                    border: "2px solid white",
+                    boxShadow: "0 0 4px rgba(0,119,255,0.6)",
+                  }}
+                />
+                {hoveredPoint === i && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "calc(100% + 7px)",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      background: "rgba(15,23,42,0.95)",
+                      color: "#fff",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "4px 9px",
+                      borderRadius: "6px",
+                      whiteSpace: "nowrap",
+                      pointerEvents: "none",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    {p.name}
+                  </div>
+                )}
+              </div>
+            </Marker>
+          )
+        )}
+      </Map>
     </div>
   );
 }
