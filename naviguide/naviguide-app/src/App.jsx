@@ -26,7 +26,7 @@ const LA_ROCHELLE_POS = { lat: 46.1541, lon: -1.167 };
 // ── Orchestrator plan cache (localStorage, 24 h TTL, per language) ───────────
 const PLAN_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-function planCacheKey(lang) { return `naviguide_expedition_plan_v1_${lang}`; }
+function planCacheKey(lang) { return `naviguide_expedition_plan_v2_${lang}`; }
 
 function getCachedPlan(lang) {
   try {
