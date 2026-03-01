@@ -11,3 +11,7 @@ numpy>=1.24.0
 xarray>=2023.0.0
 shapely>=2.0.0
 global-land-mask>=0.5.0
+# Simulation Mode — AI Agents (LangGraph)
+langgraph>=0.2.0
+langchain-core>=0.3.0
+requests>=2.31.0

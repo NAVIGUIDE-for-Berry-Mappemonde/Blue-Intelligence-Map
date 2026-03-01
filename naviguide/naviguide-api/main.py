@@ -1,11 +1,14 @@
 import os
 import re
+import math
+import json
 import time
-from typing import Optional, Union
+import asyncio
+from typing import Optional, Union, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import httpx
 import searoute as sr
@@ -923,6 +926,335 @@ async def proxy_ports():
 
 # NOTE: SHOM WFS /proxy/balisage removed — endpoint requires authentication (401).
 # Balisage is now served client-side via OpenSeaMap raster tiles (no proxy needed).
+
+
+# ── Simulation Mode — Geometry Helpers ───────────────────────────────────────
+
+_DEFAULT_CATAMARAN_SPEED_KTS = 7.5  # conservative offshore sailing speed
+
+
+def _haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in nautical miles."""
+    R = 3440.065
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi   = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial true bearing from (lat1, lon1) to (lat2, lon2) in degrees [0, 360)."""
+    dlon = math.radians(lon2 - lon1)
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    x = math.sin(dlon) * math.cos(rlat2)
+    y = math.cos(rlat1) * math.sin(rlat2) - math.sin(rlat1) * math.cos(rlat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def _snap_to_segment(
+    px: float, py: float,
+    ax: float, ay: float,
+    bx: float, by: float,
+) -> tuple:
+    """
+    Project point P(px=lon, py=lat) onto segment A-B in degree space.
+    Returns (qx, qy, t) where t ∈ [0, 1] is the normalised position along AB.
+    """
+    dx, dy = bx - ax, by - ay
+    seg2 = dx * dx + dy * dy
+    if seg2 < 1e-14:
+        return ax, ay, 0.0
+    t = ((px - ax) * dx + (py - ay) * dy) / seg2
+    t = max(0.0, min(1.0, t))
+    return ax + t * dx, ay + t * dy, t
+
+
+def _snap_catamaran_to_route(
+    cat_lat: float,
+    cat_lon: float,
+    route_coords: List[List[float]],
+) -> dict:
+    """
+    Snap the catamaran position to the nearest point on the route polyline.
+    route_coords — [[lon, lat], …] GeoJSON order.
+
+    Returns:
+        snapped_lon, snapped_lat, seg_idx, nm_covered
+    """
+    best_dist      = float("inf")
+    best_lon       = route_coords[0][0]
+    best_lat       = route_coords[0][1]
+    best_seg       = 0
+    best_nm_covered = 0.0
+    cumulative_nm   = 0.0
+
+    for i in range(len(route_coords) - 1):
+        a_lon, a_lat = route_coords[i][0], route_coords[i][1]
+        b_lon, b_lat = route_coords[i + 1][0], route_coords[i + 1][1]
+
+        qlon, qlat, _ = _snap_to_segment(cat_lon, cat_lat, a_lon, a_lat, b_lon, b_lat)
+        dist = _haversine_nm(cat_lat, cat_lon, qlat, qlon)
+
+        if dist < best_dist:
+            best_dist = dist
+            best_lon, best_lat = qlon, qlat
+            best_seg = i
+            best_nm_covered = cumulative_nm + _haversine_nm(a_lat, a_lon, qlat, qlon)
+
+        cumulative_nm += _haversine_nm(a_lat, a_lon, b_lat, b_lon)
+
+    return {
+        "snapped_lon": best_lon,
+        "snapped_lat": best_lat,
+        "seg_idx":     best_seg,
+        "nm_covered":  round(best_nm_covered, 1),
+    }
+
+
+def _find_active_leg(
+    cat_nm_covered: float,
+    route_coords:   List[List[float]],
+    stops:          List[dict],
+) -> dict:
+    """
+    Determine the active stop-to-stop leg and remaining distance to next stop.
+
+    stops — ordered list of {"name": str, "lon": float, "lat": float}
+    Returns from_stop_index, from_stop, to_stop, nm_remaining_to_stop.
+    """
+    # Compute each stop's nm_covered position on the route
+    stop_positions = []
+    for stop in stops:
+        snap = _snap_catamaran_to_route(stop["lat"], stop["lon"], route_coords)
+        stop_positions.append({
+            "name":       stop["name"],
+            "nm_covered": snap["nm_covered"],
+        })
+
+    # Sort by route distance (should already be ordered, but defensive)
+    stop_positions.sort(key=lambda x: x["nm_covered"])
+
+    # Find the active bracket: largest stop before cat, first stop after cat
+    from_idx = 0
+    for i, sp in enumerate(stop_positions):
+        if sp["nm_covered"] <= cat_nm_covered:
+            from_idx = i
+
+    to_idx = min(from_idx + 1, len(stop_positions) - 1)
+
+    from_sp = stop_positions[from_idx]
+    to_sp   = stop_positions[to_idx]
+    nm_remaining = max(0.0, to_sp["nm_covered"] - cat_nm_covered)
+
+    return {
+        "from_stop_index":     from_idx,
+        "from_stop":           from_sp["name"],
+        "to_stop":             to_sp["name"],
+        "nm_remaining_to_stop": round(nm_remaining, 1),
+    }
+
+
+# ── Simulation Mode — Pydantic Models ────────────────────────────────────────
+
+class SimulationStop(BaseModel):
+    name: str
+    lon:  float
+    lat:  float
+
+
+class SimulationPositionRequest(BaseModel):
+    lat:          float
+    lon:          float
+    route_coords: List[List[float]]   # [[lon, lat], …]
+    stops:        List[SimulationStop]
+    speed_kts:    Optional[float] = _DEFAULT_CATAMARAN_SPEED_KTS
+
+
+class AgentRequest(BaseModel):
+    from_stop:    str
+    to_stop:      str
+    lat:          float
+    lon:          float
+    nm_remaining: float
+    language:     str = "fr"
+
+
+# ── Simulation Mode — /simulation/position ───────────────────────────────────
+
+@app.post("/simulation/position", summary="Snap catamaran to route + compute leg metrics")
+def simulation_position(req: SimulationPositionRequest):
+    """
+    Snap the catamaran marker to the nearest point on the route polyline and
+    compute progression metrics for the active leg.
+
+    Returns LegContext: snappedPosition, fromStop, toStop, nmCovered,
+    nmRemainingToStop, etaHours, bearing.
+    """
+    if len(req.route_coords) < 2:
+        raise HTTPException(status_code=400, detail="route_coords must contain at least 2 points")
+    if len(req.stops) < 2:
+        raise HTTPException(status_code=400, detail="stops must contain at least 2 stops")
+
+    # Snap catamaran to route
+    snap = _snap_catamaran_to_route(req.lat, req.lon, req.route_coords)
+
+    # Find active leg
+    stops_list = [{"name": s.name, "lon": s.lon, "lat": s.lat} for s in req.stops]
+    leg        = _find_active_leg(snap["nm_covered"], req.route_coords, stops_list)
+
+    # Bearing at the active segment
+    seg_idx = min(snap["seg_idx"], len(req.route_coords) - 2)
+    a_lon, a_lat = req.route_coords[seg_idx][0], req.route_coords[seg_idx][1]
+    b_lon, b_lat = req.route_coords[seg_idx + 1][0], req.route_coords[seg_idx + 1][1]
+    bearing = round(_bearing_deg(a_lat, a_lon, b_lat, b_lon), 1)
+
+    # ETA to next stop
+    speed    = req.speed_kts if req.speed_kts and req.speed_kts > 0 else _DEFAULT_CATAMARAN_SPEED_KTS
+    eta_hours = round(leg["nm_remaining_to_stop"] / speed, 1)
+
+    return {
+        "fromStopIndex":     leg["from_stop_index"],
+        "fromStop":          leg["from_stop"],
+        "toStop":            leg["to_stop"],
+        "nmCovered":         snap["nm_covered"],
+        "nmRemainingToStop": leg["nm_remaining_to_stop"],
+        "etaHours":          eta_hours,
+        "bearing":           bearing,
+        "snappedPosition":   [snap["snapped_lon"], snap["snapped_lat"]],
+    }
+
+
+# ── Simulation Mode — Agent Endpoints ────────────────────────────────────────
+# All 4 agents run as LangGraph StateGraphs and respond via SSE text/event-stream
+# for progressive display in the frontend AgentPanel.
+
+def _sse_stream(payload: dict):
+    """Wrap a response payload as a minimal SSE generator."""
+    async def generator():
+        yield f"data: {json.dumps(payload)}\n\n"
+        yield "data: [DONE]\n\n"
+    return generator()
+
+
+@app.post("/agents/custom", summary="Agent Custom — Port & Customs Intelligence (SSE)")
+async def agent_custom(req: AgentRequest):
+    """
+    Invoke the Custom LangGraph agent for port entry intelligence.
+    Streams: AgentResponse as SSE text/event-stream.
+    """
+    try:
+        from agents.custom_agent import run_custom_agent
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_custom_agent(
+                from_stop=req.from_stop,
+                to_stop=req.to_stop,
+                lat=req.lat,
+                lon=req.lon,
+                nm_remaining=req.nm_remaining,
+                language=req.language,
+            ),
+        )
+    except Exception as exc:
+        response = {
+            "agent":          "custom",
+            "content":        f"⚠️ Agent unavailable: {exc}",
+            "data_sources":   [],
+            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "data_freshness": "training_only",
+        }
+    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+
+@app.post("/agents/guard", summary="Agent Guard — Maritime Security (SSE)")
+async def agent_guard(req: AgentRequest):
+    """
+    Invoke the Guard LangGraph agent for maritime security intelligence.
+    Streams: AgentResponse as SSE text/event-stream.
+    """
+    try:
+        from agents.guard_agent import run_guard_agent
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_guard_agent(
+                from_stop=req.from_stop,
+                to_stop=req.to_stop,
+                lat=req.lat,
+                lon=req.lon,
+                nm_remaining=req.nm_remaining,
+                language=req.language,
+            ),
+        )
+    except Exception as exc:
+        response = {
+            "agent":          "guard",
+            "content":        f"⚠️ Agent unavailable: {exc}",
+            "data_sources":   [],
+            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "data_freshness": "training_only",
+        }
+    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+
+@app.post("/agents/meteo", summary="Agent Meteo — Weather & Routing Windows (SSE)")
+async def agent_meteo(req: AgentRequest):
+    """
+    Invoke the Meteo LangGraph agent for weather and routing windows.
+    Streams: AgentResponse as SSE text/event-stream.
+    """
+    try:
+        from agents.meteo_agent import run_meteo_agent
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_meteo_agent(
+                from_stop=req.from_stop,
+                to_stop=req.to_stop,
+                lat=req.lat,
+                lon=req.lon,
+                nm_remaining=req.nm_remaining,
+                language=req.language,
+            ),
+        )
+    except Exception as exc:
+        response = {
+            "agent":          "meteo",
+            "content":        f"⚠️ Agent unavailable: {exc}",
+            "data_sources":   [],
+            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "data_freshness": "training_only",
+        }
+    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
+
+
+@app.post("/agents/pirate", summary="Agent Pirate — Community Intelligence (SSE)")
+async def agent_pirate(req: AgentRequest):
+    """
+    Invoke the Pirate LangGraph agent for cruiser community intelligence.
+    Streams: AgentResponse as SSE text/event-stream.
+    """
+    try:
+        from agents.pirate_agent import run_pirate_agent
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_pirate_agent(
+                from_stop=req.from_stop,
+                to_stop=req.to_stop,
+                lat=req.lat,
+                lon=req.lon,
+                nm_remaining=req.nm_remaining,
+                language=req.language,
+            ),
+        )
+    except Exception as exc:
+        response = {
+            "agent":          "pirate",
+            "content":        f"⚠️ Agent unavailable: {exc}",
+            "data_sources":   [],
+            "generated_at":   time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "data_freshness": "training_only",
+        }
+    return StreamingResponse(_sse_stream(response), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
