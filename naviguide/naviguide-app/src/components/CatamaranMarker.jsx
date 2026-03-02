@@ -6,9 +6,24 @@
  * - Drag (real-time) → snaps to the route via useLegContext in App.jsx
  * - Click → opens the metrics popup (handled by App.jsx)
  *
- * Icon: catamaran.jpg — white background removed via Canvas color-keying.
- * The bow points RIGHT in the source image, so we apply (bearing - 90°) to
- * keep the bow aligned with the direction of travel (mast up, bow forward).
+ * Icon: catamaran.jpg — 240×240, no EXIF tag, white background removed via Canvas.
+ *   Raw pixel layout: bow → RIGHT, mast → UP
+ *
+ * Orientation strategy (avoids upside-down appearance from large rotations):
+ *
+ *   East half  (sin(bearing) ≥ 0, i.e. bearing ∈ [0°,180°]):
+ *     → natural image (bow RIGHT), tilt = bearing − 90°
+ *     → max tilt ±90° → image never inverts
+ *
+ *   West half  (sin(bearing) < 0, i.e. bearing ∈ (180°,360°)):
+ *     → flip image horizontally → bow becomes LEFT, tilt = bearing − 270°
+ *     → max tilt ±90° → image never inverts
+ *
+ *   Southern hemisphere (latitude < 0):
+ *     → additionally scaleY(-1) to flip mast to the bottom of the image
+ *     → CSS transform order: rotate(tilt) [scaleX(-1)] [scaleY(-1)]
+ *       CSS applies transforms left→right (updating the coord system), so
+ *       scaleY/-X are applied first in image space, then the tilt rotation.
  */
 
 import { useEffect, useState } from "react";
@@ -16,10 +31,9 @@ import { Marker } from "react-map-gl/maplibre";
 import { useLang } from "../i18n/LangContext.jsx";
 import catamaranImg from "../assets/img/catamaran.jpg";
 
-// ── Remove white background + strip EXIF orientation ─────────────────────────
-// Uses createImageBitmap({ imageOrientation:'none' }) to bypass automatic EXIF
-// rotation applied by the browser, so the raw pixel layout matches the file.
-// Near-white pixels are then made transparent via Canvas color-keying.
+// ── Remove white background ───────────────────────────────────────────────────
+// Near-white pixels are made transparent via Canvas color-keying.
+// imageOrientation:'none' is kept for safety (no EXIF on this file, but harmless).
 function useTransparentPng(src, threshold = 235) {
   const [png, setPng] = useState(null);
   useEffect(() => {
@@ -28,7 +42,6 @@ function useTransparentPng(src, threshold = 235) {
       try {
         const res    = await fetch(src);
         const blob   = await res.blob();
-        // imageOrientation:'none' tells the browser to ignore EXIF orientation tags
         const bitmap = await createImageBitmap(blob, { imageOrientation: "none" });
         if (cancelled) { bitmap.close(); return; }
         const canvas = document.createElement("canvas");
@@ -74,14 +87,31 @@ function useTransparentPng(src, threshold = 235) {
   return png;
 }
 
-// ── Icône catamaran ──────────────────────────────────────────────────────────
-// Bow points RIGHT in the source image (EXIF neutralised above).
-// bearing - 90° aligns the bow with the direction of travel:
-//   bearing=0 (north) → rotate(-90°) → bow points up.
-
-function CatamaranIcon({ size = 56, bearing = 0 }) {
+// ── Catamaran icon with correct bearing + hemisphere orientation ──────────────
+//
+// Raw image: bow RIGHT (90°), mast UP.
+//
+// East half  sin(bearing) ≥ 0  →  natural (bow RIGHT) + rotate(bearing − 90°)
+// West half  sin(bearing) < 0  →  scaleX(-1) (bow → LEFT) + rotate(bearing − 270°)
+// South hemi latitude < 0      →  additionally scaleY(-1)   (mast → bottom)
+//
+// CSS transform string: "rotate(tilt) [scaleX(-1)] [scaleY(-1)]"
+// CSS applies left→right to the coordinate system, so the rightmost
+// scale is applied first in image-local space, then the rotation.
+// Max tilt is ±90° in both halves → image never rotates fully upside-down.
+//
+function CatamaranIcon({ size = 56, bearing = 0, southernHemisphere = false }) {
   const png = useTransparentPng(catamaranImg);
   if (!png) return null;
+
+  const bearingRad = (bearing * Math.PI) / 180;
+  const goingEast  = Math.sin(bearingRad) >= 0;  // bearing in [0°, 180°]
+  const tilt       = goingEast ? bearing - 90 : bearing - 270;
+
+  const parts = [`rotate(${tilt}deg)`];
+  if (!goingEast)         parts.push("scaleX(-1)");  // flip H for west half
+  if (southernHemisphere) parts.push("scaleY(-1)");
+
   return (
     <img
       src={png}
@@ -95,9 +125,7 @@ function CatamaranIcon({ size = 56, bearing = 0 }) {
         userSelect: "none",
         pointerEvents: "none",
         cursor: "grab",
-        // EXIF neutralised via createImageBitmap → raw pixels have bow on LEFT.
-        // bearing + 90° aligns the LEFT side (bow) with the direction of travel.
-        transform: `rotate(${bearing + 90}deg)`,
+        transform: parts.join(" "),
         transition: "transform 0.35s ease",
         flexShrink: 0,
       }}
@@ -110,7 +138,7 @@ function CatamaranIcon({ size = 56, bearing = 0 }) {
 /**
  * @param {number}   latitude   — current latitude of the catamaran (snapped)
  * @param {number}   longitude  — current longitude of the catamaran (snapped)
- * @param {number}   bearing    — heading in degrees; rotates the icon
+ * @param {number}   bearing    — heading in degrees 0–360; 0 = north
  * @param {Function} onDragEnd  — callback({ lat, lon }) called during drag AND on release
  *                                so useLegContext snaps in real-time as the user drags
  * @param {Function} onClick    — callback to open the metrics popup
@@ -151,7 +179,10 @@ export function CatamaranMarker({
         }
         style={{ pointerEvents: "auto" }}
       >
-        <CatamaranIcon bearing={bearing} />
+        <CatamaranIcon
+          bearing={bearing}
+          southernHemisphere={latitude < 0}
+        />
       </div>
     </Marker>
   );

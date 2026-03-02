@@ -55,7 +55,7 @@ app.add_middleware(
 )
 
 # ── Backend targets ───────────────────────────────────────────────────────────
-API_BACKEND             = "http://localhost:8000"
+API_BACKEND             = "http://localhost:8001"
 ORCHESTRATOR_BACKEND    = "http://localhost:3008"
 WEATHER_ROUTING_BACKEND = "http://localhost:3010"
 POLAR_API_BACKEND       = "http://localhost:8004"
