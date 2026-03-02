@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Map, { Source, Layer, Marker, Popup } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { ITINERARY_POINTS } from "./constants/itineraryPoints";
@@ -83,21 +83,64 @@ export default function App() {
   // ── Simulation mode — catamaran draggable ────────────────────────────────────
   const [simulationMode, setSimulationMode] = useState(false);
   const [catamaranPos,   setCatamaranPos]   = useState(null);  // { lat, lon }
-  // Index courant dans ITINERARY_POINTS (La Rochelle = 1, le départ maritime)
-  const [simPointIndex,  setSimPointIndex]  = useState(1);
+  const [simulationStep, setSimulationStep] = useState(0);
 
   // Position par défaut : La Rochelle (point de départ maritime de l'expédition)
   const initialCatamaranPos = LA_ROCHELLE_POS;
   const activeCatamaranPos  = catamaranPos ?? initialCatamaranPos;
 
-  // Avance le catamaran au milieu du prochain segment (escale ou point intermédiaire)
-  const advanceCatamaranToNextMidpoint = useCallback(() => {
-    if (simPointIndex >= ITINERARY_POINTS.length - 1) return;
-    const from = ITINERARY_POINTS[simPointIndex];
-    const to   = ITINERARY_POINTS[simPointIndex + 1];
-    setCatamaranPos({ lat: (from.lat + to.lat) / 2, lon: (from.lon + to.lon) / 2 });
-    setSimPointIndex(idx => idx + 1);
-  }, [simPointIndex]);
+  // Flat ordered list of simulation targets, built from ITINERARY_POINTS:
+  //   [La Rochelle (step 0), mid(1→2), ep[2], mid(2→3), ep[3], ..., ep[N-1]]
+  const simTargets = useMemo(() => {
+    const pts = ITINERARY_POINTS;
+    const list = [{ lat: pts[1].lat, lon: pts[1].lon }]; // step 0 = La Rochelle
+    for (let i = 1; i < pts.length - 1; i++) {
+      const from = pts[i];
+      const to   = pts[i + 1];
+      list.push({ lat: (from.lat + to.lat) / 2, lon: (from.lon + to.lon) / 2 });
+      list.push({ lat: to.lat, lon: to.lon });
+    }
+    return list;
+  }, []);
+
+  // flyTo helper — recenters map on catamaran with smooth animation
+  const flyToPos = useCallback((lat, lon) => {
+    if (!mapRef.current) return;
+    const map = mapRef.current.getMap();
+    if (map) map.flyTo({ center: [lon, lat], zoom: 8, duration: 800 });
+  }, []);
+
+  // Next step — advance one position forward in the flat target list
+  const handleSimNext = useCallback(() => {
+    const nextStep = simulationStep + 1;
+    if (nextStep >= simTargets.length) return;
+    const pos = simTargets[nextStep];
+    setSimulationStep(nextStep);
+    setCatamaranPos(pos);
+    flyToPos(pos.lat, pos.lon);
+  }, [simulationStep, simTargets, flyToPos]);
+
+  // Previous step — go back one position in the flat target list
+  const handleSimPrev = useCallback(() => {
+    const prevStep = simulationStep - 1;
+    if (prevStep < 0) return;
+    const pos = simTargets[prevStep];
+    setSimulationStep(prevStep);
+    setCatamaranPos(pos);
+    flyToPos(pos.lat, pos.lon);
+  }, [simulationStep, simTargets, flyToPos]);
+
+  // Manual drag — re-sync simulationStep to nearest target after snap
+  const handleCatamaranDrag = useCallback((pos) => {
+    setCatamaranPos(pos);
+    let bestIdx = simulationStep;
+    let bestDist = Infinity;
+    simTargets.forEach((t, i) => {
+      const d = Math.hypot(t.lat - pos.lat, t.lon - pos.lon);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    setSimulationStep(bestIdx);
+  }, [simulationStep, simTargets]);
 
   // Leg context : snap géométrique + métriques
   const legContext = useLegContext(
@@ -621,13 +664,15 @@ export default function App() {
           if (entering) {
             // Activation : positionner le catamaran sur La Rochelle
             setCatamaranPos(LA_ROCHELLE_POS);
-            setSimPointIndex(1);
+            setSimulationStep(0);
           } else {
             setCatamaranPos(null);
           }
         }}
-        onAdvance={advanceCatamaranToNextMidpoint}
-        canAdvance={simulationMode && simPointIndex < ITINERARY_POINTS.length - 1}
+        onNext={handleSimNext}
+        canNext={simulationMode && simulationStep < simTargets.length - 1}
+        onPrev={handleSimPrev}
+        canPrev={simulationMode && simulationStep > 0}
         legContext={legContext}
       />
       <ExportSidebar
@@ -1438,7 +1483,7 @@ export default function App() {
             latitude={legContext ? legContext.snappedPosition[1] : activeCatamaranPos.lat}
             longitude={legContext ? legContext.snappedPosition[0] : activeCatamaranPos.lon}
             bearing={legContext?.bearing ?? 0}
-            onDragEnd={(pos) => setCatamaranPos(pos)}
+            onDragEnd={handleCatamaranDrag}
           />
         )}
 

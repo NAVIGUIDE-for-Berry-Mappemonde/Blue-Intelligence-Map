@@ -11,10 +11,10 @@
  *   canAdvance   — boolean, désactive le bouton si fin de route atteinte
  */
 
-import { Navigation, Clock, Compass, Map as MapIcon, X } from "lucide-react";
+import { Navigation, Clock, Compass, Map as MapIcon, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLang } from "../i18n/LangContext.jsx";
 
-// ── Formatage ───────────────────────────────────────────────────────────────────
+// ── Formatage ────────────────────────────────────────────────────────────────
 
 function formatEta(hours) {
   if (hours == null || isNaN(hours)) return "—";
@@ -37,36 +37,40 @@ function formatBearing(deg) {
   return `${Math.round(deg)}° ${dirs[idx]}`;
 }
 
-// ── Bouton Avancer ──────────────────────────────────────────────────────────────────
+// ── Boutons Précédent / Suivant ──────────────────────────────────────────────
 
-function AdvanceButton({ onAdvance, canAdvance }) {
+function PrevNextButtons({ onPrev, canPrev, onNext, canNext }) {
   const { t } = useLang();
+  const btnBase = "flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-150 select-none border";
+  const btnActive = "text-white cursor-pointer";
+  const btnDisabled = "bg-slate-700/30 text-white/25 border-white/5 cursor-not-allowed";
   return (
-    <div className="px-2 pb-2 pt-1">
+    <div className="px-2 pb-2 pt-1 flex gap-1.5">
       <button
-        onClick={onAdvance}
-        disabled={!canAdvance}
-        className={[
-          "flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-lg",
-          "text-[10px] font-semibold transition-all duration-150 select-none border",
-          canAdvance
-            ? "bg-cyan-700/60 text-white border-cyan-500/50 hover:bg-cyan-600/70 cursor-pointer"
-            : "bg-slate-700/30 text-white/25 border-white/5 cursor-not-allowed",
-        ].join(" ")}
-        title={canAdvance ? t("advanceNextSegTitle") : t("endOfRoute")}
+        onClick={onPrev}
+        disabled={!canPrev}
+        className={[btnBase, canPrev ? `${btnActive} bg-slate-700/60 border-slate-500/50 hover:bg-slate-600/70` : btnDisabled].join(" ")}
+        title={t("previous")}
       >
-        <Navigation size={9} />
-        <span>
-          {t("advanceToNextPoint")}
-        </span>
+        <ChevronLeft size={10} />
+        <span>{t("previous")}</span>
+      </button>
+      <button
+        onClick={onNext}
+        disabled={!canNext}
+        className={[btnBase, canNext ? `${btnActive} bg-cyan-700/60 border-cyan-500/50 hover:bg-cyan-600/70` : btnDisabled].join(" ")}
+        title={t("next")}
+      >
+        <span>{t("next")}</span>
+        <ChevronRight size={10} />
       </button>
     </div>
   );
 }
 
-// ── Composant principal ────────────────────────────────────────────────────────────────
+// ── Composant principal ──────────────────────────────────────────────────────
 
-export function SimulationPanel({ legContext, onClose, onAdvance, canAdvance }) {
+export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, canNext }) {
   const { t } = useLang();
 
   if (!legContext) {
@@ -75,12 +79,10 @@ export function SimulationPanel({ legContext, onClose, onAdvance, canAdvance }) 
         <div className="text-xs text-slate-400 text-center">
           {t("simulationDragPrompt")}
         </div>
-        {/* Bouton avancer visible même sans legContext (catamaran sur La Rochelle) */}
-        {onAdvance && (
-          <div className="mt-2">
-            <AdvanceButton onAdvance={onAdvance} canAdvance={canAdvance} />
-          </div>
-        )}
+        {/* Boutons nav visibles même sans legContext (catamaran sur La Rochelle) */}
+        <div className="mt-2">
+          <PrevNextButtons onPrev={onPrev} canPrev={canPrev} onNext={onNext} canNext={canNext} />
+        </div>
       </div>
     );
   }
@@ -167,10 +169,8 @@ export function SimulationPanel({ legContext, onClose, onAdvance, canAdvance }) 
 
       </div>
 
-      {/* Bouton Avancer vers le prochain point (escale ou intermédiaire) */}
-      {onAdvance && (
-        <AdvanceButton onAdvance={onAdvance} canAdvance={canAdvance} />
-      )}
+      {/* Boutons Précédent / Suivant */}
+      <PrevNextButtons onPrev={onPrev} canPrev={canPrev} onNext={onNext} canNext={canNext} />
 
     </div>
   );

@@ -140,8 +140,7 @@ export default {
   exitSimulationShort:   "Exit simulation",
   simulationModeTooltip: "Simulation Mode — drag the catamaran along the route",
 
-  // ── Advance button (SimulationPanel) ──────────────────────────────────────
-  advanceToNextPoint:  "Advance to next point",
-  advanceNextSegTitle: "Advance to midpoint of next segment",
-  endOfRoute:          "End of route reached",
+  // ── Nav buttons (SimulationPanel) ─────────────────────────────────────────
+  previous: "Previous",
+  next:     "Next",
 };

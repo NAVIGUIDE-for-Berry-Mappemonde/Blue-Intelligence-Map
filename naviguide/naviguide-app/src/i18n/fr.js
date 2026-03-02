@@ -141,8 +141,7 @@ export default {
   exitSimulationShort:   "Quitter simulation",
   simulationModeTooltip: "Mode Simulation — déplacer le catamaran sur la route",
 
-  // ── Advance button (SimulationPanel) ──────────────────────────────────────
-  advanceToNextPoint:  "Avancer vers le prochain point",
-  advanceNextSegTitle: "Avancer au milieu du prochain segment",
-  endOfRoute:          "Fin de route atteinte",
+  // ── Nav buttons (SimulationPanel) ─────────────────────────────────────────
+  previous: "Précédent",
+  next:     "Suivant",
 };
