@@ -30,6 +30,7 @@ function PolarChatBubble({ role, content }) {
 
 /* ── Polar Chat section (rendered inside Sidebar above briefing) ────────── */
 function PolarChatSection({ polarData }) {
+  const { t } = useLang();
   const [messages,    setMessages]    = useState([]);
   const [chatInput,   setChatInput]   = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -92,7 +93,7 @@ function PolarChatSection({ polarData }) {
         <div className="max-h-48 overflow-y-auto sidebar-scroll px-3 py-3 space-y-0.5">
           {messages.length === 0 && !polarData && (
             <p className="text-xs text-slate-500 text-center py-3">
-              Chargez les polaires (panneau droit) pour activer le chat.
+              {t("polarChatLoadPrompt")}
             </p>
           )}
           {messages.map((m, i) => <PolarChatBubble key={i} role={m.role} content={m.content} />)}
@@ -113,7 +114,7 @@ function PolarChatSection({ polarData }) {
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={polarData ? "Question sur les polaires…" : "Chargez les polaires d'abord"}
+            placeholder={polarData ? t("polarChatAskPlaceholder") : t("polarChatLoadFirst")}
             disabled={!polarData}
             rows={1}
             className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 resize-none
@@ -250,6 +251,7 @@ function RiskBadge({ level }) {
 }
 
 function AlertItem({ alert }) {
+  const { t } = useLang();
   const colors = {
     CRITICAL: "border-red-700/60 bg-red-950/40",
     HIGH:     "border-orange-700/60 bg-orange-950/40",
@@ -262,7 +264,7 @@ function AlertItem({ alert }) {
         <RiskBadge level={alert.risk_level} />
       </div>
       <div className="text-xs text-slate-400 mt-1 capitalize">
-        Dominant: {alert.dominant_risk?.replace("_score", "") || "—"}
+        {t("dominantRisk")}: {alert.dominant_risk?.replace("_score", "") || "—"}
       </div>
     </div>
   );
@@ -629,7 +631,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
           {onSimulationToggle && (
             <button
               onClick={onSimulationToggle}
-              title={simulationMode ? "Quitter la simulation" : "Mode Simulation — déplacer le catamaran sur la route"}
+              title={simulationMode ? t("exitSimulation") : t("simulationModeTooltip")}
               className={[
                 "flex items-center justify-center gap-1.5 w-full mt-2 px-2 py-1.5 rounded-lg",
                 "text-[10px] font-semibold transition-all duration-150 select-none border",
@@ -639,8 +641,8 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               ].join(" ")}
             >
               {simulationMode
-                ? <><Square size={9} className="fill-current" /><span>Quitter simulation</span></>
-                : <><Play  size={9} className="fill-current" /><span>Mode Simulation</span></>
+                ? <><Square size={9} className="fill-current" /><span>{t("exitSimulationShort")}</span></>
+                : <><Play  size={9} className="fill-current" /><span>{t("simulationModeLabel")}</span></>
               }
             </button>
           )}
