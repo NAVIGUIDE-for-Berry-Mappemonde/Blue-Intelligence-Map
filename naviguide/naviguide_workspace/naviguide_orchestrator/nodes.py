@@ -22,19 +22,13 @@ import os
 import logging
 from datetime import datetime
 from pathlib import Path
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Load .env from workspace root (contains ANTHROPIC_API_KEY)
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-
 try:
-    import anthropic as _anthropic
-    _ANTHROPIC_CLIENT   = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    _ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
-except Exception:
-    _ANTHROPIC_CLIENT    = None
-    _ANTHROPIC_AVAILABLE = False
+    from langchain_aws import ChatBedrock
+    _BEDROCK_AVAILABLE = True
+except ImportError:
+    _BEDROCK_AVAILABLE = False
 
 from .state import OrchestratorState
 
@@ -126,9 +120,6 @@ def run_route_intelligence_node(state: OrchestratorState) -> OrchestratorState:
         "waypoints":            state["waypoints"],
         "vessel_specs":         state.get("vessel_specs") or BerryMappemondeRouter.VESSEL_PROFILE,
         "constraints":          state.get("constraints", {}),
-        "expedition_id":        state.get("expedition_id"),   # forward to fetch_vmg_node
-        "polar_vmg":            None,
-        "polar_avg_speed":      None,
         "raw_segments":         [],
         "anti_shipping_scores": [],
         "safety_validations":   [],
@@ -142,18 +133,9 @@ def run_route_intelligence_node(state: OrchestratorState) -> OrchestratorState:
     }
 
     try:
-        result  = _get_agent1().invoke(initial_a1)
-        scores  = result.get("anti_shipping_scores", [])
-        avg     = round(sum(scores) / len(scores), 4) if scores else 0.0
-        meta    = result.get("route_plan", {}).get("metadata", {})
-        eta_d   = meta.get("total_eta_days")
-
-        polar_info = ""
-        if result.get("polar_avg_speed"):
-            polar_info = (
-                f" | polar_speed={result['polar_avg_speed']} kts"
-                f" | ETA={eta_d} days"
-            )
+        result = _get_agent1().invoke(initial_a1)
+        scores = result.get("anti_shipping_scores", [])
+        avg    = round(sum(scores) / len(scores), 4) if scores else 0.0
 
         msg = AIMessage(
             content=(
@@ -161,21 +143,17 @@ def run_route_intelligence_node(state: OrchestratorState) -> OrchestratorState:
                 f"{len(result.get('raw_segments', []))} segments | "
                 f"anti-shipping avg={avg} | "
                 f"status={result.get('status')}"
-                f"{polar_info}"
             )
         )
         log.info(f"[orchestrator] Agent 1 complete: status={result.get('status')}")
         return {
             **state,
-            "agent1_status":    result.get("status", "complete"),
-            "agent1_errors":    result.get("errors", []),
-            "route_plan":       result.get("route_plan", {}),
+            "agent1_status":  result.get("status", "complete"),
+            "agent1_errors":  result.get("errors", []),
+            "route_plan":     result.get("route_plan", {}),
             "anti_shipping_avg": avg,
-            "polar_vmg":        result.get("polar_vmg"),
-            "polar_avg_speed":  result.get("polar_avg_speed"),
-            "total_eta_days":   eta_d,
-            "status":           "running_a3",
-            "messages":         [msg],
+            "status":         "running_a3",
+            "messages":       [msg],
         }
 
     except Exception as exc:
@@ -266,152 +244,108 @@ def run_risk_assessment_node(state: OrchestratorState) -> OrchestratorState:
 def llm_expedition_briefing_node(state: OrchestratorState) -> OrchestratorState:
     """
     Generate unified executive skipper briefing combining Agent 1 + Agent 3 outputs.
-    Uses Anthropic Claude API; falls back to structured static text.
+    Uses ChatBedrock (Claude 3.5) if available; falls back to structured static text.
     """
     route_plan   = state.get("route_plan", {})
     risk_report  = state.get("risk_report", {})
     risk_level   = state.get("expedition_risk_level", "UNKNOWN")
     waypoints    = state.get("waypoints", [])
     anti_avg     = state.get("anti_shipping_avg", 0.0)
-    language     = state.get("language", "en").lower()
-    if language not in ("en", "fr"):
-        language = "en"
 
     # Gather key data for the prompt
     risk_metadata   = risk_report.get("metadata", {})
     critical_alerts = risk_report.get("critical_alerts", [])
+    risk_matrix     = risk_report.get("risk_matrix", [])
+    detail          = risk_report.get("detail", {})
     route_metadata  = route_plan.get("metadata", {}) if isinstance(route_plan, dict) else {}
     total_nm        = route_metadata.get("total_distance_nm", 0)
 
-    # Polar / VMG performance data
-    polar_vmg       = state.get("polar_vmg")         # {tws: {upwind, downwind, gybe_angle}}
-    polar_avg_speed = state.get("polar_avg_speed")
-    total_eta_days  = state.get("total_eta_days") or route_metadata.get("total_eta_days")
-    polar_data_used = route_metadata.get("polar_data_used", False)
+    # Build compact per-waypoint risk table (sorted by risk descending)
+    sorted_matrix = sorted(risk_matrix, key=lambda x: x.get("overall", 0), reverse=True)
+    risk_rows = "\n".join(
+        f"  {s['name'][:28]:<28} {s['level']:<8} "
+        f"ovr={s['overall']:.2f} "
+        f"wx={s['components'].get('weather_score',0):.2f} "
+        f"pir={s['components'].get('piracy_score',0):.2f} "
+        f"med={s['components'].get('medical_score',0):.2f} "
+        f"cyc={s['components'].get('cyclone_score',0):.2f}"
+        for s in sorted_matrix
+    ) or "  Aucune donnée de risque disponible."
 
-    # Build VMG context block for the prompt
-    def _vmg_block_en():
-        if not polar_vmg:
-            return "  Polar data not available — ETAs based on vessel default speed (10 kts)."
-        lines = [
-            f"  Polar-based average speed: {polar_avg_speed:.1f} kts",
-            f"  Expedition ETA (polar): {total_eta_days:.0f} days",
-        ]
-        for tws_key in ["10", "12", "16"]:
-            entry = polar_vmg.get(tws_key, {})
-            uw = entry.get("upwind",   {})
-            dw = entry.get("downwind", {})
-            if uw and dw:
-                lines.append(
-                    f"  TWS {tws_key} kts → upwind VMG {uw.get('vmg', 0):.1f} kts "
-                    f"@ {uw.get('twa', 0)}° | downwind VMG {dw.get('vmg', 0):.1f} kts "
-                    f"@ {dw.get('twa', 0)}°"
-                )
-        return "\n".join(lines)
+    # Medical details for isolated stops (medevac ≥ 48h)
+    medical_list = detail.get("medical_access", [])
+    isolated = [
+        f"  • {m['name']}: {m['medevac_hours']}h medevac — {m.get('notes','')[:60]}"
+        for m in medical_list if m.get("medevac_hours", 0) >= 48
+    ]
+    medical_detail = "\n".join(isolated) or "  Aucun isolement médical critique."
 
-    def _vmg_block_fr():
-        if not polar_vmg:
-            return "  Données polaires indisponibles — ETAs basés sur vitesse par défaut (10 nœuds)."
-        lines = [
-            f"  Vitesse moyenne polaire : {polar_avg_speed:.1f} nœuds",
-            f"  ETA expédition (polaires) : {total_eta_days:.0f} jours",
-        ]
-        for tws_key in ["10", "12", "16"]:
-            entry = polar_vmg.get(tws_key, {})
-            uw = entry.get("upwind",   {})
-            dw = entry.get("downwind", {})
-            if uw and dw:
-                lines.append(
-                    f"  TWS {tws_key} nœuds → VMG au près {uw.get('vmg', 0):.1f} nœuds "
-                    f"@ {uw.get('twa', 0)}° | VMG portant {dw.get('vmg', 0):.1f} nœuds "
-                    f"@ {dw.get('twa', 0)}°"
-                )
-        return "\n".join(lines)
+    # Cyclone basins active
+    cyclone_list = detail.get("cyclone_exposure", [])
+    active_cyclone = list({
+        c["basin"] for c in cyclone_list
+        if c.get("season_active") or c.get("in_peak")
+    })
+    cyclone_str = ", ".join(active_cyclone) or "Aucun bassin actif au départ prévu"
+
+    # Piracy zones hit
+    piracy_list = detail.get("piracy_zones", [])
+    piracy_zones = list({
+        p["zone"] for p in piracy_list if p.get("score", 0) >= 0.30
+    })
+    piracy_str = ", ".join(piracy_zones) or "Aucune zone à risque élevé"
 
     critical_list = "\n".join(
-        f"  • {a['waypoint']} [{a['risk_level']}] — dominant: {a.get('dominant_risk', 'N/A')}"
-        for a in critical_alerts[:5]
-    ) or ("  No critical alerts detected." if language == "en" else "  Aucune alerte critique détectée.")
+        f"  • {a['waypoint']} [{a['risk_level']}] — risque dominant: {a.get('dominant_risk','N/A')}"
+        for a in critical_alerts
+    ) or "  Aucune alerte critique détectée."
 
-    if language == "en":
-        prompt = f"""You are the NAVIGUIDE chief maritime safety officer, specialist in offshore circumnavigations.
+    prompt = f"""Tu es le chef officier de sécurité maritime de NAVIGUIDE, spécialiste en circumnavigations hauturières.
 
-BERRY-MAPPEMONDE EXPEDITION SUMMARY
-═════════════════════════════════════
-Stopovers: {len(waypoints)}
-Total distance: {total_nm:,.0f} nautical miles
-Expedition risk level: {risk_level}
-Average anti-shipping score: {anti_avg:.3f}  (1.0 = ideal)
-CRITICAL/HIGH alerts: {len(critical_alerts)}
+EXPÉDITION BERRY-MAPPEMONDE — PROFIL DE RISQUE COMPLET
+═══════════════════════════════════════════════════════
+Escales: {len(waypoints)} | Distance: {total_nm:,.0f} nm | Risque global: {risk_level}
+Anti-trafic moy: {anti_avg:.3f} | CRITICAL: {risk_metadata.get('critical_stops_count',0)} | HIGH: {risk_metadata.get('high_risk_stops_count',0)}
 
-BOAT PERFORMANCE (polar data):
-{_vmg_block_en()}
+MATRICE DE RISQUE PAR ESCALE (triée par risque décroissant):
+Escale                       Niveau   Ovr   Météo Pir.  Méd.  Cyc.
+{risk_rows}
 
-PRIORITY ALERTS:
+ALERTES CRITIQUES/HIGH:
 {critical_list}
 
-AGENT 3 STATISTICS:
-• Waypoints assessed: {risk_metadata.get('waypoints_assessed', len(waypoints))}
-• Average risk score: {risk_metadata.get('overall_expedition_risk', 0):.3f}
-• CRITICAL alerts: {risk_metadata.get('critical_stops_count', 0)}
-• HIGH alerts: {risk_metadata.get('high_risk_stops_count', 0)}
+ACCÈS MÉDICAL CRITIQUE (medevac ≥48h):
+{medical_detail}
 
-Write a structured executive skipper briefing with exactly these sections:
-1. EXECUTIVE SUMMARY (2-3 sentences — include ETA estimate and average VMG if polar data available)
-2. CRITICAL ALERTS (bullet list, max 4 points, with mitigation)
-3. RECOMMENDED WEATHER WINDOWS (per ocean region, 1 sentence each)
-4. NON-NEGOTIABLE SAFETY REQUIREMENTS (3 points)
+ZONES PIRATERIE ACTIVES (score≥0.30): {piracy_str}
+BASSINS CYCLONIQUES ACTIFS: {cyclone_str}
 
-Tone: professional, concise, confirmed offshore expertise. Max 280 words. Reply in English."""
-    else:
-        prompt = f"""Tu es le chef officier de sécurité maritime de NAVIGUIDE, spécialiste en circumnavigations hauturières.
+Rédige un briefing skipper avec EXACTEMENT ces 4 sections:
+1. RÉSUMÉ EXÉCUTIF (2-3 phrases)
+2. TOP RISQUES CRITIQUES (max 4 bullets, chacun avec mitigation concrète)
+3. FENÊTRES MÉTÉO PAR BASSIN (1 phrase/bassin)
+4. EXIGENCES NON NÉGOCIABLES (3 bullets)
 
-RÉSUMÉ EXPÉDITION BERRY-MAPPEMONDE
-═══════════════════════════════════
-Escales : {len(waypoints)}
-Distance totale : {total_nm:,.0f} milles nautiques
-Niveau de risque expédition : {risk_level}
-Score anti-trafic maritime moyen : {anti_avg:.3f}  (1.0 = idéal)
-Alertes CRITICAL/HIGH : {len(critical_alerts)}
-
-PERFORMANCES DU BATEAU (données polaires) :
-{_vmg_block_fr()}
-
-ALERTES PRIORITAIRES :
-{critical_list}
-
-STATISTIQUES AGENT 3 :
-• Waypoints évalués : {risk_metadata.get('waypoints_assessed', len(waypoints))}
-• Score moyen : {risk_metadata.get('overall_expedition_risk', 0):.3f}
-• Alertes CRITICAL : {risk_metadata.get('critical_stops_count', 0)}
-• Alertes HIGH : {risk_metadata.get('high_risk_stops_count', 0)}
-
-Rédige un briefing skipper exécutif structuré avec exactement ces sections :
-1. RÉSUMÉ EXÉCUTIF (2-3 phrases — inclure l'ETA estimé et la VMG moyenne si données polaires disponibles)
-2. ALERTES CRITIQUES (liste à puces, max 4 points, avec mitigation)
-3. FENÊTRES MÉTÉO RECOMMANDÉES (par région océanique, 1 phrase chacune)
-4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES (3 points)
-
-Ton : professionnel, concis, expertise hauturière confirmée. Max 280 mots. Répondre en français."""
+Ton: professionnel hauturier, concis. Max 280 mots. En français."""
 
     briefing = ""
 
-    if _ANTHROPIC_AVAILABLE and _ANTHROPIC_CLIENT:
+    if _BEDROCK_AVAILABLE:
         try:
-            response = _ANTHROPIC_CLIENT.messages.create(
-                model      = "claude-opus-4-5",
-                max_tokens = 600,
-                messages   = [{"role": "user", "content": prompt}],
+            llm = ChatBedrock(
+                model_id    = "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+                region_name = "us-east-1",
             )
-            briefing = response.content[0].text
-            log.info(f"[orchestrator] LLM briefing generated via Anthropic Claude (lang={language})")
+            briefing = llm.invoke([HumanMessage(content=prompt)]).content
+            log.info("[orchestrator] LLM briefing generated via Bedrock")
         except Exception as exc:
-            log.warning(f"[orchestrator] Anthropic unavailable ({exc}) — using fallback briefing")
+            log.warning(f"[orchestrator] Bedrock unavailable ({exc}) — using fallback briefing")
 
     if not briefing:
-        # Structured fallback briefing
+        # Structured fallback briefing (includes critical alerts from full risk matrix)
         briefing = _build_fallback_briefing(
-            risk_level, critical_alerts, total_nm, len(waypoints), language
+            risk_level, critical_alerts, total_nm, len(waypoints),
+            sorted_matrix, isolated
         )
 
     msg = AIMessage(content=f"[llm_briefing] ✅ Executive briefing generated ({len(briefing)} chars)")
@@ -428,60 +362,49 @@ def _build_fallback_briefing(
     critical_alerts: list,
     total_nm: float,
     waypoint_count: int,
-    language: str = "en",
+    sorted_matrix: list = None,
+    isolated_medical: list = None,
 ) -> str:
-    """Structured fallback when LLM is unavailable. Respects language parameter."""
-    if language == "fr":
-        alerts_text = "\n".join(
-            f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'risque composite')}"
-            for a in critical_alerts[:4]
-        ) or "• Aucune alerte critique sur le tracé."
-        return (
-            f"BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
-            f"1. RÉSUMÉ EXÉCUTIF\n"
-            f"L'expédition Berry-Mappemonde couvre {total_nm:,.0f} milles nautiques à travers "
-            f"{waypoint_count} escales dans les territoires français d'outre-mer. "
-            f"Le niveau de risque global évalué est {risk_level}. "
-            f"Une préparation approfondie et un calendrier respectant les fenêtres météo "
-            f"saisonnières sont impératifs.\n\n"
-            f"2. ALERTES CRITIQUES\n"
-            f"{alerts_text}\n\n"
-            f"3. FENÊTRES MÉTÉO RECOMMANDÉES\n"
-            f"• Atlantique N (La Rochelle → Canaries) : mai–juin (alizés établis)\n"
-            f"• Atlantique tropical (Canaries → Caraïbes) : novembre–janvier\n"
-            f"• Pacifique S (Cayenne → Papeete) : avril–juin (hors cyclone)\n"
-            f"• Océan Indien S (Nouméa → Réunion) : mai–septembre\n\n"
-            f"4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
-            f"• Balise EPIRB 406 MHz homologuée + AIS classe B actif permanent\n"
-            f"• Trousse médicale hauturière complète + formation premiers secours en mer\n"
-            f"• Éviter les zones cycloniques en saison active (voir alertes ci-dessus)\n\n"
-            f"Bonne route, Commandant. NAVIGUIDE surveille votre expédition."
-        )
-    else:
-        alerts_text = "\n".join(
-            f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'composite risk')}"
-            for a in critical_alerts[:4]
-        ) or "• No critical alerts detected on route."
-        return (
-            f"BERRY-MAPPEMONDE EXPEDITION BRIEFING — WORLD TOUR OF FRENCH TERRITORIES\n\n"
-            f"1. EXECUTIVE SUMMARY\n"
-            f"The Berry-Mappemonde expedition covers {total_nm:,.0f} nautical miles across "
-            f"{waypoint_count} stopovers in French overseas territories. "
-            f"The overall assessed risk level is {risk_level}. "
-            f"Thorough preparation and a schedule respecting seasonal weather windows are imperative.\n\n"
-            f"2. CRITICAL ALERTS\n"
-            f"{alerts_text}\n\n"
-            f"3. RECOMMENDED WEATHER WINDOWS\n"
-            f"• N Atlantic (La Rochelle → Canaries): May–June (established trade winds)\n"
-            f"• Tropical Atlantic (Canaries → Caribbean): November–January\n"
-            f"• S Pacific (Cayenne → Papeete): April–June (outside cyclone season)\n"
-            f"• S Indian Ocean (Nouméa → Réunion): May–September\n\n"
-            f"4. NON-NEGOTIABLE SAFETY REQUIREMENTS\n"
-            f"• Certified 406 MHz EPIRB + permanent Class B AIS transponder\n"
-            f"• Full offshore medical kit + offshore first-aid certification\n"
-            f"• Avoid active cyclone zones during cyclone season (see alerts above)\n\n"
-            f"Fair winds, Captain. NAVIGUIDE is monitoring your expedition."
-        )
+    """Structured fallback when LLM is unavailable."""
+    sorted_matrix    = sorted_matrix    or []
+    isolated_medical = isolated_medical or []
+
+    # Use critical_alerts; if empty, pull top-risk entries from matrix
+    top_alerts = critical_alerts[:4] if critical_alerts else [
+        {"waypoint": s["name"], "risk_level": s["level"],
+         "dominant_risk": max(s["components"], key=s["components"].get)}
+        for s in sorted_matrix[:4] if s.get("level") in ("CRITICAL", "HIGH", "MODERATE")
+    ]
+    alerts_text = "\n".join(
+        f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'risque composite')}"
+        for a in top_alerts
+    ) or "• Aucune alerte critique sur le tracé."
+
+    medical_text = "\n".join(isolated_medical[:3]) or "• Accès médical acceptable sur l'ensemble du tracé."
+
+    return (
+        f"BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
+        f"1. RÉSUMÉ EXÉCUTIF\n"
+        f"L'expédition Berry-Mappemonde couvre {total_nm:,.0f} milles nautiques à travers "
+        f"{waypoint_count} escales dans les territoires français d'outre-mer. "
+        f"Le niveau de risque global évalué est {risk_level}. "
+        f"Une préparation approfondie et un calendrier respectant les fenêtres météo "
+        f"saisonnières sont impératifs.\n\n"
+        f"2. ALERTES CRITIQUES\n"
+        f"{alerts_text}\n\n"
+        f"3. ISOLEMENT MÉDICAL\n"
+        f"{medical_text}\n\n"
+        f"4. FENÊTRES MÉTÉO RECOMMANDÉES\n"
+        f"• Atlantique N (La Rochelle → Canaries) : mai–juin (alizés établis)\n"
+        f"• Atlantique tropical (Canaries → Caraïbes) : novembre–janvier\n"
+        f"• Pacifique S (Cayenne → Papeete) : avril–juin (hors cyclone)\n"
+        f"• Océan Indien S (Nouméa → Réunion) : mai–septembre\n\n"
+        f"5. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
+        f"• Balise EPIRB 406 MHz homologuée + AIS classe B actif permanent\n"
+        f"• Trousse médicale hauturière complète + formation premiers secours en mer\n"
+        f"• Éviter les zones cycloniques en saison active (voir alertes ci-dessus)\n\n"
+        f"Bonne route, Commandant. NAVIGUIDE surveille votre expédition."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -580,18 +503,13 @@ def generate_expedition_plan_node(state: OrchestratorState) -> OrchestratorState
     expedition_plan = {
         "executive_briefing": state.get("executive_briefing", ""),
         "voyage_statistics": {
-            "total_distance_nm":       total_nm,
-            "total_segments":          total_segs,
-            "expedition_risk_level":   risk_level,
+            "total_distance_nm":     total_nm,
+            "total_segments":        total_segs,
+            "expedition_risk_level": risk_level,
             "overall_expedition_risk": overall_risk,
-            "anti_shipping_avg":       anti_avg,
-            "high_risk_count":         high_count,
-            "critical_count":          crit_count,
-            # Polar / ETA data
-            "total_eta_days":          state.get("total_eta_days"),
-            "polar_avg_speed_knots":   state.get("polar_avg_speed"),
-            "polar_data_used":         state.get("polar_avg_speed") is not None,
-            "expedition_id":           state.get("expedition_id"),
+            "anti_shipping_avg":     anti_avg,
+            "high_risk_count":       high_count,
+            "critical_count":        crit_count,
         },
         "critical_alerts": sidebar_alerts,
         "unified_geojson":  unified_geojson,
