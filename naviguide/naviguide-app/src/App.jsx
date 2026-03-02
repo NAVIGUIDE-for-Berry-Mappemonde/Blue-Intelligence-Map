@@ -179,11 +179,16 @@ export default function App() {
   }, [simulationStep, simTargets]);
 
   // Leg context : snap géométrique + métriques
+  // simulationStep est passé pour contraindre le snap à la bonne portion de
+  // polyligne — évite que le catamaran "saute" sur le tronçon retour quand
+  // l'itinéraire passe deux fois par la même zone (ex: Cap Verde aller/retour).
   const legContext = useLegContext(
     simulationMode ? activeCatamaranPos.lat : null,
     simulationMode ? activeCatamaranPos.lon : null,
     segments,
     ITINERARY_POINTS,
+    undefined,                               // speedKnots — valeur par défaut
+    simulationMode ? simulationStep : null,  // contrainte chronologique
   );
 
   // After each Next/Prev step, fly to the SNAPPED position (not the raw target)
