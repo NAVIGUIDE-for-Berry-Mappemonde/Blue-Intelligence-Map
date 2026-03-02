@@ -126,7 +126,7 @@ function PolarChatSection({ polarData }) {
 }
 
 /* ── Logo image paths (served from /public) ──────────────────────────────── */
-const NAVIGUIDE_LOGO = "/logo-naviguide.png";
+const NAVIGUIDE_LOGO = "/logo-naviguide-7479b7aa.png";
 const BERRY_LOGO     = "/logo-berry-mappemonde.png";
 
 /* ── File parsers ─────────────────────────────────────────────────────────── */
@@ -558,7 +558,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
           {isCockpit ? (
             <div className="flex items-center gap-2 mb-2">
               <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE"
-                className="h-8 w-8 object-contain" />
+                className="h-9 w-9 object-contain rounded-full" />
               <span className="text-white font-bold text-sm tracking-widest flex-1">NAVIGUIDE</span>
             </div>
           ) : (
@@ -566,7 +566,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               <img
                 src={NAVIGUIDE_LOGO}
                 alt="NAVIGUIDE for Berry-Mappemonde"
-                className="h-24 w-24 object-contain drop-shadow-lg"
+                className="h-32 w-32 object-contain rounded-full drop-shadow-lg"
               />
             </div>
           )}

@@ -371,18 +371,19 @@ export function ExportSidebar({
       {/* Toggle button — always visible on the map edge */}
       <button
         onClick={onToggle}
-        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 border border-slate-700 text-white
-          rounded-full w-9 h-9 flex items-center justify-center shadow-lg
+        className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 text-white
+          rounded-full w-12 h-12 flex items-center justify-center shadow-lg
+          border-2 border-sky-400/70 shadow-sky-900/40
           hover:bg-slate-800 transition-all duration-300 ${open ? "right-[322px]" : "right-4"}`}
         title={open ? t("hideExportPanel") : t("showExportPanel")}
       >
-        {open ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        {open ? <ChevronRight size={22} /> : <ChevronLeft size={22} />}
       </button>
 
       {/* Sidebar panel */}
       <div
         className={`naviguide-sidebar-panel absolute top-0 right-0 h-full z-20 flex flex-col bg-slate-900/97
-          border-l border-slate-700/60 shadow-2xl transition-transform duration-300
+          border-l-2 border-sky-400/40 shadow-2xl transition-transform duration-300
           ${open ? "translate-x-0" : "translate-x-full"}`}
         style={{ width: 320 }}
       >
@@ -420,18 +421,6 @@ export function ExportSidebar({
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
             {t("modes")}
           </div>
-          <Toggle
-            labelLeft={t("cabotage")}
-            labelRight={t("offshore")}
-            active={isOffshore}
-            onChange={onOffshoreChange}
-          />
-          <Toggle
-            labelLeft={t("onboarding")}
-            labelRight={t("cockpit")}
-            active={isCockpit}
-            onChange={onCockpitChange}
-          />
           <Toggle
             labelLeft={t("dark")}
             labelRight={t("light")}

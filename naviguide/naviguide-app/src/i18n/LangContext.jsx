@@ -7,17 +7,21 @@ import { createContext, useCallback, useContext, useState } from "react";
 import en from "./en";
 import fr from "./fr";
 
-const STORAGE_KEY = "naviguide_lang";
+// v2: bumped to invalidate any legacy "fr" stored under the old key
+const STORAGE_KEY = "naviguide_lang_v2";
+const VALID_LANGS  = new Set(["en", "fr"]);
 const translations = { en, fr };
 
 const LangContext = createContext(null);
 
 export function LangProvider({ children }) {
-  const [lang, setLang] = useState(
-    () => localStorage.getItem(STORAGE_KEY) || "en"
-  );
+  const [lang, setLang] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return VALID_LANGS.has(stored) ? stored : "en";
+  });
 
   const switchLang = useCallback((l) => {
+    if (!VALID_LANGS.has(l)) return;
     setLang(l);
     localStorage.setItem(STORAGE_KEY, l);
   }, []);

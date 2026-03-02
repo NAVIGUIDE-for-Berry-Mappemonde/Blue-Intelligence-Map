@@ -411,7 +411,7 @@ Ton : professionnel, concis, expertise hauturière confirmée. Max 280 mots. Ré
     if not briefing:
         # Structured fallback briefing
         briefing = _build_fallback_briefing(
-            risk_level, critical_alerts, total_nm, len(waypoints)
+            risk_level, critical_alerts, total_nm, len(waypoints), language
         )
 
     msg = AIMessage(content=f"[llm_briefing] ✅ Executive briefing generated ({len(briefing)} chars)")
@@ -428,34 +428,60 @@ def _build_fallback_briefing(
     critical_alerts: list,
     total_nm: float,
     waypoint_count: int,
+    language: str = "en",
 ) -> str:
-    """Structured fallback when LLM is unavailable."""
-    alerts_text = "\n".join(
-        f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'risque composite')}"
-        for a in critical_alerts[:4]
-    ) or "• Aucune alerte critique sur le tracé."
-
-    return (
-        f"BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
-        f"1. RÉSUMÉ EXÉCUTIF\n"
-        f"L'expédition Berry-Mappemonde couvre {total_nm:,.0f} milles nautiques à travers "
-        f"{waypoint_count} escales dans les territoires français d'outre-mer. "
-        f"Le niveau de risque global évalué est {risk_level}. "
-        f"Une préparation approfondie et un calendrier respectant les fenêtres météo "
-        f"saisonnières sont impératifs.\n\n"
-        f"2. ALERTES CRITIQUES\n"
-        f"{alerts_text}\n\n"
-        f"3. FENÊTRES MÉTÉO RECOMMANDÉES\n"
-        f"• Atlantique N (La Rochelle → Canaries) : mai–juin (alizés établis)\n"
-        f"• Atlantique tropical (Canaries → Caraïbes) : novembre–janvier\n"
-        f"• Pacifique S (Cayenne → Papeete) : avril–juin (hors cyclone)\n"
-        f"• Océan Indien S (Nouméa → Réunion) : mai–septembre\n\n"
-        f"4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
-        f"• Balise EPIRB 406 MHz homologuée + AIS classe B actif permanent\n"
-        f"• Trousse médicale hauturière complète + formation premiers secours en mer\n"
-        f"• Éviter les zones cycloniques en saison active (voir alertes ci-dessus)\n\n"
-        f"Bonne route, Commandant. NAVIGUIDE surveille votre expédition."
-    )
+    """Structured fallback when LLM is unavailable. Respects language parameter."""
+    if language == "fr":
+        alerts_text = "\n".join(
+            f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'risque composite')}"
+            for a in critical_alerts[:4]
+        ) or "• Aucune alerte critique sur le tracé."
+        return (
+            f"BRIEFING EXPÉDITION BERRY-MAPPEMONDE — TOUR DU MONDE DES TERRITOIRES FRANÇAIS\n\n"
+            f"1. RÉSUMÉ EXÉCUTIF\n"
+            f"L'expédition Berry-Mappemonde couvre {total_nm:,.0f} milles nautiques à travers "
+            f"{waypoint_count} escales dans les territoires français d'outre-mer. "
+            f"Le niveau de risque global évalué est {risk_level}. "
+            f"Une préparation approfondie et un calendrier respectant les fenêtres météo "
+            f"saisonnières sont impératifs.\n\n"
+            f"2. ALERTES CRITIQUES\n"
+            f"{alerts_text}\n\n"
+            f"3. FENÊTRES MÉTÉO RECOMMANDÉES\n"
+            f"• Atlantique N (La Rochelle → Canaries) : mai–juin (alizés établis)\n"
+            f"• Atlantique tropical (Canaries → Caraïbes) : novembre–janvier\n"
+            f"• Pacifique S (Cayenne → Papeete) : avril–juin (hors cyclone)\n"
+            f"• Océan Indien S (Nouméa → Réunion) : mai–septembre\n\n"
+            f"4. EXIGENCES DE SÉCURITÉ NON NÉGOCIABLES\n"
+            f"• Balise EPIRB 406 MHz homologuée + AIS classe B actif permanent\n"
+            f"• Trousse médicale hauturière complète + formation premiers secours en mer\n"
+            f"• Éviter les zones cycloniques en saison active (voir alertes ci-dessus)\n\n"
+            f"Bonne route, Commandant. NAVIGUIDE surveille votre expédition."
+        )
+    else:
+        alerts_text = "\n".join(
+            f"• {a['waypoint']} [{a['risk_level']}] — {a.get('dominant_risk', 'composite risk')}"
+            for a in critical_alerts[:4]
+        ) or "• No critical alerts detected on route."
+        return (
+            f"BERRY-MAPPEMONDE EXPEDITION BRIEFING — WORLD TOUR OF FRENCH TERRITORIES\n\n"
+            f"1. EXECUTIVE SUMMARY\n"
+            f"The Berry-Mappemonde expedition covers {total_nm:,.0f} nautical miles across "
+            f"{waypoint_count} stopovers in French overseas territories. "
+            f"The overall assessed risk level is {risk_level}. "
+            f"Thorough preparation and a schedule respecting seasonal weather windows are imperative.\n\n"
+            f"2. CRITICAL ALERTS\n"
+            f"{alerts_text}\n\n"
+            f"3. RECOMMENDED WEATHER WINDOWS\n"
+            f"• N Atlantic (La Rochelle → Canaries): May–June (established trade winds)\n"
+            f"• Tropical Atlantic (Canaries → Caribbean): November–January\n"
+            f"• S Pacific (Cayenne → Papeete): April–June (outside cyclone season)\n"
+            f"• S Indian Ocean (Nouméa → Réunion): May–September\n\n"
+            f"4. NON-NEGOTIABLE SAFETY REQUIREMENTS\n"
+            f"• Certified 406 MHz EPIRB + permanent Class B AIS transponder\n"
+            f"• Full offshore medical kit + offshore first-aid certification\n"
+            f"• Avoid active cyclone zones during cyclone season (see alerts above)\n\n"
+            f"Fair winds, Captain. NAVIGUIDE is monitoring your expedition."
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

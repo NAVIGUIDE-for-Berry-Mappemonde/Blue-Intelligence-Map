@@ -73,8 +73,8 @@ export default function App() {
   const [polarData, setPolarData] = useState(null);
 
   // ── App-wide modes ──────────────────────────────────────────────────────────
-  const [isOffshore,  setIsOffshore]  = useState(false); // false=Cabotage, true=Offshore
-  const [isCockpit,   setIsCockpit]   = useState(false); // false=Onboarding, true=Cockpit
+  const [isOffshore,  setIsOffshore]  = useState(true);  // always Offshore (toggles removed)
+  const [isCockpit,   setIsCockpit]   = useState(false); // always Onboarding (toggles removed)
   const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
 
   // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
