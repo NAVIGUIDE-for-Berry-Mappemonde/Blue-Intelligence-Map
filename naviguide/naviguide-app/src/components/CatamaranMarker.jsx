@@ -108,8 +108,13 @@ function CatamaranIcon({ size = 56, bearing = 0, southernHemisphere = false }) {
   const goingEast  = Math.sin(bearingRad) >= 0;  // bearing in [0°, 180°]
   const tilt       = goingEast ? bearing - 90 : bearing - 270;
 
-  const parts = [`rotate(${tilt}deg)`];
-  if (!goingEast)         parts.push("scaleX(-1)");  // flip H for west half
+  // scaleX(-1) MUST come before rotate() so the flip happens in image-local
+  // space and the subsequent rotation is applied to the already-flipped image.
+  // Wrong order (rotate then scaleX) mirrors the rotation axis and produces
+  // a bearing that is off by up to 180° for westward headings.
+  const parts = [];
+  if (!goingEast)         parts.push("scaleX(-1)");  // flip H first (bow → LEFT)
+  parts.push(`rotate(${tilt}deg)`);                  // then tilt
   if (southernHemisphere) parts.push("scaleY(-1)");
 
   return (
