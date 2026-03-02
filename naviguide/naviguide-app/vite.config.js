@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
-    port: 3009,
+    port: 5173,
     allowedHosts: ["j19hah46.run.complete.dev", "all"],
     // Local dev: use default HMR over localhost
     // Deployed: use WSS over production domain
@@ -24,7 +24,7 @@ export default defineConfig({
   },
   preview: {
     host: "0.0.0.0",
-    port: 3009,
+    port: 5173,
     allowedHosts: ["j19hah46.run.complete.dev", "all"],
   },
 });

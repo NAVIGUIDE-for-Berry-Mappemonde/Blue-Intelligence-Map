@@ -107,26 +107,47 @@ def get_wind_data_at_position(latitude, longitude, username=None, password=None)
         traceback.print_exc()  # ✅ Ajouté pour debug
         return None
     
+def _climatological_wind_knots(latitude: float, longitude: float) -> float:
+    """
+    Simple built-in climatological wind estimate (annual average) used as
+    fallback when Copernicus Marine is unavailable.
+    Returns approximate wind speed in knots for the given position.
+    """
+    lat = abs(latitude)
+    in_atlantic = -80 <= longitude <= 20
+    in_indian   =  20 <= longitude <= 120
+    # Polar
+    if lat > 60:
+        return 20.0
+    # Roaring Forties / Furious Fifties
+    if 40 <= lat <= 60:
+        return 22.0 + (lat - 40) * 0.4   # 22–30 kn
+    # Westerlies
+    if 35 <= lat <= 40:
+        return 18.0
+    # Trade winds
+    if 5 <= lat <= 30:
+        return 15.0
+    # Doldrums / ITCZ
+    if lat <= 5:
+        return 5.0
+    return 12.0
+
+
 def overWind(latitude, longitude, username=None, password=None):
     """
-    Vérifie si la vitesse du vent dépasse 35 nœuds à une position donnée
-    
-    Args:
-        latitude (float): Latitude (-90 à 90)
-        longitude (float): Longitude (-180 à 180)
-        username (str): Username Copernicus Marine
-        password (str): Password Copernicus Marine
-    
-    Returns:
-        bool: True si vent > 35 nœuds, False sinon
+    Returns True if wind speed exceeds threshold at the given position.
+
+    Primary: Copernicus Marine real-time data (threshold > 10 kn).
+    Fallback: built-in climatological model (threshold > 20 kn) when
+    Copernicus is unavailable (no credentials, network error, etc.).
     """
-    
     try:
         dataset_id = "cmems_obs-wind_glo_phy_nrt_l4_0.125deg_PT1H"
         end_date = datetime.now() - timedelta(days=2)
         start_date = end_date - timedelta(days=1)
         margin = 0.1
-        
+
         dataset = copernicusmarine.open_dataset(
             dataset_id=dataset_id,
             username=username,
@@ -140,26 +161,23 @@ def overWind(latitude, longitude, username=None, password=None):
             end_datetime=end_date.strftime("%Y-%m-%d"),
             coordinates_selection_method="nearest"
         )
-        
+
         point_data = dataset.sel(
             latitude=latitude,
             longitude=longitude,
             method="nearest"
         )
-        
-        # ✅ Utilisation des BONNES variables (pas de try/except nécessaire)
+
         u_wind = float(point_data['eastward_wind'].isel(time=-1).values)
         v_wind = float(point_data['northward_wind'].isel(time=-1).values)
-        
-        # Calcul de la vitesse en nœuds
         wind_speed_ms = math.sqrt(u_wind**2 + v_wind**2)
         wind_speed_knots = wind_speed_ms * 1.944
-
-        print(f"🌬️  Vitesse du vent : {wind_speed_knots:.1f} nœuds")
-        
-        # ✅ Comparaison au bon seuil (35 au lieu de 0)
+        print(f"🌬️  Vitesse du vent (Copernicus): {wind_speed_knots:.1f} kn")
         return wind_speed_knots > 10
-        
+
     except Exception as e:
-        print(f"❌ Erreur: {e}")
-        return False
+        # Copernicus unavailable — use built-in climatological fallback
+        print(f"⚠️  Copernicus unavailable ({type(e).__name__}), using climatological fallback")
+        spd = _climatological_wind_knots(latitude, longitude)
+        print(f"🌬️  Vitesse du vent (climatologie): {spd:.1f} kn")
+        return spd > 20

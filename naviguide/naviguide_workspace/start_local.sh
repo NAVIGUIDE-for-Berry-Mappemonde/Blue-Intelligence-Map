@@ -67,10 +67,10 @@ fi
 # ── Service 1: naviguide-api (port 8000) ──────────────────────────────────────
 info "Starting naviguide-api on :8000..."
 API_DIR="$PROJECT_ROOT/naviguide-api"
-if [ ! -f "$API_DIR/.env" ]; then
-    cat > "$API_DIR/.env" <<'ENVEOF'
+# Always write the API .env to ensure correct credentials and port
+cat > "$API_DIR/.env" <<'ENVEOF'
 COPERNICUS_USERNAME=berrymappemonde@gmail.com
-COPERNICUS_PASSWORD=Hackmyroute2027
+COPERNICUS_PASSWORD=Hackmyroute2027$
 PORT=8000
 # ── Agents IA simulation — Anthropic Claude (obligatoire pour les agents) ─
 # Renseigner ANTHROPIC_API_KEY pour activer les 4 agents IA en mode simulation.
@@ -82,7 +82,6 @@ ANTHROPIC_MODEL=claude-opus-4-5
 # Données météo live. Sans clé, l'agent météo utilise la climatologie LLM.
 STORMGLASS_API_KEY=
 ENVEOF
-fi
 API_LOG="$LOG_DIR/naviguide-api.log"
 (cd "$API_DIR" && nohup $PYTHON main.py > "$API_LOG" 2>&1) &
 API_PID=$!
