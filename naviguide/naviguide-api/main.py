@@ -725,76 +725,117 @@ def get_route(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _sim_wind(lat: float, lon: float) -> dict:
+    """Simulation fallback — field names match frontend expectations exactly."""
+    import random, datetime
+    rng = random.Random(int(abs(lat * 100) + abs(lon * 100)))
+    speed_ms    = rng.uniform(3, 18)
+    speed_kmh   = round(speed_ms * 3.6, 1)
+    speed_knots = round(speed_ms * 1.944, 1)
+    direction   = round(rng.uniform(0, 360), 1)
+    u = round(-speed_ms * math.sin(math.radians(direction)), 3)
+    v = round(-speed_ms * math.cos(math.radians(direction)), 3)
+    return {
+        "latitude": lat, "longitude": lon,
+        "u_component": u, "v_component": v,
+        "wind_speed": round(speed_ms, 2),
+        "wind_speed_kmh": speed_kmh,
+        "wind_speed_knots": speed_knots,
+        "wind_direction": direction,
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "simulation": True, "source": "estimated (Copernicus unavailable)",
+    }
+
+def _sim_wave(lat: float, lon: float) -> dict:
+    """Simulation fallback — field names match frontend expectations exactly."""
+    import random, datetime
+    rng = random.Random(int(abs(lat * 137) + abs(lon * 73)))
+    height  = round(rng.uniform(0.3, 4.5), 2)
+    period  = round(rng.uniform(4, 14), 1)
+    direction = round(rng.uniform(0, 360), 1)
+    return {
+        "latitude": lat, "longitude": lon,
+        "significant_wave_height_m": height,   # exact field name frontend expects
+        "mean_wave_period": period,
+        "mean_wave_direction": direction,       # exact field name frontend expects
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "simulation": True, "source": "estimated (Copernicus unavailable)",
+    }
+
+def _sim_current(lat: float, lon: float) -> dict:
+    """Simulation fallback — field names match frontend expectations exactly."""
+    import random, datetime
+    rng = random.Random(int(abs(lat * 211) + abs(lon * 157)))
+    speed_ms    = rng.uniform(0.05, 1.2)
+    speed_knots = round(speed_ms * 1.944, 2)
+    speed_kmh   = round(speed_ms * 3.6, 2)
+    direction   = round(rng.uniform(0, 360), 1)
+    u = round(speed_ms * math.sin(math.radians(direction)), 4)
+    v = round(speed_ms * math.cos(math.radians(direction)), 4)
+    return {
+        "latitude": lat, "longitude": lon,
+        "u_component": u, "v_component": v,
+        "speed_ms": round(speed_ms, 3),
+        "speed_knots": speed_knots,             # exact field name frontend expects
+        "speed_kmh": speed_kmh,                 # exact field name frontend expects
+        "direction_deg": direction,             # exact field name frontend expects
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "simulation": True, "source": "estimated (Copernicus unavailable)",
+    }
+
+
 @app.post("/wind")
 def get_wind(request: PositionRequest):
-    """Récupère les données de vent à une position donnée via Copernicus Marine."""
-    if not COPERNICUS_USERNAME or not COPERNICUS_PASSWORD:
-        raise HTTPException(
-            status_code=503,
-            detail="Copernicus credentials not configured"
-        )
+    """Récupère les données de vent via Copernicus Marine, avec fallback simulation."""
     try:
-        wind_data = get_wind_data_at_position(
-            latitude=request.latitude,
-            longitude=request.longitude,
-            username=COPERNICUS_USERNAME,
-            password=COPERNICUS_PASSWORD
-        )
-        if wind_data is None:
-            raise HTTPException(status_code=404, detail="Aucune donnée de vent disponible")
-        return wind_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if COPERNICUS_USERNAME and COPERNICUS_PASSWORD:
+            wind_data = get_wind_data_at_position(
+                latitude=request.latitude,
+                longitude=request.longitude,
+                username=COPERNICUS_USERNAME,
+                password=COPERNICUS_PASSWORD
+            )
+            if wind_data is not None:
+                return wind_data
+    except Exception:
+        pass
+    return _sim_wind(request.latitude, request.longitude)
 
 
 @app.post("/wave")
 def get_wave(request: PositionRequest):
-    """Récupère les données de vague à une position donnée via Copernicus Marine."""
-    if not COPERNICUS_USERNAME or not COPERNICUS_PASSWORD:
-        raise HTTPException(
-            status_code=503,
-            detail="Copernicus credentials not configured"
-        )
+    """Récupère les données de vague via Copernicus Marine, avec fallback simulation."""
     try:
-        wave_data = get_wave_data_at_position(
-            latitude=request.latitude,
-            longitude=request.longitude,
-            username=COPERNICUS_USERNAME,
-            password=COPERNICUS_PASSWORD
-        )
-        if wave_data is None:
-            raise HTTPException(status_code=404, detail="Aucune donnée de vague disponible")
-        return wave_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if COPERNICUS_USERNAME and COPERNICUS_PASSWORD:
+            wave_data = get_wave_data_at_position(
+                latitude=request.latitude,
+                longitude=request.longitude,
+                username=COPERNICUS_USERNAME,
+                password=COPERNICUS_PASSWORD
+            )
+            if wave_data is not None:
+                return wave_data
+    except Exception:
+        pass
+    return _sim_wave(request.latitude, request.longitude)
 
 
 @app.post("/current")
 def get_current(request: PositionRequest):
-    """Récupère les données de courant marin de surface via Copernicus Marine."""
-    if not COPERNICUS_USERNAME or not COPERNICUS_PASSWORD:
-        raise HTTPException(
-            status_code=503,
-            detail="Copernicus credentials not configured"
-        )
+    """Récupère les données de courant via Copernicus Marine, avec fallback simulation."""
     try:
-        current_data = get_current_data_at_position(
-            latitude=request.latitude,
-            longitude=request.longitude,
-            username=COPERNICUS_USERNAME,
-            password=COPERNICUS_PASSWORD
-        )
-        if current_data is None:
-            raise HTTPException(status_code=404, detail="Aucune donnée de courant disponible")
-        return current_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if COPERNICUS_USERNAME and COPERNICUS_PASSWORD:
+            current_data = get_current_data_at_position(
+                latitude=request.latitude,
+                longitude=request.longitude,
+                username=COPERNICUS_USERNAME,
+                password=COPERNICUS_PASSWORD
+            )
+            if current_data is not None:
+                return current_data
+    except Exception:
+        pass
+    return _sim_current(request.latitude, request.longitude)
 
 
 # ── Maritime data proxy routes (CORS bypass) ─────────────────────────────────
