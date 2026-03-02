@@ -246,7 +246,9 @@ export function useLegContext(
       if (stopIndices[i].polyIdx > bestSegIdx) {
         toStop   = stopIndices[i].stop;
         toIdx    = i;
-        fromStop = i > 0 ? stopIndices[i - 1].stop : stopIndices[0].stop;
+        // Quand i=0 (catamaran avant la première escale), fromStop = null
+        // pour afficher "Départ" au lieu de dupliquer le même stop en from ET to.
+        fromStop = i > 0 ? stopIndices[i - 1].stop : null;
         fromIdx  = i > 0 ? i - 1 : 0;
         break;
       }
@@ -267,11 +269,17 @@ export function useLegContext(
     }
 
     // ── 7. Bearing (cap) ─────────────────────────────────────────────────────
-    // Utilise la direction du segment A→B (pas snap→vertex) pour éviter
-    // bearing=0° quand le snap coïncide avec un vertex (t=1 ou vertex dupliqué).
-    const bearing = (bestSegIdx < polyline.length - 1)
-      ? initialBearing(aLat, aLon, bLat, bLon)
-      : 0;
+    // Quand le snap est en fin de segment (t≈1, catamaran exactement sur une
+    // escale/jonction), avancer d'un segment pour afficher le cap de DÉPART
+    // plutôt que le cap d'ARRIVÉE. Exemple : catamaran AT Avant Corse doit
+    // montrer le cap vers Ajaccio (NNE), pas le cap d'approche depuis La Rochelle.
+    let bearingSegIdx = bestSegIdx;
+    if (bestT > 0.999 && bearingSegIdx + 1 < polyline.length - 1) {
+      bearingSegIdx += 1;
+    }
+    const [bearALon, bearALat] = polyline[bearingSegIdx];
+    const [bearBLon, bearBLat] = polyline[bearingSegIdx + 1];
+    const bearing = initialBearing(bearALat, bearALon, bearBLat, bearBLon);
 
     // ── 8. ETA ───────────────────────────────────────────────────────────────
     const etaHours = speedKnots > 0 ? nmRemainingToStop / speedKnots : 0;
