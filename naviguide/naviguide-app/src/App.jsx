@@ -89,19 +89,52 @@ export default function App() {
   const initialCatamaranPos = LA_ROCHELLE_POS;
   const activeCatamaranPos  = catamaranPos ?? initialCatamaranPos;
 
-  // Flat ordered list of simulation targets, built from ITINERARY_POINTS:
-  //   [La Rochelle (step 0), mid(1→2), ep[2], mid(2→3), ep[3], ..., ep[N-1]]
+  // Flat ordered list of simulation targets built from the REAL route polylines:
+  //   [departure(step 0), mid(seg0), end(seg0), mid(seg1), end(seg1), …]
+  // Using segments[] ensures midpoints lie ON the actual maritime route and
+  // handles all detours (Saint-Pierre, Marigot→Cayenne, etc.) automatically.
   const simTargets = useMemo(() => {
-    const pts = ITINERARY_POINTS;
-    const list = [{ lat: pts[1].lat, lon: pts[1].lon }]; // step 0 = La Rochelle
-    for (let i = 1; i < pts.length - 1; i++) {
-      const from = pts[i];
-      const to   = pts[i + 1];
-      list.push({ lat: (from.lat + to.lat) / 2, lon: (from.lon + to.lon) / 2 });
-      list.push({ lat: to.lat, lon: to.lon });
+    const maritimeSegs = segments.filter(s => !s.nonMaritime && s.coords?.length >= 2);
+    if (maritimeSegs.length === 0) {
+      return [{ lat: LA_ROCHELLE_POS.lat, lon: LA_ROCHELLE_POS.lon }];
+    }
+    // Step 0 = first coord of first maritime segment (La Rochelle departure)
+    const firstCoord = maritimeSegs[0].coords[0];
+    const list = [{ lat: firstCoord[1], lon: firstCoord[0] }];
+    for (const seg of maritimeSegs) {
+      const coords = seg.coords; // [[lon, lat], …]
+      // Midpoint at 50% cumulative Euclidean distance along the polyline
+      let totalLen = 0;
+      const lengths = [];
+      for (let i = 0; i < coords.length - 1; i++) {
+        const l = Math.hypot(coords[i + 1][0] - coords[i][0], coords[i + 1][1] - coords[i][1]);
+        lengths.push(l);
+        totalLen += l;
+      }
+      const halfLen = totalLen / 2;
+      let acc = 0;
+      let mid = null;
+      for (let i = 0; i < lengths.length; i++) {
+        if (acc + lengths[i] >= halfLen) {
+          const t = lengths[i] > 0 ? (halfLen - acc) / lengths[i] : 0;
+          mid = {
+            lat: coords[i][1] + t * (coords[i + 1][1] - coords[i][1]),
+            lon: coords[i][0] + t * (coords[i + 1][0] - coords[i][0]),
+          };
+          break;
+        }
+        acc += lengths[i];
+      }
+      if (!mid) {
+        const m = Math.floor(coords.length / 2);
+        mid = { lat: coords[m][1], lon: coords[m][0] };
+      }
+      const last = coords[coords.length - 1];
+      list.push(mid);
+      list.push({ lat: last[1], lon: last[0] });
     }
     return list;
-  }, []);
+  }, [segments]);
 
   // flyTo helper — recenters map on catamaran with smooth animation
   const flyToPos = useCallback((lat, lon) => {
@@ -110,6 +143,9 @@ export default function App() {
     if (map) map.flyTo({ center: [lon, lat], zoom: 8, duration: 800 });
   }, []);
 
+  // Ref flag: true when Next/Prev was clicked and we're waiting for legContext to snap
+  const pendingFlyTo = useRef(false);
+
   // Next step — advance one position forward in the flat target list
   const handleSimNext = useCallback(() => {
     const nextStep = simulationStep + 1;
@@ -117,8 +153,8 @@ export default function App() {
     const pos = simTargets[nextStep];
     setSimulationStep(nextStep);
     setCatamaranPos(pos);
-    flyToPos(pos.lat, pos.lon);
-  }, [simulationStep, simTargets, flyToPos]);
+    pendingFlyTo.current = true; // fly AFTER legContext snaps to the route
+  }, [simulationStep, simTargets]);
 
   // Previous step — go back one position in the flat target list
   const handleSimPrev = useCallback(() => {
@@ -127,8 +163,8 @@ export default function App() {
     const pos = simTargets[prevStep];
     setSimulationStep(prevStep);
     setCatamaranPos(pos);
-    flyToPos(pos.lat, pos.lon);
-  }, [simulationStep, simTargets, flyToPos]);
+    pendingFlyTo.current = true; // fly AFTER legContext snaps to the route
+  }, [simulationStep, simTargets]);
 
   // Manual drag — re-sync simulationStep to nearest target after snap
   const handleCatamaranDrag = useCallback((pos) => {
@@ -149,6 +185,14 @@ export default function App() {
     segments,
     ITINERARY_POINTS,
   );
+
+  // After each Next/Prev step, fly to the SNAPPED position (not the raw target)
+  // so the camera always centers on the boat as it appears on the route.
+  useEffect(() => {
+    if (!pendingFlyTo.current || !legContext) return;
+    pendingFlyTo.current = false;
+    flyToPos(legContext.snappedPosition[1], legContext.snappedPosition[0]);
+  }, [legContext, flyToPos]);
 
   // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
   const markerOffsets = useMarkerOffsets(points, mapRef);
