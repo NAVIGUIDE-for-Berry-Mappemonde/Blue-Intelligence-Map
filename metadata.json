@@ -1,0 +1,5 @@
+{
+  "name": "Blue Intelligence Map",
+  "description": "Interactive MapLibre GL JS visualization of marine conservation projects globally.",
+  "requestFramePermissions": []
+}
