@@ -40,3 +40,11 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Replaced Claude with Gemini (user choice, own Google AI key in backend/.env GEMINI_API_KEY)
 - Gatekeeper: gemini-3-flash-preview | Extraction+Scoring: gemini-3.1-pro-preview (selectable in Settings)
 - Verified live: marine accepted 1.0, terrestrial rejected, extraction w/ GPS + S_ocean 0.95
+
+## Update 2026-06 — Donations Stripe + UX Map
+- Vue mondiale au chargement (zoom 2, centre [22,5])
+- Cagnotte globale: compteur EUR en header (GET /api/donations/total), bouton Donner (liste + popups carte), modale montants 5/10/25/50/100 EUR
+- Stripe SANDBOX via emergentintegrations StripeCheckout (STRIPE_API_KEY=sk_test_emergent — sandbox à réclamer impossible: pays NC non supporté par Stripe)
+- Endpoints: POST /api/donations/checkout, GET /api/payments/status/{id}, GET /api/donations/total, webhook /api/webhook/stripe
+- Import GeoJSON (session précédente): 4420 projets importés, popup fix (sigRef), photos og:image/twitter/first-img
+- Tests iteration_3: 100% pass

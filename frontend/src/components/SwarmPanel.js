@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Download, Play, Square, Trash2 } from "lucide-react";
+import { Download, Play, Search, Square, Trash2 } from "lucide-react";
 import api from "../api";
 import AgentConsole from "./AgentConsole";
 import ProjectList from "./ProjectList";
 
-export default function SwarmPanel({ t, status, projects, funders, funderFilter, setFunderFilter, refresh }) {
+export default function SwarmPanel({ t, status, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, onDonate, refresh }) {
   const [mode, setMode] = useState("test");
   const [clearDb, setClearDb] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -135,9 +135,20 @@ export default function SwarmPanel({ t, status, projects, funders, funderFilter,
               <option key={f.name} value={f.name}>{f.name} ({f.count})</option>
             ))}
           </select>
+          <div className="relative mt-2">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              data-testid="project-search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("searchPlaceholder")}
+              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
         </section>
 
-        <ProjectList t={t} projects={projects} funderFilter={funderFilter} />
+        <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} onDonate={onDonate} />
       </div>
 
       {/* Bottom actions */}

@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 import os
 import time
 import uuid
@@ -10,7 +11,7 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -92,6 +93,7 @@ def project_to_feature(p: dict) -> dict:
             "s_ocean": p.get("s_ocean"),
             "snapped": p.get("snapped", False),
             "image": p.get("image"),
+            "category": p.get("category"),
         },
     }
 
@@ -106,13 +108,13 @@ async def get_projects(funder: str | None = None):
     q = {}
     if funder and funder != "All":
         q = {"funders": funder}
-    docs = await db.projects.find(q).to_list(5000)
+    docs = await db.projects.find(q).to_list(20000)
     return {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
 
 
 @router.get("/funders")
 async def get_funders():
-    docs = await db.projects.find({}, {"funders": 1}).to_list(5000)
+    docs = await db.projects.find({}, {"funders": 1}).to_list(20000)
     counts = {}
     for d in docs:
         for f in d.get("funders") or []:
@@ -129,7 +131,7 @@ async def clear_projects():
 
 @router.get("/export/geojson")
 async def export_geojson():
-    docs = await db.projects.find({}).to_list(5000)
+    docs = await db.projects.find({}).to_list(20000)
     fc = {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
     return JSONResponse(fc, headers={"Content-Disposition": "attachment; filename=blue_intelligence_projects.geojson"})
 
@@ -271,6 +273,78 @@ async def force_all():
     return {"status": "started", "count": len(rows)}
 
 
+@router.post("/import/geojson")
+async def import_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    existing = await db.projects.find({}, {"url": 1, "title": 1, "lat": 1, "lon": 1, "funders": 1}).to_list(50000)
+    seen_urls = {e.get("url") for e in existing}
+    grid = {}
+    for e in existing:
+        grid.setdefault((round(e["lat"], 1), round(e["lon"], 1)), []).append(e)
+    imported = merged = invalid = skipped = 0
+    docs = []
+    for f in feats:
+        try:
+            geom = f.get("geometry") or {}
+            if geom.get("type") != "Point":
+                invalid += 1
+                continue
+            lon, lat = float(geom["coordinates"][0]), float(geom["coordinates"][1])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                invalid += 1
+                continue
+            p = f.get("properties") or {}
+            title = str(p.get("title") or "").strip()
+            url = str(p.get("url") or "").strip()
+            if not title or not url:
+                invalid += 1
+                continue
+            if url in seen_urls:
+                skipped += 1
+                continue
+            s = p.get("s_ocean", p.get("s_ocean_score", p.get("relevance_score", 0.5)))
+            try:
+                s = float(s)
+                s = round(s / 100, 3) if s > 1 else round(s, 3)
+            except (TypeError, ValueError):
+                s = 0.5
+            funder = str(p.get("funder") or "Imported").strip() or "Imported"
+            cell = (round(lat, 1), round(lon, 1))
+            dup = None
+            for e in grid.get(cell, []):
+                if difflib.SequenceMatcher(None, title.lower(), e["title"].lower()).ratio() > 0.9:
+                    dup = e
+                    break
+            if dup:
+                funders = list(set((dup.get("funders") or []) + [funder]))
+                await db.projects.update_one({"_id": dup["_id"]}, {"$set": {"funders": funders}})
+                merged += 1
+                seen_urls.add(url)
+                continue
+            doc = {
+                "_id": str(uuid.uuid4()), "title": title[:200], "url": url,
+                "description": str(p.get("description") or "")[:250],
+                "funder": funder, "funders": [funder],
+                "location": p.get("location"), "lat": lat, "lon": lon,
+                "s_ocean": s, "snapped": bool(p.get("snapped") or p.get("snapped_coastal") or False),
+                "geo_source": "import", "image": p.get("image") or p.get("image_url"),
+                "category": p.get("category"), "engine": "GeoJSON Import", "created_at": now_iso(),
+            }
+            docs.append(doc)
+            seen_urls.add(url)
+            grid.setdefault(cell, []).append({"_id": doc["_id"], "title": title, "lat": lat, "lon": lon, "funders": [funder]})
+            imported += 1
+        except Exception:
+            invalid += 1
+    if docs:
+        await db.projects.insert_many(docs)
+    total = await db.projects.count_documents({})
+    swarm.log(f"GeoJSON import: {imported} imported, {merged} merged, {skipped} already known, {invalid} invalid", "success")
+    return {"imported": imported, "merged": merged, "skipped_existing": skipped, "invalid": invalid, "total_projects": total}
+
+
 @router.get("/settings")
 async def read_settings():
     s = await get_settings()
@@ -352,7 +426,101 @@ async def manual(lang: str = "en"):
     return PlainTextResponse(text, headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"})
 
 
+# ---------- Donations (Stripe sandbox) ----------
+DONATION_PACKAGES = {"don_5": 5.0, "don_10": 10.0, "don_25": 25.0, "don_50": 50.0, "don_100": 100.0}
+
+
+def _stripe_checkout(request: Request):
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    host_url = str(request.base_url)
+    return StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{host_url}api/webhook/stripe")
+
+
+class DonationCheckoutBody(BaseModel):
+    package_id: str
+    origin_url: str
+    project_id: str | None = None
+    project_title: str | None = None
+
+
+@router.post("/donations/checkout")
+async def donation_checkout(body: DonationCheckoutBody, request: Request):
+    amount = DONATION_PACKAGES.get(body.package_id)
+    if amount is None:
+        raise HTTPException(400, "invalid package_id")
+    from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
+    sc = _stripe_checkout(request)
+    req = CheckoutSessionRequest(
+        amount=amount,
+        currency="eur",
+        success_url=f"{body.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{body.origin_url}/payment/cancel",
+        metadata={"project_id": body.project_id or "", "project_title": (body.project_title or "")[:100], "package_id": body.package_id},
+    )
+    session = await sc.create_checkout_session(req)
+    await db.payment_transactions.insert_one({
+        "_id": str(uuid.uuid4()), "session_id": session.session_id,
+        "package_id": body.package_id, "amount": amount, "currency": "eur",
+        "project_id": body.project_id, "project_title": body.project_title,
+        "status": "initiated", "payment_status": "pending",
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@router.get("/payments/status/{session_id}")
+async def payment_status(session_id: str, request: Request):
+    record = await db.payment_transactions.find_one({"session_id": session_id})
+    if not record:
+        raise HTTPException(404, "Transaction not found")
+    if record.get("payment_status") != "paid":
+        try:
+            sc = _stripe_checkout(request)
+            st = await sc.get_checkout_status(session_id)
+            if st.payment_status == "paid" or st.status == "complete":
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+                )
+                record = await db.payment_transactions.find_one({"session_id": session_id})
+        except Exception:
+            pass
+    return {"session_id": record["session_id"], "status": record["status"], "payment_status": record["payment_status"]}
+
+
+@router.get("/donations/total")
+async def donations_total():
+    pipeline_agg = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+    ]
+    rows = await db.payment_transactions.aggregate(pipeline_agg).to_list(1)
+    total = rows[0]["total"] if rows else 0.0
+    count = rows[0]["count"] if rows else 0
+    return {"total_eur": round(total, 2), "count": count}
+
+
 app.include_router(router)
+
+
+@app.post("/api/webhook/stripe")
+async def stripe_webhook(request: Request):
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout
+    host_url = str(request.base_url)
+    sc = StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{host_url}api/webhook/stripe")
+    body = await request.body()
+    try:
+        wh = await sc.handle_webhook(body, request.headers.get("Stripe-Signature"))
+    except Exception as e:
+        raise HTTPException(400, f"webhook error: {e}")
+    if wh.payment_status == "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": wh.session_id, "payment_status": {"$ne": "paid"}},
+            {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+        )
+    return {"status": "ok"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),

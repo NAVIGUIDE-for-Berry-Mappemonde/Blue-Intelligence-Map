@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, FileDown, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, FileDown, Upload, X } from "lucide-react";
 import api from "../api";
 
 const MODELS = [
@@ -21,9 +21,11 @@ function Field({ label, children }) {
 
 const inputCls = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500";
 
-export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
+export default function SettingsPanel({ t, lang, settings, onSaved, onImported, onClose }) {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     if (settings) setForm({ ...settings, gemini_api_key: "", tinyfish_api_key: "" });
@@ -48,6 +50,24 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
 
   const dl = (l) => window.open(`${process.env.REACT_APP_BACKEND_URL}/api/manual?lang=${l}`, "_blank");
 
+  const importFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const fc = JSON.parse(text);
+      const { data } = await api.post("/import/geojson", fc, { timeout: 180000 });
+      alert(`${t("importDone")}\n• ${t("importedN")}: ${data.imported}\n• ${t("mergedN")}: ${data.merged}\n• ${t("skippedN")}: ${data.skipped_existing}\n• ${t("invalidN")}: ${data.invalid}\n• ${t("totalN")}: ${data.total_projects}`);
+      if (onImported) onImported();
+    } catch (err) {
+      alert(`${t("importError")}: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <aside className="w-[320px] shrink-0 border-l border-line bg-surface overflow-y-auto" data-testid="settings-panel">
       <div className="flex items-center justify-between px-4 py-3 border-b border-line sticky top-0 bg-surface z-10">
@@ -68,6 +88,17 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
               <FileDown size={11} /> {t("manual")} FR
             </button>
           </div>
+        </section>
+
+        {/* Data import */}
+        <section>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70 mb-2">{t("dataSection")}</p>
+          <input ref={fileRef} data-testid="import-geojson-input" type="file" accept=".geojson,.json,application/geo+json,application/json"
+            className="hidden" onChange={importFile} />
+          <button data-testid="import-geojson-btn" onClick={() => fileRef.current?.click()} disabled={importing}
+            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-sonar/40 text-sonar rounded-sm hover:bg-sonar/10 disabled:opacity-40">
+            <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
+          </button>
         </section>
 
         {/* Marine filtering */}

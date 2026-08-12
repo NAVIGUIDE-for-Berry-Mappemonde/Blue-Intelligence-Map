@@ -14,15 +14,31 @@ from readability import Document as ReadabilityDoc
 
 from ai import extract_project, gatekeeper_check, gemini_geocode, has_llm
 from geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
-from seeds import MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
+from seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from tinyfish_client import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
-                             tf_get_run, tf_run_async)
+                             tf_get_run, tf_run_async, tf_run_sse)
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def pick_image(full_soup, content_soup, base_url):
+    for attrs in ({"property": "og:image"}, {"name": "twitter:image"}, {"property": "twitter:image"}):
+        m = full_soup.find("meta", attrs=attrs)
+        if m and m.get("content", "").strip():
+            return urljoin(base_url, m["content"].strip())
+    for img in content_soup.find_all("img", src=True):
+        src = img["src"].strip()
+        low = src.lower()
+        if src.startswith("data:") or low.endswith(".svg"):
+            continue
+        if any(b in low for b in ("logo", "icon", "sprite", "avatar", "placeholder", "pixel")):
+            continue
+        return urljoin(base_url, src)
+    return None
 
 
 class Swarm:
@@ -197,14 +213,16 @@ class Swarm:
         t0 = time.time()
         urls = []
         used_engine = engine
+        tf_err = ""
         try:
             if key:
                 self.agent_log(aid, f"TinyFish mission dispatched → {seed['url']}")
                 try:
                     urls = await self._tinyfish_discover(aid, seed, key, max_urls)
                 except Exception as e:
-                    self.agent_log(aid, f"TinyFish failed: {str(e)[:100]}")
-                    self.log(f"TinyFish discovery failed on {seed['name']}: {str(e)[:120]}", "error")
+                    tf_err = str(e)[:120]
+                    self.agent_log(aid, f"TinyFish failed: {tf_err}")
+                    self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
             if not urls:
                 used_engine = "Crawler" if not key else "TinyFish+Crawler"
                 self.set_agent(aid, status="RUNNING")
@@ -225,8 +243,9 @@ class Swarm:
             else:
                 self.set_agent(aid, status="FAILED")
                 self.log(f"[{seed['name']}] discovery returned 0 URLs", "warn")
-                await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, "no urls found")
-                await self.add_failed(seed["url"], seed["url"], seed["name"], "discovery returned 0 urls", "discover")
+                detail = f"tinyfish: {tf_err}; crawler: 0 urls" if tf_err else "no urls found"
+                await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, detail)
+                await self.add_failed(seed["url"], seed["url"], seed["name"], detail, "discover")
         except asyncio.CancelledError:
             self.set_agent(aid, status="CANCELLED")
             raise
@@ -236,38 +255,58 @@ class Swarm:
             await self.add_failed(seed["url"], seed["url"], seed["name"], str(e), "discover")
 
     async def _tinyfish_discover(self, aid, seed, key, max_urls):
+        """SSE streaming first (real-time agent events), polling fallback."""
+        self.set_agent(aid, status="RUNNING")
+
+        async def on_event(ev):
+            et = ev.get("type")
+            if et == "STARTED":
+                self.agent_log(aid, f"SSE stream open — run {str(ev.get('run_id'))[:8]}…")
+            elif et == "STREAMING_URL" and ev.get("streaming_url"):
+                self.set_agent(aid, live_url=ev["streaming_url"])
+            elif et == "PROGRESS" and ev.get("purpose"):
+                self.agent_log(aid, str(ev["purpose"])[:110])
+
+        try:
+            result = await tf_run_sse(seed["url"], discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key, on_event=on_event)
+        except (httpx.HTTPError, TimeoutError) as e:
+            self.agent_log(aid, f"SSE dropped ({str(e)[:60]}) → polling fallback")
+            result = await self._tinyfish_discover_poll(aid, seed, key)
+        projects = (result or {}).get("projects") or []
+        self.agent_log(aid, f"agent finished: {len(projects)} candidates")
+        urls, seen = [], set()
+        for p in projects:
+            u = (p.get("url") or "").strip()
+            if u.startswith("http") and u not in seen:
+                seen.add(u)
+                urls.append(u)
+        return urls[:max_urls]
+
+    async def _tinyfish_discover_poll(self, aid, seed, key):
         body = await tf_run_async(seed["url"], discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key)
         run_id = body.get("run_id")
         if not run_id:
             raise ValueError(body.get("error", "no run_id"))
         live = find_live_url(body)
-        self.set_agent(aid, status="RUNNING", live_url=live)
+        if live:
+            self.set_agent(aid, live_url=live)
         self.agent_log(aid, f"run_id {run_id[:12]}… agent navigating")
-        for i in range(100):
+        for i in range(120):
             await asyncio.sleep(3)
             run = await tf_get_run(run_id, key)
             st = run.get("status", "")
             if not self.agents.get(aid) or self.agents[aid]["status"] == "CANCELLED":
-                return []
+                return {}
             live2 = find_live_url(run)
             if live2:
                 self.set_agent(aid, live_url=live2)
             if st in ("COMPLETED", "FAILED", "CANCELLED"):
                 if st != "COMPLETED":
                     raise ValueError(f"run {st}: {str(run.get('error'))[:100]}")
-                result = run.get("result") or {}
-                projects = result.get("projects") or []
-                self.agent_log(aid, f"agent finished: {len(projects)} candidates")
-                urls, seen = [], set()
-                for p in projects:
-                    u = (p.get("url") or "").strip()
-                    if u.startswith("http") and u not in seen:
-                        seen.add(u)
-                        urls.append(u)
-                return urls[:max_urls]
+                return run.get("result") or {}
             if i % 5 == 0:
                 self.agent_log(aid, f"status {st or 'PENDING'} — navigating pagination/forms")
-        raise TimeoutError("TinyFish run timed out (300s)")
+        raise TimeoutError("TinyFish run timed out (360s)")
 
     async def _crawl_discover(self, seed, max_urls):
         async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=UA) as client:
@@ -286,6 +325,19 @@ class Swarm:
                     urls.append(href)
             if len(urls) >= max_urls * 2:
                 break
+        if not urls:
+            for a in soup.find_all("a", href=True):
+                href = urljoin(seed["url"], a["href"]).split("#")[0].split("?")[0]
+                if urlparse(href).netloc != base_host or href.rstrip("/") == seed["url"].rstrip("/"):
+                    continue
+                path = urlparse(href).path.strip("/")
+                if not path or any(b in path.lower() for b in CRAWL_BLACKLIST):
+                    continue
+                if href not in seen:
+                    seen.add(href)
+                    urls.append(href)
+                if len(urls) >= min(8, max_urls):
+                    break
         return urls[:max_urls]
 
     # ---------- extraction ----------
@@ -348,7 +400,7 @@ class Swarm:
                 full_soup.find("meta", attrs={"property": "og:description"})
             meta_desc = meta.get("content", "").strip() if meta else ""
             og_img = full_soup.find("meta", attrs={"property": "og:image"})
-            image = og_img.get("content", "").strip() if og_img else None
+            image = pick_image(full_soup, soup, url)
             base_host = urlparse(url).netloc
             ext_links, seen_d = [], set()
             for a in full_soup.find_all("a", href=True):

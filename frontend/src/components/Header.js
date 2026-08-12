@@ -1,6 +1,6 @@
-import { Map as MapIcon, Radar, Settings, Waves } from "lucide-react";
+import { HandCoins, Map as MapIcon, Moon, Radar, Settings, Sun, Waves } from "lucide-react";
 
-export default function Header({ lang, setLang, view, setView, showSettings, setShowSettings, status, t }) {
+export default function Header({ lang, setLang, view, setView, showSettings, setShowSettings, status, t, basemap, setBasemap, donations }) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
       <div className="flex items-center gap-3">
@@ -23,6 +23,14 @@ export default function Header({ lang, setLang, view, setView, showSettings, set
         )}
       </div>
       <div className="flex items-center gap-2">
+        <div data-testid="donation-counter" title={t("donationCounterTitle")}
+          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/5 rounded-sm">
+          <HandCoins size={14} className="text-bio" />
+          <span className="font-heading font-black text-sm text-bio">
+            {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} €
+          </span>
+          <span className="font-mono text-[9px] uppercase tracking-wide text-bio/70">{t("donationsLabel")} ({donations?.count ?? 0})</span>
+        </div>
         <div className="flex border border-line rounded-sm overflow-hidden">
           <button
             data-testid="view-toggle-map"
@@ -51,6 +59,14 @@ export default function Header({ lang, setLang, view, setView, showSettings, set
             className={`px-2.5 py-1.5 border-l border-line ${lang === "fr" ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:bg-raised"}`}
           >FR</button>
         </div>
+        <button
+          data-testid="basemap-toggle-btn"
+          onClick={() => setBasemap(basemap === "dark" ? "light" : "dark")}
+          className="p-2 border border-line rounded-sm text-slate-400 hover:text-slate-200 hover:bg-raised"
+          title={basemap === "dark" ? t("lightMap") : t("darkMap")}
+        >
+          {basemap === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <button
           data-testid="settings-toggle-btn"
           onClick={() => setShowSettings(!showSettings)}

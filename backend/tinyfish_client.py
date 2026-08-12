@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 BASE = "https://agent.tinyfish.ai/v1"
@@ -77,6 +79,35 @@ async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int 
         r = await client.post(f"{BASE}/automation/run", headers=_headers(key), json=payload)
         r.raise_for_status()
         return r.json()
+
+
+async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None, timeout: int = 420) -> dict:
+    """Stream a TinyFish run via SSE; returns final result dict, raises on failure."""
+    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=30)) as client:
+        async with client.stream("POST", f"{BASE}/automation/run-sse", headers=_headers(key), json=payload) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data:
+                    continue
+                try:
+                    ev = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if on_event:
+                    await on_event(ev)
+                et = ev.get("type")
+                if et == "COMPLETE":
+                    if ev.get("status") != "COMPLETED":
+                        raise ValueError(f"run {ev.get('status')}: {str(ev.get('error'))[:120]}")
+                    return ev.get("result") or {}
+                if et in ("ERROR", "FAILED"):
+                    raise ValueError(str(ev.get("message") or ev)[:150])
+    raise TimeoutError("SSE stream ended without COMPLETE event")
+
 
 
 def find_live_url(body: dict):
