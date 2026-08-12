@@ -455,20 +455,41 @@ MANUALS = {
 Blue Intelligence transforms the living web of maritime data into an executable geospatial database.
 TinyFish agents discover project pages on foundation portals; Readability + Gemini extract, filter (Gatekeeper Protocol) and score each project (S_ocean); results are mapped live and exportable as GeoJSON.
 
-## Swarm Controls (left sidebar)
-- **Deploy TinyFish Swarm**: starts the ETL pipeline. Test mode = 3 foundations, Full mode = all MasterSeeds + DeepLinkCache.
-- **Clear DB before start**: wipes the project database first.
-- **Stop Swarm**: cancels all agents and flushes the queue.
-- **Live Swarm Console**: one card per active agent (TinyFish discover / Readability extract) with status and stream logs.
+## Map View (default)
+- **World map**: single-world Leaflet dark map (light/dark toggle in the header ☀/🌙). Markers are colored by category and clustered.
+- **Popup**: click a marker → photo, title, funder, category, description, S_ocean score, "View project" link and a **Donate** button. The popup always stays fully on screen without moving the map.
+- **Left sidebar**:
+  - *Legend*: 9 color-coded categories (MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other). Click a category to filter the map.
+  - *Organization filter* and *Category filter* dropdowns.
+  - *Instant search* across titles, descriptions, funders and locations.
+  - *Project list* with Donate buttons and source links.
+  - *"Missing project?"*: report a project we missed (name, URL, description). It is emailed to the Blue Intelligence team and queued for the next Swarm run.
 
-## Map
-Leaflet dark map with clustered markers. Click a marker for title, funder, description and project link.
+## Donations (Global Pot)
+The header shows the global donation counter in euros. Click **Donate** on any project, pick an amount (5–100 €) and pay through Stripe. Sandbox mode: test card 4242 4242 4242 4242.
 
-## Audit
-KPIs (total extractions, success rate, projects mapped), telemetry table, failed extractions with Force Extract (TinyFish).
+## Swarm Intelligence Audit (header toggle)
+Operator console:
+- **Swarm Controls**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream.
+- **Live Swarm Console**: one card per agent (TinyFish discover / Readability extract) with status, live-view link and stream logs.
+- **Auto-Stop**: the swarm shuts down gracefully after N consecutive extractions without a new unique project (default 50) to save credits.
+- **Follow the Money**: agents detect partner/grantee NGOs on project pages and recursively queue their sites.
+- **KPIs**: total extractions, success rate, projects mapped.
+- **Telemetry table** and **Failed extractions** with per-URL Force Extract (TinyFish) or Force Extract All.
 
-## Settings
-Marine filtering thresholds, extraction concurrency, Gemini models, map limits, API keys (TinyFish + Gemini).
+## Settings (right panel, gear icon)
+- **Documentation**: download this manual (EN/FR).
+- **Data**: Import GeoJSON (validates coordinates, counts and merges duplicates), Export GeoJSON, Clear all projects.
+- **Marine filtering**: max coast distance (km), minimum marine score.
+- **Extraction**: parallel TinyFish agents (1-2), extraction concurrency (1-20), Gemini model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
+- **Map**: minimum zoom, max markers.
+- **API keys**: TinyFish and Gemini (stored server-side, never exposed).
+
+## Pipeline (how it works)
+1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, crawler fallback).
+2. **Extraction**: Readability cleans the page → Gemini Gatekeeper rejects terrestrial/freshwater projects → Gemini extracts title, description (<250 chars), location, category, partners and S_ocean score.
+3. **Geocoding**: extracted GPS → Nominatim → Gemini smart geocoding → Point-in-Ocean test → coastal snapping when inland.
+4. **Deduplication**: URL match, spatial proximity (<500 m) + title similarity (>90%) → funders merged.
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
@@ -476,20 +497,41 @@ Marine filtering thresholds, extraction concurrency, Gemini models, map limits, 
 Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable.
 Les agents TinyFish découvrent les fiches projets sur les portails des fondations ; Readability + Gemini extraient, filtrent (Protocole Gatekeeper) et notent chaque projet (S_ocean) ; les résultats sont cartographiés en direct et exportables en GeoJSON.
 
-## Contrôles du Swarm (barre gauche)
-- **Déployer TinyFish Swarm** : lance le pipeline ETL. Mode Test = 3 fondations, mode Complet = tous les MasterSeeds + DeepLinkCache.
-- **Vider la base avant de démarrer** : efface la base de projets.
-- **Arrêter le Swarm** : annule tous les agents et vide la file.
-- **Console Swarm en direct** : une carte par agent actif (découverte TinyFish / extraction Readability) avec statut et logs.
+## Vue Carte (par défaut)
+- **Carte mondiale** : carte Leaflet sombre à monde unique (bascule clair/sombre dans l'en-tête ☀/🌙). Marqueurs colorés par catégorie et regroupés en clusters.
+- **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean, lien « Voir le projet » et bouton **Donner**. L'encadré reste toujours entièrement visible sans déplacer la carte.
+- **Bandeau gauche** :
+  - *Légende* : 9 catégories colorées (AMP, Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Autre). Cliquer une catégorie filtre la carte.
+  - Menus *Filtre par organisation* et *Filtre par catégorie*.
+  - *Recherche instantanée* sur titres, descriptions, financeurs et lieux.
+  - *Liste des projets* avec boutons Donner et liens sources.
+  - *« Projet manquant ? »* : signaler un projet oublié (nom, URL, description). Un email est envoyé à l'équipe Blue Intelligence et le projet est mis en file pour le prochain run du Swarm.
 
-## Carte
-Carte Leaflet sombre avec clusters. Un clic sur un marqueur affiche titre, financeur, description et lien.
+## Dons (Cagnotte globale)
+L'en-tête affiche le compteur global de dons en euros. Cliquez **Donner** sur un projet, choisissez un montant (5–100 €) et payez via Stripe. Mode sandbox : carte de test 4242 4242 4242 4242.
 
-## Audit
-KPIs (extractions totales, taux de succès, projets cartographiés), table de télémétrie, extractions échouées avec Force Extract (TinyFish).
+## Audit Swarm Intelligence (bascule dans l'en-tête)
+Console opérateur :
+- **Contrôles du Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct.
+- **Console Swarm en direct** : une carte par agent (découverte TinyFish / extraction Readability) avec statut, lien « Voir l'agent » et logs.
+- **Auto-Stop** : le swarm s'arrête proprement après N extractions consécutives sans nouveau projet unique (50 par défaut) pour économiser les crédits.
+- **Follow the Money** : les agents détectent les ONG partenaires/bénéficiaires sur les pages et explorent récursivement leurs sites.
+- **KPIs** : extractions totales, taux de succès, projets cartographiés.
+- **Table de télémétrie** et **Extractions échouées** avec Force Extract (TinyFish) par URL ou global.
 
-## Paramètres
-Seuils de filtrage marin, concurrence d'extraction, modèles Gemini, limites carte, clés API (TinyFish + Gemini).
+## Paramètres (bandeau droit, icône engrenage)
+- **Documentation** : télécharger ce manuel (EN/FR).
+- **Données** : Importer GeoJSON (validation des coordonnées, comptage et fusion des doublons), Exporter GeoJSON, Effacer tous les projets.
+- **Filtrage marin** : distance max à la côte (km), score marin minimum.
+- **Extraction** : agents TinyFish en parallèle (1-2), concurrence des extractions (1-20), modèle Gemini par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
+- **Carte** : zoom minimum, marqueurs max.
+- **Clés API** : TinyFish et Gemini (stockées côté serveur, jamais exposées).
+
+## Pipeline (fonctionnement)
+1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler).
+2. **Extraction** : Readability nettoie la page → le Gatekeeper Gemini rejette les projets terrestres/eau douce → Gemini extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
+3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent Gemini → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
+4. **Déduplication** : URL identique, proximité spatiale (<500 m) + similarité de titre (>90 %) → financeurs fusionnés.
 """,
 }
 
