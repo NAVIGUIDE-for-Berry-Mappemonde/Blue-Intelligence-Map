@@ -3,10 +3,11 @@ import { Check, FileDown, X } from "lucide-react";
 import api from "../api";
 
 const MODELS = [
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4-5-20250929",
-  "claude-opus-4-8",
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
 ];
 
 function Field({ label, children }) {
@@ -25,7 +26,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, anthropic_api_key: "", tinyfish_api_key: "" });
+    if (settings) setForm({ ...settings, gemini_api_key: "", tinyfish_api_key: "" });
   }, [settings]);
 
   if (!form) return null;
@@ -34,7 +35,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
 
   const save = async () => {
     const body = { ...form };
-    delete body.anthropic_api_key_set;
+    delete body.gemini_api_key_set;
     delete body.tinyfish_api_key_set;
     ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
@@ -122,15 +123,15 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70">{t("apiKeys")}</p>
           <Field label={
             <>
-              {t("anthropicKey")}{" "}
-              <span className={form.anthropic_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.anthropic_api_key_set ? t("keySet") : t("keyNotSet")})
+              {t("geminiKey")}{" "}
+              <span className={form.gemini_api_key_set ? "text-bio" : "text-amberx"}>
+                ({form.gemini_api_key_set ? t("keySet") : t("keyNotSet")})
               </span>
             </>
           }>
-            <input data-testid="anthropic-key-input" type="password" value={form.anthropic_api_key}
+            <input data-testid="gemini-key-input" type="password" value={form.gemini_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("anthropic_api_key", e.target.value)} className={inputCls} />
+              onChange={(e) => set("gemini_api_key", e.target.value)} className={inputCls} />
           </Field>
           <Field label={
             <>

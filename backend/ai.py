@@ -16,20 +16,20 @@ LAND_KW = [
 
 
 def get_llm_key(settings: dict) -> str:
-    return (settings.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    return (settings.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or "").strip()
 
 
 def has_llm(settings: dict) -> bool:
     return bool(get_llm_key(settings))
 
 
-async def _claude_json(prompt: str, model: str, key: str) -> dict:
+async def _gemini_json(prompt: str, model: str, key: str) -> dict:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     chat = LlmChat(
         api_key=key,
         session_id=str(uuid.uuid4()),
         system_message="You are the Blue Intelligence maritime OSINT engine. Reply ONLY with a single valid JSON object, no prose, no markdown fences.",
-    ).with_model("anthropic", model)
+    ).with_model("gemini", model)
     resp = await chat.send_message(UserMessage(text=prompt))
     text = resp if isinstance(resp, str) else str(resp)
     m = re.search(r"\{.*\}", text, re.S)
@@ -62,14 +62,14 @@ Page content (truncated):
 
 Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>"}}"""
     try:
-        out = await _claude_json(prompt, settings.get("gatekeeper_model", "claude-haiku-4-5-20251001"), key)
+        out = await _gemini_json(prompt, settings.get("gatekeeper_model", "gemini-3-flash-preview"), key)
         score = float(out.get("score", 0))
         return {"accepted": bool(out.get("marine")) and score >= float(settings.get("min_marine_score", 0.5)),
                 "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
-                "engine": "Claude Gatekeeper"}
+                "engine": "Gemini Gatekeeper"}
     except Exception as e:
         res = heuristic_gatekeeper(f"{title} {text}", settings)
-        res["reason"] = f"claude failed ({str(e)[:80]}), {res['reason']}"
+        res["reason"] = f"gemini failed ({str(e)[:80]}), {res['reason']}"
         return res
 
 
@@ -101,7 +101,7 @@ Return JSON:
  "longitude": <decimal or null>,
  "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>}}"""
     try:
-        out = await _claude_json(prompt, settings.get("extract_model", "claude-sonnet-4-6"), key)
+        out = await _gemini_json(prompt, settings.get("extract_model", "gemini-3.1-pro-preview"), key)
         return {
             "title": str(out.get("title") or title)[:200],
             "description": str(out.get("description") or "")[:250],
@@ -109,7 +109,7 @@ Return JSON:
             "latitude": out.get("latitude"),
             "longitude": out.get("longitude"),
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
-            "engine": "Claude Extractor",
+            "engine": "Gemini Extractor",
         }
     except Exception:
         return heuristic_extract(title, text, meta_desc, settings)

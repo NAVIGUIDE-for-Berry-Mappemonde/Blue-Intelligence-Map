@@ -30,12 +30,12 @@ swarm = Swarm(db)
 
 DEFAULT_SETTINGS = {
     "_id": "global",
-    "anthropic_api_key": "",
+    "gemini_api_key": "",
     "tinyfish_api_key": "",
     "tinyfish_agents": 2,
     "extract_concurrency": 6,
-    "gatekeeper_model": "claude-haiku-4-5-20251001",
-    "extract_model": "claude-sonnet-4-6",
+    "gatekeeper_model": "gemini-3-flash-preview",
+    "extract_model": "gemini-3.1-pro-preview",
     "max_coast_km": 50,
     "min_marine_score": 0.5,
     "test_max_urls_per_seed": 6,
@@ -48,6 +48,9 @@ DEFAULT_SETTINGS = {
 async def get_settings() -> dict:
     doc = await db.settings.find_one({"_id": "global"})
     merged = {**DEFAULT_SETTINGS, **(doc or {})}
+    for k in ("gatekeeper_model", "extract_model"):
+        if not str(merged.get(k, "")).startswith("gemini"):
+            merged[k] = DEFAULT_SETTINGS[k]
     return merged
 
 
@@ -57,7 +60,7 @@ class DeployBody(BaseModel):
 
 
 class SettingsBody(BaseModel):
-    anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
     tinyfish_api_key: str | None = None
     tinyfish_agents: int | None = None
     extract_concurrency: int | None = None
@@ -268,11 +271,12 @@ async def force_all():
 async def read_settings():
     s = await get_settings()
     s.pop("_id", None)
-    if s.get("anthropic_api_key"):
-        s["anthropic_api_key_set"] = True
-        s["anthropic_api_key"] = ""
+    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
+        s["gemini_api_key_set"] = True
+        s["gemini_api_key"] = ""
     else:
-        s["anthropic_api_key_set"] = False
+        s["gemini_api_key_set"] = False
+    s.pop("anthropic_api_key", None)
     if s.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY"):
         s["tinyfish_api_key_set"] = True
         s["tinyfish_api_key"] = ""
@@ -284,7 +288,7 @@ async def read_settings():
 @router.put("/settings")
 async def write_settings(body: SettingsBody):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("anthropic_api_key", "tinyfish_api_key"):
+    for k in ("gemini_api_key", "tinyfish_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
     if updates:
@@ -297,7 +301,7 @@ MANUALS = {
 
 ## Overview
 Blue Intelligence transforms the living web of maritime data into an executable geospatial database.
-TinyFish agents discover project pages on foundation portals; Readability + Claude extract, filter (Gatekeeper Protocol) and score each project (S_ocean); results are mapped live and exportable as GeoJSON.
+TinyFish agents discover project pages on foundation portals; Readability + Gemini extract, filter (Gatekeeper Protocol) and score each project (S_ocean); results are mapped live and exportable as GeoJSON.
 
 ## Swarm Controls (left sidebar)
 - **Deploy TinyFish Swarm**: starts the ETL pipeline. Test mode = 3 foundations, Full mode = all MasterSeeds + DeepLinkCache.
@@ -312,13 +316,13 @@ Leaflet dark map with clustered markers. Click a marker for title, funder, descr
 KPIs (total extractions, success rate, projects mapped), telemetry table, failed extractions with Force Extract (TinyFish).
 
 ## Settings
-Marine filtering thresholds, extraction concurrency, Claude models, map limits, API keys (TinyFish + Anthropic).
+Marine filtering thresholds, extraction concurrency, Gemini models, map limits, API keys (TinyFish + Gemini).
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
 ## Vue d'ensemble
 Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable.
-Les agents TinyFish découvrent les fiches projets sur les portails des fondations ; Readability + Claude extraient, filtrent (Protocole Gatekeeper) et notent chaque projet (S_ocean) ; les résultats sont cartographiés en direct et exportables en GeoJSON.
+Les agents TinyFish découvrent les fiches projets sur les portails des fondations ; Readability + Gemini extraient, filtrent (Protocole Gatekeeper) et notent chaque projet (S_ocean) ; les résultats sont cartographiés en direct et exportables en GeoJSON.
 
 ## Contrôles du Swarm (barre gauche)
 - **Déployer TinyFish Swarm** : lance le pipeline ETL. Mode Test = 3 fondations, mode Complet = tous les MasterSeeds + DeepLinkCache.
@@ -333,7 +337,7 @@ Carte Leaflet sombre avec clusters. Un clic sur un marqueur affiche titre, finan
 KPIs (extractions totales, taux de succès, projets cartographiés), table de télémétrie, extractions échouées avec Force Extract (TinyFish).
 
 ## Paramètres
-Seuils de filtrage marin, concurrence d'extraction, modèles Claude, limites carte, clés API (TinyFish + Anthropic).
+Seuils de filtrage marin, concurrence d'extraction, modèles Gemini, limites carte, clés API (TinyFish + Gemini).
 """,
 }
 

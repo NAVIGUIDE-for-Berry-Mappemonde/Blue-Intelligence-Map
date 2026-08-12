@@ -112,7 +112,7 @@ class Swarm:
         self.log(f"Deploying TinyFish Swarm — mode: {mode.upper()}")
         self.log(f"TinyFish key: {'ACTIVE' if self._tf_key() else 'MISSING → fallback crawler'}",
                  "info" if self._tf_key() else "warn")
-        self.log(f"Claude pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
+        self.log(f"Gemini pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
                  "info" if has_llm(settings) else "warn")
         self.main_task = asyncio.create_task(self._run())
 
@@ -329,7 +329,7 @@ class Swarm:
                 await self.add_failed(url, source, funder, gk["reason"], "gatekeeper")
                 return
 
-            self.agent_log(aid, f"Extraction + S_ocean scoring ({'Claude' if has_llm(self.settings) else 'heuristic'})")
+            self.agent_log(aid, f"Extraction + S_ocean scoring ({'Gemini' if has_llm(self.settings) else 'heuristic'})")
             proj = await extract_project(page_title, text, meta_desc, url, funder, self.settings)
 
             lat, lon = proj.get("latitude"), proj.get("longitude")
