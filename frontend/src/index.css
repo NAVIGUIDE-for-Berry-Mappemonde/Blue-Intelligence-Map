@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: #020617;
+  color: #e2e8f0;
+  font-family: "Manrope", sans-serif;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #00f0ff66; }
+
+::selection { background: #00f0ff33; color: #00f0ff; }
+
+.console-scanlines {
+  position: relative;
+}
+.console-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 240, 255, 0.02) 3px
+  );
+}
+
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.cursor-blink { animation: blink 1s step-end infinite; }
+
+@keyframes ping-ring {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Leaflet dark theme overrides */
+.leaflet-container { background: #020617; font-family: "Manrope", sans-serif; }
+.leaflet-popup-content-wrapper {
+  background: rgba(15, 23, 42, 0.95);
+  color: #e2e8f0;
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 4px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+.leaflet-popup-tip { background: #0f172a; border: 1px solid #334155; }
+.leaflet-popup-content { margin: 12px 14px; }
+.leaflet-popup-close-button { color: #94a3b8 !important; }
+.leaflet-bar a {
+  background: #0f172a !important;
+  color: #00f0ff !important;
+  border-color: #334155 !important;
+}
+.leaflet-bar a:hover { background: #1e293b !important; }
+
+.bi-cluster {
+  background: rgba(0, 240, 255, 0.15);
+  border: 2px solid #00f0ff;
+  border-radius: 9999px;
+  color: #00f0ff;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
+}
+
+button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }

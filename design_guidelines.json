@@ -1,0 +1,106 @@
+{
+  "project_name": "Blue Intelligence - Maritime OSINT Swarm",
+  "app_type": "Mission-Control Geospatial Dashboard",
+  "theme": "Dark ocean-themed UI (Default) with EN/FR toggle",
+  "typography": {
+    "headings": {
+      "family": "IBM Plex Sans",
+      "styles": "font-black tracking-tight",
+      "usage": "Headers, KPIs, Main Panel Titles. DO NOT use Space Grotesk."
+    },
+    "body": {
+      "family": "Manrope",
+      "styles": "font-normal leading-relaxed",
+      "usage": "General text, lists, table cells, descriptions."
+    },
+    "monospace": {
+      "family": "JetBrains Mono",
+      "styles": "font-medium text-sm tracking-wide",
+      "usage": "Live agent logs, telemetry, coordinates, extraction statuses, API keys."
+    },
+    "hierarchy_rules": "H1 max text-5xl. Overlines must be uppercase, tiny, wide spacing (tracking-[0.2em])."
+  },
+  "colors": {
+    "archetype": "LUXURY & TECHNICAL (Deep Ocean & Radar)",
+    "base": {
+      "background": "#020617",
+      "surface": "#0f172a",
+      "surface_raised": "#1e293b",
+      "border": "#334155"
+    },
+    "accents": {
+      "primary": "#00f0ff",
+      "success": "#39ff14",
+      "warning": "#fbbf24",
+      "danger": "#ff4a4a",
+      "funder": "#c084fc"
+    },
+    "rules": {
+      "tinted_grey": "Never use pure #000000. Always tint dark backgrounds with blue/navy (#020617).",
+      "forbidden_colors": "Teal green (#1B93A4) is explicitly forbidden for dashboards.",
+      "contrast": "Ensure minimum 4.5:1 for standard text against #0f172a. Active states must be vibrant but readable."
+    }
+  },
+  "visual_enhancers": {
+    "surface_strategy": "Grid Borders (Technical Look). Expose the skeleton. Container uses border-collapse. Items have subtle borders on right and bottom (border-slate-800/60). Remove last item borders.",
+    "glassmorphism": "Used ONLY for overlay panels floating over the Leaflet map. Must be bg-slate-900/80 with backdrop-blur-xl and 1px inner stroke border-slate-700/50.",
+    "retro_futurism": "Terminal Look for the 'Live Swarm Console'. Deep black background with scanline overlays, neon green/cyan text, and subtle text-shadow for a glow effect.",
+    "icons": "Use Phosphor Icons (dense dashboard weight) or lucide-react (default). Install: yarn add @phosphor-icons/react"
+  },
+  "grids": {
+    "mode": "High Density Grid (Data Correlation, Scanability)",
+    "base": "grid-cols-1 md:grid-cols-3 lg:grid-cols-12 gap-4 or gap-6",
+    "spans": {
+      "summary_kpi": "col-span-3",
+      "primary_data": "col-span-8 row-span-2 (e.g., Map or Main Telemetry)",
+      "side_feed": "col-span-4 row-span-2 (e.g., Swarm Control Logs)"
+    },
+    "rules": "Every pixel must be utilized. Use h-full on children to ensure stretch. No jagged bottoms."
+  },
+  "layouts": {
+    "app_shell": "3-Column Mission Control Layout. Left Sidebar (Swarm Control), Center Main (Leaflet Map / Audit Grid), Right Sidebar (Settings & Thresholds).",
+    "header": "Fixed top header with 'Blue Intelligence' (left), 'Maritime OSINT Swarm' subtitle, EN/FR toggle, and View Toggle (Map vs Audit) on the right. Must have solid or heavy glass background, not transparent.",
+    "spacing": "Dense but structured. p-4 to p-6 inside panels. Massive spacing is for marketing; dashboards require precision and high data density."
+  },
+  "components": {
+    "SwarmControlPanel": "Left Sidebar. Contains Status (Test/Full), 'Deploy TinyFish Swarm' (primary vibrant button), 'Stop Swarm' (danger button), Live Console.",
+    "LiveAgentConsole": "Nested in Left Sidebar. Terminal aesthetic. Cards per active agent (TinyFish/Readability). PENDING/RUNNING statuses in colored monospace.",
+    "LeafletMap": "Main center area. Clustered markers based on GeoJSON. Dark mode map tiles (e.g., CartoDB Dark Matter). Popups must use the dark theme styling with precise padding.",
+    "AuditDashboard": "Alternative Main View. Bento grid layout for KPIs (total extractions, success rate) and a dense Telemetry Table for active URLs, engines, durations.",
+    "SettingsPanel": "Right Sidebar. Use Shadcn forms, sliders for map zoom/extraction concurrency. Select dropdown for Claude models. Dense layout.",
+    "Buttons": "Sharp or slightly rounded (max 4px radius). High contrast hover states. Deploy button uses a Tracing Beam or inner glow effect."
+  },
+  "motion": {
+    "interactions": "Hover states on all rows/cards (slight bg shift).",
+    "map_markers": "Ping animation (pulsing ring) on active extraction nodes in the map.",
+    "console": "Smooth auto-scroll for the live agent logs. Blinking cursor effect for 'Agent active' state."
+  },
+  "accessibility": {
+    "contrast": "Adhere to APCA guidelines. Ensure all cyan/green text is legible against deep navy.",
+    "testing": "All interactive elements MUST have data-testid attributes (e.g., data-testid='deploy-swarm-btn', data-testid='lang-toggle-en').",
+    "focus": "Clear focus rings (ring-2 ring-cyan-500) on all inputs and buttons."
+  },
+  "media": {
+    "map_tiles": "URL for dark map: https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+  },
+  "instructions_to_main_agent": [
+    "Build the UI in React using standard Shadcn components but heavily override classes to remove the 'Vercel default' look. Go cardless or use flat rectangles with 1px border.",
+    "For the Map, use react-leaflet. Ensure the container has explicit height (e.g., h-full min-h-[600px]).",
+    "Implement the EN/FR translation strings natively via a simple context or dictionary file.",
+    "Create the data-testid attributes correctly in all components.",
+    "Apply 'flex-1 overflow-y-auto' to scrolling sidebars to keep the layout fixed and app-like.",
+    "Do not center-align the whole App. Align text left."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts. Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) only where necessary, like map overlays.",
+    "You MUST NOT apply universal transition. Eg: transition: all. Always add transitions for specific interactive elements.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file.",
+    "Always use modern button styles (sharp/minimal radius) with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use sonner for toasts, located in /app/src/components/ui/sonner.tsx."
+  ]
+}
