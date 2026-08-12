@@ -55,3 +55,7 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Export GeoJSON + Clear projects déplacés dans le panneau Paramètres (section Données)
 - Auto-Stop saturation (saturation_limit=50, _bump_saturation), formulaire signalement (Resend email OK → clementfilisetti@berrymappemonde.org, mise en file swarm), marqueurs colorés par catégorie + fix zoom (defer rebuild until zoomend, chunkedLoading, maxBounds)
 - Tests iteration_4: 100%
+
+## Update 2026-06 — Fixes carte
+- Popup bord de carte: autoPan:false + adjustPopup (translate CSS de la bulle, carte immobile, flèche ancrée) — testé sur les 4 bords (iteration_5)
+- Monde unique: noWrap + maxBounds ±180° + viscosité 1.0 + fitMinZoom (getBoundsZoom) — plus de duplication du monde ni de glissement chaotique (iteration_6, 100%)

@@ -28,21 +28,32 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
 
   useEffect(() => {
     if (mapObj.current) return;
+    const WORLD = [[-85, -180], [85, 180]];
     const map = L.map(mapRef.current, {
       center: [22, 5],
       zoom: 2,
+      zoomSnap: 0.25,
       minZoom: minZoom || 2,
       maxZoom: 18,
-      worldCopyJump: true,
       zoomControl: true,
-      maxBounds: [[-85, -Infinity], [85, Infinity]],
+      maxBounds: WORLD,
       maxBoundsViscosity: 1.0,
     });
     tileRef.current = L.tileLayer(TILE_URLS.dark, {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
       subdomains: "abcd",
       maxZoom: 19,
+      noWrap: true,
+      bounds: WORLD,
     }).addTo(map);
+    // Single-world view: min zoom = world exactly fills the screen (no grey bands, no wrap)
+    const fitMinZoom = () => {
+      const mz = Math.max(minZoom || 2, map.getBoundsZoom(WORLD, true));
+      map.setMinZoom(mz);
+      if (map.getZoom() < mz) map.setZoom(mz, { animate: false });
+    };
+    fitMinZoom();
+    map.on("resize", fitMinZoom);
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 50,
       chunkedLoading: true,
@@ -66,6 +77,31 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
         fn();
       }
       map.invalidateSize({ pan: false });
+    });
+    // Keep popups fully visible WITHOUT panning the map: shift the popup bubble itself
+    const adjustPopup = (popup) => {
+      const el = popup.getElement && popup.getElement();
+      if (!el || !mapRef.current) return;
+      const wrapper = el.querySelector(".leaflet-popup-content-wrapper");
+      if (!wrapper) return;
+      wrapper.style.transform = "";
+      const mapRect = mapRef.current.getBoundingClientRect();
+      const rect = wrapper.getBoundingClientRect();
+      const pad = 10;
+      let dx = 0, dy = 0;
+      if (rect.left < mapRect.left + pad) dx = mapRect.left + pad - rect.left;
+      else if (rect.right > mapRect.right - pad) dx = mapRect.right - pad - rect.right;
+      if (rect.top < mapRect.top + pad) dy = mapRect.top + pad - rect.top;
+      else if (rect.bottom > mapRect.bottom - pad) dy = mapRect.bottom - pad - rect.bottom;
+      if (dx || dy) {
+        wrapper.style.transition = "transform 0.15s ease";
+        wrapper.style.transform = `translate(${dx}px, ${dy}px)`;
+      }
+    };
+    map.on("popupopen", (e) => {
+      adjustPopup(e.popup);
+      setTimeout(() => adjustPopup(e.popup), 250);
+      setTimeout(() => adjustPopup(e.popup), 800);
     });
     mapObj.current = map;
     clusterRef.current = cluster;
@@ -120,7 +156,7 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
               ${p.s_ocean != null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#39ff14;">S<sub>ocean</sub> ${p.s_ocean}</span>` : ""}
             </div>
           </div>
-        `, { maxWidth: 280 });
+        `, { maxWidth: 280, autoPan: false });
         return marker;
       });
       cluster.addLayers(markers);

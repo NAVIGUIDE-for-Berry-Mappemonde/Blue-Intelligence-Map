@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend regression testing after MapView.js world-wrap/drag-lock fix (noWrap tiles + WORLD maxBounds + viscosity 1.0 + fitMinZoom). All critical checks pass: single world rendered, drag locked within world bounds, popup edge fix still works, filters and search intact.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_findings": {
+    "single_world_verified": "At initial load z=3, tile x range = [0..7] (exactly 8 tiles = one full world, no wrap). After heavy drag +1200px right and -1200px left, tile x range remained [0..7] — no new tiles loaded outside world, no duplicates.",
+    "drag_lock_verified": "leaflet-map-pane transform stays within world-bounded slack (~±81px at min zoom). No chaotic panning, no grey void bands, no marker jumping.",
+    "min_zoom_behavior": "getBoundsZoom snapped minZoom to 3 at 1560x744 map area (viewport 1920x800 minus 293px left panel). World fills screen with slight horizontal slack (world 2048px > map 1560px) — no grey bands visible, single world only. NOTE: with zoomSnap 0.25, expected fractional ~2.5-2.75 per problem statement; got integer 3. This is because Leaflet's getBoundsZoom snaps to zoomSnap grid and inside=true rounds up. Not a bug (spec is 'world fills exactly once, no grey bands' which passes), but if a fractional minZoom is strictly required, consider setting zoomSnap:0 or overriding rounding.",
+    "popup_edge_fix_regression": "Cluster expansion + marker click → popup opens with autoPan:false + adjustPopup translate. Popup visible: true. iter5 fix intact.",
+    "zoom_cycling": "Zoom out to min, zoom in +3 — clusters re-render correctly (156 clusters, 245 interactive markers). No orphan clusters.",
+    "filters_regression": "Search input functional (filled 'ocean'). Legend, organization filter, category filter dropdowns render correctly."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "MapView.js line 51: Math.max(minZoom||2, getBoundsZoom(WORLD, true)) — at typical desktop viewports this snaps to integer 3 rather than fractional 2.5-2.75 as expected in the spec. If exact fill is required, either set zoomSnap:0 during init or compute manually via log(mapWidth/256*1)/log(2). Current behavior is acceptable (no grey bands, single world) but leaves slight horizontal pan slack."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "MapView bug fix verified. Tile-count assertion (xMin/xMax parsed from tile URLs) is the most reliable way to detect world-wrap regressions. Note minZoom rounds to integer 3 with zoomSnap 0.25 in this layout."
+}
