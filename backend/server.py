@@ -42,6 +42,8 @@ DEFAULT_SETTINGS = {
     "full_max_urls_per_seed": 20,
     "min_zoom": 2,
     "max_markers": 1000,
+    "follow_the_money": True,
+    "max_partner_orgs": 5,
 }
 
 
@@ -72,6 +74,8 @@ class SettingsBody(BaseModel):
     full_max_urls_per_seed: int | None = None
     min_zoom: int | None = None
     max_markers: int | None = None
+    follow_the_money: bool | None = None
+    max_partner_orgs: int | None = None
 
 
 def project_to_feature(p: dict) -> dict:

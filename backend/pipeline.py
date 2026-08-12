@@ -12,7 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 from readability import Document as ReadabilityDoc
 
-from ai import extract_project, gatekeeper_check, has_llm
+from ai import extract_project, gatekeeper_check, gemini_geocode, has_llm
 from geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
 from seeds import MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from tinyfish_client import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
@@ -38,6 +38,9 @@ class Swarm:
         self.workers = []
         self.settings = {}
         self.queued_count = 0
+        self.recursive_tasks = []
+        self.partner_domains = set()
+        self.partner_count = 0
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -143,6 +146,9 @@ class Swarm:
             max_urls = int(self.settings.get("test_max_urls_per_seed", 6)) if self.mode == "test" \
                 else int(self.settings.get("full_max_urls_per_seed", 20))
             self.queue = asyncio.Queue()
+            self.recursive_tasks = []
+            self.partner_domains = {urlparse(s["url"]).netloc.replace("www.", "") for s in MASTER_SEEDS}
+            self.partner_count = 0
             concurrency = max(1, min(20, int(self.settings.get("extract_concurrency", 6))))
             self.workers = [asyncio.create_task(self._extract_worker(i)) for i in range(concurrency)]
             self.log(f"MasterSeeds loaded: {len(seeds)} portals | extraction concurrency: {concurrency}")
@@ -164,7 +170,13 @@ class Swarm:
 
             await asyncio.gather(*[guarded(s) for s in seeds], return_exceptions=True)
             self.log("Discovery phase complete — waiting for extraction queue to drain")
-            await self.queue.join()
+            while True:
+                await self.queue.join()
+                pending = [t for t in self.recursive_tasks if not t.done()]
+                if not pending:
+                    break
+                self.log(f"Follow the Money: waiting on {len(pending)} recursive discovery agent(s)")
+                await asyncio.gather(*pending, return_exceptions=True)
             for w in self.workers:
                 w.cancel()
             self.workers = []
@@ -178,7 +190,7 @@ class Swarm:
             self.running = False
 
     # ---------- discovery ----------
-    async def _discover(self, seed, max_urls):
+    async def _discover(self, seed, max_urls, depth=0):
         key = self._tf_key()
         engine = "TinyFish" if key else "Crawler"
         aid = self.new_agent(engine, "discover", seed["url"], seed["name"])
@@ -208,7 +220,7 @@ class Swarm:
                         {"url": u}, {"$set": {"url": u, "funder": seed["name"], "source": seed["url"], "ts": now_iso()},
                                      "$setOnInsert": {"_id": str(uuid.uuid4())}}, upsert=True)
                     self.queued_count += 1
-                    await self.queue.put({"url": u, "funder": seed["name"], "source": seed["url"]})
+                    await self.queue.put({"url": u, "funder": seed["name"], "source": seed["url"], "depth": depth})
                 await self.telemetry(seed["url"], used_engine, "SUCCESS", (time.time() - t0) * 1000, len(urls))
             else:
                 self.set_agent(aid, status="FAILED")
@@ -294,8 +306,26 @@ class Swarm:
                 except ValueError:
                     pass
 
+    def _queue_partner(self, name: str, purl: str):
+        if not self.running or not self.settings.get("follow_the_money", True):
+            return
+        try:
+            domain = urlparse(purl).netloc.replace("www.", "")
+        except Exception:
+            return
+        if not domain or domain in self.partner_domains:
+            return
+        if self.partner_count >= int(self.settings.get("max_partner_orgs", 5)):
+            return
+        self.partner_domains.add(domain)
+        self.partner_count += 1
+        self.log(f"Follow the Money: new org '{name}' ({domain}) → recursive discovery", "success")
+        seed = {"name": f"{name} (partner)", "url": purl}
+        self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
+
     async def _process_url(self, item):
         url, funder, source = item["url"], item["funder"], item["source"]
+        depth = item.get("depth", 0)
         if await self.db.projects.find_one({"url": url}):
             return
         aid = self.new_agent("Readability.js", "extract", url, source)
@@ -319,6 +349,17 @@ class Swarm:
             meta_desc = meta.get("content", "").strip() if meta else ""
             og_img = full_soup.find("meta", attrs={"property": "og:image"})
             image = og_img.get("content", "").strip() if og_img else None
+            base_host = urlparse(url).netloc
+            ext_links, seen_d = [], set()
+            for a in full_soup.find_all("a", href=True):
+                href = urljoin(url, a["href"]).split("#")[0]
+                d = urlparse(href).netloc
+                name = re.sub(r"\s+", " ", a.get_text(" ")).strip()
+                if href.startswith("http") and d and d != base_host and d not in seen_d and 3 < len(name) < 80:
+                    seen_d.add(d)
+                    ext_links.append({"name": name, "url": href})
+                if len(ext_links) >= 15:
+                    break
 
             self.agent_log(aid, "Gatekeeper Protocol (marine filter)")
             gk = await gatekeeper_check(page_title, text, self.settings)
@@ -330,7 +371,7 @@ class Swarm:
                 return
 
             self.agent_log(aid, f"Extraction + S_ocean scoring ({'Gemini' if has_llm(self.settings) else 'heuristic'})")
-            proj = await extract_project(page_title, text, meta_desc, url, funder, self.settings)
+            proj = await extract_project(page_title, text, meta_desc, url, funder, self.settings, ext_links=ext_links)
 
             lat, lon = proj.get("latitude"), proj.get("longitude")
             geo_src = "extracted"
@@ -341,6 +382,12 @@ class Swarm:
                     if g:
                         lat, lon = g
                         geo_src = "geocoded:location"
+                if lat is None:
+                    g = await gemini_geocode(proj.get("location") or "", proj["title"], self.settings)
+                    if g:
+                        lat, lon = g
+                        geo_src = "gemini-geocoded"
+                        self.agent_log(aid, "Smart geocoding: Gemini estimated site coordinates")
                 if lat is None:
                     g = await geocode(proj["title"])
                     if g:
@@ -376,6 +423,10 @@ class Swarm:
             self.agent_log(aid, f"Project mapped — S_ocean {proj.get('s_ocean')}")
             self.log(f"+ {proj['title'][:60]} ({funder})", "success")
             await self.telemetry(url, proj["engine"], "SUCCESS", (time.time() - t0) * 1000, 1)
+            if depth == 0:
+                for p in (proj.get("partners") or []):
+                    if p.get("url"):
+                        self._queue_partner(p["name"], p["url"])
         except asyncio.CancelledError:
             self.set_agent(aid, status="CANCELLED")
             raise

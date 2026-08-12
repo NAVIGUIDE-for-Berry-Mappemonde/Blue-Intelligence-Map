@@ -37,7 +37,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
     const body = { ...form };
     delete body.gemini_api_key_set;
     delete body.tinyfish_api_key_set;
-    ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers"].forEach(
+    ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers", "max_partner_orgs"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
     await api.put("/settings", body);
@@ -105,6 +105,17 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onClose }) {
               {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </Field>
+          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+            <input data-testid="follow-money-checkbox" type="checkbox" checked={!!form.follow_the_money}
+              onChange={(e) => set("follow_the_money", e.target.checked)} className="accent-cyan-400" />
+            {t("followMoney")}
+          </label>
+          {form.follow_the_money && (
+            <Field label={t("maxPartnerOrgs")}>
+              <input data-testid="max-partner-orgs-input" type="number" min="1" max="20" value={form.max_partner_orgs}
+                onChange={(e) => set("max_partner_orgs", e.target.value)} className={inputCls} />
+            </Field>
+          )}
         </section>
 
         {/* Map */}

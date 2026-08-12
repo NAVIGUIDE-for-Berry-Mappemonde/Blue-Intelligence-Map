@@ -82,16 +82,40 @@ def heuristic_extract(title: str, text: str, meta_desc: str, settings: dict) -> 
             "engine": "Heuristic Extractor"}
 
 
-async def extract_project(title: str, text: str, meta_desc: str, url: str, funder: str, settings: dict) -> dict:
+async def gemini_geocode(location: str, title: str, settings: dict):
+    """Smart geocoding: Gemini estimates precise coastal/marine coordinates."""
+    key = get_llm_key(settings)
+    if not key:
+        return None
+    prompt = f"""You are a maritime geocoding expert. Give the best-estimate GPS coordinates for this marine conservation project site.
+Project: {title}
+Location description: {location or 'unknown'}
+
+Rules: prefer the actual project site (reef, bay, MPA, coastal zone) over any city or HQ. If the location is a coastal region, return a point in the adjacent waters.
+Return JSON: {{"latitude": <decimal>, "longitude": <decimal>, "confidence": <0.0-1.0>}}. If you truly cannot estimate, use confidence 0."""
+    try:
+        out = await _gemini_json(prompt, settings.get("gatekeeper_model", "gemini-3-flash-preview"), key)
+        lat, lon = float(out.get("latitude")), float(out.get("longitude"))
+        if float(out.get("confidence", 0)) >= 0.4 and -90 <= lat <= 90 and -180 <= lon <= 180 and not (lat == 0 and lon == 0):
+            return lat, lon
+    except Exception:
+        pass
+    return None
+
+
+async def extract_project(title: str, text: str, meta_desc: str, url: str, funder: str, settings: dict, ext_links=None) -> dict:
     key = get_llm_key(settings)
     if not key:
         return heuristic_extract(title, text, meta_desc, settings)
+    links_block = ""
+    if ext_links:
+        links_block = "\nExternal organization links found on the page:\n" + "\n".join(f"- {l['name']}: {l['url']}" for l in ext_links[:15])
     prompt = f"""Extract structured data from this marine conservation project page.
 URL: {url}
 Funder: {funder}
 Page title: {title}
 Content (truncated):
-{text[:5000]}
+{text[:5000]}{links_block}
 
 Return JSON:
 {{"title": "<official project name>",
@@ -99,7 +123,8 @@ Return JSON:
  "location": "<most specific geographic place name, e.g. 'Banc d'Arguin, Mauritania', or null if global>",
  "latitude": <decimal or null>,
  "longitude": <decimal or null>,
- "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>}}"""
+ "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>,
+ "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
     try:
         out = await _gemini_json(prompt, settings.get("extract_model", "gemini-3.1-pro-preview"), key)
         return {
@@ -109,6 +134,7 @@ Return JSON:
             "latitude": out.get("latitude"),
             "longitude": out.get("longitude"),
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
+            "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
             "engine": "Gemini Extractor",
         }
     except Exception:
