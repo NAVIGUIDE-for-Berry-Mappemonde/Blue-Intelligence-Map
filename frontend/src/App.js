@@ -7,6 +7,7 @@ import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import SettingsPanel from "./components/SettingsPanel";
 import { DonateModal, PaymentReturn } from "./components/Donations";
+import ReportModal from "./components/ReportModal";
 
 export default function App() {
   const [lang, setLang] = useState("en");
@@ -21,6 +22,9 @@ export default function App() {
   const [settings, setSettings] = useState(null);
   const [donations, setDonations] = useState({ total_eur: 0, count: 0 });
   const [donateTarget, setDonateTarget] = useState(null);
+  const [showReport, setShowReport] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState("All");
   const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
   const t = makeT(lang);
   const lastTotalRef = useRef(-1);
@@ -58,6 +62,13 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const { data } = await api.get("/categories");
+      setCategories(data.groups);
+    } catch (e) { /* transient */ }
+  }, []);
+
   useEffect(() => {
     window.__biDonate = (id) => {
       setDonateTarget({ id, title: null });
@@ -77,11 +88,13 @@ export default function App() {
     fetchProjects();
     fetchSettings();
     fetchDonations();
+    fetchCategories();
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(fetchProjects, 5000);
     const d = setInterval(fetchDonations, 10000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(d); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations]);
+    const c = setInterval(fetchCategories, 15000);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss">
@@ -93,24 +106,26 @@ export default function App() {
       />
       <div className="flex flex-1 min-h-0">
         <SwarmPanel
-          t={t} status={status} projects={projects} funders={funders}
+          t={t} projects={projects} funders={funders}
           funderFilter={funderFilter} setFunderFilter={setFunderFilter}
           searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+          categories={categories} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter}
           onDonate={(id, title) => setDonateTarget({ id, title })}
-          refresh={() => { fetchStatus(); fetchProjects(); }}
+          onReport={() => setShowReport(true)}
         />
         <main className="flex-1 relative min-w-0">
           {view === "map" ? (
             <MapView projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} t={t}
-              basemap={basemap}
+              basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
-            <AuditView t={t} />
+            <AuditView t={t} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} />
           )}
         </main>
-        {showSettings && (
+          {showSettings && (
           <SettingsPanel t={t} lang={lang} settings={settings}
-            onSaved={fetchSettings} onImported={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
+            onSaved={fetchSettings} onImported={() => fetchProjects(true)}
+            onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
         )}
       </div>
       {donateTarget && (

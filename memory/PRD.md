@@ -48,3 +48,10 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Endpoints: POST /api/donations/checkout, GET /api/payments/status/{id}, GET /api/donations/total, webhook /api/webhook/stripe
 - Import GeoJSON (session précédente): 4420 projets importés, popup fix (sigRef), photos og:image/twitter/first-img
 - Tests iteration_3: 100% pass
+
+## Update 2026-06 — UX Reorganisation + Engagement
+- Sidebar gauche épurée: légende cliquable (9 catégories colorées), filtres org+catégorie, recherche, liste projets, bouton "Projet manquant ?"
+- Contrôles Swarm (statut, deploy/stop, logs, console agents) déplacés dans l onglet Swarm Intelligence Audit (SwarmControls.js)
+- Export GeoJSON + Clear projects déplacés dans le panneau Paramètres (section Données)
+- Auto-Stop saturation (saturation_limit=50, _bump_saturation), formulaire signalement (Resend email OK → clementfilisetti@berrymappemonde.org, mise en file swarm), marqueurs colorés par catégorie + fix zoom (defer rebuild until zoomend, chunkedLoading, maxBounds)
+- Tests iteration_4: 100%

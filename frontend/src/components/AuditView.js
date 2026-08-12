@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Trash2, Zap } from "lucide-react";
 import api from "../api";
+import SwarmControls from "./SwarmControls";
 
 const STATUS_COLORS = {
   SUCCESS: "text-bio",
@@ -10,7 +11,7 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
-export default function AuditView({ t }) {
+export default function AuditView({ t, status, refresh }) {
   const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
@@ -57,6 +58,9 @@ export default function AuditView({ t }) {
           <Trash2 size={12} /> {t("clearAll")}
         </button>
       </div>
+
+      {/* Swarm operations */}
+      <SwarmControls t={t} status={status} refresh={refresh} />
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-px bg-line border border-line">

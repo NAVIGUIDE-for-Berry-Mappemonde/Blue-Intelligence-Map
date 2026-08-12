@@ -1,9 +1,10 @@
 import { ExternalLink, HandCoins } from "lucide-react";
 
-export default function ProjectList({ t, projects, funderFilter, searchQuery, onDonate }) {
+export default function ProjectList({ t, projects, funderFilter, searchQuery, categoryFilter, onDonate }) {
   const q = (searchQuery || "").toLowerCase();
   const features = (projects.features || []).filter(
     (f) => (funderFilter === "All" || (f.properties.funder || "").includes(funderFilter)) &&
+      (categoryFilter === "All" || f.properties.category_group === categoryFilter) &&
       (!q || `${f.properties.title} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q))
   );
 

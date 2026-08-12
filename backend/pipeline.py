@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from readability import Document as ReadabilityDoc
 
 from ai import extract_project, gatekeeper_check, gemini_geocode, has_llm
+from categories import normalize_category
 from geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
 from seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from tinyfish_client import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
@@ -57,6 +58,8 @@ class Swarm:
         self.recursive_tasks = []
         self.partner_domains = set()
         self.partner_count = 0
+        self.no_new_streak = 0
+        self.saturated = False
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -118,6 +121,17 @@ class Swarm:
         return (self.settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip()
 
     # ---------- lifecycle ----------
+    def _bump_saturation(self, new_project: bool):
+        if new_project:
+            self.no_new_streak = 0
+            return
+        self.no_new_streak += 1
+        limit = int(self.settings.get("saturation_limit", 50))
+        if limit > 0 and self.no_new_streak >= limit and self.running and not self.saturated:
+            self.saturated = True
+            self.log(f"Auto-Stop: {self.no_new_streak} consecutive extractions without a new unique project — graceful shutdown to save credits", "warn")
+            asyncio.create_task(self.stop())
+
     async def deploy(self, mode: str, clear_db: bool, settings: dict):
         if self.running:
             raise ValueError("swarm already running")
@@ -128,7 +142,10 @@ class Swarm:
             self.log("Database cleared before deployment", "warn")
         self.running = True
         self.logs.clear()
+        self.no_new_streak = 0
+        self.saturated = False
         self.log(f"Deploying TinyFish Swarm — mode: {mode.upper()}")
+        self.log(f"Auto-Stop armed: shutdown after {int(settings.get('saturation_limit', 50))} extractions without new project")
         self.log(f"TinyFish key: {'ACTIVE' if self._tf_key() else 'MISSING → fallback crawler'}",
                  "info" if self._tf_key() else "warn")
         self.log(f"Gemini pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
@@ -379,6 +396,7 @@ class Swarm:
         url, funder, source = item["url"], item["funder"], item["source"]
         depth = item.get("depth", 0)
         if await self.db.projects.find_one({"url": url}):
+            self._bump_saturation(False)
             return
         aid = self.new_agent("Readability.js", "extract", url, source)
         t0 = time.time()
@@ -420,6 +438,7 @@ class Swarm:
                 self.agent_log(aid, f"REJECTED: {gk['reason'][:80]}")
                 await self.telemetry(url, gk["engine"], "REJECTED", (time.time() - t0) * 1000, 0, gk["reason"])
                 await self.add_failed(url, source, funder, gk["reason"], "gatekeeper")
+                self._bump_saturation(False)
                 return
 
             self.agent_log(aid, f"Extraction + S_ocean scoring ({'Gemini' if has_llm(self.settings) else 'heuristic'})")
@@ -462,15 +481,19 @@ class Swarm:
                 self.set_agent(aid, status="SUCCESS")
                 self.agent_log(aid, "Merged with existing project (dedup <500m / similarity)")
                 await self.telemetry(url, proj["engine"], "MERGED", (time.time() - t0) * 1000, 1)
+                self._bump_saturation(False)
                 return
 
+            category = proj.get("category")
             await self.db.projects.insert_one({
                 "_id": str(uuid.uuid4()), "title": proj["title"], "url": url,
                 "description": proj["description"], "funder": funder, "funders": [funder],
                 "location": proj.get("location"), "lat": float(lat), "lon": float(lon),
                 "s_ocean": proj.get("s_ocean", 0.5), "snapped": snapped, "geo_source": geo_src,
+                "category": category, "category_group": normalize_category(category),
                 "image": image, "engine": proj["engine"], "created_at": now_iso(),
             })
+            self._bump_saturation(True)
             self.set_agent(aid, status="SUCCESS")
             self.agent_log(aid, f"Project mapped — S_ocean {proj.get('s_ocean')}")
             self.log(f"+ {proj['title'][:60]} ({funder})", "success")
@@ -487,6 +510,7 @@ class Swarm:
             self.agent_log(aid, f"FAILED: {str(e)[:80]}")
             await self.telemetry(url, "Readability.js", "FAILED", (time.time() - t0) * 1000, 0, str(e))
             await self.add_failed(url, source, funder, str(e), "extract")
+            self._bump_saturation(False)
 
     @staticmethod
     def _valid_coords(lat, lon):

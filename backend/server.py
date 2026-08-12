@@ -18,6 +18,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
 from ai import extract_project, gatekeeper_check
+from categories import CATEGORY_GROUPS, normalize_category
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from pipeline import Swarm, now_iso
 from tinyfish_client import EXTRACT_SCHEMA, extract_goal, tf_run_sync
@@ -45,6 +46,7 @@ DEFAULT_SETTINGS = {
     "max_markers": 1000,
     "follow_the_money": True,
     "max_partner_orgs": 5,
+    "saturation_limit": 50,
 }
 
 
@@ -77,6 +79,7 @@ class SettingsBody(BaseModel):
     max_markers: int | None = None
     follow_the_money: bool | None = None
     max_partner_orgs: int | None = None
+    saturation_limit: int | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -94,6 +97,7 @@ def project_to_feature(p: dict) -> dict:
             "snapped": p.get("snapped", False),
             "image": p.get("image"),
             "category": p.get("category"),
+            "category_group": p.get("category_group") or normalize_category(p.get("category")),
         },
     }
 
@@ -343,6 +347,76 @@ async def import_geojson(fc: dict = Body(...)):
     total = await db.projects.count_documents({})
     swarm.log(f"GeoJSON import: {imported} imported, {merged} merged, {skipped} already known, {invalid} invalid", "success")
     return {"imported": imported, "merged": merged, "skipped_existing": skipped, "invalid": invalid, "total_projects": total}
+
+
+@router.get("/categories")
+async def get_categories():
+    rows = await db.projects.aggregate([
+        {"$group": {"_id": "$category_group", "n": {"$sum": 1}}},
+    ]).to_list(50)
+    counts = {r["_id"] or "Other": r["n"] for r in rows}
+    return {"groups": [{"name": g, "color": c, "count": counts.get(g, 0)} for g, c in CATEGORY_GROUPS.items()]}
+
+
+class ReportBody(BaseModel):
+    name: str
+    url: str
+    description: str = ""
+
+
+@router.post("/report-project")
+async def report_project(body: ReportBody):
+    name, url = body.name.strip(), body.url.strip()
+    if not name or not url.startswith("http"):
+        raise HTTPException(400, "name required and url must start with http(s)")
+    rid = str(uuid.uuid4())
+    email_status = "skipped"
+    resend_key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    if resend_key:
+        try:
+            import resend
+            resend.api_key = resend_key
+            params = {
+                "from": os.environ.get("SENDER_EMAIL", "onboarding@resend.dev"),
+                "to": [os.environ.get("REPORT_RECIPIENT", "clementfilisetti@berrymappemonde.org")],
+                "subject": f"[Blue Intelligence] Projet signalé : {name[:80]}",
+                "html": f"""<table style="font-family:Arial,sans-serif;max-width:560px;"><tr><td>
+<h2 style="color:#0284c7;">🌊 Nouveau projet signalé sur Blue Intelligence</h2>
+<p><b>Nom du projet :</b> {name}</p>
+<p><b>URL :</b> <a href="{url}">{url}</a></p>
+<p><b>Description :</b><br/>{(body.description or '—')[:1000]}</p>
+<p style="color:#64748b;font-size:12px;">Ce projet a été ajouté automatiquement à la file d'attente du Swarm et sera analysé lors du prochain run.</p>
+</td></tr></table>""",
+            }
+            result = await asyncio.to_thread(resend.Emails.send, params)
+            email_status = "sent" if result.get("id") else "failed"
+        except Exception as e:
+            email_status = f"failed: {str(e)[:120]}"
+    await db.reported_projects.insert_one({
+        "_id": rid, "name": name, "url": url, "description": body.description[:1000],
+        "status": "queued", "email_status": email_status, "ts": now_iso(),
+    })
+    await db.deeplink_pages.update_one(
+        {"url": url},
+        {"$set": {"url": url, "funder": "Community Report", "source": "user-report", "ts": now_iso()},
+         "$setOnInsert": {"_id": str(uuid.uuid4())}},
+        upsert=True,
+    )
+    queued_now = False
+    if swarm.running and swarm.queue is not None:
+        swarm.queued_count += 1
+        await swarm.queue.put({"url": url, "funder": "Community Report", "source": "user-report", "depth": 1})
+        queued_now = True
+    swarm.log(f"Community report: '{name[:50]}' → {'queue (live)' if queued_now else 'DeepLinkCache (next run)'}", "success")
+    return {"id": rid, "status": "queued_now" if queued_now else "queued_next_run", "email_status": email_status}
+
+
+@router.get("/reports")
+async def get_reports():
+    docs = await db.reported_projects.find({}).sort("ts", -1).to_list(100)
+    for d in docs:
+        d["id"] = d.pop("_id")
+    return docs
 
 
 @router.get("/settings")

@@ -124,6 +124,7 @@ Return JSON:
  "latitude": <decimal or null>,
  "longitude": <decimal or null>,
  "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>,
+ "category": "<exactly one of: MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other>",
  "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
     try:
         out = await _gemini_json(prompt, settings.get("extract_model", "gemini-3.1-pro-preview"), key)
@@ -134,6 +135,7 @@ Return JSON:
             "latitude": out.get("latitude"),
             "longitude": out.get("longitude"),
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
+            "category": str(out.get("category") or "Other"),
             "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
             "engine": "Gemini Extractor",
         }

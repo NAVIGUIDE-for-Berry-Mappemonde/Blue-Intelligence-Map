@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, FileDown, Upload, X } from "lucide-react";
+import { Check, Download, FileDown, Trash2, Upload, X } from "lucide-react";
 import api from "../api";
 
 const MODELS = [
@@ -21,7 +21,7 @@ function Field({ label, children }) {
 
 const inputCls = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500";
 
-export default function SettingsPanel({ t, lang, settings, onSaved, onImported, onClose }) {
+export default function SettingsPanel({ t, lang, settings, onSaved, onImported, onProjectsCleared, onClose }) {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -39,7 +39,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
     const body = { ...form };
     delete body.gemini_api_key_set;
     delete body.tinyfish_api_key_set;
-    ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers", "max_partner_orgs"].forEach(
+    ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers", "max_partner_orgs", "saturation_limit"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
     await api.put("/settings", body);
@@ -99,6 +99,20 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
             className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-sonar/40 text-sonar rounded-sm hover:bg-sonar/10 disabled:opacity-40">
             <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
           </button>
+          <button data-testid="export-geojson-btn"
+            onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}/api/export/geojson`, "_blank")}
+            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-sonar/40 text-sonar rounded-sm hover:bg-sonar/10">
+            <Download size={12} /> {t("exportGeojson")}
+          </button>
+          <button data-testid="clear-projects-btn"
+            onClick={async () => {
+              if (!window.confirm(t("clearProjectsConfirm"))) return;
+              await api.delete("/projects");
+              if (onProjectsCleared) onProjectsCleared();
+            }}
+            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
+            <Trash2 size={12} /> {t("clearProjects")}
+          </button>
         </section>
 
         {/* Marine filtering */}
@@ -147,6 +161,10 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
                 onChange={(e) => set("max_partner_orgs", e.target.value)} className={inputCls} />
             </Field>
           )}
+          <Field label={t("autoStopLimit")}>
+            <input data-testid="saturation-limit-input" type="number" min="0" max="500" value={form.saturation_limit}
+              onChange={(e) => set("saturation_limit", e.target.value)} className={inputCls} />
+          </Field>
         </section>
 
         {/* Map */}
