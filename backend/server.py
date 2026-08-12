@@ -47,6 +47,7 @@ DEFAULT_SETTINGS = {
     "follow_the_money": True,
     "max_partner_orgs": 5,
     "saturation_limit": 50,
+    "rescan_after_days": 7,
 }
 
 
@@ -62,6 +63,7 @@ async def get_settings() -> dict:
 class DeployBody(BaseModel):
     mode: str = "test"
     clear_db: bool = False
+    force_rescan: bool = False
 
 
 class SettingsBody(BaseModel):
@@ -80,6 +82,7 @@ class SettingsBody(BaseModel):
     follow_the_money: bool | None = None
     max_partner_orgs: int | None = None
     saturation_limit: int | None = None
+    rescan_after_days: float | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -146,7 +149,7 @@ async def deploy(body: DeployBody):
         raise HTTPException(400, "mode must be test|full")
     settings = await get_settings()
     try:
-        await swarm.deploy(body.mode, body.clear_db, settings)
+        await swarm.deploy(body.mode, body.clear_db, settings, body.force_rescan)
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"status": "deployed", "mode": body.mode}

@@ -32,8 +32,8 @@ EXTRACT_SCHEMA = {
 }
 
 
-def discovery_goal(org_name: str) -> str:
-    return (
+def discovery_goal(org_name: str, known_urls=None) -> str:
+    base = (
         f"You are a maritime OSINT discovery agent for Blue Intelligence, exploring the website of '{org_name}'. "
         "Navigate menus, project/program/campaign listings, and pagination as needed. "
         "Collect pages that each describe ONE individual marine, ocean, coastal, reef, mangrove, seagrass, "
@@ -42,6 +42,13 @@ def discovery_goal(org_name: str) -> str:
         "Return every qualifying page as projects with canonical URL and visible page title. "
         "Do not invent values. If none qualify, return an empty projects array."
     )
+    if known_urls:
+        sample = "\n".join(f"- {u}" for u in known_urls[:40])
+        base += (
+            f"\n\nINCREMENTAL MODE: we already know the following {len(known_urls)} project URLs from a previous scan. "
+            f"Return ONLY project pages that are NOT in this list (new or recently added projects):\n{sample}"
+        )
+    return base
 
 
 def extract_goal(url: str) -> str:

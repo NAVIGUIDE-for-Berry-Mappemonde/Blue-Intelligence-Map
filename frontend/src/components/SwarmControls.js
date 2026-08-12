@@ -6,13 +6,14 @@ import AgentConsole from "./AgentConsole";
 export default function SwarmControls({ t, status, refresh }) {
   const [mode, setMode] = useState("test");
   const [clearDb, setClearDb] = useState(false);
+  const [forceRescan, setForceRescan] = useState(false);
   const [busy, setBusy] = useState(false);
   const running = status?.running;
 
   const deploy = async () => {
     setBusy(true);
     try {
-      await api.post("/swarm/deploy", { mode, clear_db: clearDb });
+      await api.post("/swarm/deploy", { mode, clear_db: clearDb, force_rescan: forceRescan });
       refresh();
     } catch (e) {
       alert(e.response?.data?.detail || e.message);

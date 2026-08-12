@@ -42,6 +42,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
     ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers", "max_partner_orgs", "saturation_limit"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
+    body.rescan_after_days = parseFloat(body.rescan_after_days);
     await api.put("/settings", body);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -164,6 +165,10 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
           <Field label={t("autoStopLimit")}>
             <input data-testid="saturation-limit-input" type="number" min="0" max="500" value={form.saturation_limit}
               onChange={(e) => set("saturation_limit", e.target.value)} className={inputCls} />
+          </Field>
+          <Field label={t("rescanDays")}>
+            <input data-testid="rescan-days-input" type="number" min="0" max="365" step="0.5" value={form.rescan_after_days}
+              onChange={(e) => set("rescan_after_days", e.target.value)} className={inputCls} />
           </Field>
         </section>
 

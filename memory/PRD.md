@@ -59,3 +59,10 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 ## Update 2026-06 — Fixes carte
 - Popup bord de carte: autoPan:false + adjustPopup (translate CSS de la bulle, carte immobile, flèche ancrée) — testé sur les 4 bords (iteration_5)
 - Monde unique: noWrap + maxBounds ±180° + viscosité 1.0 + fitMinZoom (getBoundsZoom) — plus de duplication du monde ni de glissement chaotique (iteration_6, 100%)
+
+## Update 2026-06 — Découverte incrémentale
+- discovery_state (TTL par portail, rescan_after_days=7): seeds scannés récemment sautés (0 crédit TinyFish)
+- Delta scan: URLs connues transmises à l agent TinyFish (retourne uniquement les nouveautés)
+- Case "Forcer un rescan complet" dans les contrôles Swarm (force_rescan)
+- 9 portails marqués scannés; 12 restants seront découverts au prochain full run
+- Vérifié: deploy test → 3 seeds sautés, 0 appel TinyFish, manuels EN/FR mis à jour

@@ -132,11 +132,12 @@ class Swarm:
             self.log(f"Auto-Stop: {self.no_new_streak} consecutive extractions without a new unique project — graceful shutdown to save credits", "warn")
             asyncio.create_task(self.stop())
 
-    async def deploy(self, mode: str, clear_db: bool, settings: dict):
+    async def deploy(self, mode: str, clear_db: bool, settings: dict, force_rescan: bool = False):
         if self.running:
             raise ValueError("swarm already running")
         self.settings = settings
         self.mode = mode
+        self.force_rescan = force_rescan
         if clear_db:
             await self.db.projects.delete_many({})
             self.log("Database cleared before deployment", "warn")
@@ -224,6 +225,24 @@ class Swarm:
 
     # ---------- discovery ----------
     async def _discover(self, seed, max_urls, depth=0):
+        # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
+        known_urls = []
+        if depth == 0:
+            state = await self.db.discovery_state.find_one({"seed_url": seed["url"]})
+            rescan_days = float(self.settings.get("rescan_after_days", 7))
+            if state and state.get("last_scan") and not getattr(self, "force_rescan", False):
+                try:
+                    last = datetime.fromisoformat(state["last_scan"])
+                    age_days = (datetime.now(timezone.utc) - last).total_seconds() / 86400
+                    if age_days < rescan_days:
+                        self.log(f"[{seed['name']}] discovery skipped — scanned {age_days:.1f}d ago (TTL {rescan_days:g}d, cache reused)")
+                        return
+                except ValueError:
+                    pass
+            cached = await self.db.deeplink_pages.find({"source": seed["url"]}, {"url": 1}).to_list(300)
+            known_urls = [c["url"] for c in cached]
+            if known_urls:
+                self.log(f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission")
         key = self._tf_key()
         engine = "TinyFish" if key else "Crawler"
         aid = self.new_agent(engine, "discover", seed["url"], seed["name"])
@@ -235,7 +254,7 @@ class Swarm:
             if key:
                 self.agent_log(aid, f"TinyFish mission dispatched → {seed['url']}")
                 try:
-                    urls = await self._tinyfish_discover(aid, seed, key, max_urls)
+                    urls = await self._tinyfish_discover(aid, seed, key, max_urls, known_urls)
                 except Exception as e:
                     tf_err = str(e)[:120]
                     self.agent_log(aid, f"TinyFish failed: {tf_err}")
@@ -246,6 +265,15 @@ class Swarm:
                 self.agent_log(aid, "Fallback crawler engaged")
                 urls = await self._crawl_discover(seed, max_urls)
             urls = urls[:max_urls]
+            if depth == 0 and (urls or known_urls):
+                new_count = len([u for u in urls if u not in set(known_urls)])
+                await self.db.discovery_state.update_one(
+                    {"seed_url": seed["url"]},
+                    {"$set": {"seed_url": seed["url"], "name": seed["name"], "last_scan": now_iso(),
+                              "urls_found": len(urls), "new_urls": new_count},
+                     "$setOnInsert": {"_id": str(uuid.uuid4())}},
+                    upsert=True,
+                )
             if urls:
                 self.set_agent(aid, status="SUCCESS")
                 self.agent_log(aid, f"{len(urls)} project URLs discovered")
@@ -271,9 +299,10 @@ class Swarm:
             await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, str(e))
             await self.add_failed(seed["url"], seed["url"], seed["name"], str(e), "discover")
 
-    async def _tinyfish_discover(self, aid, seed, key, max_urls):
+    async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
         """SSE streaming first (real-time agent events), polling fallback."""
         self.set_agent(aid, status="RUNNING")
+        goal = discovery_goal(seed["name"], known_urls)
 
         async def on_event(ev):
             et = ev.get("type")
@@ -285,10 +314,10 @@ class Swarm:
                 self.agent_log(aid, str(ev["purpose"])[:110])
 
         try:
-            result = await tf_run_sse(seed["url"], discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key, on_event=on_event)
+            result = await tf_run_sse(seed["url"], goal, DISCOVERY_SCHEMA, key, on_event=on_event)
         except (httpx.HTTPError, TimeoutError) as e:
             self.agent_log(aid, f"SSE dropped ({str(e)[:60]}) → polling fallback")
-            result = await self._tinyfish_discover_poll(aid, seed, key)
+            result = await self._tinyfish_discover_poll(aid, seed, key, goal)
         projects = (result or {}).get("projects") or []
         self.agent_log(aid, f"agent finished: {len(projects)} candidates")
         urls, seen = [], set()
@@ -299,8 +328,8 @@ class Swarm:
                 urls.append(u)
         return urls[:max_urls]
 
-    async def _tinyfish_discover_poll(self, aid, seed, key):
-        body = await tf_run_async(seed["url"], discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key)
+    async def _tinyfish_discover_poll(self, aid, seed, key, goal=None):
+        body = await tf_run_async(seed["url"], goal or discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key)
         run_id = body.get("run_id")
         if not run_id:
             raise ValueError(body.get("error", "no run_id"))
