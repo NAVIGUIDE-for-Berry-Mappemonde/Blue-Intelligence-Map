@@ -188,10 +188,12 @@ class Swarm:
             self.log(f"MasterSeeds loaded: {len(seeds)} portals | extraction concurrency: {concurrency}")
 
             if self.mode == "full":
-                cached = await self.db.deeplink_pages.find({}).to_list(2000)
+                cached = await self.db.deeplink_pages.find({}).to_list(5000)
                 if cached:
-                    self.log(f"DeepLinkCache: injecting {len(cached)} cached project pages")
-                    for c in cached:
+                    existing = {p["url"] for p in await self.db.projects.find({}, {"url": 1}).to_list(30000)}
+                    fresh = [c for c in cached if c["url"] not in existing]
+                    self.log(f"DeepLinkCache: {len(cached)} pages cached, {len(fresh)} not yet extracted → queued")
+                    for c in fresh:
                         self.queued_count += 1
                         await self.queue.put({"url": c["url"], "funder": c.get("funder", ""), "source": c.get("source", "cache")})
 
@@ -425,7 +427,7 @@ class Swarm:
         url, funder, source = item["url"], item["funder"], item["source"]
         depth = item.get("depth", 0)
         if await self.db.projects.find_one({"url": url}):
-            self._bump_saturation(False)
+            # Free URL-dedup skip: costs no credits, must NOT count toward Auto-Stop saturation
             return
         aid = self.new_agent("Readability.js", "extract", url, source)
         t0 = time.time()
