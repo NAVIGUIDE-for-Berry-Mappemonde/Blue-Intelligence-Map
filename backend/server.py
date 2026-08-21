@@ -433,6 +433,8 @@ async def get_mpa(bbox: str):
     except ValueError:
         raise HTTPException(400, "bbox must be minLon,minLat,maxLon,maxLat")
     key = f"{round(min_lon, 1)},{round(min_lat, 1)},{round(max_lon, 1)},{round(max_lat, 1)}"
+    offset = max(0.005, round((max_lon - min_lon) / 500, 4))
+    key = f"{key}|{offset}"
     cached = await db.mpa_cache.find_one({"_id": key})
     if cached:
         age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(cached["ts"])).total_seconds() / 86400
@@ -446,10 +448,12 @@ async def get_mpa(bbox: str):
         "spatialRel": "esriSpatialRelIntersects",
         "outFields": "*", "f": "geojson",
         "resultRecordCount": "250",
+        "maxAllowableOffset": str(offset),
+        "geometryPrecision": "4",
     }
     import httpx as _httpx
     try:
-        async with _httpx.AsyncClient(timeout=30) as c:
+        async with _httpx.AsyncClient(timeout=90) as c:
             r = await c.get(ARCGIS_MPA_URL, params=params, headers={"Accept-Encoding": "gzip"})
             data = r.json()
     except Exception as e:
@@ -682,6 +686,9 @@ async def donations_total():
 
 
 app.include_router(router)
+
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1500)
 
 
 @app.post("/api/webhook/stripe")

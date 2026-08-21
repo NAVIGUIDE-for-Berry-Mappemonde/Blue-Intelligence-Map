@@ -72,3 +72,8 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Couche Leaflet: toggle "Aires Marines Protégées", chargement par bbox à zoom>=5 (hint sinon), polygones colorés LFP 1-5 (bleu→violet), popups (nom, badge LFP, désignation, lien), légende LFP on-map, attribution CC BY 4.0 + disclaimer
 - Vérifié: API Banc d Arguin LFP4 OK, rendu frontend OK
 - Backlog ProtectedSeas: Phase 2 enrichissement projets (badge intersection AMP, sites_updated sync), Phase 3 PMTiles
+
+## Update 2026-06 — Fix visibilité AMP + filtre LFP
+- Bug 50MB géométries (Parc Mer de Corail): maxAllowableOffset adaptatif (bbox/500) + geometryPrecision 4 + gzip middleware + timeout 90s + cache offset-bucket → NC bbox 76 AMP en ~2s
+- Style polygones plus visible (fillOpacity 0.28), cases à cocher LFP 1-5 dans la légende on-map (filtrage live, labels barrés)
+- Vérifié iteration_7 100%: popup Chesterfield-Bellona LFP5 No-Take, filtre 328→303→328 polygones

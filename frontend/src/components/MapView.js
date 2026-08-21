@@ -30,6 +30,9 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
   const mpaLoadingRef = useRef(false);
   const [mpaOn, setMpaOn] = useState(false);
   const [mpaZoomHint, setMpaZoomHint] = useState(false);
+  const [lfpFilter, setLfpFilter] = useState({ 1: true, 2: true, 3: true, 4: true, 5: true });
+  const lfpFilterRef = useRef(lfpFilter);
+  const mpaDataRef = useRef(null);
 
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
@@ -116,9 +119,9 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
     const mpaLayer = L.geoJSON(null, {
       style: (f) => ({
         color: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
-        weight: 1.2,
+        weight: 1.6,
         fillColor: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
-        fillOpacity: 0.16,
+        fillOpacity: 0.28,
       }),
       onEachFeature: (f, layer) => {
         const p = f.properties;
@@ -137,10 +140,25 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       },
     });
     mpaLayerRef.current = mpaLayer;
+    const renderMpa = () => {
+      const data = mpaDataRef.current;
+      mpaLayer.clearLayers();
+      if (!data) return;
+      const flt = lfpFilterRef.current;
+      mpaLayer.addData({
+        ...data,
+        features: (data.features || []).filter((f) => {
+          const s = f.properties.lfp;
+          return s >= 1 && s <= 5 ? flt[s] : true;
+        }),
+      });
+    };
+    map.__renderMpa = renderMpa;
     const loadMpa = async () => {
       if (!mpaOnRef.current || mpaLoadingRef.current) return;
       if (map.getZoom() < MPA_MIN_ZOOM) {
         setMpaZoomHint(true);
+        mpaDataRef.current = null;
         mpaLayer.clearLayers();
         return;
       }
@@ -149,9 +167,9 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       try {
         const b = map.getBounds();
         const bbox = `${b.getWest().toFixed(3)},${b.getSouth().toFixed(3)},${b.getEast().toFixed(3)},${b.getNorth().toFixed(3)}`;
-        const { data } = await api.get(`/mpa?bbox=${bbox}`);
-        mpaLayer.clearLayers();
-        mpaLayer.addData(data);
+        const { data } = await api.get(`/mpa?bbox=${bbox}`, { timeout: 120000 });
+        mpaDataRef.current = data;
+        renderMpa();
       } catch (e) { /* transient */ } finally {
         mpaLoadingRef.current = false;
       }
@@ -163,6 +181,11 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
   }, [minZoom]);
 
   useEffect(() => {
+    lfpFilterRef.current = lfpFilter;
+    if (mapObj.current && mapObj.current.__renderMpa && mpaOnRef.current) mapObj.current.__renderMpa();
+  }, [lfpFilter]);
+
+  useEffect(() => {
     const map = mapObj.current;
     const layer = mpaLayerRef.current;
     if (!map || !layer) return;
@@ -172,6 +195,7 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       map.attributionControl.addAttribution("ProtectedSeas Navigator® CC BY 4.0");
       map.__loadMpa();
     } else {
+      mpaDataRef.current = null;
       layer.clearLayers();
       map.removeLayer(layer);
       map.attributionControl.removeAttribution("ProtectedSeas Navigator® CC BY 4.0");
@@ -258,12 +282,15 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
         {mpaOn && !mpaZoomHint && (
           <div data-testid="mpa-legend" className="bg-surface/90 backdrop-blur-md border border-line rounded-sm p-2 text-right">
             {[1, 2, 3, 4, 5].map((s) => (
-              <div key={s} className="flex items-center justify-end gap-1.5 py-0.5">
-                <span className="text-[10px] text-slate-300">LFP {s} — {t("lfp" + s)}</span>
-                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: LFP_COLORS[s] }} />
-              </div>
+              <label key={s} data-testid={`lfp-checkbox-row-${s}`} className="flex items-center justify-end gap-1.5 py-0.5 cursor-pointer select-none hover:bg-raised/60 rounded-sm px-1">
+                <span className={`text-[10px] ${lfpFilter[s] ? "text-slate-300" : "text-slate-600 line-through"}`}>LFP {s} — {t("lfp" + s)}</span>
+                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: LFP_COLORS[s], opacity: lfpFilter[s] ? 1 : 0.25 }} />
+                <input type="checkbox" data-testid={`lfp-checkbox-${s}`} checked={lfpFilter[s]}
+                  onChange={(e) => setLfpFilter({ ...lfpFilter, [s]: e.target.checked })}
+                  className="accent-cyan-400 w-3 h-3" />
+              </label>
             ))}
-            <p className="text-[8px] text-slate-500 mt-1 max-w-[180px]">{t("mpaDisclaimer")}</p>
+            <p className="text-[8px] text-slate-500 mt-1 max-w-[190px]">{t("mpaDisclaimer")}</p>
           </div>
         )}
       </div>
