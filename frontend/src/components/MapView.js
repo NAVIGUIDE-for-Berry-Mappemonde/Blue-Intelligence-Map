@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet.markercluster";
+import api from "../api";
 
 const TILE_URLS = {
   dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
@@ -13,6 +14,9 @@ const FALLBACK_COLORS = {
   "Coastal & Habitat": "#34d399", "Education": "#60a5fa", "Other": "#94a3b8",
 };
 
+const LFP_COLORS = { 1: "#60a5fa", 2: "#34d399", 3: "#fbbf24", 4: "#ef4444", 5: "#a855f7", 0: "#94a3b8" };
+const MPA_MIN_ZOOM = 5;
+
 export default function MapView({ projects, funderFilter, searchQuery, t, maxMarkers, minZoom, basemap, categories, categoryFilter }) {
   const mapRef = useRef(null);
   const mapObj = useRef(null);
@@ -21,6 +25,11 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
   const sigRef = useRef("");
   const zoomingRef = useRef(false);
   const pendingRef = useRef(null);
+  const mpaLayerRef = useRef(null);
+  const mpaOnRef = useRef(false);
+  const mpaLoadingRef = useRef(false);
+  const [mpaOn, setMpaOn] = useState(false);
+  const [mpaZoomHint, setMpaZoomHint] = useState(false);
 
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
@@ -103,9 +112,72 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       setTimeout(() => adjustPopup(e.popup), 250);
       setTimeout(() => adjustPopup(e.popup), 800);
     });
+    // ProtectedSeas MPA overlay
+    const mpaLayer = L.geoJSON(null, {
+      style: (f) => ({
+        color: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
+        weight: 1.2,
+        fillColor: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
+        fillOpacity: 0.16,
+      }),
+      onEachFeature: (f, layer) => {
+        const p = f.properties;
+        const col = LFP_COLORS[p.lfp] || LFP_COLORS[0];
+        layer.bindPopup(`
+          <div style="min-width:220px;max-width:270px;">
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.site_name || "MPA"}</div>
+            <div style="margin:5px 0;"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${col};border:1px solid ${col}66;padding:2px 6px;border-radius:2px;">LFP ${p.lfp || "?"} — ${t("lfp" + (p.lfp || 0))}</span></div>
+            <div style="font-size:11px;color:#94a3b8;line-height:1.5;">
+              ${p.designation ? p.designation + "<br/>" : ""}${p.country || ""}${p.managing_authority ? " · " + p.managing_authority : ""}
+            </div>
+            ${p.url ? `<a href="${p.url}" target="_blank" rel="noreferrer" style="font-size:11px;color:#00f0ff;font-weight:600;text-decoration:none;">${t("viewProject")} →</a>` : ""}
+            <div style="font-size:9px;color:#64748b;margin-top:6px;line-height:1.4;">${t("mpaDisclaimer")}<br/>ProtectedSeas Navigator® — CC BY 4.0</div>
+          </div>
+        `, { maxWidth: 280, autoPan: false });
+      },
+    });
+    mpaLayerRef.current = mpaLayer;
+    const loadMpa = async () => {
+      if (!mpaOnRef.current || mpaLoadingRef.current) return;
+      if (map.getZoom() < MPA_MIN_ZOOM) {
+        setMpaZoomHint(true);
+        mpaLayer.clearLayers();
+        return;
+      }
+      setMpaZoomHint(false);
+      mpaLoadingRef.current = true;
+      try {
+        const b = map.getBounds();
+        const bbox = `${b.getWest().toFixed(3)},${b.getSouth().toFixed(3)},${b.getEast().toFixed(3)},${b.getNorth().toFixed(3)}`;
+        const { data } = await api.get(`/mpa?bbox=${bbox}`);
+        mpaLayer.clearLayers();
+        mpaLayer.addData(data);
+      } catch (e) { /* transient */ } finally {
+        mpaLoadingRef.current = false;
+      }
+    };
+    map.on("moveend", loadMpa);
+    map.__loadMpa = loadMpa;
     mapObj.current = map;
     clusterRef.current = cluster;
   }, [minZoom]);
+
+  useEffect(() => {
+    const map = mapObj.current;
+    const layer = mpaLayerRef.current;
+    if (!map || !layer) return;
+    mpaOnRef.current = mpaOn;
+    if (mpaOn) {
+      map.addLayer(layer);
+      map.attributionControl.addAttribution("ProtectedSeas Navigator® CC BY 4.0");
+      map.__loadMpa();
+    } else {
+      layer.clearLayers();
+      map.removeLayer(layer);
+      map.attributionControl.removeAttribution("ProtectedSeas Navigator® CC BY 4.0");
+      setMpaZoomHint(false);
+    }
+  }, [mpaOn]);
 
   useEffect(() => {
     if (tileRef.current) tileRef.current.setUrl(TILE_URLS[basemap] || TILE_URLS.dark);
@@ -174,6 +246,27 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
   return (
     <div className="w-full h-full relative">
       <div ref={mapRef} data-testid="map-container" className="w-full h-full" />
+      {/* ProtectedSeas layer toggle */}
+      <div className="absolute top-3 right-3 z-[1000] flex flex-col items-end gap-2">
+        <button data-testid="mpa-toggle-btn" onClick={() => setMpaOn(!mpaOn)}
+          className={`px-3 py-2 text-xs font-semibold border rounded-sm backdrop-blur-md ${mpaOn ? "bg-sonar/20 border-sonar/60 text-sonar" : "bg-surface/90 border-line text-slate-300 hover:text-white"}`}>
+          🛡 {t("mpaLayer")}
+        </button>
+        {mpaOn && mpaZoomHint && (
+          <span data-testid="mpa-zoom-hint" className="px-2 py-1 text-[10px] font-mono bg-surface/90 border border-line rounded-sm text-amberx">{t("mpaZoomHint")}</span>
+        )}
+        {mpaOn && !mpaZoomHint && (
+          <div data-testid="mpa-legend" className="bg-surface/90 backdrop-blur-md border border-line rounded-sm p-2 text-right">
+            {[1, 2, 3, 4, 5].map((s) => (
+              <div key={s} className="flex items-center justify-end gap-1.5 py-0.5">
+                <span className="text-[10px] text-slate-300">LFP {s} — {t("lfp" + s)}</span>
+                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: LFP_COLORS[s] }} />
+              </div>
+            ))}
+            <p className="text-[8px] text-slate-500 mt-1 max-w-[180px]">{t("mpaDisclaimer")}</p>
+          </div>
+        )}
+      </div>
       {legendCats.length > 0 && false && (
         <div data-testid="map-legend"
           className="absolute bottom-6 left-3 z-[1000] bg-surface/90 backdrop-blur-md border border-line rounded-sm p-3 max-w-[210px]">

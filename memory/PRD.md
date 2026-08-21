@@ -66,3 +66,9 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Case "Forcer un rescan complet" dans les contrôles Swarm (force_rescan)
 - 9 portails marqués scannés; 12 restants seront découverts au prochain full run
 - Vérifié: deploy test → 3 seeds sautés, 0 appel TinyFish, manuels EN/FR mis à jour
+
+## Update 2026-06 — Intégration ProtectedSeas Navigator (Phase 1)
+- Endpoint proxy GET /api/mpa?bbox= → ArcGIS Living Atlas (Navigator All Sites), cache Mongo mpa_cache TTL 3j, propriétés normalisées (ps_id, site_name, lfp, designation, country, managing_authority, url)
+- Couche Leaflet: toggle "Aires Marines Protégées", chargement par bbox à zoom>=5 (hint sinon), polygones colorés LFP 1-5 (bleu→violet), popups (nom, badge LFP, désignation, lien), légende LFP on-map, attribution CC BY 4.0 + disclaimer
+- Vérifié: API Banc d Arguin LFP4 OK, rendu frontend OK
+- Backlog ProtectedSeas: Phase 2 enrichissement projets (badge intersection AMP, sites_updated sync), Phase 3 PMTiles

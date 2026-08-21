@@ -422,6 +422,68 @@ async def get_reports():
     return docs
 
 
+ARCGIS_MPA_URL = "https://services9.arcgis.com/lm7wE8a9YA9rKfzy/arcgis/rest/services/Navigator_AllSites_010925_attributes/FeatureServer/0/query"
+MPA_FIELDS = ["SITE_ID", "site_name", "url", "country", "designation", "category_name", "managing_authority", "lfp", "protection_focus"]
+
+
+@router.get("/mpa")
+async def get_mpa(bbox: str):
+    try:
+        min_lon, min_lat, max_lon, max_lat = [float(x) for x in bbox.split(",")]
+    except ValueError:
+        raise HTTPException(400, "bbox must be minLon,minLat,maxLon,maxLat")
+    key = f"{round(min_lon, 1)},{round(min_lat, 1)},{round(max_lon, 1)},{round(max_lat, 1)}"
+    cached = await db.mpa_cache.find_one({"_id": key})
+    if cached:
+        age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(cached["ts"])).total_seconds() / 86400
+        if age_days < 3:
+            return JSONResponse(cached["geojson"])
+    params = {
+        "where": "1=1",
+        "geometry": f"{min_lon},{min_lat},{max_lon},{max_lat}",
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326", "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "*", "f": "geojson",
+        "resultRecordCount": "250",
+    }
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(ARCGIS_MPA_URL, params=params, headers={"Accept-Encoding": "gzip"})
+            data = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"ProtectedSeas upstream error: {str(e)[:100]}")
+    if "features" not in data:
+        raise HTTPException(502, f"ProtectedSeas query error: {str(data.get('error'))[:150]}")
+    feats = []
+    for f in data["features"]:
+        p = f.get("properties") or {}
+        try:
+            lfp = int(float(p.get("lfp") or 0))
+        except (TypeError, ValueError):
+            lfp = 0
+        feats.append({
+            "type": "Feature",
+            "geometry": f["geometry"],
+            "properties": {
+                "ps_id": p.get("SITE_ID"),
+                "site_name": p.get("site_name"),
+                "url": p.get("url"),
+                "country": p.get("country"),
+                "designation": p.get("designation"),
+                "category_name": p.get("category_name"),
+                "managing_authority": p.get("managing_authority"),
+                "protection_focus": p.get("protection_focus"),
+                "lfp": lfp,
+            },
+        })
+    fc = {"type": "FeatureCollection", "features": feats,
+          "attribution": "The ProtectedSeas Navigator Map of Conservation Regulations, ProtectedSeas®, https://map.navigatormap.org — CC BY 4.0"}
+    await db.mpa_cache.update_one({"_id": key}, {"$set": {"geojson": fc, "ts": now_iso()}}, upsert=True)
+    return JSONResponse(fc)
+
+
 @router.get("/settings")
 async def read_settings():
     s = await get_settings()
