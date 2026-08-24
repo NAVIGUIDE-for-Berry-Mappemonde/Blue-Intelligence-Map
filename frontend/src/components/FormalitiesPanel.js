@@ -1,5 +1,5 @@
-import { Anchor, ChevronRight, Clock, Loader2, Radar, ScrollText, ShieldCheck, ShieldQuestion, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Anchor, ChevronRight, Clock, ScrollText, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
 import api from "../api";
 
 // --- Status → colour tokens (kept in sync with MapView escale colours) ---
@@ -40,76 +40,8 @@ export default function FormalitiesPanel({
 }) {
   const batchPollRef = useRef(null);
 
-  // ---- Phase 8 — ZEE crossings ----
-  const [zee, setZee] = useState(null);            // GET /zee/crossings payload
-  const [zeeLoading, setZeeLoading] = useState(true);
-  const [zeeComputing, setZeeComputing] = useState(false);
-  const [zeeError, setZeeError] = useState(null);
-  const [zeeTriggering, setZeeTriggering] = useState(false);
-  const [zeeTriggerResult, setZeeTriggerResult] = useState(null);
-
-  const territoryByCode = useMemo(() => {
-    const acc = {};
-    for (const terr of territories?.territories || []) acc[terr.code] = terr;
-    return acc;
-  }, [territories]);
-
-  const fetchZee = async () => {
-    try {
-      const { data } = await api.get("/zee/crossings");
-      setZee(data);
-      setZeeError(null);
-    } catch (e) {
-      // 404 = not computed yet (expected); surface any other failure
-      if (e?.response?.status !== 404) setZeeError(e?.message || "request failed");
-    } finally {
-      setZeeLoading(false);
-    }
-  };
-  useEffect(() => { fetchZee(); }, []);
-
-  const detectZee = async () => {
-    if (zeeComputing) return;
-    setZeeError(null);
-    setZeeComputing(true);
-    try {
-      await api.post("/zee/compute", {});
-    } catch (e) {
-      if (e?.response?.status !== 409) {
-        setZeeError(e?.message || "failed");
-        setZeeComputing(false);
-        return;
-      }
-    }
-    // Poll status until done (max ~5 min — first run downloads/parses EEZ polygons)
-    for (let i = 0; i < 150; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const { data } = await api.get("/zee/compute/status");
-        if (!data.running) {
-          if (data.error) setZeeError(data.error);
-          await fetchZee();
-          break;
-        }
-      } catch (_) { /* transient */ }
-    }
-    setZeeComputing(false);
-  };
-
-  const triggerZeeFormalities = async () => {
-    if (zeeTriggering) return;
-    setZeeTriggering(true);
-    setZeeTriggerResult(null);
-    try {
-      const { data } = await api.post("/zee/trigger-formalities");
-      setZeeTriggerResult(data);
-      if (onFormalitiesRefresh) onFormalitiesRefresh();
-    } catch (e) {
-      setZeeTriggerResult({ error: e?.message || "failed" });
-    } finally {
-      setZeeTriggering(false);
-    }
-  };
+  // Phase 8 ZEE crossings — moved to the Swarm Intelligence Audit panel
+  // (BatchHub formalities card) per user request, 2026-06.
 
   const rows = useMemo(() => {
     if (!route?.features || !territories?.territories) return [];
@@ -233,85 +165,7 @@ export default function FormalitiesPanel({
         <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
           {t("formalitiesPopupHint")}
         </p>
-
-        {/* Phase 8 — ZEE crossings detection */}
-        <div className="mt-3 pt-3 border-t border-line" data-testid="zee-section">
-          <div className="flex items-center gap-2 mb-2">
-            <Radar size={13} className="text-amberx" />
-            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{t("zeeTitle")}</span>
-            {zee?.summary && (
-              <span className="ml-auto font-mono text-[9px] text-slate-500" data-testid="zee-summary">
-                {zee.summary.total_crossings} {t("zeeCrossings")} · {zee.summary.unique_territories} {t("zeeTerritories")}
-              </span>
-            )}
-          </div>
-          <button
-            data-testid="zee-detect-btn"
-            onClick={detectZee}
-            disabled={zeeComputing}
-            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-amberx/40 bg-amberx/10 hover:bg-amberx/20 disabled:opacity-60 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
-          >
-            {zeeComputing
-              ? <><Loader2 size={12} className="animate-spin" /> {t("zeeDetecting")}</>
-              : <><Radar size={12} /> {t("zeeDetect")}</>}
-          </button>
-          {zeeError && (
-            <p className="mt-1.5 text-[10px] text-alert font-mono" data-testid="zee-error">{t("zeeError")}: {String(zeeError).slice(0, 120)}</p>
-          )}
-          {zeeLoading && !zee && (
-            <p className="mt-1.5 text-[10px] text-slate-500 font-mono animate-pulse">…</p>
-          )}
-          {!zee && !zeeLoading && !zeeComputing && !zeeError && (
-            <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed">{t("zeeEmpty")}</p>
-          )}
-          {zee?.crossings?.length > 0 && (
-            <>
-              <div
-                className="mt-2 max-h-72 overflow-y-auto border border-line rounded-sm bg-abyss/50 divide-y divide-line/60"
-                data-testid="zee-crossings-list"
-              >
-                {zee.crossings.map((c) => {
-                  const terr = c.territory_code ? territoryByCode[c.territory_code] : null;
-                  const isFr = !!c.territory_code;
-                  return (
-                    <div key={`${c.order}-${c.geoname}`} className="px-2 py-1.5 flex items-start gap-1.5">
-                      <span className="font-mono text-[9px] text-slate-600 mt-0.5 w-5 shrink-0">#{c.order}</span>
-                      <span className="text-sm leading-none mt-0.5 shrink-0">{terr?.flag_emoji || "🌐"}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[11px] truncate ${isFr ? "text-slate-100" : "text-slate-400"}`}>
-                          {terr?.name_fr || c.geoname}
-                        </div>
-                        <div className="font-mono text-[9px] text-slate-500 truncate">
-                          {isFr ? (c.pol_type && c.pol_type !== "200NM" ? c.pol_type : "ZEE FR") : `${t("zeeForeign")} · ${c.sovereign || ""}`}
-                          {" · "}{t("zeeEntry")} {Number(c.entry_lat).toFixed(2)},{Number(c.entry_lon).toFixed(2)}
-                          {c.intersection_length_nm ? ` · ~${Math.round(c.intersection_length_nm)} NM` : ""}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <button
-                data-testid="zee-trigger-btn"
-                onClick={triggerZeeFormalities}
-                disabled={zeeTriggering}
-                className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/20 disabled:opacity-60 disabled:cursor-not-allowed text-bio font-semibold text-[11px] rounded-sm"
-              >
-                {zeeTriggering
-                  ? <><Loader2 size={12} className="animate-spin" /> {t("zeeTriggering")}</>
-                  : <><Sparkles size={12} /> {t("zeeTrigger")}</>}
-              </button>
-              {zeeTriggerResult && !zeeTriggerResult.error && (
-                <p className="mt-1.5 text-[9px] font-mono text-slate-400 leading-relaxed" data-testid="zee-trigger-result">
-                  ✓ {zeeTriggerResult.triggered?.length || 0} {t("zeeTriggered")} · {zeeTriggerResult.skipped_uptodate?.length || 0} {t("zeeUpToDate")}
-                </p>
-              )}
-              {zeeTriggerResult?.error && (
-                <p className="mt-1.5 text-[9px] font-mono text-alert">{String(zeeTriggerResult.error).slice(0, 100)}</p>
-              )}
-            </>
-          )}
-        </div>
+        {/* ZEE crossings section moved to the SIA formalities card (2026-06) */}
       </div>
 
       {/* Escales list */}

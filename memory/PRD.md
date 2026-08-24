@@ -723,3 +723,9 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - LIVE SWARM CONSOLE rendu seulement si status.running ou agents actifs ; EXTRACTION TELEMETRY seulement si telemetry.length>0 ; FAILED EXTRACTIONS seulement si failed.length>0. KPIs + bouton d'action toujours visibles.
 ### Tests : iteration_10 — 100% backend (14/14) & frontend, 3 clics marker NC + pans antiméridien = 0 pageerror, plus de ligne verticale. Suite : /app/tests/test_iteration10_route_zee.py.
 ### Notes builds : scans marinas & mouillages réels en cours pendant la session (~96/159 et ~94/159, persistance incrémentale). Logs 502/backoff Overpass = fallback normal.
+
+## Update 2026-06 — Section ZEE déplacée dans le SIA
+- La section EEZ CROSSINGS (détection + liste 117 traversées + bouton génération) a été déplacée de la sidebar Formalités vers la carte SIA du mode Formalities (BatchHub.js) — demande user.
+- BatchHub : état ZEE + fetch /territories (drapeaux) chargés uniquement en mode formalities ; data-testids conservés (zee-section, zee-detect-btn, zee-crossings-list, zee-trigger-btn, zee-summary).
+- FormalitiesPanel : section + état ZEE retirés, sidebar = disclaimer + liste escales uniquement.
+- Vérifié par screenshot + assertions DOM : 0 zee-section dans la sidebar, 1 dans le SIA, 117 lignes rendues, 0 erreur runtime.
