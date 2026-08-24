@@ -17,6 +17,9 @@ module.exports = {
         alert: "#ff4a4a",
         amberx: "#fbbf24",
         funder: "#c084fc",
+        // Semantic "accent" — RGB channels come from --accent-rgb which switches
+        // between projects (cyan) and marinas (red) via the [data-mode] attribute.
+        accent: "rgb(var(--accent-rgb) / <alpha-value>)",
       },
     },
   },

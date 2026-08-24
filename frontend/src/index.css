@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Dual-mode theme tokens (R-002) ----------
+ * Projects mode → cyan/blue accent (matches existing app palette)
+ * Marinas mode  → red accent
+ * Anything using Tailwind class `accent` (bg-accent, text-accent, border-accent)
+ * automatically follows this variable.
+ */
+:root,
+[data-mode="projects"] {
+  --accent-rgb: 0 240 255;         /* #00f0ff — cyan */
+  --accent-glow: rgba(0, 240, 255, 0.35);
+  --marker-fill: #00f0ff;
+  --marker-stroke: #0f172a;
+}
+[data-mode="marinas"] {
+  --accent-rgb: 255 74 74;         /* #ff4a4a — alert red */
+  --accent-glow: rgba(255, 74, 74, 0.35);
+  --marker-fill: #ff4a4a;
+  --marker-stroke: #0f172a;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -72,6 +92,18 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
+}
+.bi-cluster-marina {
+  background: rgba(255, 74, 74, 0.15);
+  border: 2px solid #ff4a4a;
+  border-radius: 9999px;
+  color: #ff4a4a;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(255, 74, 74, 0.35);
 }
 
 /* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */

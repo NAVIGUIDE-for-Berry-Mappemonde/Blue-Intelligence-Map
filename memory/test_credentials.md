@@ -15,4 +15,13 @@ Configured in `/app/backend/.env` and validated live on 2026-08-24:
 - `REACT_APP_BACKEND_URL` — set in `/app/frontend/.env`, used by axios in `src/api.js`.
 
 ## MongoDB
-- Local Mongo at `mongodb://localhost:27017`, DB name `blueintel_db`. Contains historical import: `projects` count = 4463 as of 2026-08-24.
+- Local Mongo at `mongodb://localhost:27017`, DB name `blueintel_db`.
+- Collections (as of Phase 2, 2026-08-24):
+  - `projects`: 4463 documents (all with correct `category_group` after import bugfix). Distribution: Research 890, Conservation 765, Policy 490, Other 474, MPA 402, Pollution 391, Coastal 389, Fisheries 361, Education 301.
+  - `marinas`: 19 documents, all `source: "curated"` (Overpass + SHOM unreachable at build time — see PRD Update 2026-08 Phase 2 for full verdict). Split: 16 priority-1 (near escale), 0 priority-2, 3 priority-3 (TAAF remote mooring, Ilet la Mère). Indexes: unique on `dedup_key`, compound on `(priority, name)`.
+  - `settings`: `_id: "global"` with 21 tunables (including new `marina_search_radius_nm: 10.0`).
+- **Feature flags for the testing agent to know**:
+  - Global mode switch in header: `[data-testid="mode-toggle-projects"]` and `[data-testid="mode-toggle-marinas"]`. Persisted in `localStorage["bi.mode"]`.
+  - The `<html>` element carries `data-mode="projects|marinas"` — CSS var `--accent-rgb` reads `0 240 255` in Projects, `255 74 74` in Marinas.
+  - Marinas mode sidebar test-ids: `marinas-panel`, `marinas-search-input`, `marinas-filter-priority`, `marinas-filter-source`, `marinas-scan-btn`, `marinas-list`, `marina-row-<uuid>`.
+  - Map layer test-ids preserved: `map-container`, `mpa-toggle-btn`, `route-toggle-btn`.

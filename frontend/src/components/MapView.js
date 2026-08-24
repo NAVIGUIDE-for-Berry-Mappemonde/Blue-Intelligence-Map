@@ -28,10 +28,13 @@ const ESCALE_STROKE = "#0f172a";
 const INTERMEDIATE_FILL = "#94a3b8";
 const INTERMEDIATE_STROKE = "#475569";
 
-export default function MapView({ projects, funderFilter, searchQuery, t, maxMarkers, minZoom, basemap, categories, categoryFilter }) {
+export default function MapView({ mode = "projects", projects, marinas, flyToMarina, funderFilter, searchQuery, t, maxMarkers, minZoom, basemap, categories, categoryFilter }) {
   const mapRef = useRef(null);
   const mapObj = useRef(null);
   const clusterRef = useRef(null);
+  const marinaClusterRef = useRef(null);
+  const marinaMarkersById = useRef(new Map());
+  const marinaSigRef = useRef("");
   const tileRef = useRef(null);
   const sigRef = useRef("");
   const zoomingRef = useRef(false);
@@ -92,7 +95,24 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
         iconSize: [34, 34],
       }),
     });
-    map.addLayer(cluster);
+    // Marinas cluster — red-tinted, only added to the map when mode="marinas"
+    const marinaCluster = L.markerClusterGroup({
+      maxClusterRadius: 40,
+      chunkedLoading: true,
+      chunkInterval: 100,
+      removeOutsideVisibleBounds: true,
+      animate: false,
+      iconCreateFunction: (c) => L.divIcon({
+        html: `<div class="bi-cluster-marina" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
+        className: "",
+        iconSize: [32, 32],
+      }),
+    });
+    marinaClusterRef.current = marinaCluster;
+    // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
+    // if the user is starting in the OTHER mode.
+    if (mode === "marinas") map.addLayer(marinaCluster);
+    else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
     map.on("zoomend", () => {
@@ -352,6 +372,109 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       map.removeLayer(layer);
     }
   }, [routeOn]);
+
+  // ---------- Marinas layer: rebuild markers when the marinas prop changes ----------
+  useEffect(() => {
+    const marinaCluster = marinaClusterRef.current;
+    const map = mapObj.current;
+    if (!marinaCluster || !map) return;
+    const feats = (marinas && marinas.features) || [];
+    const sig = feats.length + ":" + feats.map((f) => f.properties?.id).join(",");
+    if (sig === marinaSigRef.current) return;
+    marinaSigRef.current = sig;
+    marinaCluster.clearLayers();
+    marinaMarkersById.current.clear();
+
+    // Priority-driven marker sizing (escales bigger than corridor)
+    const RADIUS_BY_PRIO = { 1: 8, 2: 6, 3: 5 };
+    const markers = feats.map((f) => {
+      const [lon, lat] = f.geometry?.coordinates || [0, 0];
+      const p = f.properties || {};
+      const r = RADIUS_BY_PRIO[p.priority] || 5;
+      const m = L.circleMarker([lat, lon], {
+        radius: r,
+        color: "#ff4a4a",
+        weight: 2,
+        fillColor: "#ff4a4a",
+        fillOpacity: p.priority === 1 ? 0.85 : 0.55,
+      });
+      const tags = p.tags || {};
+      const wp = p.nearest_waypoint || {};
+      // Priority label localised via t()
+      const prioLabels = { 1: t("marinasPriority1"), 2: t("marinasPriority2"), 3: t("marinasPriority3") };
+      const srcLabels = {
+        openstreetmap: t("marinasSourceOSM"),
+        shom: t("marinasSourceSHOM"),
+        curated: t("marinasSourceCurated"),
+      };
+      // Tag rows (only render those present)
+      const tagRow = (label, value, isLink = false) => {
+        if (!value) return "";
+        const disp = isLink
+          ? `<a href="${value}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;">${value.replace(/^https?:\/\//, "").slice(0, 40)}</a>`
+          : String(value);
+        return `<div style="font-size:11px;color:#94a3b8;margin-top:3px;"><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;">${label}</span> ${disp}</div>`;
+      };
+      const vhf = tags.vhf_channel || tags.vhf;
+      const phone = tags.phone || tags["contact:phone"];
+      const website = tags.website || tags["contact:website"] || tags.url;
+      const capacity = tags.capacity || tags["capacity:persons"] || tags["seamark:harbour:capacity"];
+      const depth = tags.max_depth || tags.depth || tags["seamark:harbour:draught"];
+      const fee = tags.fee;
+      m.bindPopup(
+        `<div style="min-width:220px;max-width:280px;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.name || ""}</div>
+          <div style="margin:6px 0;display:flex;gap:5px;flex-wrap:wrap;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid #ff4a4a55;padding:2px 6px;border-radius:2px;">P${p.priority} · ${prioLabels[p.priority] || ""}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${srcLabels[p.source] || p.source || ""}</span>
+          </div>
+          <div style="font-size:11px;color:#c084fc;margin:3px 0 6px;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;">${t("marinasNearest")}</span>
+            ${wp.name || "—"} · ${(wp.distance_nm ?? 0).toFixed(1)} ${t("marinasDistanceNM")}
+          </div>
+          ${tagRow(t("marinasVHF"), vhf)}
+          ${tagRow(t("marinasCapacity"), capacity)}
+          ${tagRow(t("marinasDepth"), depth)}
+          ${tagRow(t("marinasFee"), fee)}
+          ${tagRow(t("marinasPhone"), phone)}
+          ${tagRow(t("marinasWebsite"), website, true)}
+          <div style="font-size:9px;color:#64748b;margin-top:6px;line-height:1.4;">
+            ${p.osm_id ? "OSM " + p.osm_id + " · " : ""}${t("marinasFetchedAt")}: ${(p.fetched_at || "").slice(0, 10)}
+          </div>
+        </div>`,
+        { maxWidth: 300, autoPan: false },
+      );
+      marinaMarkersById.current.set(p.id, m);
+      return m;
+    });
+    marinaCluster.addLayers(markers);
+  }, [marinas, t]);
+
+  // ---------- Mode swap: attach the right cluster, hide the other ----------
+  useEffect(() => {
+    const map = mapObj.current;
+    const proj = clusterRef.current;
+    const mar = marinaClusterRef.current;
+    if (!map || !proj || !mar) return;
+    if (mode === "marinas") {
+      if (map.hasLayer(proj)) map.removeLayer(proj);
+      if (!map.hasLayer(mar)) map.addLayer(mar);
+    } else {
+      if (map.hasLayer(mar)) map.removeLayer(mar);
+      if (!map.hasLayer(proj)) map.addLayer(proj);
+    }
+    map.closePopup();
+  }, [mode]);
+
+  // ---------- FlyTo signal from MarinasPanel ----------
+  useEffect(() => {
+    if (!flyToMarina) return;
+    const map = mapObj.current;
+    if (!map) return;
+    const m = marinaMarkersById.current.get(flyToMarina.id);
+    map.flyTo([flyToMarina.lat, flyToMarina.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
+    setTimeout(() => { if (m) m.openPopup(); }, 1100);
+  }, [flyToMarina]);
 
   useEffect(() => {
     const cluster = clusterRef.current;

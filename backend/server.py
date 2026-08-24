@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 from ai import extract_project, gatekeeper_check
 from categories import CATEGORY_GROUPS, normalize_category
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
+from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from pipeline import Swarm, now_iso
 from tinyfish_client import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 
@@ -48,6 +50,7 @@ DEFAULT_SETTINGS = {
     "max_partner_orgs": 5,
     "saturation_limit": 50,
     "rescan_after_days": 7,
+    "marina_search_radius_nm": 10.0,
 }
 
 
@@ -83,6 +86,7 @@ class SettingsBody(BaseModel):
     max_partner_orgs: int | None = None
     saturation_limit: int | None = None
     rescan_after_days: float | None = None
+    marina_search_radius_nm: float | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -309,6 +313,25 @@ async def import_geojson(fc: dict = Body(...)):
                 invalid += 1
                 continue
             if url in seen_urls:
+                # URL already imported — silent backfill of category/category_group if missing.
+                incoming_cat = p.get("category")
+                incoming_grp = p.get("category_group") or normalize_category(incoming_cat)
+                if incoming_cat or incoming_grp:
+                    update_set = {}
+                    if incoming_cat:
+                        update_set["category"] = incoming_cat
+                    if incoming_grp:
+                        update_set["category_group"] = incoming_grp
+                    if update_set:
+                        await db.projects.update_one(
+                            {"url": url, "$or": [
+                                {"category_group": {"$exists": False}},
+                                {"category_group": None},
+                                {"category_group": ""},
+                                {"category_group": "Other"},
+                            ]},
+                            {"$set": update_set},
+                        )
                 skipped += 1
                 continue
             s = p.get("s_ocean", p.get("s_ocean_score", p.get("relevance_score", 0.5)))
@@ -326,7 +349,15 @@ async def import_geojson(fc: dict = Body(...)):
                     break
             if dup:
                 funders = list(set((dup.get("funders") or []) + [funder]))
-                await db.projects.update_one({"_id": dup["_id"]}, {"$set": {"funders": funders}})
+                update_set = {"funders": funders}
+                # Backfill category & category_group on already-imported docs (fixes historical import loss)
+                incoming_cat = p.get("category")
+                incoming_grp = p.get("category_group") or normalize_category(incoming_cat)
+                if incoming_cat and not dup.get("category"):
+                    update_set["category"] = incoming_cat
+                if incoming_grp and not dup.get("category_group"):
+                    update_set["category_group"] = incoming_grp
+                await db.projects.update_one({"_id": dup["_id"]}, {"$set": update_set})
                 merged += 1
                 seen_urls.add(url)
                 continue
@@ -337,7 +368,9 @@ async def import_geojson(fc: dict = Body(...)):
                 "location": p.get("location"), "lat": lat, "lon": lon,
                 "s_ocean": s, "snapped": bool(p.get("snapped") or p.get("snapped_coastal") or False),
                 "geo_source": "import", "image": p.get("image") or p.get("image_url"),
-                "category": p.get("category"), "engine": "GeoJSON Import", "created_at": now_iso(),
+                "category": p.get("category"),
+                "category_group": p.get("category_group") or normalize_category(p.get("category")),
+                "engine": "GeoJSON Import", "created_at": now_iso(),
             }
             docs.append(doc)
             seen_urls.add(url)
@@ -359,6 +392,113 @@ async def get_categories():
     ]).to_list(50)
     counts = {r["_id"] or "Other": r["n"] for r in rows}
     return {"groups": [{"name": g, "color": c, "count": counts.get(g, 0)} for g, c in CATEGORY_GROUPS.items()]}
+
+
+# ---------- Marinas (Phase 2) ----------
+MARINA_BUILD_STATE = BuildState()
+
+
+@router.get("/marinas")
+async def list_marinas(
+    priority: int | None = None,
+    source: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if source:
+        q["source"] = source
+    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return marinas_to_geojson(docs)
+
+
+@router.get("/export/marinas.geojson")
+async def export_marinas():
+    docs = await db.marinas.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = marinas_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
+    )
+
+
+@router.get("/export/route.geojson")
+async def export_route():
+    if not ROUTE_FILE.exists():
+        raise HTTPException(404, "route.geojson not found")
+    import json as _json
+    data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    return JSONResponse(
+        data,
+        headers={"Content-Disposition": "attachment; filename=route.geojson"},
+    )
+
+
+class MarinasBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    corridor_step_nm: float = 100.0
+
+
+@router.post("/marinas/build")
+async def marinas_build_start(body: MarinasBuildBody | None = None):
+    if MARINA_BUILD_STATE.running:
+        raise HTTPException(409, "A marinas build is already running")
+    body = body or MarinasBuildBody()
+    settings = await get_settings()
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.marinas.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_marinas(
+                marinas_coll=db.marinas,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=MARINA_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {"started": True, "radius_nm": radius_nm, "include_corridor": body.include_corridor}
+
+
+@router.get("/marinas/build/status")
+async def marinas_build_status():
+    s = MARINA_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/marinas/count")
+async def marinas_count():
+    return {
+        "total": await db.marinas.count_documents({}),
+        "by_priority": {
+            "1": await db.marinas.count_documents({"priority": 1}),
+            "2": await db.marinas.count_documents({"priority": 2}),
+            "3": await db.marinas.count_documents({"priority": 3}),
+        },
+        "by_source": {
+            "openstreetmap": await db.marinas.count_documents({"source": "openstreetmap"}),
+            "shom": await db.marinas.count_documents({"source": "shom"}),
+            "curated": await db.marinas.count_documents({"source": "curated"}),
+        },
+    }
 
 
 class ReportBody(BaseModel):
@@ -693,7 +833,7 @@ async def openapi_under_api():
     return JSONResponse(app.openapi())
 
 
-ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
+ROUTE_FILE_ENDPOINT_TARGET = ROUTE_FILE  # kept for clarity; original variable is defined at top
 
 
 @app.get("/api/route")

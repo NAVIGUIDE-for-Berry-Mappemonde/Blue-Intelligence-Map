@@ -3,15 +3,28 @@ import api from "./api";
 import { makeT } from "./i18n";
 import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
+import MarinasPanel from "./components/MarinasPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import SettingsPanel from "./components/SettingsPanel";
 import { DonateModal, PaymentReturn } from "./components/Donations";
 import ReportModal from "./components/ReportModal";
 
+// Read the persisted mode on boot. Default = "projects".
+const readInitialMode = () => {
+  try {
+    const v = localStorage.getItem("bi.mode");
+    if (v === "marinas" || v === "projects") return v;
+  } catch (_) {
+    /* localStorage disabled */
+  }
+  return "projects";
+};
+
 export default function App() {
   const [lang, setLang] = useState("en");
   const [view, setView] = useState("map");
+  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
   const [projects, setProjects] = useState({ type: "FeatureCollection", features: [] });
@@ -25,9 +38,22 @@ export default function App() {
   const [showReport, setShowReport] = useState(false);
   const [categories, setCategories] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [marinas, setMarinas] = useState({ type: "FeatureCollection", features: [] });
+  const [flyToMarina, setFlyToMarina] = useState(null); // {id, lat, lon} used as a one-shot signal
   const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
   const t = makeT(lang);
   const lastTotalRef = useRef(-1);
+
+  // Persist mode + reflect on <html> for CSS var switching
+  const setMode = useCallback((m) => {
+    setModeRaw(m);
+    try { localStorage.setItem("bi.mode", m); } catch (_) { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    // Set data-mode on <html> so [data-mode="..."] CSS vars kick in globally
+    document.documentElement.setAttribute("data-mode", mode);
+  }, [mode]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -69,6 +95,13 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
+  const fetchMarinas = useCallback(async () => {
+    try {
+      const { data } = await api.get("/marinas");
+      setMarinas(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
   useEffect(() => {
     window.__biDonate = (id) => {
       setDonateTarget({ id, title: null });
@@ -89,33 +122,56 @@ export default function App() {
     fetchSettings();
     fetchDonations();
     fetchCategories();
+    fetchMarinas();
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(fetchProjects, 5000);
     const d = setInterval(fetchDonations, 10000);
     const c = setInterval(fetchCategories, 15000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories]);
+    // Marinas refresh only when a build might be running — a light 8s poll.
+    const m = setInterval(fetchMarinas, 8000);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas]);
+
+  // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
+  const handleFlyToMarina = useCallback((id, lat, lon) => {
+    setFlyToMarina({ id, lat, lon, ts: Date.now() });
+  }, []);
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss">
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss" data-mode={mode}>
       <Header
         lang={lang} setLang={setLang} view={view} setView={setView}
         showSettings={showSettings} setShowSettings={setShowSettings}
         status={status} t={t} basemap={basemap} setBasemap={setBasemap}
         donations={donations}
+        mode={mode} setMode={setMode}
       />
       <div className="flex flex-1 min-h-0">
-        <SwarmPanel
-          t={t} projects={projects} funders={funders}
-          funderFilter={funderFilter} setFunderFilter={setFunderFilter}
-          searchQuery={searchQuery} setSearchQuery={setSearchQuery}
-          categories={categories} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter}
-          onDonate={(id, title) => setDonateTarget({ id, title })}
-          onReport={() => setShowReport(true)}
-        />
+        {mode === "projects" ? (
+          <SwarmPanel
+            t={t} projects={projects} funders={funders}
+            funderFilter={funderFilter} setFunderFilter={setFunderFilter}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+            categories={categories} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter}
+            onDonate={(id, title) => setDonateTarget({ id, title })}
+            onReport={() => setShowReport(true)}
+          />
+        ) : (
+          <MarinasPanel
+            t={t}
+            marinas={marinas}
+            onFlyTo={handleFlyToMarina}
+            onRefresh={fetchMarinas}
+          />
+        )}
         <main className="flex-1 relative min-w-0">
           {view === "map" ? (
-            <MapView projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} t={t}
+            <MapView
+              mode={mode}
+              projects={projects}
+              marinas={marinas}
+              flyToMarina={flyToMarina}
+              funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
@@ -130,6 +186,9 @@ export default function App() {
       </div>
       {donateTarget && (
         <DonateModal t={t} target={donateTarget} onClose={() => setDonateTarget(null)} />
+      )}
+      {showReport && (
+        <ReportModal t={t} onClose={() => setShowReport(false)} onSubmitted={() => { setShowReport(false); }} />
       )}
       {paymentReturn && (
         <PaymentReturn t={t} onDone={() => { setPaymentReturn(false); fetchDonations(); }} />
