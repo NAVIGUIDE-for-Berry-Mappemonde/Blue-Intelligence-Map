@@ -166,27 +166,20 @@ html, body, #root {
 /* Phase 7bis — Formalities status marker.
    Explicitly override the default `.leaflet-div-icon` styles (white bg +
    light grey border) that would otherwise leak through and create a visible
-   halo/ring on our dark map. */
-.bi-status-marker,
-.bi-status-marker.leaflet-div-icon {
+   halo/ring on our dark map. The class name matches divIcon({className:"bi-status-icon"})
+   in MapView.js so leaflet's default styling is neutralised. */
+.bi-status-icon,
+.bi-status-icon.leaflet-div-icon {
   background: transparent !important;
-  border: none !important;
+  background-color: transparent !important;
+  border: 0 !important;
   box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
-.bi-status-marker .bi-status-dot {
-  display: block;
-  width: 14px;
-  height: 14px;
-  border-radius: 9999px;
-  /* Dark navy edge blends with the basemap — zero white halo. */
-  border: 1.5px solid #0b1220;
-  transition: transform 0.15s ease;
-}
-.bi-status-marker:hover .bi-status-dot { transform: scale(1.15); }
-.bi-status-marker .bi-status-dot.bi-escale-dashed {
-  border-style: dashed;
-  border-width: 1.5px;
-}
+.bi-status-icon > div { transition: transform 0.15s ease; }
+.bi-status-icon:hover > div { transform: scale(1.15); }
 
 /* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */
 .bi-route-tt {

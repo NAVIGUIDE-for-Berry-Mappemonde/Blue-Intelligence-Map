@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api from "./api";
 import { makeT } from "./i18n";
 import Header from "./components/Header";
@@ -49,7 +49,11 @@ export default function App() {
   const [selectedEscale, setSelectedEscale] = useState(null);
   const [flyToEscale, setFlyToEscale] = useState(null); // {name, lat, lon, ts}
   const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
-  const t = makeT(lang);
+  // Phase 7bis stabilisation — memoise `t` so its reference stays stable
+  // across selection setStates. Otherwise every `handleSelectEscale` call
+  // creates a fresh `t` → MapView props change → the formalities marker
+  // rebuild useEffect re-fires and the DOM briefly drops to 0 markers.
+  const t = useMemo(() => makeT(lang), [lang]);
   const lastTotalRef = useRef(-1);
 
   // Persist mode + reflect on <html> for CSS var switching

@@ -69,6 +69,16 @@ export default function MapView({
   const formalitiesSigRef = useRef("");
   const [routeOn] = useState(true);
 
+  // Phase 7bis — Popup content must reflect the CURRENT language, not the one
+  // captured when markers were bound. We keep `t` and formality data in refs
+  // refreshed every render, then let bindPopup(fn) read them at open time.
+  const tRef = useRef(t);
+  tRef.current = t;
+  const formalitiesRef = useRef(formalities);
+  formalitiesRef.current = formalities;
+  const territoriesRef = useRef(territories);
+  territoriesRef.current = territories;
+
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
   const colorOf = (g) => colorMap[g] || FALLBACK_COLORS[g] || "#00f0ff";
@@ -193,6 +203,11 @@ export default function MapView({
     });
     mapObj.current = map;
     clusterRef.current = cluster;
+    // Debug hook — expose the map + all 3 clusters on window for headless
+    // inspection. Non-visible, no runtime cost.
+    if (typeof window !== "undefined") {
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, formalities: formalitiesCluster };
+    }
   }, [minZoom]);
 
   useEffect(() => {
@@ -278,8 +293,8 @@ export default function MapView({
           pane: "route",
         });
         m.bindPopup(
-          `<div style="min-width:200px;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:rgb(var(--accent-rgb));text-transform:uppercase;letter-spacing:0.1em;">${t(
+          () => `<div style="min-width:200px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:rgb(var(--accent-rgb));text-transform:uppercase;letter-spacing:0.1em;">${tRef.current(
               "routeWaypointEscale",
             )}</div>
             <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;margin-top:4px;">${
@@ -335,14 +350,14 @@ export default function MapView({
       });
       const tags = p.tags || {};
       const wp = p.nearest_waypoint || {};
-      // Priority label localised via t()
-      const prioLabels = { 1: t("marinasPriority1"), 2: t("marinasPriority2"), 3: t("marinasPriority3") };
-      const srcLabels = {
-        openstreetmap: t("marinasSourceOSM"),
-        shom: t("marinasSourceSHOM"),
-        curated: t("marinasSourceCurated"),
-      };
-      // Tag rows (only render those present)
+      const vhf = tags.vhf_channel || tags.vhf;
+      const phone = tags.phone || tags["contact:phone"];
+      const website = tags.website || tags["contact:website"] || tags.url;
+      const capacity = tags.capacity || tags["capacity:persons"] || tags["seamark:harbour:capacity"];
+      const depth = tags.max_depth || tags.depth || tags["seamark:harbour:draught"];
+      const fee = tags.fee;
+      const enrSource = p.enrichment_source;
+      const stars = (n) => (n && n >= 1 && n <= 5) ? "★".repeat(n) + "☆".repeat(5 - n) : null;
       const tagRow = (label, value, isLink = false) => {
         if (!value) return "";
         const disp = isLink
@@ -350,21 +365,6 @@ export default function MapView({
           : String(value);
         return `<div style="font-size:11px;color:#94a3b8;margin-top:3px;"><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;">${label}</span> ${disp}</div>`;
       };
-      const vhf = tags.vhf_channel || tags.vhf;
-      const phone = tags.phone || tags["contact:phone"];
-      const website = tags.website || tags["contact:website"] || tags.url;
-      const capacity = tags.capacity || tags["capacity:persons"] || tags["seamark:harbour:capacity"];
-      const depth = tags.max_depth || tags.depth || tags["seamark:harbour:draught"];
-      const fee = tags.fee;
-
-      // Enrichment block — visible when the marina has been enriched (source: tinyfish/openrouter/fallback)
-      const enrSource = p.enrichment_source;
-      const enrSourceLabel = {
-        tinyfish: t("enrichSourceTinyfish"),
-        openrouter: t("enrichSourceOpenrouter"),
-        fallback: t("enrichSourceFallback"),
-      }[enrSource] || "";
-      const stars = (n) => (n && n >= 1 && n <= 5) ? "★".repeat(n) + "☆".repeat(5 - n) : null;
       const enrichRow = (label, value) => {
         if (value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return "";
         const disp = Array.isArray(value)
@@ -372,53 +372,69 @@ export default function MapView({
           : String(value);
         return `<div style="font-size:11px;color:#e2e8f0;margin-top:5px;line-height:1.35;"><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:1px;">${label}</span>${disp}</div>`;
       };
-      const enrichBlock = p.enriched
-        ? `<div style="margin-top:8px;padding:6px 7px;background:rgba(255,74,74,0.06);border:1px solid rgba(255,74,74,0.30);border-radius:3px;">
-            <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
-              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;text-transform:uppercase;letter-spacing:0.1em;">◆ ${t("marinasEnriched")}</span>
-              ${enrSourceLabel ? `<span style="font-size:9px;color:#94a3b8;font-family:'JetBrains Mono',monospace;">${enrSourceLabel}</span>` : ""}
-              ${p.stale ? `<span style="font-size:9px;color:#fbbf24;font-family:'JetBrains Mono',monospace;">· ${t("enrichStale")}</span>` : ""}
-            </div>
-            ${enrichRow(t("enrichVHF"), p.canal_vhf)}
-            ${enrichRow(t("enrichBerths"), p.places_visiteurs)}
-            ${enrichRow(t("enrichDraft"), p.tirant_eau_max_metres)}
-            ${enrichRow(t("enrichWeather"), stars(p.score_protection_meteo))}
-            ${enrichRow(t("enrichServices"), p.services_disponibles)}
-            ${enrichRow(t("enrichPhone"), p.telephone_capitainerie)}
-            ${enrichRow(t("enrichReview"), p.resume_avis)}
-          </div>`
-        : `<div style="margin-top:8px;font-size:10px;color:#94a3b8;font-family:'JetBrains Mono',monospace;font-style:italic;">${t("enrichNever")}</div>`;
 
+      // Phase 7bis — bindPopup(FN) reads tRef.current lazily so FR ↔ EN
+      // switching updates every next popup open, without rebuilding markers.
       m.bindPopup(
-        `<div style="min-width:240px;max-width:300px;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.name || ""}</div>
-          <div style="margin:6px 0;display:flex;gap:5px;flex-wrap:wrap;">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid #ff4a4a55;padding:2px 6px;border-radius:2px;">P${p.priority} · ${prioLabels[p.priority] || ""}</span>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${srcLabels[p.source] || p.source || ""}</span>
-          </div>
-          <div style="font-size:11px;color:#c084fc;margin:3px 0 6px;">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;">${t("marinasNearest")}</span>
-            ${wp.name || "—"} · ${(wp.distance_nm ?? 0).toFixed(1)} ${t("marinasDistanceNM")}
-          </div>
-          ${tagRow(t("marinasVHF"), vhf)}
-          ${tagRow(t("marinasCapacity"), capacity)}
-          ${tagRow(t("marinasDepth"), depth)}
-          ${tagRow(t("marinasFee"), fee)}
-          ${tagRow(t("marinasPhone"), phone)}
-          ${tagRow(t("marinasWebsite"), website, true)}
-          ${enrichBlock}
-          <div style="margin-top:8px;display:flex;gap:5px;align-items:center;">
-            <button onclick="window.__biEnrichMarina && window.__biEnrichMarina('${p.id}')" data-testid="popup-enrich-btn" style="font-size:10px;font-weight:600;color:#ff4a4a;background:rgba(255,74,74,0.10);border:1px solid rgba(255,74,74,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">◆ ${t("enrichAction")}</button>
-            <span style="font-size:9px;color:#64748b;">${p.osm_id ? "OSM " + p.osm_id + " · " : ""}${t("marinasFetchedAt")}: ${(p.fetched_at || "").slice(0, 10)}</span>
-          </div>
-        </div>`,
+        () => {
+          const t = tRef.current;
+          const prioLabels = { 1: t("marinasPriority1"), 2: t("marinasPriority2"), 3: t("marinasPriority3") };
+          const srcLabels = {
+            openstreetmap: t("marinasSourceOSM"),
+            shom: t("marinasSourceSHOM"),
+            curated: t("marinasSourceCurated"),
+          };
+          const enrSourceLabel = {
+            tinyfish: t("enrichSourceTinyfish"),
+            openrouter: t("enrichSourceOpenrouter"),
+            fallback: t("enrichSourceFallback"),
+          }[enrSource] || "";
+          const enrichBlock = p.enriched
+            ? `<div style="margin-top:8px;padding:6px 7px;background:rgba(255,74,74,0.06);border:1px solid rgba(255,74,74,0.30);border-radius:3px;">
+                <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;text-transform:uppercase;letter-spacing:0.1em;">◆ ${t("marinasEnriched")}</span>
+                  ${enrSourceLabel ? `<span style="font-size:9px;color:#94a3b8;font-family:'JetBrains Mono',monospace;">${enrSourceLabel}</span>` : ""}
+                  ${p.stale ? `<span style="font-size:9px;color:#fbbf24;font-family:'JetBrains Mono',monospace;">· ${t("enrichStale")}</span>` : ""}
+                </div>
+                ${enrichRow(t("enrichVHF"), p.canal_vhf)}
+                ${enrichRow(t("enrichBerths"), p.places_visiteurs)}
+                ${enrichRow(t("enrichDraft"), p.tirant_eau_max_metres)}
+                ${enrichRow(t("enrichWeather"), stars(p.score_protection_meteo))}
+                ${enrichRow(t("enrichServices"), p.services_disponibles)}
+                ${enrichRow(t("enrichPhone"), p.telephone_capitainerie)}
+                ${enrichRow(t("enrichReview"), p.resume_avis)}
+              </div>`
+            : `<div style="margin-top:8px;font-size:10px;color:#94a3b8;font-family:'JetBrains Mono',monospace;font-style:italic;">${t("enrichNever")}</div>`;
+          return `<div style="min-width:240px;max-width:300px;">
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.name || ""}</div>
+            <div style="margin:6px 0;display:flex;gap:5px;flex-wrap:wrap;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid #ff4a4a55;padding:2px 6px;border-radius:2px;">P${p.priority} · ${prioLabels[p.priority] || ""}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${srcLabels[p.source] || p.source || ""}</span>
+            </div>
+            <div style="font-size:11px;color:#c084fc;margin:3px 0 6px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;">${t("marinasNearest")}</span>
+              ${wp.name || "—"} · ${(wp.distance_nm ?? 0).toFixed(1)} ${t("marinasDistanceNM")}
+            </div>
+            ${tagRow(t("marinasVHF"), vhf)}
+            ${tagRow(t("marinasCapacity"), capacity)}
+            ${tagRow(t("marinasDepth"), depth)}
+            ${tagRow(t("marinasFee"), fee)}
+            ${tagRow(t("marinasPhone"), phone)}
+            ${tagRow(t("marinasWebsite"), website, true)}
+            ${enrichBlock}
+            <div style="margin-top:8px;display:flex;gap:5px;align-items:center;">
+              <button onclick="window.__biEnrichMarina && window.__biEnrichMarina('${p.id}')" data-testid="popup-enrich-btn" style="font-size:10px;font-weight:600;color:#ff4a4a;background:rgba(255,74,74,0.10);border:1px solid rgba(255,74,74,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">◆ ${t("enrichAction")}</button>
+              <span style="font-size:9px;color:#64748b;">${p.osm_id ? "OSM " + p.osm_id + " · " : ""}${t("marinasFetchedAt")}: ${(p.fetched_at || "").slice(0, 10)}</span>
+            </div>
+          </div>`;
+        },
         { maxWidth: 320, autoPan: false },
       );
       marinaMarkersById.current.set(p.id, m);
       return m;
     });
     marinaCluster.addLayers(markers);
-  }, [marinas, t]);
+  }, [marinas]);
 
   // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A → Phase 7) ----------
   useEffect(() => {
@@ -613,8 +629,11 @@ export default function MapView({
         </div>`;
     };
 
-    // ---- Popup HTML builder for a full territory fiche ----
+    // ---- Popup HTML builder for a full territory fiche.
+    //      Phase 7bis — reads `t` from tRef.current so popups always reflect
+    //      the current UI language even if built earlier.                  ----
     const buildPopup = (feat, meta) => {
+      const t = tRef.current;                                    // lazy read
       const {
         name, leg, terr, forDoc, isPoe, status, fill, overlay,
       } = meta;
@@ -710,32 +729,31 @@ export default function MapView({
       const fill = STATUS_FILL[status] || STATUS_FILL.non_generee;
       const stroke = STATUS_STROKE[status] || STATUS_STROKE.non_generee;
 
-      // Phase 7 — PoE white ring on the map is removed. The PoE badge remains
-      // visible in the popup header + the sidebar row.
-
       let leg = null;
       if (name === "La Rochelle") {
         laRochelleSeen.count += 1;
         leg = laRochelleSeen.count === 1 ? "departure" : "return";
       }
 
-      // Phase 6 — unified marker style with projects/marinas.
-      // Phase 7 — use L.marker with divIcon so leaflet.markercluster clusters
-      // them at world zoom (circleMarker is not supported by markercluster).
-      const dashClass = dashed ? " bi-escale-dashed" : "";
-      const iconHtml = `<span class="bi-status-dot${dashClass}" style="background:${fill};border-color:${stroke};"></span>`;
+      // Phase 7bis — SINGLE self-contained div: iconSize matches exactly the
+      // colored dot, no wrapper padding, no leaflet-div-icon default bg leak.
+      // The .bi-status-icon class carries a defensive reset in index.css.
+      const iconHtml = `<div style="width:14px;height:14px;border-radius:50%;background-color:${fill};border:1.5px ${dashed ? "dashed" : "solid"} ${stroke};box-sizing:border-box;"></div>`;
       const marker = L.marker([lat, lon], {
         icon: L.divIcon({
           html: iconHtml,
-          className: "bi-status-marker",
-          iconSize: [18, 18],
-          iconAnchor: [9, 9],
-          popupAnchor: [0, -8],
+          className: "bi-status-icon",
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+          popupAnchor: [0, -7],
         }),
       });
 
+      // Phase 7bis — bindPopup(FN) so the HTML is rebuilt at each open with
+      // the CURRENT `t` (via tRef inside buildPopup). Fixes the FR↔EN closure
+      // capture bug where popups kept the language captured at bind time.
       marker.bindPopup(
-        buildPopup(feat, { name, leg, terr, forDoc, isPoe, status, fill, overlay }),
+        () => buildPopup(feat, { name, leg, terr, forDoc, isPoe, status, fill, overlay }),
         { maxWidth: 360, minWidth: 280, autoPan: false, className: "bi-formalities-popup" },
       );
 
@@ -755,38 +773,73 @@ export default function MapView({
   }, [route, territories, formalities, t, mode, onSelectEscale]);
 
   // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
-  // Phase 6 — also open the popup of the target escale so the fiche is visible
-  // straight away (the fiche now lives inside the popup, not the sidebar).
-  // Phase 7 — the marker may be inside a cluster at world zoom; use
-  // markercluster's zoomToShowLayer to spiderfy/zoom first.
+  // Phase 7bis — deterministic chain: moveend → zoomToShowLayer → openPopup,
+  // with a fallback fire('click') if openPopup didn't stick. No blind setTimeout.
   useEffect(() => {
     if (!flyToEscale) return;
     const map = mapObj.current;
     const cluster = formalitiesClusterRef.current;
     if (!map) return;
-    map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
-    const openTimer = setTimeout(() => {
+
+    let cancelled = false;
+
+    const findTarget = () => {
       const markers = formalitiesMarkersByEscale.current;
-      if (!markers || markers.size === 0) return;
-      let target = null;
+      if (!markers || markers.size === 0) return null;
       if (flyToEscale.name && flyToEscale.leg) {
-        target = markers.get(`${flyToEscale.name}::${flyToEscale.leg}`) || null;
+        const t = markers.get(`${flyToEscale.name}::${flyToEscale.leg}`);
+        if (t) return t;
       }
-      if (!target && flyToEscale.name) {
-        target = markers.get(flyToEscale.name)
+      if (flyToEscale.name) {
+        return markers.get(flyToEscale.name)
           || markers.get(`${flyToEscale.name}::departure`)
-          || markers.get(`${flyToEscale.name}::return`);
+          || markers.get(`${flyToEscale.name}::return`)
+          || null;
       }
+      return null;
+    };
+
+    const openWithFallback = (target) => {
+      if (!target || cancelled) return;
+      try { target.openPopup(); } catch (_) { /* map or marker not ready */ }
+      // Fallback: if openPopup didn't visibly attach a popup (marker still
+      // inside a spidered cluster, or race with rebuild), fire the marker's
+      // own click event which reruns bindPopup + attaches.
+      setTimeout(() => {
+        if (cancelled) return;
+        const isOpen = typeof target.isPopupOpen === "function" ? target.isPopupOpen() : false;
+        if (!isOpen) {
+          try { target.fire("click"); } catch (_) { /* noop */ }
+          setTimeout(() => {
+            if (cancelled) return;
+            const stillClosed = typeof target.isPopupOpen === "function" ? !target.isPopupOpen() : true;
+            if (stillClosed) { try { target.openPopup(); } catch (_) { /* noop */ } }
+          }, 200);
+        }
+      }, 250);
+    };
+
+    const doOpenTarget = () => {
+      const target = findTarget();
       if (!target) return;
-      if (cluster && typeof cluster.zoomToShowLayer === "function") {
-        cluster.zoomToShowLayer(target, () => {
-          if (typeof target.openPopup === "function") target.openPopup();
-        });
-      } else if (typeof target.openPopup === "function") {
-        target.openPopup();
+      if (cluster && typeof cluster.zoomToShowLayer === "function" && cluster.hasLayer(target)) {
+        cluster.zoomToShowLayer(target, () => openWithFallback(target));
+      } else {
+        openWithFallback(target);
       }
-    }, 1150);
-    return () => clearTimeout(openTimer);
+    };
+
+    // Chain: fire flyTo → wait for moveend → open popup.
+    // Fallback: if moveend never fires (already at destination), open after 900 ms.
+    map.once("moveend", doOpenTarget);
+    map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
+    const safety = setTimeout(doOpenTarget, 1500);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(safety);
+      map.off("moveend", doOpenTarget);
+    };
   }, [flyToEscale]);
 
   useEffect(() => {
