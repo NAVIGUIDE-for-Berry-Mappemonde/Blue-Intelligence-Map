@@ -473,7 +473,7 @@ async def _synthesize_llm(
                     headers={
                         "Authorization": f"Bearer {openrouter_key}",
                         "Content-Type": "application/json",
-                        "HTTP-Referer": "https://codebase-scan-45.preview.emergentagent.com",
+                        "HTTP-Referer": "https://popup-restore.preview.emergentagent.com",
                         "X-Title": "Blue Intelligence - Formalities Synthesis",
                     },
                     json={

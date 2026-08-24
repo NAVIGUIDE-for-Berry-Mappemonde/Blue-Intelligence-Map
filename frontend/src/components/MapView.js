@@ -78,6 +78,12 @@ export default function MapView({
   formalitiesRef.current = formalities;
   const territoriesRef = useRef(territories);
   territoriesRef.current = territories;
+  // Popup-open bug fix (2026-08-24): keep the selection callback in a ref so
+  // the formalities markers rebuild effect does NOT depend on it. Even when
+  // App.js already wraps handleSelectEscale in useCallback([]), we want the
+  // effect deps to advertise "data only" and never re-fire on selection.
+  const onSelectEscaleRef = useRef(onSelectEscale);
+  onSelectEscaleRef.current = onSelectEscale;
 
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
@@ -147,11 +153,19 @@ export default function MapView({
     marinaClusterRef.current = marinaCluster;
     // Phase 7 — Formalities cluster (amber). Used to group the escales when zoomed out
     // (e.g. the 4 Antilles escales collapse into a single cluster in world view).
+    //
+    // Popup-open bug fix (2026-08-24): `removeOutsideVisibleBounds` is DELIBERATELY
+    // false for this cluster. With only 17 escale markers world-wide, keeping them
+    // all in the DOM at all times has zero perf impact AND guarantees that
+    // `target._icon` is populated when the sidebar sends a flyToEscale signal for a
+    // marker that was previously off-screen (e.g. clicking Papeete from a Europe-
+    // centred view). Otherwise `leaflet.markercluster.zoomToShowLayer` enters its
+    // `panTo` branch, the panTo is a no-op (we already flyTo'd there), the internal
+    // `moveend` never fires, and the popup callback never runs → popup never opens.
     const formalitiesCluster = L.markerClusterGroup({
       maxClusterRadius: 45,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
+      chunkedLoading: false,
+      removeOutsideVisibleBounds: false,
       animate: false,
       iconCreateFunction: (c) => L.divIcon({
         html: `<div class="bi-cluster-formalities" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
@@ -758,9 +772,13 @@ export default function MapView({
       );
 
       // Click on marker → tell App to fly there + tag the row in the sidebar.
+      // Bug-fix 2026-08-24: read the handler from a ref so the rebuild effect
+      // does NOT need to list onSelectEscale as a dep. Guarantees "data-only"
+      // rebuild triggers.
       marker.on("click", () => {
-        if (typeof onSelectEscale === "function" && terr?.code) {
-          onSelectEscale(name, terr.code, [lon, lat]);
+        const cb = onSelectEscaleRef.current;
+        if (typeof cb === "function" && terr?.code) {
+          cb(name, terr.code, [lon, lat]);
         }
       });
 
@@ -770,11 +788,27 @@ export default function MapView({
 
     // Phase 7 — cluster is shared and attached by the mode-swap effect, no
     // per-render layerGroup to add.
-  }, [route, territories, formalities, t, mode, onSelectEscale]);
+    //
+    // Popup-open bug fix (2026-08-24): deps are DATA-ONLY. `t`, `mode` and
+    // `onSelectEscale` are intentionally excluded — `t` is read lazily via
+    // `tRef.current` inside bindPopup(FN), `mode` doesn't affect marker
+    // geometry (mode swap attaches/detaches the whole cluster in a separate
+    // effect), and `onSelectEscale` is read via `onSelectEscaleRef.current`
+    // inside the click handler. This guarantees a sidebar selection change
+    // never triggers a marker rebuild.
+  }, [route, territories, formalities]);
 
   // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
   // Phase 7bis — deterministic chain: moveend → zoomToShowLayer → openPopup,
   // with a fallback fire('click') if openPopup didn't stick. No blind setTimeout.
+  //
+  // Popup-open bug fix (2026-08-24): `leaflet.markercluster.zoomToShowLayer`
+  // silently does nothing when it enters the `panTo` branch and the map is
+  // already at the destination (flyTo just landed there). In that case the
+  // internal moveend never fires and the callback is never called. We now
+  // detect a still-closed popup and, as a last resort, open the bound popup
+  // directly on the map via `popup.setLatLng().openOn(map)` — this works
+  // regardless of whether the marker's DOM icon has been attached yet.
   useEffect(() => {
     if (!flyToEscale) return;
     const map = mapObj.current;
@@ -799,23 +833,41 @@ export default function MapView({
       return null;
     };
 
+    // Ultimate fallback: attach the marker's bound popup directly to the map
+    // at its latlng. Works even when the marker's DOM icon hasn't been
+    // attached yet by the cluster (the failing scenario for far-away escales).
+    const forceOpenPopupOnMap = (target) => {
+      if (!target || cancelled) return false;
+      try {
+        const popup = typeof target.getPopup === "function" ? target.getPopup() : null;
+        if (popup && typeof popup.setLatLng === "function" && typeof popup.openOn === "function") {
+          popup.setLatLng(target.getLatLng()).openOn(map);
+          return true;
+        }
+      } catch (_) { /* noop */ }
+      return false;
+    };
+
     const openWithFallback = (target) => {
       if (!target || cancelled) return;
+      // Attempt 1: standard openPopup (works when the marker has an _icon
+      // attached in the DOM — the common case for close/visible escales).
       try { target.openPopup(); } catch (_) { /* map or marker not ready */ }
-      // Fallback: if openPopup didn't visibly attach a popup (marker still
-      // inside a spidered cluster, or race with rebuild), fire the marker's
-      // own click event which reruns bindPopup + attaches.
+      // Attempt 2: after a short delay, if the popup is still not on the DOM
+      // (marker was clustered or its _icon hadn't been attached by
+      // leaflet.markercluster after the pan), attach the marker's own bound
+      // popup directly to the map via `popup.setLatLng().openOn(map)`. This
+      // is the DEFINITIVE fallback — it works regardless of whether the
+      // marker is currently rendered in the DOM.
+      //
+      // We deliberately DO NOT `target.fire("click")` here — that would
+      // re-trigger the sidebar's onSelectEscale handler, which re-sets
+      // `flyToEscale`, which re-runs this whole effect, creating an infinite
+      // loop for far-away escales whose _icon never gets attached.
       setTimeout(() => {
         if (cancelled) return;
-        const isOpen = typeof target.isPopupOpen === "function" ? target.isPopupOpen() : false;
-        if (!isOpen) {
-          try { target.fire("click"); } catch (_) { /* noop */ }
-          setTimeout(() => {
-            if (cancelled) return;
-            const stillClosed = typeof target.isPopupOpen === "function" ? !target.isPopupOpen() : true;
-            if (stillClosed) { try { target.openPopup(); } catch (_) { /* noop */ } }
-          }, 200);
-        }
+        const domHasPopup = !!document.querySelector(".leaflet-popup");
+        if (!domHasPopup) forceOpenPopupOnMap(target);
       }, 250);
     };
 
@@ -823,7 +875,17 @@ export default function MapView({
       const target = findTarget();
       if (!target) return;
       if (cluster && typeof cluster.zoomToShowLayer === "function" && cluster.hasLayer(target)) {
-        cluster.zoomToShowLayer(target, () => openWithFallback(target));
+        // `zoomToShowLayer` can silently no-op (see comment above). Guard with
+        // a timeout that opens the popup directly if the callback never fires.
+        let cbFired = false;
+        cluster.zoomToShowLayer(target, () => {
+          cbFired = true;
+          openWithFallback(target);
+        });
+        setTimeout(() => {
+          if (cancelled || cbFired) return;
+          openWithFallback(target);
+        }, 600);
       } else {
         openWithFallback(target);
       }
