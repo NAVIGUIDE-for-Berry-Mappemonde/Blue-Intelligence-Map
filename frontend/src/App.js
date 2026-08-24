@@ -423,9 +423,6 @@ export default function App() {
           <MarinasPanel
             t={t}
             marinas={marinas}
-            anchorages={anchorages}
-            showAnchorages={showAnchorages}
-            setShowAnchorages={setShowAnchorages}
             onFlyTo={handleFlyToMarina}
             onRefresh={fetchMarinas}
             onRefreshAnchorages={fetchAnchorages}
@@ -463,7 +460,9 @@ export default function App() {
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
-            <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities} />
+            <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities}
+              showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
+              anchoragesCount={anchorages?.features?.length || 0} />
           )}
         </main>
           {showSettings && (

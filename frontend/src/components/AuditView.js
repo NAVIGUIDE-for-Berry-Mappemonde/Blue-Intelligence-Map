@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Trash2, Zap } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
 import api from "../api";
 import BatchHub from "./BatchHub";
 import AgentConsole from "./AgentConsole";
@@ -12,7 +12,7 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
-export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh }) {
+export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
   const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0, items_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
@@ -55,6 +55,7 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
     await api.delete("/audit");
     load();
   };
+  void clearAudit; // kept for potential re-enable; button removed 2026-06
 
   const forceOne = async (id) => {
     setForcing((f) => ({ ...f, [id]: true }));
@@ -69,10 +70,7 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
     <div className="h-full overflow-y-auto p-5 space-y-5 bi-audit-themed" data-testid="audit-view">
       <div className="flex items-center justify-between">
         <h2 className="font-heading font-black text-xl text-accent">{t("audit")}</h2>
-        <button data-testid="clear-audit-btn" onClick={clearAudit}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
-          <Trash2 size={12} /> {t("clearAll")}
-        </button>
+        {/* "Clear database" button removed 2026-06 per user request */}
       </div>
 
       {/* Phase 7 — Contextual Swarm Intelligence Hub: only the active mode's card
@@ -85,6 +83,9 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
         settings={settings}
         onSettingsSaved={loadSettings}
         onFormalitiesRefresh={onFormalitiesRefresh}
+        showAnchorages={showAnchorages}
+        setShowAnchorages={setShowAnchorages}
+        anchoragesCount={anchoragesCount}
       />
 
       {/* Live agent console — 2026-06 UX: only rendered while the swarm is

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Download, FileDown, Trash2, Upload, X } from "lucide-react";
+import { Check, Download, FileDown, Upload, X } from "lucide-react";
 import api from "../api";
 
 // Phase 6 — Extraction (project-swarm) section migrated to Audit → Projects card.
@@ -131,7 +131,14 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     <aside className="w-[320px] shrink-0 border-l border-line bg-surface overflow-y-auto" data-testid="settings-panel">
       <div className="flex items-center justify-between px-4 py-3 border-b border-line sticky top-0 bg-surface z-10">
         <h3 className="font-heading font-bold text-sm text-accent">{t("settings")}</h3>
-        <button data-testid="settings-close-btn" onClick={onClose} className="text-slate-500 hover:text-accent"><X size={15} /></button>
+        <div className="flex items-center gap-2">
+          {saved && (
+            <span data-testid="settings-autosaved-hint" className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide text-bio">
+              <Check size={11} /> {t("saved")}
+            </span>
+          )}
+          <button data-testid="settings-close-btn" onClick={onClose} className="text-slate-500 hover:text-accent"><X size={15} /></button>
+        </div>
       </div>
       <div className="p-4 space-y-5">
         {/* Docs */}
@@ -173,15 +180,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           <p data-testid="settings-export-context-hint" className="mt-1.5 font-mono text-[9px] uppercase tracking-wide text-slate-500">
             {t("settingsExportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
           </p>
-          <button data-testid="clear-projects-btn"
-            onClick={async () => {
-              if (!window.confirm(t("clearProjectsConfirm"))) return;
-              await api.delete("/projects");
-              if (onProjectsCleared) onProjectsCleared();
-            }}
-            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
-            <Trash2 size={12} /> {t("clearProjects")}
-          </button>
+          {/* "Clear all projects" button removed 2026-06 per user request */}
         </section>
 
         {/* Phase 7 — Marine filtering block migrated to Audit → Projects card. */}
@@ -190,10 +189,10 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
         <section className="space-y-2.5">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("mapSettings")}</p>
           <Field label={t("minZoom")}>
-            <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} className={inputCls} />
+            <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={t("maxMarkers")}>
-            <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} className={inputCls} />
+            <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
         </section>
 
@@ -210,7 +209,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           }>
             <input data-testid="gemini-key-input" type="password" value={form.gemini_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("gemini_api_key", e.target.value)} className={inputCls} />
+              onChange={(e) => set("gemini_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={
             <>
@@ -222,14 +221,12 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           }>
             <input data-testid="tinyfish-key-input" type="password" value={form.tinyfish_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("tinyfish_api_key", e.target.value)} className={inputCls} />
+              onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
         </section>
 
-        <button data-testid="save-settings-btn" onClick={save}
-          className="w-full flex items-center justify-center gap-2 py-2 font-heading font-bold text-sm rounded-sm bg-accent/15 border border-accent/60 text-accent hover:bg-accent/25">
-          {saved ? <><Check size={14} /> {t("saved")}</> : t("save")}
-        </button>
+        {/* Save button removed 2026-06 — settings now auto-save on field blur
+            (see the onBlur={save} handlers above). */}
       </div>
     </aside>
   );

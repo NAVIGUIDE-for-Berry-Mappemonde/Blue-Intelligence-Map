@@ -29,9 +29,6 @@ const SOURCE_COLORS = {
 export default function MarinasPanel({
   t,
   marinas,               // GeoJSON FeatureCollection
-  anchorages,            // GeoJSON FeatureCollection (Phase 8 — mouillages)
-  showAnchorages,        // bool — anchorage layer visibility on the map
-  setShowAnchorages,     // fn(bool)
   onFlyTo,               // fn(featureId, lat, lon) — used to fly + open popup on the map
   onRefresh,             // fn() — parent will refetch after build
   onRefreshAnchorages,   // fn() — refetch anchorages after a build
@@ -42,7 +39,6 @@ export default function MarinasPanel({
   const batchPollRef = useRef(null);
 
   const features = marinas?.features || [];
-  const anchorageCount = anchorages?.features?.length || 0;
 
   // Phase 8 — anchorages build poller: refetch the layer when a build finishes.
   useEffect(() => {
@@ -189,22 +185,7 @@ export default function MarinasPanel({
           </div>
         </div>
 
-        {/* Phase 8 — anchorages layer toggle */}
-        <label
-          className="flex items-center gap-2 mb-3 text-xs text-slate-300 cursor-pointer select-none"
-          data-testid="anchorages-toggle"
-        >
-          <input
-            type="checkbox"
-            checked={!!showAnchorages}
-            onChange={(e) => setShowAnchorages && setShowAnchorages(e.target.checked)}
-            className="accent-teal-400"
-          />
-          <span className="flex-1">{t("anchoragesToggle")}</span>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-teal-300/80" data-testid="anchorages-count">
-            ⚓ {anchorageCount}
-          </span>
-        </label>
+        {/* Anchorages toggle moved to the SIA marinas card (2026-06) */}
 
         {/* Phase 6 — Batch controls migrated to Audit view; sidebar keeps only the list.
             Export button removed from the sidebar (available in Settings). */}

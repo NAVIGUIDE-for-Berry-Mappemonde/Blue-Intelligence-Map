@@ -45,7 +45,7 @@ function CardShell({ title, icon, borderCls, children }) {
   );
 }
 
-export default function BatchHub({ t, mode, status, refresh, settings, onSettingsSaved, onFormalitiesRefresh }) {
+export default function BatchHub({ t, mode, status, refresh, settings, onSettingsSaved, onFormalitiesRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
   // ---- Projects — swarm controls ----
   const [swarmMode, setSwarmMode] = useState("test");
   const [clearDb, setClearDb] = useState(false);
@@ -355,6 +355,22 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
                 {anchStatus.logs_tail.slice(-4).map((l, i) => <div key={i} className="truncate">{l}</div>)}
               </div>
             )}
+            {/* Anchorage layer visibility — moved here from the sidebar (2026-06) */}
+            <label
+              className="flex items-center gap-2 mt-2 text-xs text-slate-300 cursor-pointer select-none"
+              data-testid="anchorages-toggle"
+            >
+              <input
+                type="checkbox"
+                checked={!!showAnchorages}
+                onChange={(e) => setShowAnchorages && setShowAnchorages(e.target.checked)}
+                className="accent-teal-400"
+              />
+              <span className="flex-1">{t("anchoragesToggle")}</span>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-teal-300/80" data-testid="anchorages-count">
+                ⚓ {anchoragesCount ?? 0}
+              </span>
+            </label>
           </div>
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">

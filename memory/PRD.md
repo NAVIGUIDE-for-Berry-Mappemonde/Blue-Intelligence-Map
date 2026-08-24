@@ -729,3 +729,9 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - BatchHub : état ZEE + fetch /territories (drapeaux) chargés uniquement en mode formalities ; data-testids conservés (zee-section, zee-detect-btn, zee-crossings-list, zee-trigger-btn, zee-summary).
 - FormalitiesPanel : section + état ZEE retirés, sidebar = disclaimer + liste escales uniquement.
 - Vérifié par screenshot + assertions DOM : 0 zee-section dans la sidebar, 1 dans le SIA, 117 lignes rendues, 0 erreur runtime.
+
+## Update 2026-06 — Nettoyage UI (demande user)
+- Boutons "Clear database" (AuditView) et "Clear all projects" (SettingsPanel) SUPPRIMÉS (fonctions conservées en code mort commenté pour ré-activation éventuelle).
+- Bouton "Save Settings" SUPPRIMÉ → auto-sauvegarde au blur de chaque champ (min zoom, max markers, clés API) + indicateur "✓ Saved" transitoire dans l'en-tête du panneau.
+- Toggle "Show anchorages on the map" (⚓ count) déplacé de la sidebar Marinas vers la carte SIA marinas (props showAnchorages/setShowAnchorages/anchoragesCount passées App→AuditView→BatchHub, data-testids conservés).
+- Dédup validée en réel : re-scan marinas lancé par le user → total 809 → 810 (+1 découverte, 0 doublon, upserts par dedup_key).
