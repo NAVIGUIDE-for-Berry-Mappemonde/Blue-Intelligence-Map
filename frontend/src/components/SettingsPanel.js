@@ -29,6 +29,24 @@ const EXPORT_URLS = {
   formalities: "/api/export/formalities.geojson",
 };
 
+// 2026-08-24 bug-fix — import endpoint per mode. Previously the sidebar
+// "Import GeoJSON" button ALWAYS hit /import/geojson (projects), so
+// importing a marinas or formalities export from another instance silently
+// tried to insert them as projects → 0 imported, no error, user thinks the
+// button is broken. Now the button routes to the right endpoint based on
+// the current mode.
+const IMPORT_URLS = {
+  projects:    "/import/geojson",
+  marinas:     "/import/marinas.geojson",
+  formalities: "/import/formalities.geojson",
+};
+
+const IMPORT_TOTAL_KEY = {
+  projects:    "total_projects",
+  marinas:     "total_marinas",
+  formalities: "total_formalities",
+};
+
 export default function SettingsPanel({ t, mode, settings, onSaved, onImported, onProjectsCleared, onClose }) {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -63,12 +81,42 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     e.target.value = "";
     if (!file) return;
     setImporting(true);
+    const currentMode = mode || "projects";
+    const importUrl = IMPORT_URLS[currentMode] || IMPORT_URLS.projects;
+    const totalKey = IMPORT_TOTAL_KEY[currentMode] || IMPORT_TOTAL_KEY.projects;
     try {
       const text = await file.text();
       const fc = JSON.parse(text);
-      const { data } = await api.post("/import/geojson", fc, { timeout: 180000 });
-      alert(`${t("importDone")}\n• ${t("importedN")}: ${data.imported}\n• ${t("mergedN")}: ${data.merged}\n• ${t("skippedN")}: ${data.skipped_existing}\n• ${t("invalidN")}: ${data.invalid}\n• ${t("totalN")}: ${data.total_projects}`);
-      if (onImported) onImported();
+      // Server-side content-type sniffing: raise a friendlier error early if
+      // the file structure is obviously not what the current mode expects.
+      // (Formalities export uses `escale_name` in properties; marinas uses
+      // `source`+`priority`; projects uses `title`+`url`.)
+      const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
+      const isProj = "title" in first && "url" in first;
+      const isMar = "source" in first && "priority" in first && !("escale_name" in first);
+      const isForm = "escale_name" in first || "territory_code" in first;
+      const looksLike = isForm ? "formalities" : isMar ? "marinas" : isProj ? "projects" : "unknown";
+      if (looksLike !== "unknown" && looksLike !== currentMode) {
+        throw new Error(
+          `Fichier détecté comme "${looksLike}" mais le mode actif est "${currentMode}". ` +
+            `Bascule dans le bon mode avant d'importer.`,
+        );
+      }
+      const { data } = await api.post(importUrl, fc, { timeout: 180000 });
+      const totalLabel = currentMode === "marinas"
+        ? "Total marinas"
+        : currentMode === "formalities"
+          ? "Total formalities"
+          : t("totalN");
+      alert(
+        `${t("importDone")}\n` +
+          `• ${t("importedN")}: ${data.imported}\n` +
+          `• ${t("mergedN")}: ${data.merged}\n` +
+          `• ${t("skippedN")}: ${data.skipped_existing}\n` +
+          `• ${t("invalidN")}: ${data.invalid}\n` +
+          `• ${totalLabel}: ${data[totalKey]}`,
+      );
+      if (onImported) onImported(currentMode);
     } catch (err) {
       alert(`${t("importError")}: ${err.response?.data?.detail || err.message}`);
     } finally {
@@ -107,9 +155,13 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           <input ref={fileRef} data-testid="import-geojson-input" type="file" accept=".geojson,.json,application/geo+json,application/json"
             className="hidden" onChange={importFile} />
           <button data-testid="import-geojson-btn" onClick={() => fileRef.current?.click()} disabled={importing}
-            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40">
+            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
+            title={t("importGeojson") + " → " + t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}>
             <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
           </button>
+          <p data-testid="settings-import-context-hint" className="mt-1 font-mono text-[9px] uppercase tracking-wide text-slate-500">
+            {t("settingsImportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
+          </p>
           {/* Phase 6 — single contextual export button. URL follows the active mode. */}
           <button data-testid="settings-export-btn"
             onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}${exportUrl}`, "_blank")}

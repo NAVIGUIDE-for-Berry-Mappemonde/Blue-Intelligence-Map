@@ -443,7 +443,15 @@ export default function App() {
         </main>
           {showSettings && (
           <SettingsPanel t={t} lang={lang} mode={mode} settings={settings}
-            onSaved={fetchSettings} onImported={() => fetchProjects(true)}
+            onSaved={fetchSettings}
+            // 2026-08-24 bug-fix — import router-callback receives the mode
+            // that was actually imported so we only refresh the affected
+            // dataset (never both, to avoid unnecessary re-fetches).
+            onImported={(importedMode) => {
+              if (importedMode === "marinas") fetchMarinas();
+              else if (importedMode === "formalities") fetchFormalities();
+              else fetchProjects(true);
+            }}
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
         )}
       </div>

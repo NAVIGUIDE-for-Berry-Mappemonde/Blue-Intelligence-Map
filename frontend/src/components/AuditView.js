@@ -13,22 +13,28 @@ const STATUS_COLORS = {
 };
 
 export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh }) {
-  const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0 });
+  const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0, items_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
   const [forcing, setForcing] = useState({});
   const [settings, setSettings] = useState(null);
 
+  // Bug-fix 2026-08-24 — the KPI card previously always showed the projects
+  // count (4463) regardless of the active mode. `/api/stats?mode={mode}` now
+  // returns items_mapped scoped to the mode (17 formalities / 212 marinas /
+  // 4463 projects) and mode-scoped extractions/success_rate.
   const load = useCallback(async () => {
     try {
       const [s, tm, f] = await Promise.all([
-        api.get("/stats"), api.get("/telemetry"), api.get("/failed"),
+        api.get("/stats", { params: { mode: mode || "projects" } }),
+        api.get("/telemetry"),
+        api.get("/failed"),
       ]);
       setStats(s.data);
       setTelemetry(tm.data);
       setFailed(f.data);
     } catch (e) { /* transient */ }
-  }, []);
+  }, [mode]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -98,7 +104,7 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
         </div>
         <div className="bg-surface p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("itemsMapped")}</p>
-          <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.projects_mapped}</p>
+          <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.items_mapped ?? stats.projects_mapped}</p>
         </div>
       </div>
 

@@ -208,12 +208,52 @@ async def status():
 
 
 @router.get("/stats")
-async def stats():
-    total = await db.telemetry.count_documents({})
-    success = await db.telemetry.count_documents({"status": {"$in": ["SUCCESS", "MERGED"]}})
-    projects = await db.projects.count_documents({})
-    return {"total_extractions": total, "success_rate": round(success / total * 100, 1) if total else 0.0,
-            "projects_mapped": projects}
+async def stats(mode: str = "projects"):
+    """KPI counters shown in the Swarm Intelligence Audit view.
+
+    Bug-fix 2026-08-24 — `projects_mapped` used to always return
+    `db.projects.count_documents({})` (4463), regardless of the active mode.
+    The Audit view now passes `?mode=marinas|formalities|projects` so the
+    counter reflects the actual dataset the user is looking at. Extractions
+    and success_rate are read from a mode-scoped `dataset` field in the
+    telemetry collection when present; legacy rows without that field are
+    counted for projects only (backwards-compat).
+    """
+    m = (mode or "projects").lower()
+    if m == "marinas":
+        items = await db.marinas.count_documents({})
+        tele_filter = {"dataset": "marinas"}
+    elif m == "formalities":
+        # 1 fiche per escale, 17 escales in the route (SPM, La Rochelle×2, …).
+        # We report the number of escales currently rendered on the map to
+        # match the sidebar count the user sees ("17 escales").
+        items = 0
+        try:
+            import json as _json
+            if ROUTE_FILE.exists():
+                route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+                items = sum(
+                    1 for f in (route.get("features") or [])
+                    if (f.get("geometry") or {}).get("type") == "Point"
+                    and (f.get("properties") or {}).get("point_type") == "escale"
+                )
+        except Exception:
+            items = await db.formalities.count_documents({})
+        tele_filter = {"dataset": "formalities"}
+    else:  # projects (default)
+        items = await db.projects.count_documents({})
+        # Legacy rows have no `dataset` field — count them as projects.
+        tele_filter = {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}
+
+    total = await db.telemetry.count_documents(tele_filter)
+    success = await db.telemetry.count_documents({**tele_filter, "status": {"$in": ["SUCCESS", "MERGED"]}})
+    return {
+        "mode": m,
+        "total_extractions": total,
+        "success_rate": round(success / total * 100, 1) if total else 0.0,
+        "projects_mapped": items,  # legacy key kept for backwards-compat
+        "items_mapped": items,
+    }
 
 
 @router.get("/telemetry")
@@ -420,6 +460,202 @@ async def import_geojson(fc: dict = Body(...)):
     total = await db.projects.count_documents({})
     swarm.log(f"GeoJSON import: {imported} imported, {merged} merged, {skipped} already known, {invalid} invalid", "success")
     return {"imported": imported, "merged": merged, "skipped_existing": skipped, "invalid": invalid, "total_projects": total}
+
+
+# ---------------------------------------------------------------------------
+# Import — Marinas GeoJSON (2026-08-24 bug-fix: previously only projects had
+# an import endpoint; the sidebar "Import GeoJSON" button silently sent
+# marinas/formalities exports to the projects endpoint, discarding them).
+# Accepts the `FeatureCollection` produced by `/api/export/marinas.geojson`.
+# Each feature.properties.id is used as the Mongo `_id` for idempotent
+# upserts, so re-importing the same file is a no-op (updated count grows,
+# imported stays at 0).
+# ---------------------------------------------------------------------------
+@router.post("/import/marinas.geojson")
+async def import_marinas_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    imported = updated = invalid = 0
+    for f in feats:
+        try:
+            geom = f.get("geometry") or {}
+            if geom.get("type") != "Point":
+                invalid += 1
+                continue
+            coords = geom.get("coordinates") or []
+            if len(coords) < 2:
+                invalid += 1
+                continue
+            lon, lat = float(coords[0]), float(coords[1])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                invalid += 1
+                continue
+            p = f.get("properties") or {}
+            name = str(p.get("name") or "").strip()
+            if not name:
+                invalid += 1
+                continue
+            mid = str(p.get("id") or "").strip() or str(uuid.uuid4())
+            doc = {
+                "_id": mid,
+                "name": name,
+                "lat": lat,
+                "lon": lon,
+                "source": p.get("source") or "curated",
+                "priority": int(p.get("priority") or 3),
+                "nearest_waypoint": p.get("nearest_waypoint") or {},
+                "tags": p.get("tags") or {},
+                "osm_id": p.get("osm_id"),
+                "enriched": bool(p.get("enriched")),
+                "enrichment_source": p.get("enrichment_source"),
+                "enriched_at": p.get("enriched_at"),
+                "stale": bool(p.get("stale")),
+                "canal_vhf": p.get("canal_vhf"),
+                "places_visiteurs": p.get("places_visiteurs"),
+                "tirant_eau_max_metres": p.get("tirant_eau_max_metres"),
+                "score_protection_meteo": p.get("score_protection_meteo"),
+                "services_disponibles": p.get("services_disponibles"),
+                "telephone_capitainerie": p.get("telephone_capitainerie"),
+                "resume_avis": p.get("resume_avis"),
+                "fetched_at": p.get("fetched_at") or now_iso(),
+            }
+            existing = await db.marinas.find_one({"_id": mid})
+            if existing:
+                await db.marinas.update_one({"_id": mid}, {"$set": doc})
+                updated += 1
+            else:
+                await db.marinas.insert_one(doc)
+                imported += 1
+        except Exception:
+            invalid += 1
+    total = await db.marinas.count_documents({})
+    swarm.log(f"Marinas GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid", "success")
+    return {"imported": imported, "merged": updated, "skipped_existing": 0, "invalid": invalid, "total_marinas": total}
+
+
+# ---------------------------------------------------------------------------
+# Import — Formalities GeoJSON (2026-08-24 bug-fix companion).
+# Accepts the `FeatureCollection` produced by `/api/export/formalities.geojson`.
+# That export ships 1 Point per escale (17 features), and each feature only
+# carries META (status, is_port_of_entry, generated_at, verified_at, stale)
+# — NOT the full fiche content (entree/sortie/…). Import therefore RESTORES
+# per-territory status and rebuilds `escale_overlays[]` from the meta, but
+# leaves fiche content fields untouched (they stay whatever was in the seed
+# or a previous generate/verify run).
+# Features are grouped by `territory_code` before upsert, so the 17 escale
+# features collapse to 13 territory documents (matches the seed cardinality).
+# ---------------------------------------------------------------------------
+@router.post("/import/formalities.geojson")
+async def import_formalities_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+
+    # Group features by territory_code
+    # Bug-fix 2026-08-24 — the export was extended to ship the full fiche
+    # content (entree/sortie/…/contacts/sources). To keep the round-trip
+    # export → import → restore identical, we now propagate those fields when
+    # they're present in the imported file. Backwards-compat: files produced
+    # by the older meta-only export still work — the content fields simply
+    # stay untouched (never overwritten with null).
+    CONTENT_FIELDS = ("entree", "sortie", "cas_particuliers", "immigration",
+                      "contacts", "liens_officiels", "sources")
+    by_code: dict[str, dict] = {}
+    invalid = 0
+    for f in feats:
+        try:
+            p = f.get("properties") or {}
+            code = str(p.get("territory_code") or "").strip()
+            escale_name = str(p.get("escale_name") or "").strip()
+            if not code or not escale_name:
+                invalid += 1
+                continue
+            entry = by_code.setdefault(code, {
+                "territory_code": code,
+                "escale_overlays": [],
+                "status": p.get("status") or "non_generee",
+                "generated_at": p.get("generated_at"),
+                "verified_at": p.get("verified_at"),
+                "content": {},  # only set fields with a real value survive
+            })
+            # First non-empty status wins (all escales of a territory share the
+            # same status in the export).
+            if p.get("status") and entry["status"] in (None, "non_generee"):
+                entry["status"] = p.get("status")
+            if p.get("generated_at") and not entry.get("generated_at"):
+                entry["generated_at"] = p.get("generated_at")
+            if p.get("verified_at") and not entry.get("verified_at"):
+                entry["verified_at"] = p.get("verified_at")
+            # Capture fiche content (identical across all escales of a
+            # territory — take the first non-null value seen).
+            for cf in CONTENT_FIELDS:
+                if cf in p and p[cf] not in (None, [], {}) and cf not in entry["content"]:
+                    entry["content"][cf] = p[cf]
+            # Escale overlay: preserve is_port_of_entry flag per escale. If the
+            # new export shipped `escale_overlay`, use it; otherwise fall back
+            # to the legacy top-level `is_port_of_entry` field.
+            legacy_overlay = p.get("escale_overlay") or {
+                "escale_name": escale_name,
+                "is_port_of_entry": bool(p.get("is_port_of_entry")),
+                "note": None,
+            }
+            # Ensure escale_name is set (older files might omit it inside overlay)
+            if not legacy_overlay.get("escale_name"):
+                legacy_overlay["escale_name"] = escale_name
+            entry["escale_overlays"].append(legacy_overlay)
+        except Exception:
+            invalid += 1
+            continue
+
+    imported = updated = 0
+    for code, entry in by_code.items():
+        existing = await db.formalities.find_one({"territory_code": code})
+        # Update META fields + any content fields explicitly present in the
+        # import. Content fields NOT present in the import are never touched.
+        update_set = {
+            "status": entry["status"],
+            "escale_overlays": entry["escale_overlays"],
+        }
+        if entry.get("generated_at"):
+            update_set["generated_at"] = entry["generated_at"]
+        if entry.get("verified_at"):
+            update_set["verified_at"] = entry["verified_at"]
+        # Merge fiche content (bug-fix 2026-08-24 round-trip).
+        for cf, val in (entry.get("content") or {}).items():
+            update_set[cf] = val
+        if existing:
+            await db.formalities.update_one(
+                {"territory_code": code}, {"$set": update_set},
+            )
+            updated += 1
+        else:
+            # Territory not seeded yet — create a minimal doc so the meta
+            # survives. Fiche content stays null unless the import carried it.
+            new_doc = {
+                "_id": str(uuid.uuid4()),
+                "territory_code": code,
+                "entree": None, "sortie": None, "cas_particuliers": None,
+                "immigration": None, "contacts": [], "liens_officiels": [],
+                "sources": [],
+                **update_set,
+            }
+            await db.formalities.insert_one(new_doc)
+            imported += 1
+    total = await db.formalities.count_documents({})
+    swarm.log(
+        f"Formalities GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid, "
+        f"{len(by_code)} territories",
+        "success",
+    )
+    return {
+        "imported": imported,
+        "merged": updated,
+        "skipped_existing": 0,
+        "invalid": invalid,
+        "total_formalities": total,
+        "territories_touched": len(by_code),
+    }
 
 
 @router.get("/categories")
@@ -1567,7 +1803,15 @@ async def export_formalities_json():
 
 @router.get("/export/formalities.geojson")
 async def export_formalities_geojson():
-    """1 Point per escale (all 17 features from route.geojson) with formality meta."""
+    """1 Point per escale (all 17 features from route.geojson) with formality meta
+    AND full fiche content (entree / sortie / cas_particuliers / immigration /
+    contacts / liens_officiels / sources).
+
+    Bug-fix 2026-08-24 — previously the export only shipped the 8 META fields
+    (status, is_port_of_entry, generated_at, verified_at, stale, escale_name,
+    leg, territory_code). All AI-generated content was silently dropped,
+    breaking the round-trip export → import → identical restore.
+    """
     if not ROUTE_FILE.exists():
         raise HTTPException(500, "route.geojson missing")
     import json as _json
@@ -1603,6 +1847,7 @@ async def export_formalities_geojson():
             "type": "Feature",
             "geometry": feat["geometry"],
             "properties": {
+                # ---- META (unchanged) ----
                 "escale_name": name,
                 "leg": leg,
                 "territory_code": code,
@@ -1611,6 +1856,18 @@ async def export_formalities_geojson():
                 "stale": _fs(d) if d else False,
                 "generated_at": d.get("generated_at"),
                 "verified_at": d.get("verified_at"),
+                # ---- FULL FICHE CONTENT (bug-fix) ----
+                "entree":            d.get("entree"),
+                "sortie":            d.get("sortie"),
+                "cas_particuliers":  d.get("cas_particuliers"),
+                "immigration":       d.get("immigration"),
+                "contacts":          d.get("contacts") or [],
+                "liens_officiels":   d.get("liens_officiels") or [],
+                "sources":           d.get("sources") or [],
+                # `escale_overlays` is exported at the FEATURE level (per escale)
+                # rather than duplicated on every escale of a multi-escale
+                # territory — the import endpoint re-groups them by territory.
+                "escale_overlay": overlay,
             },
         })
     fc = {"type": "FeatureCollection", "features": features}

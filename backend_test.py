@@ -1,481 +1,341 @@
-"""
-Phase 3.1 async enrichment bug fix – backend test suite.
+"""Backend tests for 4-bug fix phase (2026-08-24).
 
-Runs T1..T10 as described in the review request against the URL declared in
-frontend/.env (REACT_APP_BACKEND_URL) + /api. Read-only verification only.
-"""
-from __future__ import annotations
+Covers:
+  T1 — GET /api/export/formalities.geojson ships FULL content
+  T2 — round-trip export → import
+  T3 — GET /api/stats?mode=... returns mode-scoped counter
+  T4 — GET /api/stats?mode=unknown defaults to projects
+  T5 — non-regression sanity endpoints
 
+Run: python /app/backend_test.py
+"""
 import json
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import requests
 
-# ---------- Base URL ----------
-def _load_base_url() -> str:
-    env_path = Path("/app/frontend/.env")
-    for line in env_path.read_text().splitlines():
-        if line.startswith("REACT_APP_BACKEND_URL="):
-            return line.split("=", 1)[1].strip().strip('"')
-    raise RuntimeError("REACT_APP_BACKEND_URL not found in frontend/.env")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8001")
+API = f"{BASE_URL}/api"
 
-BASE = _load_base_url().rstrip("/") + "/api"
-print(f"[setup] BASE = {BASE}")
+TMP_EXPORT = Path("/tmp/formalities_export_roundtrip.geojson")
 
-# ---------- helpers ----------
-RESULTS: dict[str, dict[str, Any]] = {}
+results: list[tuple[str, bool, str]] = []
 
-def record(tid: str, ok: bool, detail: str, extra: dict | None = None):
-    RESULTS[tid] = {"ok": ok, "detail": detail, **(extra or {})}
-    tag = "✅" if ok else "❌"
-    print(f"{tag} {tid}: {detail}")
 
-def timed_post(url: str, **kw) -> tuple[requests.Response, float]:
-    t0 = time.monotonic()
-    r = requests.post(url, timeout=kw.pop("timeout", 30), **kw)
-    return r, time.monotonic() - t0
+def _record(tag: str, ok: bool, msg: str = ""):
+    results.append((tag, ok, msg))
+    prefix = "PASS" if ok else "FAIL"
+    print(f"[{prefix}] {tag} — {msg}")
 
-def timed_get(url: str, **kw) -> tuple[requests.Response, float]:
-    t0 = time.monotonic()
-    r = requests.get(url, timeout=kw.pop("timeout", 30), **kw)
-    return r, time.monotonic() - t0
 
-def poll_status(url: str, timeout_s: float, interval: float = 3.0) -> dict:
-    deadline = time.monotonic() + timeout_s
-    last = {}
-    while time.monotonic() < deadline:
-        r, _ = timed_get(url)
-        last = r.json()
-        if last.get("state") in ("done", "error"):
-            return last
-        time.sleep(interval)
-    return last
-
-# ---------- setup constants ----------
-MARINA_PRIMARY = "b75bc928-b5bb-4a54-a433-142c8dffc208"  # Port des Minimes
-BAD_ID = "00000000-0000-0000-0000-000000000000"
-MAX_HTTP_TIME_OBSERVED = 0.0
-
-def observe_time(t: float):
-    global MAX_HTTP_TIME_OBSERVED
-    MAX_HTTP_TIME_OBSERVED = max(MAX_HTTP_TIME_OBSERVED, t)
-
-# ================================================================
-# T1: Marina POST returns 202 fast
-# ================================================================
-print("\n--- T1: marina POST returns 202 fast ---")
-url_t1 = f"{BASE}/marinas/{MARINA_PRIMARY}/enrich"
-r, elapsed = timed_post(url_t1)
-observe_time(elapsed)
-print(f"  status={r.status_code} elapsed={elapsed:.2f}s body={r.text[:200]}")
-t1_ok = False
-t1_body = {}
-if r.status_code == 202:
-    try:
-        t1_body = r.json()
-    except Exception:
-        t1_body = {}
-    t1_ok = (
-        elapsed < 5.0
-        and t1_body.get("status") == "started"
-        and t1_body.get("marina_id") == MARINA_PRIMARY
-    )
-    record("T1", t1_ok, f"HTTP 202 in {elapsed:.2f}s body={t1_body}",
-           {"elapsed": elapsed, "body": t1_body})
-elif r.status_code == 409:
-    # A prior test left a task running — wait it out and retry once
-    print("  409 lock hit — waiting up to 180s for prior task to finish, then retry")
-    poll_status(f"{BASE}/marinas/{MARINA_PRIMARY}/enrich/status", 180)
-    r, elapsed = timed_post(url_t1)
-    observe_time(elapsed)
-    print(f"  retry status={r.status_code} elapsed={elapsed:.2f}s")
-    if r.status_code == 202 and elapsed < 5.0:
-        t1_body = r.json()
-        t1_ok = t1_body.get("status") == "started"
-    record("T1", t1_ok, f"After 409 wait: HTTP {r.status_code} in {elapsed:.2f}s",
-           {"elapsed": elapsed, "body": t1_body})
-else:
-    record("T1", False, f"unexpected HTTP {r.status_code}: {r.text[:200]}")
-
-# ================================================================
-# T2: Marina status lifecycle
-# ================================================================
-print("\n--- T2: marina status endpoint lifecycle ---")
-status_url = f"{BASE}/marinas/{MARINA_PRIMARY}/enrich/status"
-r, _ = timed_get(status_url)
-s0 = r.json()
-print(f"  immediate: state={s0.get('state')} started_at={s0.get('started_at')} "
-      f"finished_at={s0.get('finished_at')} logs_tail_len={len(s0.get('logs_tail') or [])}")
-
-immediate_running_ok = (
-    s0.get("state") == "running"
-    and s0.get("started_at") is not None
-    and s0.get("finished_at") is None
-)
-final = poll_status(status_url, timeout_s=200, interval=3.0)
-print(f"  final state={final.get('state')} finished_at={final.get('finished_at')}")
-result = final.get("result") or {}
-err = final.get("error")
-enrichment_source = result.get("enrichment_source") if isinstance(result, dict) else None
-
-filled_fields = 0
-enrichment_fields = [
-    "phone", "email", "website", "vhf_channel", "electricity_amperage",
-    "berth_count", "max_length_m",
-]
-if isinstance(result, dict):
-    filled_fields = sum(1 for f in enrichment_fields if result.get(f) not in (None, "", []))
-
-t2_ok = immediate_running_ok and final.get("state") in ("done", "error")
-detail = (
-    f"immediate running OK={immediate_running_ok}; "
-    f"final={final.get('state')} source={enrichment_source} "
-    f"fields_filled={filled_fields}/7 error={err}"
-)
-record("T2", t2_ok, detail,
-       {"final_state": final.get("state"),
-        "enrichment_source": enrichment_source,
-        "fields_filled": filled_fields,
-        "logs_tail": final.get("logs_tail", [])})
-
-# ================================================================
-# T3: per-id 409 lock
-# ================================================================
-print("\n--- T3: per-id 409 lock ---")
-# Pick a different marina that hasn't been enriched (in this session)
-# We'll list marinas and pick one whose id is not MARINA_PRIMARY.
-r, _ = timed_get(f"{BASE}/marinas?limit=20")
-marinas_list = r.json() if r.status_code == 200 else []
-alt_marina_id = None
-if isinstance(marinas_list, list):
-    for m in marinas_list:
-        mid = m.get("_id") or m.get("id")
-        if mid and mid != MARINA_PRIMARY:
-            alt_marina_id = mid
-            break
-elif isinstance(marinas_list, dict):
-    feats = marinas_list.get("features") or marinas_list.get("items") or []
-    for m in feats:
-        mid = (m.get("properties") or {}).get("id") or m.get("_id")
-        if mid and mid != MARINA_PRIMARY:
-            alt_marina_id = mid
-            break
-print(f"  alt marina picked: {alt_marina_id}")
-
-if alt_marina_id:
-    r1, e1 = timed_post(f"{BASE}/marinas/{alt_marina_id}/enrich")
-    observe_time(e1)
-    print(f"  first POST status={r1.status_code} in {e1:.2f}s")
-    # immediate re-post
-    r2, e2 = timed_post(f"{BASE}/marinas/{alt_marina_id}/enrich")
-    observe_time(e2)
-    print(f"  second POST status={r2.status_code} in {e2:.2f}s body={r2.text[:200]}")
-    body2 = {}
-    try:
-        body2 = r2.json()
-    except Exception:
-        pass
-    t3_ok = (
-        r1.status_code == 202
-        and r2.status_code == 409
-        and "already in progress" in (body2.get("detail") or "").lower()
-    )
-    record("T3", t3_ok,
-           f"first={r1.status_code} second={r2.status_code} detail={body2.get('detail')}",
-           {"alt_marina_id": alt_marina_id})
-else:
-    record("T3", False, "could not find an alt marina id to test 409")
-
-# ================================================================
-# T4: Project POST returns 202 fast
-# ================================================================
-print("\n--- T4: project POST returns 202 fast ---")
-r, _ = timed_get(f"{BASE}/projects")
-projects_payload = r.json() if r.status_code == 200 else {}
-project_id = None
-project_url_present = False
-if isinstance(projects_payload, dict):
-    feats = projects_payload.get("features") or []
-    for f in feats:
-        props = f.get("properties") or {}
-        pid = props.get("id")
-        if pid:
-            # need a URL — projects without URL return 400 per code
-            if props.get("url"):
-                project_id = pid
-                project_url_present = True
-                break
-            elif project_id is None:
-                project_id = pid  # fallback
-print(f"  project_id={project_id} url_present={project_url_present}")
-
-t4_ok = False
-if project_id:
-    r, elapsed = timed_post(f"{BASE}/projects/{project_id}/enrich")
-    observe_time(elapsed)
-    print(f"  status={r.status_code} elapsed={elapsed:.2f}s body={r.text[:200]}")
-    if r.status_code == 202 and elapsed < 5.0:
-        b = r.json()
-        t4_ok = b.get("status") == "started" and b.get("project_id") == project_id
-        record("T4", t4_ok, f"HTTP 202 in {elapsed:.2f}s body={b}",
-               {"elapsed": elapsed, "project_id": project_id})
-    elif r.status_code == 400:
-        # project had no url — try next one
-        print("  400: project has no URL, picking another with a URL...")
-        picked = None
-        for f in projects_payload.get("features", []):
-            props = f.get("properties") or {}
-            if props.get("url") and props.get("id") != project_id:
-                picked = props.get("id")
-                break
-        if picked:
-            project_id = picked
-            r, elapsed = timed_post(f"{BASE}/projects/{project_id}/enrich")
-            observe_time(elapsed)
-            print(f"  retry status={r.status_code} elapsed={elapsed:.2f}s")
-            if r.status_code == 202 and elapsed < 5.0:
-                b = r.json()
-                t4_ok = b.get("status") == "started"
-                record("T4", t4_ok, f"HTTP 202 in {elapsed:.2f}s body={b}",
-                       {"elapsed": elapsed, "project_id": project_id})
-            else:
-                record("T4", False, f"retry HTTP {r.status_code} in {elapsed:.2f}s: {r.text[:200]}")
-        else:
-            record("T4", False, "no project with URL found to test 202")
+def _assert(tag: str, cond: bool, msg: str):
+    if cond:
+        _record(tag, True, msg)
     else:
-        record("T4", False, f"unexpected HTTP {r.status_code} in {elapsed:.2f}s: {r.text[:200]}")
-else:
-    record("T4", False, "no project id available")
+        _record(tag, False, msg)
+    return cond
 
-# ================================================================
-# T5: Project status lifecycle
-# ================================================================
-print("\n--- T5: project status lifecycle ---")
-if t4_ok and project_id:
-    proj_status_url = f"{BASE}/projects/{project_id}/enrich/status"
-    r, _ = timed_get(proj_status_url)
-    ps0 = r.json()
-    print(f"  immediate state={ps0.get('state')}")
-    immediate_ok = ps0.get("state") == "running"
-    final_p = poll_status(proj_status_url, timeout_s=120, interval=3.0)
-    print(f"  final state={final_p.get('state')} error={final_p.get('error')}")
-    t5_ok = immediate_ok and final_p.get("state") in ("done", "error")
-    detail = f"immediate_running={immediate_ok} final={final_p.get('state')} error={final_p.get('error')}"
-    record("T5", t5_ok, detail,
-           {"final_state": final_p.get("state"),
-            "logs_tail": final_p.get("logs_tail", [])})
-else:
-    record("T5", False, "skipped due to T4 failure")
 
-# ================================================================
-# T6: Idle state before any POST
-# ================================================================
-print("\n--- T6: idle state before first POST ---")
-# find a fresh marina id we have NOT posted against
-fresh_id = None
-used = {MARINA_PRIMARY, alt_marina_id}
-if isinstance(marinas_list, list):
-    for m in marinas_list:
-        mid = m.get("_id") or m.get("id")
-        if mid and mid not in used:
-            fresh_id = mid
-            break
-elif isinstance(marinas_list, dict):
-    for feat in marinas_list.get("features") or []:
-        props = feat.get("properties") or {}
-        mid = props.get("id") or feat.get("_id")
-        if mid and mid not in used:
-            fresh_id = mid
-            break
-print(f"  fresh_id={fresh_id}")
-if fresh_id:
-    r, _ = timed_get(f"{BASE}/marinas/{fresh_id}/enrich/status")
-    body = r.json() if r.ok else {}
-    print(f"  status={r.status_code} body={body}")
-    t6_ok = r.status_code == 200 and body.get("state") == "idle"
-    record("T6", t6_ok, f"HTTP {r.status_code} state={body.get('state')}")
-else:
-    record("T6", False, "no fresh marina id to test idle state")
+# ---------------------------------------------------------------------------
+# T1 — export ships full content
+# ---------------------------------------------------------------------------
+def test_T1_export_full_content() -> dict:
+    print("\n=== T1 — /api/export/formalities.geojson ships full content ===")
+    r = requests.get(f"{API}/export/formalities.geojson", timeout=30)
+    _assert("T1.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code != 200:
+        return {}
+    body_bytes = r.content
+    size = len(body_bytes)
+    _assert("T1.size>20KB", size > 20 * 1024, f"size={size} bytes ({size/1024:.1f} KB)")
+    fc = r.json()
+    _assert("T1.type", fc.get("type") == "FeatureCollection",
+            f"type={fc.get('type')!r}")
+    feats = fc.get("features") or []
+    _assert("T1.count==17", len(feats) == 17, f"features={len(feats)}")
 
-# ================================================================
-# T7: 404 on unknown id
-# ================================================================
-print("\n--- T7: 404 on unknown id ---")
-r1, _ = timed_post(f"{BASE}/marinas/{BAD_ID}/enrich")
-r2, _ = timed_post(f"{BASE}/projects/{BAD_ID}/enrich")
-b1, b2 = {}, {}
-try:
-    b1 = r1.json()
-except Exception:
-    pass
-try:
-    b2 = r2.json()
-except Exception:
-    pass
-print(f"  marinas: {r1.status_code} {b1}")
-print(f"  projects: {r2.status_code} {b2}")
-t7_ok = (
-    r1.status_code == 404 and "marina not found" in (b1.get("detail") or "").lower()
-    and r2.status_code == 404 and "project not found" in (b2.get("detail") or "").lower()
-)
-record("T7", t7_ok,
-       f"marinas: {r1.status_code} '{b1.get('detail')}' | projects: {r2.status_code} '{b2.get('detail')}'")
+    # Save for T2 round-trip
+    TMP_EXPORT.write_bytes(body_bytes)
 
-# ================================================================
-# T8: Chain order in logs (using final logs_tail from T2)
-# ================================================================
-print("\n--- T8: chain order in logs_tail ---")
-logs = RESULTS.get("T2", {}).get("logs_tail", []) or []
-joined = "\n".join(logs)
-print("  logs_tail sample:")
-for line in logs[-30:]:
-    print(f"    {line}")
-# order check
-def find_idx(needle: str) -> int:
-    for i, line in enumerate(logs):
-        if needle.lower() in line.lower():
-            return i
-    return -1
+    # Find Martinique feature
+    mart = next(
+        (f for f in feats if (f.get("properties") or {}).get("territory_code") == "martinique"),
+        None,
+    )
+    _assert("T1.mart.present", mart is not None, f"found={mart is not None}")
+    if not mart:
+        return {"export": fc}
 
-idx_tiny = find_idx("tinyfish")
-idx_kimi = find_idx("kimi")
-idx_or = find_idx("openrouter")
-idx_fb = find_idx("fallback")
-print(f"  idx tinyfish={idx_tiny} kimi={idx_kimi} openrouter={idx_or} fallback={idx_fb}")
+    props = mart.get("properties") or {}
+    required = [
+        "escale_name", "leg", "territory_code", "status", "is_port_of_entry",
+        "stale", "generated_at", "verified_at",
+        "entree", "sortie", "cas_particuliers", "immigration",
+        "contacts", "liens_officiels", "sources", "escale_overlay",
+    ]
+    missing = [k for k in required if k not in props]
+    _assert("T1.mart.all_keys", not missing,
+            f"missing_keys={missing} present_keys={sorted(props.keys())}")
 
-# Order: TinyFish first; later tiers must be after if present
-present = [(n, i) for n, i in [
-    ("tinyfish", idx_tiny), ("kimi", idx_kimi),
-    ("openrouter", idx_or), ("fallback", idx_fb)
-] if i >= 0]
-order_ok = all(present[k][1] < present[k+1][1] for k in range(len(present) - 1))
-tinyfish_present = idx_tiny >= 0
-t8_ok = tinyfish_present and order_ok
-kimi_auth_seen = any(("[kimi]" in ln and ("auth error" in ln.lower() or "401" in ln
-                     or "unavailable" in ln.lower() or "no credentials" in ln.lower()))
-                     for ln in logs)
-detail = (
-    f"tinyfish_present={tinyfish_present} order_ok={order_ok} "
-    f"kimi_auth_line_seen={kimi_auth_seen} present={present}"
-)
-record("T8", t8_ok, detail, {"kimi_auth_seen": kimi_auth_seen})
+    entree = props.get("entree")
+    _assert("T1.mart.entree_dict", isinstance(entree, dict),
+            f"type(entree)={type(entree).__name__}")
+    if isinstance(entree, dict):
+        dem = entree.get("demarches_arrivee")
+        any_nonnull = any(v not in (None, "", [], {}) for v in entree.values())
+        _assert(
+            "T1.mart.entree_content_populated",
+            (isinstance(dem, str) and len(dem) > 0) or any_nonnull,
+            f"demarches_arrivee_len={len(dem) if isinstance(dem, str) else None} "
+            f"any_nonnull={any_nonnull} keys={sorted(entree.keys())}",
+        )
 
-# ================================================================
-# T9: No-regression sanity
-# ================================================================
-print("\n--- T9: no-regression sanity ---")
-issues = []
+    sortie = props.get("sortie")
+    _assert("T1.mart.sortie_dict", isinstance(sortie, dict),
+            f"type(sortie)={type(sortie).__name__}")
 
-r, _ = timed_get(f"{BASE}/")
-observe_time(_)
-if r.status_code != 200:
-    issues.append(f"GET /api/ => {r.status_code}")
+    contacts = props.get("contacts")
+    _assert("T1.mart.contacts_list", isinstance(contacts, list),
+            f"type(contacts)={type(contacts).__name__} len={len(contacts) if isinstance(contacts, list) else 'n/a'}")
 
-r, _ = timed_get(f"{BASE}/openapi.json")
-observe_time(_)
-paths = {}
-if r.status_code == 200:
-    paths = (r.json() or {}).get("paths", {})
-else:
-    issues.append(f"GET /api/openapi.json => {r.status_code}")
-required_paths = [
-    "/api/marinas/{marina_id}/enrich",
-    "/api/marinas/{marina_id}/enrich/status",
-    "/api/projects/{project_id}/enrich",
-    "/api/projects/{project_id}/enrich/status",
-]
-missing_paths = [p for p in required_paths if p not in paths]
-if missing_paths:
-    issues.append(f"openapi missing: {missing_paths}")
+    sources = props.get("sources")
+    _assert("T1.mart.sources_list", isinstance(sources, list),
+            f"type(sources)={type(sources).__name__} len={len(sources) if isinstance(sources, list) else 'n/a'}")
 
-r, _ = timed_get(f"{BASE}/marinas/count")
-observe_time(_)
-if r.status_code != 200:
-    issues.append(f"marinas/count => {r.status_code}")
-else:
-    total = r.json().get("total")
-    if not (isinstance(total, int) and total >= 200):
-        issues.append(f"marinas/count total={total} <200")
-    else:
-        print(f"  marinas/count total={total}")
+    return {"export": fc, "mart_props": props}
 
-r, _ = timed_get(f"{BASE}/route")
-observe_time(_)
-if r.status_code != 200:
-    issues.append(f"/route => {r.status_code}")
-else:
-    j = r.json()
-    n_feats = len(j.get("features", []))
-    print(f"  route type={j.get('type')} features={n_feats}")
-    if j.get("type") != "FeatureCollection":
-        issues.append(f"/route type={j.get('type')}")
-    if n_feats != 71:
-        issues.append(f"/route features={n_feats} (expected 71)")
 
-r, _ = timed_get(f"{BASE}/projects")
-observe_time(_)
-if r.status_code != 200:
-    issues.append(f"/projects => {r.status_code}")
-else:
-    j = r.json()
-    n_feats = len(j.get("features", []))
-    print(f"  projects features={n_feats}")
-    if n_feats != 4463:
-        issues.append(f"/projects features={n_feats} (expected 4463)")
+# ---------------------------------------------------------------------------
+# T2 — round-trip export → import
+# ---------------------------------------------------------------------------
+def test_T2_round_trip(t1_data: dict):
+    print("\n=== T2 — round-trip export → import ===")
+    if not TMP_EXPORT.exists():
+        _record("T2", False, "no export file saved from T1")
+        return
+    export_fc = json.loads(TMP_EXPORT.read_text(encoding="utf-8"))
+    r = requests.post(
+        f"{API}/import/formalities.geojson",
+        json=export_fc,
+        timeout=30,
+    )
+    _assert("T2.http", r.status_code == 200,
+            f"status={r.status_code} body={r.text[:200]}")
+    if r.status_code != 200:
+        return
+    resp = r.json()
+    _assert("T2.total_formalities==13",
+            resp.get("total_formalities") == 13,
+            f"total_formalities={resp.get('total_formalities')} resp={resp}")
+    _assert("T2.territories_touched==13",
+            resp.get("territories_touched") == 13,
+            f"territories_touched={resp.get('territories_touched')}")
+    _assert("T2.invalid==0",
+            resp.get("invalid") == 0,
+            f"invalid={resp.get('invalid')}")
 
-# enrich-batch
-r, e = timed_post(f"{BASE}/marinas/enrich-batch", json={"limit": 2})
-observe_time(e)
-print(f"  enrich-batch: {r.status_code} in {e:.2f}s body={r.text[:200]}")
-if r.status_code not in (200, 202, 409):
-    issues.append(f"enrich-batch POST => {r.status_code}")
-else:
-    try:
-        bb = r.json()
-        if r.status_code in (200, 202) and bb.get("started") is not True:
-            # server may return other shape; check for other indicators
-            pass
-    except Exception:
-        pass
-r, _ = timed_get(f"{BASE}/marinas/enrich-batch/status")
-observe_time(_)
-if r.status_code >= 500:
-    issues.append(f"enrich-batch/status => {r.status_code}")
+    # Fetch /api/formalities and compare martinique fields
+    r2 = requests.get(f"{API}/formalities", timeout=30)
+    _assert("T2.formalities.http", r2.status_code == 200,
+            f"status={r2.status_code}")
+    if r2.status_code != 200:
+        return
+    body = r2.json()
+    items = body.get("items") or []
+    mart_item = next(
+        (it for it in items if it.get("territory_code") == "martinique"),
+        None,
+    )
+    _assert("T2.mart_item.present", mart_item is not None,
+            f"found={mart_item is not None}")
+    if not mart_item:
+        return
 
-t9_ok = not issues
-record("T9", t9_ok, f"issues={issues}")
+    exported_mart = t1_data.get("mart_props") or {}
+    # entree.demarches_arrivee identical
+    exported_entree = exported_mart.get("entree") or {}
+    imported_entree = mart_item.get("entree") or {}
+    exp_dem = exported_entree.get("demarches_arrivee") if isinstance(exported_entree, dict) else None
+    imp_dem = imported_entree.get("demarches_arrivee") if isinstance(imported_entree, dict) else None
+    _assert(
+        "T2.entree.demarches_arrivee.identical",
+        exp_dem == imp_dem,
+        f"exp_len={len(exp_dem) if isinstance(exp_dem, str) else None} "
+        f"imp_len={len(imp_dem) if isinstance(imp_dem, str) else None} "
+        f"equal={exp_dem == imp_dem}",
+    )
 
-# ================================================================
-# T10: Health of the async pattern (no HTTP > 15s)
-# ================================================================
-print("\n--- T10: async pattern health ---")
-t10_ok = MAX_HTTP_TIME_OBSERVED < 15.0
-record("T10", t10_ok,
-       f"max observed single-request wall-clock = {MAX_HTTP_TIME_OBSERVED:.2f}s (limit 15s)")
+    # sortie.clearance preserved
+    exported_sortie = exported_mart.get("sortie") or {}
+    imported_sortie = mart_item.get("sortie") or {}
+    exp_cl = exported_sortie.get("clearance") if isinstance(exported_sortie, dict) else None
+    imp_cl = imported_sortie.get("clearance") if isinstance(imported_sortie, dict) else None
+    _assert(
+        "T2.sortie.clearance.preserved",
+        exp_cl == imp_cl,
+        f"exp={str(exp_cl)[:80]!r} imp={str(imp_cl)[:80]!r} equal={exp_cl == imp_cl}",
+    )
 
-# ================================================================
-# Final summary
-# ================================================================
-print("\n\n================ SUMMARY ================")
-all_ok = True
-for tid in sorted(RESULTS.keys()):
-    r = RESULTS[tid]
-    tag = "✅" if r["ok"] else "❌"
-    print(f"{tag} {tid}: {r['detail']}")
-    if not r["ok"]:
-        all_ok = False
+    overlays = mart_item.get("escale_overlays") or []
+    _assert(
+        "T2.escale_overlays.len==1",
+        isinstance(overlays, list) and len(overlays) == 1,
+        f"len={len(overlays) if isinstance(overlays, list) else 'n/a'} overlays={overlays}",
+    )
 
-t2 = RESULTS.get("T2", {})
-print(f"\nEnrichment source: {t2.get('enrichment_source')}")
-print(f"Fields filled: {t2.get('fields_filled')}/7")
-print(f"Max single HTTP wall-clock: {MAX_HTTP_TIME_OBSERVED:.2f}s")
 
-print("\nFinal logs_tail from marina enrichment (T2):")
-for ln in (t2.get("logs_tail") or [])[-30:]:
-    print(f"  {ln}")
+# ---------------------------------------------------------------------------
+# T3 — /api/stats?mode=... returns mode-scoped counter
+# ---------------------------------------------------------------------------
+def test_T3_stats_mode_scoped():
+    print("\n=== T3 — /api/stats?mode=... ===")
+    cases = [
+        ("projects", 4463),
+        ("marinas", 212),
+        ("formalities", 17),
+    ]
+    for mode, expected in cases:
+        r = requests.get(f"{API}/stats", params={"mode": mode}, timeout=15)
+        _assert(f"T3.{mode}.http", r.status_code == 200, f"status={r.status_code}")
+        if r.status_code != 200:
+            continue
+        body = r.json()
+        _assert(
+            f"T3.{mode}.items_mapped=={expected}",
+            body.get("items_mapped") == expected,
+            f"items_mapped={body.get('items_mapped')} body={body}",
+        )
+        _assert(
+            f"T3.{mode}.mode",
+            body.get("mode") == mode,
+            f"mode={body.get('mode')!r}",
+        )
+        if mode == "projects":
+            _assert(
+                "T3.projects.projects_mapped==4463(bw-compat)",
+                body.get("projects_mapped") == 4463,
+                f"projects_mapped={body.get('projects_mapped')}",
+            )
 
-sys.exit(0 if all_ok else 1)
+    # Default (no query) should equal projects
+    r = requests.get(f"{API}/stats", timeout=15)
+    _assert("T3.default.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        _assert(
+            "T3.default.items_mapped==4463",
+            body.get("items_mapped") == 4463,
+            f"items_mapped={body.get('items_mapped')} body={body}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# T4 — unknown mode defaults to projects
+# ---------------------------------------------------------------------------
+def test_T4_unknown_mode():
+    print("\n=== T4 — /api/stats?mode=unknown ===")
+    r = requests.get(f"{API}/stats", params={"mode": "xxx_unknown"}, timeout=15)
+    _assert("T4.http", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+    if r.status_code != 200:
+        return
+    body = r.json()
+    _assert("T4.has_items_mapped", "items_mapped" in body,
+            f"keys={sorted(body.keys())}")
+    _assert("T4.no_crash", isinstance(body.get("items_mapped"), int),
+            f"items_mapped={body.get('items_mapped')!r} type={type(body.get('items_mapped')).__name__}")
+
+
+# ---------------------------------------------------------------------------
+# T5 — non-regression sanity endpoints
+# ---------------------------------------------------------------------------
+def test_T5_sanity():
+    print("\n=== T5 — non-regression sanity ===")
+
+    r = requests.get(f"{API}/", timeout=15)
+    _assert("T5./api/", r.status_code == 200, f"status={r.status_code}")
+
+    r = requests.get(f"{API}/route", timeout=15)
+    _assert("T5./api/route.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        feats = body.get("features") or []
+        _assert("T5./api/route.type",
+                body.get("type") == "FeatureCollection",
+                f"type={body.get('type')!r}")
+        _assert("T5./api/route.features>=60",
+                len(feats) >= 60,
+                f"features={len(feats)}")
+
+    r = requests.get(f"{API}/projects", timeout=30)
+    _assert("T5./api/projects.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        feats = body.get("features") or []
+        _assert("T5./api/projects.count==4463",
+                len(feats) == 4463,
+                f"features={len(feats)}")
+
+    r = requests.get(f"{API}/marinas", timeout=30)
+    _assert("T5./api/marinas.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        feats = body.get("features") or []
+        _assert("T5./api/marinas.count==212",
+                len(feats) == 212,
+                f"features={len(feats)}")
+
+    r = requests.get(f"{API}/formalities", timeout=15)
+    _assert("T5./api/formalities.http", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        _assert("T5./api/formalities.count==13",
+                body.get("count") == 13,
+                f"count={body.get('count')}")
+
+    r = requests.get(f"{API}/territories", timeout=15)
+    _assert("T5./api/territories.http", r.status_code == 200, f"status={r.status_code}")
+
+    r = requests.get(f"{API}/openapi.json", timeout=15)
+    _assert("T5./api/openapi.json.http", r.status_code == 200,
+            f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        paths = body.get("paths") or {}
+        required_paths = [
+            "/api/import/geojson",
+            "/api/import/marinas.geojson",
+            "/api/import/formalities.geojson",
+            "/api/export/formalities.geojson",
+            "/api/stats",
+        ]
+        missing = [p for p in required_paths if p not in paths]
+        _assert("T5./api/openapi.json.paths",
+                not missing,
+                f"missing_paths={missing}")
+
+
+def main():
+    print(f"BASE_URL = {BASE_URL}")
+    t1 = test_T1_export_full_content()
+    test_T2_round_trip(t1)
+    test_T3_stats_mode_scoped()
+    test_T4_unknown_mode()
+    test_T5_sanity()
+
+    print("\n" + "=" * 72)
+    ok = sum(1 for _, o, _ in results if o)
+    ko = sum(1 for _, o, _ in results if not o)
+    print(f"SUMMARY: {ok} PASS · {ko} FAIL · total={len(results)}")
+    if ko:
+        print("\nFailures:")
+        for tag, o, msg in results:
+            if not o:
+                print(f"  - {tag}: {msg}")
+    return 0 if ko == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

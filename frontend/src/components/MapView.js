@@ -151,28 +151,28 @@ export default function MapView({
       }),
     });
     marinaClusterRef.current = marinaCluster;
-    // Phase 7 — Formalities cluster (amber). Used to group the escales when zoomed out
-    // (e.g. the 4 Antilles escales collapse into a single cluster in world view).
+    // Phase 7 — Formalities layer (amber).
     //
-    // Popup-open bug fix (2026-08-24): `removeOutsideVisibleBounds` is DELIBERATELY
-    // false for this cluster. With only 17 escale markers world-wide, keeping them
-    // all in the DOM at all times has zero perf impact AND guarantees that
-    // `target._icon` is populated when the sidebar sends a flyToEscale signal for a
-    // marker that was previously off-screen (e.g. clicking Papeete from a Europe-
-    // centred view). Otherwise `leaflet.markercluster.zoomToShowLayer` enters its
-    // `panTo` branch, the panTo is a no-op (we already flyTo'd there), the internal
-    // `moveend` never fires, and the popup callback never runs → popup never opens.
-    const formalitiesCluster = L.markerClusterGroup({
-      maxClusterRadius: 45,
-      chunkedLoading: false,
-      removeOutsideVisibleBounds: false,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-formalities" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [32, 32],
-      }),
-    });
+    // SPM disappearance bug-fix (2026-08-24): we USED to wrap this layer in
+    // `L.markerClusterGroup` but its post-init "in-bounds" cache is stubbornly
+    // wrong for markers that fall outside the initial map viewport
+    // (Saint-Pierre-et-Miquelon at lng=-56, Papeete at lng=-149, Nouméa at
+    // lng=+166, Wallis at lng=-176 all ended up with __parent still pointing
+    // at the ROOT cluster at zoom 1 with hasIcon=false — they never got a
+    // DOM element even with removeOutsideVisibleBounds=false AND
+    // disableClusteringAtZoom=4). With only 17 escale markers in this layer,
+    // clustering is aesthetic-only, so we drop it entirely: a plain
+    // `L.featureGroup` guarantees every marker gets a DOM element the moment
+    // the layer is attached to the map. Popup open now Just Works for every
+    // escale regardless of its longitude.
+    //
+    // NB: the ref is still called `formalitiesClusterRef` to keep the rest of
+    // the codebase (flyToEscale effect, mode-swap effect) untouched. The
+    // duck-typed methods we call on it (`clearLayers`, `addLayer`,
+    // `getLayers`, `hasLayer`) are shared between `L.markerClusterGroup` and
+    // `L.featureGroup`; the ones we don't call anymore (`zoomToShowLayer`,
+    // `refreshClusters`) are guarded elsewhere with `typeof … === "function"`.
+    const formalitiesCluster = L.featureGroup();
     formalitiesClusterRef.current = formalitiesCluster;
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
     // if the user is starting in another mode.
@@ -262,6 +262,7 @@ export default function MapView({
             lineCap: "round",
             lineJoin: "round",
             interactive: false,
+            fill: false,  // 2026-08-24 defensive — no fill on polyline
             pane: "route",
           }).addTo(group);
           // main stroke on top of the casing but still in the "route" pane
@@ -273,6 +274,7 @@ export default function MapView({
             lineCap: "round",
             lineJoin: "round",
             interactive: false,   // Phase 5: no hover tooltip on route segments
+            fill: false,  // 2026-08-24 defensive — no fill on polyline
             pane: "route",
           });
           main.addTo(group);
@@ -315,7 +317,7 @@ export default function MapView({
               w.name || ""
             }</div>
           </div>`,
-          { maxWidth: 260, autoPan: false },
+          { maxWidth: 260, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
         );
         m.addTo(group);
       });
@@ -442,7 +444,7 @@ export default function MapView({
             </div>
           </div>`;
         },
-        { maxWidth: 320, autoPan: false },
+        { maxWidth: 320, maxHeight: 400, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
       );
       marinaMarkersById.current.set(p.id, m);
       return m;
@@ -774,7 +776,21 @@ export default function MapView({
       // capture bug where popups kept the language captured at bind time.
       marker.bindPopup(
         () => buildPopup(feat, { name, leg, terr, forDoc, isPoe, status, fill, overlay }),
-        { maxWidth: 360, minWidth: 280, autoPan: false, className: "bi-formalities-popup" },
+        // Popup overflow bug-fix 2026-08-24 — long fiches (Martinique with 8
+        // ARRIVAL fields + 4 DEPARTURE + 3 SPECIAL + contacts + sources
+        // easily exceeds 800 px) were rendered beyond the top of the map
+        // container. `autoPan` pans the map so the popup fits, `keepInView`
+        // clamps it inside the container, `maxHeight` caps at ~viewport and
+        // Leaflet adds a native scrollbar inside the popup body.
+        {
+          maxWidth: 360,
+          minWidth: 280,
+          maxHeight: 400,
+          autoPan: true,
+          keepInView: true,
+          autoPanPadding: [40, 40],
+          className: "bi-formalities-popup",
+        },
       );
 
       // Click on marker → tell App to fly there + tag the row in the sidebar.
@@ -986,7 +1002,7 @@ export default function MapView({
             </div>
           </div>
         `;
-        }, { maxWidth: 280, autoPan: false });
+        }, { maxWidth: 280, maxHeight: 400, autoPan: true, keepInView: true, autoPanPadding: [40, 40] });
         return marker;
       });
       cluster.addLayers(markers);
