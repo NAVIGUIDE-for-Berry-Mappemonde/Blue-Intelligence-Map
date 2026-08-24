@@ -109,6 +109,10 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   const [marinaBatchStatus, setMarinaBatchStatus] = useState(null);
   const [marinaBatchStarting, setMarinaBatchStarting] = useState(false);
   const [marinaBatchCount, setMarinaBatchCount] = useState(10);
+  // Phase 8 — anchorages build + corridor toggle (shared by both scans)
+  const [anchStatus, setAnchStatus] = useState(null);
+  const [anchStarting, setAnchStarting] = useState(false);
+  const [corridorOn, setCorridorOn] = useState(true);
   // ---- Formalities — generate batch ----
   const [formalitiesBatchStatus, setFormalitiesBatchStatus] = useState(null);
   const [formalitiesBatchStarting, setFormalitiesBatchStarting] = useState(false);
@@ -142,6 +146,19 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     return () => { alive = false; clearInterval(pollRefs.current.marinasBatch); };
   }, [mode]);
   useEffect(() => {
+    if (mode !== "marinas") return;
+    let alive = true;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/anchorages/build/status");
+        if (alive) setAnchStatus(data);
+      } catch (_) { /* transient */ }
+    };
+    check();
+    pollRefs.current.anchBuild = setInterval(check, 3000);
+    return () => { alive = false; clearInterval(pollRefs.current.anchBuild); };
+  }, [mode]);
+  useEffect(() => {
     if (mode !== "formalities") return;
     let alive = true;
     let wasRunning = false;
@@ -164,9 +181,16 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
     setBuildStarting(true);
-    try { await api.post("/marinas/build", { include_corridor: false, clear_before: false }); }
+    try { await api.post("/marinas/build", { include_corridor: corridorOn, clear_before: false }); }
     catch (e) { console.warn("build start failed", e); }
     finally { setTimeout(() => setBuildStarting(false), 800); }
+  };
+  const startAnchBuild = async () => {
+    if (anchStarting || anchStatus?.running) return;
+    setAnchStarting(true);
+    try { await api.post("/anchorages/build", { include_corridor: corridorOn, clear_before: false }); }
+    catch (e) { console.warn("anchorages build start failed", e); }
+    finally { setTimeout(() => setAnchStarting(false), 800); }
   };
   const startMarinaBatch = async () => {
     if (marinaBatchStarting || marinaBatchStatus?.running || buildStatus?.running) return;
@@ -199,6 +223,16 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
               {t("auditMarinasBuild")}
             </label>
+            <label className="flex items-center gap-2 mb-2 text-xs text-slate-400 cursor-pointer select-none">
+              <input
+                data-testid="audit-corridor-toggle"
+                type="checkbox"
+                checked={corridorOn}
+                onChange={(e) => setCorridorOn(e.target.checked)}
+                className="accent-teal-400"
+              />
+              {t("auditCorridorToggle")}
+            </label>
             <button
               data-testid="audit-marinas-scan-btn"
               onClick={startBuild}
@@ -215,6 +249,34 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
               <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
                 ✓ OSM {buildStatus.summary.by_source?.openstreetmap ?? 0} · SHOM {buildStatus.summary.by_source?.shom ?? 0} · Curated {buildStatus.summary.by_source?.curated ?? 0}
               </p>
+            )}
+            {/* Phase 8 — anchorages scan (same ±25 NM corridor logic) */}
+            <button
+              data-testid="audit-anchorages-scan-btn"
+              onClick={startAnchBuild}
+              disabled={anchStarting || anchStatus?.running}
+              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 border border-teal-400/50 bg-teal-400/10 hover:bg-teal-400/20 disabled:opacity-70 disabled:cursor-not-allowed text-teal-300 font-semibold text-xs rounded-sm"
+            >
+              {anchStatus?.running ? (
+                <><Loader2 size={13} className="animate-spin" /> {anchStatus.progress}/{anchStatus.total}</>
+              ) : (
+                <><Anchor size={13} /> {t("auditAnchoragesBuild")}</>
+              )}
+            </button>
+            {anchStatus?.summary && !anchStatus.running && (
+              <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed" data-testid="audit-anchorages-summary">
+                ⚓ {anchStatus.summary.unique_after_dedup ?? 0} · bay {anchStatus.summary.by_type?.bay ?? 0} · anchorage {anchStatus.summary.by_type?.anchorage ?? 0} · berth {anchStatus.summary.by_type?.anchor_berth ?? 0}
+              </p>
+            )}
+            {anchStatus?.error && !anchStatus.running && (
+              <p className="mt-1.5 text-[9px] font-mono text-alert leading-relaxed" data-testid="audit-anchorages-error">
+                ✗ {String(anchStatus.error).slice(0, 90)}
+              </p>
+            )}
+            {anchStatus?.running && anchStatus?.logs_tail?.length > 0 && (
+              <div className="mt-1.5 text-[9px] font-mono text-slate-500 max-h-16 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1">
+                {anchStatus.logs_tail.slice(-4).map((l, i) => <div key={i} className="truncate">{l}</div>)}
+              </div>
             )}
           </div>
           <div>

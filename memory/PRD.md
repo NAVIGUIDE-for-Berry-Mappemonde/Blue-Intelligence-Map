@@ -226,10 +226,10 @@ Blue Intelligence transforms the living web of maritime data into an executable 
   3. Résultat : `/api/route`, `/api/projects`, `/api/marinas`, `/api/settings`, `/api/funders`, `/api/categories`, `/api/donations/total` = tous KO côté client, tuiles Carto avortées par ricochet.
 
 ### Fix (1 ligne)
-- `REACT_APP_BACKEND_URL=https://popup-restore.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
+- `REACT_APP_BACKEND_URL=https://anchorages-50nm.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
 
 ### Verification externe (public URL)
-- `curl https://popup-restore.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
+- `curl https://anchorages-50nm.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
 - `curl .../api/marinas` → HTTP 200, FeatureCollection **212 features**.
 - `curl .../api/route` → HTTP 200, FeatureCollection **71 features** (Berry-Mappemonde).
 - MongoDB `blueintel_db` : projects=4463, marinas=212 — **DB intacte**, pas de wipe, pas de re-import nécessaire.
@@ -244,13 +244,13 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - `GET  /api/settings` → `cloudflare_model = @cf/openai/gpt-oss-120b` (configurable, tier Kimi dormant tant qu'un token Workers AI valide n'est pas fourni).
 
 ### Lesson learnt (à documenter dans les runbooks fork)
-- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://popup-restore.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
+- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://anchorages-50nm.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
 
 
 ## Update 2026-08-25 — Phase 4.0 (réanimation) + Phase 4A : mode "Formalités & Douanes"
 
 ### Phase 4.0 — Réanimation
-- `/app/backend/.env` et `/app/frontend/.env` recréés (les fichiers avaient été perdus après relance du job). Clés API réinjectées : `TINYFISH_API_KEY`, `OPENROUTER_API_KEY`, `EMERGENT_LLM_KEY` (récupérée via l'integration manager, `sk-emergent-2BaBcC37a89984a811`), `STRIPE_API_KEY=sk_test_emergent` (sandbox), `RESEND_API_KEY=` vide, `CLOUDFLARE_ACCOUNT_ID=` et `CLOUDFLARE_API_TOKEN=` vides (fall-through voulu, tier CF dormant). `REACT_APP_BACKEND_URL=https://popup-restore.preview.emergentagent.com` (slug public confirmé).
+- `/app/backend/.env` et `/app/frontend/.env` recréés (les fichiers avaient été perdus après relance du job). Clés API réinjectées : `TINYFISH_API_KEY`, `OPENROUTER_API_KEY`, `EMERGENT_LLM_KEY` (récupérée via l'integration manager, `sk-emergent-2BaBcC37a89984a811`), `STRIPE_API_KEY=sk_test_emergent` (sandbox), `RESEND_API_KEY=` vide, `CLOUDFLARE_ACCOUNT_ID=` et `CLOUDFLARE_API_TOKEN=` vides (fall-through voulu, tier CF dormant). `REACT_APP_BACKEND_URL=https://anchorages-50nm.preview.emergentagent.com` (slug public confirmé).
 - Dépendances Python réinstallées : `emergentintegrations` via l'extra-index-url officiel, puis `pip install fastapi motor pymongo httpx beautifulsoup4 readability-lxml resend python-dotenv uvicorn pydantic global-land-mask` pour couvrir ce qui manquait dans le venv du container relancé (le `requirements.txt` a un conflit litellm/emergentintegrations qui empêche `pip install -r` de résoudre — contourné en installant emergentintegrations d'abord seul, le reste ensuite).
 - `sudo supervisorctl restart all` → backend + frontend RUNNING.
 - Restauration data : la DB `blueintel_db` était vide (0 projet, 0 marina). `POST /api/marinas/build` (radius 10 NM, sans corridor) → **212 marinas insérées en 133 s** (124 OSM + 69 SHOM + 19 curated, répartition P1=192 · P2=17 · P3=3, 0 overpass_error). **Les 4 463 projets historiques restent à ré-importer par l'utilisateur via `POST /api/import/geojson` avec son GeoJSON de sauvegarde** — non fait cette phase (pas de sauvegarde locale disponible et hors périmètre 4A).
@@ -678,3 +678,35 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - `/app/frontend/src/i18n.js` (clearAll renommé EN+FR)
 - `/app/backend/server.py` (media_type text/markdown pour /api/manual)
 
+
+## Update 2026-06 — Phase 8 : Corridor 50 NM + Mouillages + Détection ZEE
+### 1. Marina Corridor 50 NM (buffer polygonal réel — choix user)
+- `marinas.py::build_marinas` : `corridor_step_nm` 100→25 NM + nouveau `corridor_radius_nm=25` (bande totale 50 NM).
+- Nouveau `marinas.py::fetch_corridor_band()` : points corridor clusterisés via `cluster_points_to_bboxes` (pad lon corrigé par latitude, max span 240 NM) → requêtes bbox groupées `overpass_fetch_bbox` (param `body` ajouté pour requêtes custom) → post-filtre de bande EXACT (seuil sqrt(r²+(step/2)²)=27.95 NM garantit la bande ±25 NM complète) → fallback per-point `around:` si un bbox échoue. Dédup par osm type/id.
+- SHOM : gardé si ≤ radius_nm d'un waypoint OU ≤ 25 NM du corridor.
+- `POST /api/marinas/build` accepte `corridor_radius_nm`; summary expose corridor_band_nm.
+### 2. Mouillages (collection séparée — choix user)
+- Nouveau `/app/backend/anchorages.py` : tags seamark:type=anchorage/anchor_berth, natural=bay (nommées uniquement — anti-bruit), leisure=anchorage. Réutilise fetch_corridor_band (bbox batching + bande exacte). Pas de SHOM/curated/enrichissement. Champ `anchorage_type` (bay|anchorage|anchor_berth), labels catach S-57.
+- Collection Mongo `anchorages` (index dedup_key unique, priority+name, anchorage_type). Endpoints : GET /api/anchorages (filtres priority, anchorage_type), POST /api/anchorages/build (409 guard, params corridor), GET /api/anchorages/build/status, GET /api/anchorages/count, GET /api/export/anchorages.geojson.
+- Build réel : 36 waypoints → beaucoup de candidats (Marigot 84, FdF 45, Ajaccio 32…), corridor 1553 pts → 123 bboxes.
+### 3. Détection ZEE (deterministic spatial trigger)
+- Dataset : GeoPackage OFFICIEL MarineRegions Maritime Boundaries v12 fourni par le user (doi:10.14284/632, CC-BY 4.0, licence copiée dans backend/data/LICENSE_EEZ_v12.txt). Extraction one-off (sqlite3+GPB parsing+shapely) → `/app/backend/data/eez_french.geojson` (18.8 MB) : 24 ZEE françaises + 53 ZEE étrangères croisées par la route, simplifiées 0.01°.
+- Nouveau `/app/backend/zee.py` : table MRGID→territory_code VÉRIFIÉE sur données réelles (5677 métropole, 8440 Polynésie, 8312 NC, 48944 Mayotte overlapping, 48945 Glorieuses→taaf, 48946 Tromelin→taaf, 7 EEZ TAAF, joint regimes Espagne/Italie→métropole, Clipperton→None) + fallback patterns geoname. Chaîne : fichier local → WFS VLIZ (sovereign1=France, simplifié avant cache) → MRGID REST → point-in-EEZ API. Intersection shapely dans asyncio.to_thread, entry/exit interpolés sur la frontière, fusion des traversées consécutives même ZEE, longueur ~NM.
+- Endpoints : POST /api/zee/compute (202-style, background, 409 guard), GET /api/zee/compute/status, GET /api/zee/crossings?french_only=, POST /api/zee/trigger-formalities (déclenche generate_territory_formality pour chaque territoire FR détecté non_generee/stale — remplace le seeding manuel), DELETE /api/zee/crossings.
+- Résultat réel : 116 traversées en 5.2s (89 étrangères + 27 FR), 13/13 territoires français détectés = exactement territories.json. trigger-formalities a généré les 13 fiches (toutes ia, 13 avec sources).
+### Frontend
+- Mode Marinas : toggle "Afficher les mouillages" (⚓ count, localStorage bi.showAnchorages), cluster teal séparé (bi-cluster-anchorage), popups mouillage (type, catégorie S-57, profondeur, tenue, abri, waypoint le plus proche).
+- Audit (carte marinas) : checkbox "corridor ±25 NM" (les 2 scans), bouton scan mouillages teal avec progress + summary + logs.
+- Mode Formalités : section "ZEE traversées" (détection + liste ordonnée FR drapeaux/étrangères 🌐 avec entrée + ~NM + pol_type, bouton "Générer les formalités des territoires détectés" avec compte rendu).
+- i18n EN/FR ~30 clés (anchorages*, zee*, auditCorridorToggle).
+- shapely>=2.0.0 ajouté à requirements.txt.
+### Notes relance job
+- DB relancée vide : formalities regénérées via zee/trigger (13 ia), marinas=0 → relancer POST /api/marinas/build (corridor on) après le build mouillages, projects=0 → réimport GeoJSON user.
+### Testing Phase 8 (iteration_8 + iteration_9)
+- iteration_8 : 10/10 backend, 100% frontend. Critical trouvé : builds volatils (état mémoire, persistance uniquement en fin de crawl 1h, tué par hot-reload).
+- Fix : `marinas.py::flush_docs_incremental` + `_marina_doc`/`_anchorage_doc` extraits, flush par waypoint + par bbox corridor (param `on_batch` de fetch_corridor_band), préservation enriched/enrichment lors des flush, index créés en début de build anchorages. FormalitiesPanel : zeeLoading + erreurs non-404 surfacées, liste max-h-72. BatchHub : affichage anchStatus.error.
+- iteration_9 (retest) : 100% validé. Persistance incrémentale prouvée live (count 67→111→256→264 pendant le build). Popup mouillage vérifié (Golfe de Sagone, Bay, P1, Ajaccio 8.4 NM). Régression ZEE/formalités OK.
+- Minors non bloquants notés : total status 36→159 entre phases (cohérent, jamais progress>total), boucle upsert N+1 (lots petits, OK), ligne route bord de carte (cosmétique préexistant).
+### État à la clôture de session
+- Build mouillages EN COURS (fin estimée ~1h, données persistées au fil de l'eau). Build marinas corridor 50 NM À LANCER ensuite (bouton Audit, corridor coché) — DB marinas vide suite relaunch job. Projects vide (réimport GeoJSON user si besoin).
+- Suite pytest régression : /app/tests/test_phase8_zee_anchorages.py (ne JAMAIS créer de fichiers sous /app/backend pendant un build — hot reload).

@@ -41,6 +41,15 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [marinas, setMarinas] = useState({ type: "FeatureCollection", features: [] });
   const [flyToMarina, setFlyToMarina] = useState(null); // {id, lat, lon} used as a one-shot signal
+  // Phase 8 — Anchorages (mouillages) layer
+  const [anchorages, setAnchorages] = useState({ type: "FeatureCollection", features: [] });
+  const [showAnchorages, setShowAnchoragesRaw] = useState(() => {
+    try { return localStorage.getItem("bi.showAnchorages") !== "0"; } catch (_) { return true; }
+  });
+  const setShowAnchorages = useCallback((v) => {
+    setShowAnchoragesRaw(v);
+    try { localStorage.setItem("bi.showAnchorages", v ? "1" : "0"); } catch (_) { /* ignore */ }
+  }, []);
   // Phase 4A — Formalities mode data
   const [route, setRoute] = useState({ type: "FeatureCollection", features: [] });
   const [territories, setTerritories] = useState(null);
@@ -111,6 +120,14 @@ export default function App() {
     try {
       const { data } = await api.get("/marinas");
       setMarinas(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  // Phase 8 — anchorages fetcher
+  const fetchAnchorages = useCallback(async () => {
+    try {
+      const { data } = await api.get("/anchorages");
+      setAnchorages(data);
     } catch (e) { /* transient */ }
   }, []);
 
@@ -352,6 +369,7 @@ export default function App() {
     fetchDonations();
     fetchCategories();
     fetchMarinas();
+    fetchAnchorages();
     fetchRoute();
     fetchTerritories();
     fetchFormalities();
@@ -361,8 +379,9 @@ export default function App() {
     const c = setInterval(fetchCategories, 15000);
     // Marinas refresh only when a build might be running — a light 8s poll.
     const m = setInterval(fetchMarinas, 8000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchRoute, fetchTerritories, fetchFormalities]);
+    const a = setInterval(fetchAnchorages, 10000);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); clearInterval(a); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchAnchorages, fetchRoute, fetchTerritories, fetchFormalities]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
@@ -404,8 +423,12 @@ export default function App() {
           <MarinasPanel
             t={t}
             marinas={marinas}
+            anchorages={anchorages}
+            showAnchorages={showAnchorages}
+            setShowAnchorages={setShowAnchorages}
             onFlyTo={handleFlyToMarina}
             onRefresh={fetchMarinas}
+            onRefreshAnchorages={fetchAnchorages}
           />
         )}
         {mode === "formalities" && (
@@ -426,6 +449,8 @@ export default function App() {
               mode={mode}
               projects={projects}
               marinas={marinas}
+              anchorages={anchorages}
+              showAnchorages={showAnchorages}
               formalities={formalities}
               territories={territories}
               route={route}

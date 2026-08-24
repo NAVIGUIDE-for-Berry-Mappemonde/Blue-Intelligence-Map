@@ -150,6 +150,19 @@ html, body, #root {
   justify-content: center;
   box-shadow: 0 0 18px rgba(255, 74, 74, 0.35);
 }
+/* Phase 8 — Anchorages cluster (teal) */
+.bi-cluster-anchorage {
+  background: rgba(45, 212, 191, 0.15);
+  border: 2px solid #2dd4bf;
+  border-radius: 9999px;
+  color: #2dd4bf;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.35);
+}
 /* Phase 7 — Formalities cluster (amber) + unified status dot for individual escales */
 .bi-cluster-formalities {
   background: rgba(251, 191, 36, 0.15);

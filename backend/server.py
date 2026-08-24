@@ -33,6 +33,13 @@ from formalities_gen import (
 )
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
+from anchorages import build_anchorages as run_build_anchorages, anchorages_to_geojson
+from zee import (
+    EEZ_FILE,
+    build_zee_crossings as run_build_zee_crossings,
+    crossings_to_summary as zee_crossings_summary,
+    filter_french_territories,
+)
 from pipeline import Swarm, now_iso
 from tinyfish_client import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 
@@ -669,6 +676,8 @@ async def get_categories():
 
 # ---------- Marinas (Phase 2) ----------
 MARINA_BUILD_STATE = BuildState()
+# Phase 8 — Anchorages (Mouillages)
+ANCHORAGE_BUILD_STATE = BuildState()
 
 
 @router.get("/marinas")
@@ -711,7 +720,9 @@ class MarinasBuildBody(BaseModel):
     radius_nm: float | None = None
     clear_before: bool = False
     include_corridor: bool = True
-    corridor_step_nm: float = 100.0
+    # Phase 8 — continuous 50 NM band: 25 NM sampling step × ±25 NM buffer
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
 
 
 @router.post("/marinas/build")
@@ -734,12 +745,20 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                 state=MARINA_BUILD_STATE,
                 include_corridor=body.include_corridor,
                 corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
             )
         except Exception:
             pass
 
     asyncio.create_task(_runner())
-    return {"started": True, "radius_nm": radius_nm, "include_corridor": body.include_corridor}
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
 
 
 @router.get("/marinas/build/status")
@@ -772,6 +791,110 @@ async def marinas_count():
             "curated": await db.marinas.count_documents({"source": "curated"}),
         },
         "enriched": await db.marinas.count_documents({"enriched": True}),
+    }
+
+
+# ---------- Anchorages (Phase 8 — Mouillages) ----------
+
+class AnchoragesBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    # Same corridor defaults as marinas: ±25 NM band (25 NM step × ±25 NM buffer)
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
+
+
+@router.get("/anchorages")
+async def list_anchorages(
+    priority: int | None = None,
+    anchorage_type: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if anchorage_type:
+        q["anchorage_type"] = anchorage_type
+    docs = await db.anchorages.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return anchorages_to_geojson(docs)
+
+
+@router.get("/export/anchorages.geojson")
+async def export_anchorages():
+    docs = await db.anchorages.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = anchorages_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=anchorages.geojson"},
+    )
+
+
+@router.post("/anchorages/build")
+async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
+    if ANCHORAGE_BUILD_STATE.running:
+        raise HTTPException(409, "An anchorages build is already running")
+    body = body or AnchoragesBuildBody()
+    settings = await get_settings()
+    # Reuse marina_search_radius_nm as default waypoint radius for anchorages too
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.anchorages.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_anchorages(
+                anchorages_coll=db.anchorages,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=ANCHORAGE_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
+
+
+@router.get("/anchorages/build/status")
+async def anchorages_build_status():
+    s = ANCHORAGE_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/anchorages/count")
+async def anchorages_count():
+    return {
+        "total": await db.anchorages.count_documents({}),
+        "by_priority": {
+            "1": await db.anchorages.count_documents({"priority": 1}),
+            "2": await db.anchorages.count_documents({"priority": 2}),
+            "3": await db.anchorages.count_documents({"priority": 3}),
+        },
+        "by_type": {
+            "anchorage": await db.anchorages.count_documents({"anchorage_type": "anchorage"}),
+            "anchor_berth": await db.anchorages.count_documents({"anchorage_type": "anchor_berth"}),
+            "bay": await db.anchorages.count_documents({"anchorage_type": "bay"}),
+        },
     }
 
 
@@ -1875,6 +1998,245 @@ async def export_formalities_geojson():
         fc,
         headers={"Content-Disposition": "attachment; filename=formalities.geojson"},
     )
+
+
+# ---------- ZEE Detection (Phase 8) ----------
+
+class ZeeComputeState:
+    """État de la tâche de calcul ZEE. In-memory; la dernière snapshot complète
+    est persistée dans MongoDB (collection zee_crossings, _id="latest")."""
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.error: str | None = None
+        self.logs: list[str] = []
+        self.result: dict | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 600:
+            self.logs = self.logs[-600:]
+
+
+ZEE_COMPUTE_STATE = ZeeComputeState()
+
+
+@router.get("/zee/crossings")
+async def zee_get_crossings(french_only: bool = False):
+    """
+    Traversées ZEE calculées pour la route Berry-Mappemonde (cache MongoDB).
+    404 si aucun calcul n'a encore été lancé (POST /api/zee/compute).
+    `french_only=true` ne garde que les ZEE françaises (territory_code non null).
+    """
+    cached = await db.zee_crossings.find_one({"_id": "latest"})
+    if not cached:
+        raise HTTPException(404, "No ZEE crossings computed yet. Call POST /api/zee/compute first.")
+    crossings: list[dict] = cached.get("crossings") or []
+    if french_only:
+        crossings = filter_french_territories(crossings)
+    return {
+        "computed_at": cached.get("computed_at"),
+        "eez_source": cached.get("eez_source"),
+        "detection_method": cached.get("detection_method"),
+        "summary": zee_crossings_summary(crossings),
+        "crossings": crossings,
+    }
+
+
+class ZeeComputeBody(BaseModel):
+    force_download: bool = False
+    use_point_api_fallback: bool = True
+
+
+@router.post("/zee/compute")
+async def zee_compute(body: ZeeComputeBody | None = None):
+    """
+    Lance le calcul des traversées ZEE en tâche de fond :
+      1. charge les polygones EEZ (fichier local MarineRegions v12, sinon WFS),
+      2. intersecte les segments maritimes (shapely, thread),
+      3. persiste dans MongoDB (zee_crossings, _id="latest").
+    409 si un calcul est déjà en cours ; suivre via GET /api/zee/compute/status.
+    """
+    if ZEE_COMPUTE_STATE.running:
+        raise HTTPException(409, "A ZEE computation is already running")
+    body = body or ZeeComputeBody()
+
+    ZEE_COMPUTE_STATE.running = True
+    ZEE_COMPUTE_STATE.started_at = time.time()
+    ZEE_COMPUTE_STATE.finished_at = None
+    ZEE_COMPUTE_STATE.error = None
+    ZEE_COMPUTE_STATE.logs = []
+    ZEE_COMPUTE_STATE.result = None
+
+    async def _runner():
+        try:
+            crossings = await run_build_zee_crossings(
+                route_path=ROUTE_FILE,
+                eez_path=EEZ_FILE,
+                force_download=body.force_download,
+                use_point_api_fallback=body.use_point_api_fallback,
+                logger=ZEE_COMPUTE_STATE.log,
+            )
+            summary = zee_crossings_summary(crossings)
+            method = crossings[0]["detection_method"] if crossings else "none"
+            eez_source = (
+                "MarineRegions Maritime Boundaries v12 (local, CC-BY 4.0)"
+                if EEZ_FILE.exists() else "MarineRegions REST API"
+            )
+            doc = {
+                "_id": "latest",
+                "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "eez_source": eez_source,
+                "detection_method": method,
+                "crossings": crossings,
+                "summary": summary,
+            }
+            await db.zee_crossings.replace_one({"_id": "latest"}, doc, upsert=True)
+            ZEE_COMPUTE_STATE.result = doc
+            ZEE_COMPUTE_STATE.log(
+                f"ZEE compute complete — {summary['total_crossings']} crossings, "
+                f"{summary['unique_territories']} unique FR territories: {summary['territory_codes']}"
+            )
+        except Exception as exc:
+            ZEE_COMPUTE_STATE.error = f"{type(exc).__name__}: {exc}"
+            ZEE_COMPUTE_STATE.log(f"FATAL: {ZEE_COMPUTE_STATE.error}")
+        finally:
+            ZEE_COMPUTE_STATE.finished_at = time.time()
+            ZEE_COMPUTE_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "force_download": body.force_download,
+        "use_point_api_fallback": body.use_point_api_fallback,
+    }
+
+
+@router.get("/zee/compute/status")
+async def zee_compute_status():
+    s = ZEE_COMPUTE_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "error": s.error,
+        "logs_tail": s.logs[-60:],
+        "result_summary": s.result.get("summary") if s.result else None,
+    }
+
+
+@router.post("/zee/trigger-formalities")
+async def zee_trigger_formalities(stale_only: bool = False):
+    """
+    Déclenche la génération des formalités pour tous les territoires FRANÇAIS
+    détectés dans les traversées ZEE calculées (seed déterministe — remplace le
+    seeding manuel). non_generee → génère ; stale_only=True → régénère aussi
+    les fiches ia stales ; les fiches verrouillées ou à jour sont sautées.
+    """
+    cached = await db.zee_crossings.find_one({"_id": "latest"})
+    if not cached:
+        raise HTTPException(404, "No ZEE crossings available. Call POST /api/zee/compute first.")
+
+    crossings = cached.get("crossings") or []
+    french = filter_french_territories(crossings)
+    detected_codes: list[str] = []
+    for c in french:
+        code = c.get("territory_code")
+        if code and code not in detected_codes:
+            detected_codes.append(code)
+
+    territories_data = _load_territories_cached()
+    tf_key, or_key, emg_key = _keys_gen()
+    from formalities import is_stale as _is_stale_formality
+
+    triggered: list[str] = []
+    skipped_uptodate: list[str] = []
+    skipped_locked: list[str] = []
+    not_in_db: list[str] = []
+
+    for code in detected_codes:
+        if not any(t.get("code") == code for t in territories_data.get("territories", [])):
+            not_in_db.append(code)
+            continue
+        doc = await db.formalities.find_one({"territory_code": code})
+        if not doc:
+            not_in_db.append(code)
+            continue
+
+        current_status = doc.get("status", "non_generee")
+        should_generate = (
+            current_status == "non_generee"
+            or (stale_only and _is_stale_formality(doc) and current_status != "verifiee")
+        )
+        if not should_generate:
+            skipped_uptodate.append(code)
+            continue
+        if code in FORMALITIES_LOCKS:
+            skipped_locked.append(code)
+            continue
+
+        _prune_tasks(FORMALITIES_GEN_TASKS)
+        FORMALITIES_LOCKS.add(code)
+        FORMALITIES_GEN_TASKS[code] = {
+            "state": "running",
+            "started_at": time.time(),
+            "finished_at": None,
+            "result": None,
+            "error": None,
+            "logs": [],
+        }
+
+        async def _runner(territory_code: str = code):
+            task = FORMALITIES_GEN_TASKS[territory_code]
+
+            def log_fn(msg: str):
+                task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+                if len(task["logs"]) > 400:
+                    task["logs"] = task["logs"][-400:]
+
+            try:
+                result_doc = await generate_territory_formality(
+                    db, territory_code, territories_data,
+                    logger=log_fn,
+                    tinyfish_key=tf_key,
+                    openrouter_key=or_key,
+                    emergent_key=emg_key,
+                )
+                task["result"] = _formalities_serialise_doc(result_doc) if result_doc else None
+                task["state"] = "done"
+            except Exception as exc:
+                task["error"] = f"{type(exc).__name__}: {exc}"
+                task["state"] = "error"
+            finally:
+                task["finished_at"] = time.time()
+                FORMALITIES_LOCKS.discard(territory_code)
+
+        asyncio.create_task(_runner())
+        triggered.append(code)
+
+    return {
+        "detected_territory_codes": detected_codes,
+        "triggered": triggered,
+        "skipped_uptodate": skipped_uptodate,
+        "skipped_locked": skipped_locked,
+        "not_in_db": not_in_db,
+        "stale_only": stale_only,
+    }
+
+
+@router.delete("/zee/crossings")
+async def zee_clear_crossings(delete_eez_file: bool = False):
+    """Supprime le cache crossings (et optionnellement le fichier EEZ local)."""
+    res = await db.zee_crossings.delete_one({"_id": "latest"})
+    eez_deleted = False
+    if delete_eez_file and EEZ_FILE.exists():
+        try:
+            EEZ_FILE.unlink()
+            eez_deleted = True
+        except Exception:
+            pass
+    return {"cache_deleted": res.deleted_count > 0, "eez_file_deleted": eez_deleted}
 
 
 app.include_router(router)

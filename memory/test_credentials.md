@@ -13,7 +13,7 @@ Configured in `/app/backend/.env` and re-provisioned live on 2026-08-25 during P
 - `CLOUDFLARE_ACCOUNT_ID=` and `CLOUDFLARE_API_TOKEN=` intentionally empty — the Cloudflare Workers AI tier is dormant and the chain falls through to OpenRouter → OSM tags (matches Phase 3.1 verdict).
 
 ## Frontend
-- `REACT_APP_BACKEND_URL=https://popup-restore.preview.emergentagent.com` — set in `/app/frontend/.env`, used by axios in `src/api.js`.
+- `REACT_APP_BACKEND_URL=https://anchorages-50nm.preview.emergentagent.com` — set in `/app/frontend/.env`, used by axios in `src/api.js`.
 
 ## MongoDB
 - Local Mongo at `mongodb://localhost:27017`, DB name `blueintel_db`.

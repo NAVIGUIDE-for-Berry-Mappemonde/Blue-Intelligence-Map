@@ -32,6 +32,8 @@ export default function MapView({
   mode = "projects",
   projects,
   marinas,
+  anchorages,
+  showAnchorages = true,
   formalities,
   territories,
   route,
@@ -53,6 +55,8 @@ export default function MapView({
   const mapObj = useRef(null);
   const clusterRef = useRef(null);
   const marinaClusterRef = useRef(null);
+  const anchorClusterRef = useRef(null);
+  const anchorSigRef = useRef("");
   const formalitiesClusterRef = useRef(null);
   const marinaMarkersById = useRef(new Map());
   const marinaSigRef = useRef("");
@@ -151,6 +155,20 @@ export default function MapView({
       }),
     });
     marinaClusterRef.current = marinaCluster;
+    // Phase 8 — Anchorages cluster (teal), shown alongside marinas in marinas mode
+    const anchorCluster = L.markerClusterGroup({
+      maxClusterRadius: 40,
+      chunkedLoading: true,
+      chunkInterval: 100,
+      removeOutsideVisibleBounds: true,
+      animate: false,
+      iconCreateFunction: (c) => L.divIcon({
+        html: `<div class="bi-cluster-anchorage" style="width:30px;height:30px;">${c.getChildCount()}</div>`,
+        className: "",
+        iconSize: [30, 30],
+      }),
+    });
+    anchorClusterRef.current = anchorCluster;
     // Phase 7 — Formalities layer (amber).
     //
     // SPM disappearance bug-fix (2026-08-24): we USED to wrap this layer in
@@ -220,7 +238,7 @@ export default function MapView({
     // Debug hook — expose the map + all 3 clusters on window for headless
     // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, formalities: formalitiesCluster };
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, anchorages: anchorCluster, formalities: formalitiesCluster };
     }
   }, [minZoom]);
 
@@ -452,26 +470,88 @@ export default function MapView({
     marinaCluster.addLayers(markers);
   }, [marinas]);
 
-  // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A → Phase 7) ----------
+  // ---------- Phase 8 — Anchorages layer: rebuild when the anchorages prop changes ----------
+  useEffect(() => {
+    const anchorCluster = anchorClusterRef.current;
+    const map = mapObj.current;
+    if (!anchorCluster || !map) return;
+    const feats = (anchorages && anchorages.features) || [];
+    const sig = feats.length + ":" + feats.map((f) => f.properties?.id).join(",");
+    if (sig === anchorSigRef.current) return;
+    anchorSigRef.current = sig;
+    anchorCluster.clearLayers();
+
+    const TYPE_KEY = { bay: "anchoragesTypeBay", anchorage: "anchoragesTypeAnchorage", anchor_berth: "anchoragesTypeBerth" };
+    const markers = feats.map((f) => {
+      const [lon, lat] = f.geometry?.coordinates || [0, 0];
+      const p = f.properties || {};
+      const m = L.circleMarker([lat, lon], {
+        radius: p.priority === 1 ? 7 : 5,
+        color: "#2dd4bf",
+        weight: 2,
+        fillColor: "#2dd4bf",
+        fillOpacity: p.priority === 1 ? 0.8 : 0.5,
+      });
+      const tags = p.tags || {};
+      const wp = p.nearest_waypoint || {};
+      const row = (label, value) => {
+        if (!value) return "";
+        return `<div style="font-size:11px;color:#94a3b8;margin-top:3px;"><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;">${label}</span> ${String(value)}</div>`;
+      };
+      m.bindPopup(
+        () => {
+          const t = tRef.current;
+          const typeLabel = t(TYPE_KEY[p.anchorage_type] || "anchoragesTypeAnchorage");
+          const depth = tags["seamark:anchorage:depth"] || tags.depth || tags.max_depth;
+          const holding = tags["seamark:anchorage:holding_ground"] || tags.holding_ground;
+          return `<div style="min-width:220px;max-width:290px;">
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">⚓ ${p.name || ""}</div>
+            <div style="margin:6px 0;display:flex;gap:5px;flex-wrap:wrap;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#2dd4bf;border:1px solid #2dd4bf55;padding:2px 6px;border-radius:2px;">${typeLabel}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">P${p.priority} · OSM</span>
+            </div>
+            <div style="font-size:11px;color:#c084fc;margin:3px 0 6px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;">${t("marinasNearest")}</span>
+              ${wp.name || "—"} · ${(wp.distance_nm ?? 0).toFixed(1)} ${t("marinasDistanceNM")}
+            </div>
+            ${row(t("anchoragesCategory"), tags.anchorage_category_label)}
+            ${row(t("marinasDepth"), depth)}
+            ${row(t("anchoragesHolding"), holding)}
+            ${row(t("anchoragesShelter"), tags.shelter)}
+            ${row("Description", tags.description ? String(tags.description).slice(0, 160) : null)}
+            <div style="margin-top:7px;font-size:9px;color:#64748b;">${p.osm_id ? "OSM " + p.osm_id + " · " : ""}${t("marinasFetchedAt")}: ${(p.fetched_at || "").slice(0, 10)}</div>
+          </div>`;
+        },
+        { maxWidth: 300, maxHeight: 360, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
+      );
+      return m;
+    });
+    anchorCluster.addLayers(markers);
+  }, [anchorages]);
+
+  // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A → Phase 8) ----------
   useEffect(() => {
     const map = mapObj.current;
     const proj = clusterRef.current;
     const mar = marinaClusterRef.current;
+    const anch = anchorClusterRef.current;
     const formCluster = formalitiesClusterRef.current;
     if (!map || !proj || !mar || !formCluster) return;
-    // Detach everything first, then attach only the layer for the current mode.
+    // Detach everything first, then attach only the layer(s) for the current mode.
     if (map.hasLayer(proj)) map.removeLayer(proj);
     if (map.hasLayer(mar)) map.removeLayer(mar);
+    if (anch && map.hasLayer(anch)) map.removeLayer(anch);
     if (map.hasLayer(formCluster)) map.removeLayer(formCluster);
     if (mode === "marinas") {
       map.addLayer(mar);
+      if (anch && showAnchorages) map.addLayer(anch);
     } else if (mode === "formalities") {
       map.addLayer(formCluster);
     } else {
       map.addLayer(proj);
     }
     map.closePopup();
-  }, [mode]);
+  }, [mode, showAnchorages]);
 
   // ---------- FlyTo signal from MarinasPanel ----------
   useEffect(() => {

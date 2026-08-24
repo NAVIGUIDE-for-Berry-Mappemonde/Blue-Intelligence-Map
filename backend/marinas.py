@@ -251,12 +251,14 @@ async def overpass_fetch_bbox(
     client: httpx.AsyncClient,
     max_retries: int = 5,
     logger=None,
+    body: str | None = None,
 ) -> list[dict]:
     """
     Fetch all marina/harbour features inside a bbox. Retries across endpoints.
-    Returns raw Overpass `elements` list.
+    Returns raw Overpass `elements` list. Pass a custom `body` (Overpass QL)
+    to reuse the same client for other feature classes (e.g. anchorages).
     """
-    body = _overpass_bbox_body(south, west, north, east)
+    body = body or _overpass_bbox_body(south, west, north, east)
     last_err: Exception | None = None
     for attempt in range(max_retries):
         endpoint = OVERPASS_ENDPOINTS[attempt % len(OVERPASS_ENDPOINTS)]
@@ -322,15 +324,191 @@ def cluster_points_to_bboxes(
     for cl in clusters:
         lats = [p[0] for p in cl]
         lons = [p[1] for p in cl]
+        # Longitude padding must widen with latitude (1' of lon < 1 NM off-equator)
+        max_abs_lat = min(85.0, max(abs(la) for la in lats))
+        pad_lon = pad_deg / max(0.2, math.cos(math.radians(max_abs_lat)))
         out.append({
             "south": max(-90.0, min(lats) - pad_deg),
-            "west": max(-180.0, min(lons) - pad_deg),
+            "west": max(-180.0, min(lons) - pad_lon),
             "north": min(90.0, max(lats) + pad_deg),
-            "east": min(180.0, max(lons) + pad_deg),
+            "east": min(180.0, max(lons) + pad_lon),
             "labels": [p[2] for p in cl],
+            "points": cl,
             "pt_count": len(cl),
         })
     return out
+
+
+def _marina_doc(cand: dict, wps, now_iso: str) -> dict:
+    """Build the canonical marina document for a candidate."""
+    prio, nearest_wp, dist_nm = priority_for(cand["lat"], cand["lon"], wps)
+    return {
+        "_id": str(uuid.uuid4()),
+        "name": cand["name"],
+        "lat": cand["lat"],
+        "lon": cand["lon"],
+        "source": cand["source"],
+        "osm_id": cand.get("osm_id"),
+        "tags": cand.get("tags") or {},
+        "priority": prio,
+        "nearest_waypoint": {
+            "id": nearest_wp.id,
+            "name": nearest_wp.name,
+            "kind": nearest_wp.kind,
+            "distance_nm": round(dist_nm, 2),
+        },
+        "dedup_key": dedup_key(cand["name"], cand["lat"], cand["lon"]),
+        "fetched_at": now_iso,
+        "enriched": False,
+        "stale": False,
+    }
+
+
+async def flush_docs_incremental(
+    coll,
+    docs: list[dict],
+    *,
+    preserve_fields: tuple = ("enriched", "enrichment", "enriched_at"),
+) -> None:
+    """
+    Crash-safe incremental persistence (Phase 8): upsert each doc by dedup_key
+    as soon as its batch is fetched, so a backend reload mid-build (hot reload,
+    deploy…) loses nothing. Best-effort — the final dedup pass at the end of a
+    build re-writes everything with the full source/distance preference logic.
+    """
+    for doc in docs:
+        try:
+            existing = await coll.find_one({"dedup_key": doc["dedup_key"]})
+            if existing:
+                d2 = dict(doc)
+                d2["_id"] = existing["_id"]
+                for f in preserve_fields:
+                    if existing.get(f):
+                        d2[f] = existing[f]
+                await coll.replace_one({"_id": existing["_id"]}, d2)
+            else:
+                await coll.insert_one(doc)
+        except Exception:
+            pass
+
+
+async def fetch_corridor_band(
+    corridor: list["CorridorPoint"],
+    corridor_radius_nm: float,
+    client: httpx.AsyncClient,
+    *,
+    state: "BuildState",
+    bbox_body_builder=None,
+    point_fetcher=None,
+    max_bbox_span_nm: float = 240.0,
+    throttle_s: float = 3.0,
+    on_batch=None,
+) -> tuple[list[dict], int]:
+    """
+    True spatial-buffer corridor coverage (±corridor_radius_nm band — Phase 8).
+
+    1. Corridor sample points are greedily clustered into padded bboxes
+       (cluster_points_to_bboxes) — a handful of bulk bbox queries instead of
+       hundreds of `around:` calls.
+    2. Each bbox runs ONE Overpass bbox query; on failure it falls back to
+       per-point `around:` queries for that bbox's own points.
+    3. Exact band post-filter: an element is kept only if its distance to the
+       nearest corridor sample is <= sqrt(r² + (step/2)²) — which keeps every
+       feature inside the true ±r band around the route polyline.
+
+    Returns (unique_elements, error_count).
+    """
+    if not corridor:
+        return [], 0
+    fetch_point = point_fetcher or overpass_fetch
+    pts = [(cp.lat, cp.lon, f"c{i}") for i, cp in enumerate(corridor)]
+    bboxes = cluster_points_to_bboxes(pts, radius_nm=corridor_radius_nm, max_bbox_span_nm=max_bbox_span_nm)
+    state.total += len(bboxes)
+    state.log(
+        f"Corridor band: {len(corridor)} sample points → {len(bboxes)} bbox queries "
+        f"(true ±{corridor_radius_nm:.0f} NM buffer = {corridor_radius_nm*2:.0f} NM band)"
+    )
+
+    # Sample step estimate (median of consecutive distances) for the exact cutoff
+    steps = [
+        haversine_nm(corridor[i].lat, corridor[i].lon, corridor[i + 1].lat, corridor[i + 1].lon)
+        for i in range(min(len(corridor) - 1, 50))
+    ]
+    step_nm = sorted(steps)[len(steps) // 2] if steps else corridor_radius_nm
+    band_cutoff_nm = math.sqrt(corridor_radius_nm ** 2 + (step_nm / 2.0) ** 2)
+
+    radius_m = int(corridor_radius_nm * METERS_PER_NM)
+    seen: set[str] = set()
+    kept: list[dict] = []
+    errors = 0
+
+    def _elem_latlon(elem: dict):
+        if elem.get("type") == "node":
+            return elem.get("lat"), elem.get("lon")
+        c = elem.get("center") or {}
+        return c.get("lat"), c.get("lon")
+
+    for bi, bb in enumerate(bboxes):
+        label = f"bbox {bi + 1}/{len(bboxes)}"
+        elements: list[dict] = []
+        try:
+            body = (
+                bbox_body_builder(bb["south"], bb["west"], bb["north"], bb["east"])
+                if bbox_body_builder else None
+            )
+            elements = await overpass_fetch_bbox(
+                bb["south"], bb["west"], bb["north"], bb["east"], client, logger=state.log, body=body,
+            )
+            state.log(
+                f"Corridor {label} ({bb['pt_count']} pts, "
+                f"{bb['south']:.1f},{bb['west']:.1f}→{bb['north']:.1f},{bb['east']:.1f}): "
+                f"{len(elements)} raw"
+            )
+        except Exception as e:
+            state.log(
+                f"Corridor {label} bbox query failed ({type(e).__name__}: {str(e)[:60]}) — "
+                f"falling back to per-point around:"
+            )
+            for (la, lo, plabel) in bb.get("points") or []:
+                try:
+                    elements.extend(await fetch_point(la, lo, radius_m, client, logger=state.log))
+                except Exception as pe:
+                    errors += 1
+                    state.log(f"Corridor {plabel}: {type(pe).__name__}: {str(pe)[:60]}")
+                await asyncio.sleep(throttle_s)
+
+        # Pre-filter corridor points near this bbox (perf), then exact band filter
+        pad_lat = band_cutoff_nm / 60.0 * 2
+        cand_pts = [
+            cp for cp in corridor
+            if (bb["south"] - pad_lat) <= cp.lat <= (bb["north"] + pad_lat)
+            and (bb["west"] - pad_lat * 3) <= cp.lon <= (bb["east"] + pad_lat * 3)
+        ] or corridor
+        in_band = 0
+        batch: list[dict] = []
+        for elem in elements:
+            ekey = f"{elem.get('type')}/{elem.get('id')}"
+            if ekey in seen:
+                continue
+            la, lo = _elem_latlon(elem)
+            if la is None or lo is None:
+                continue
+            d = min(haversine_nm(la, lo, cp.lat, cp.lon) for cp in cand_pts)
+            if d <= band_cutoff_nm:
+                seen.add(ekey)
+                kept.append(elem)
+                batch.append(elem)
+                in_band += 1
+        if in_band:
+            state.log(f"Corridor {label}: {in_band} kept within ±{corridor_radius_nm:.0f} NM band")
+        if on_batch and batch:
+            try:
+                await on_batch(batch)
+            except Exception as pe:
+                state.log(f"Corridor {label} incremental persist failed: {type(pe).__name__}")
+        state.progress += 1
+        await asyncio.sleep(throttle_s)
+    return kept, errors
 
 
 async def overpass_status(client: httpx.AsyncClient, logger=None) -> dict:
@@ -763,11 +941,19 @@ async def build_marinas(
     radius_nm: float,
     state: BuildState,
     include_corridor: bool = True,
-    corridor_step_nm: float = 100.0,
+    corridor_step_nm: float = 25.0,
+    corridor_radius_nm: float = 25.0,
 ) -> dict:
     """
-    Full build: query OSM (bbox-batched) + SHOM around every waypoint + corridor sample,
+    Full build: OSM around every waypoint + true ±corridor_radius_nm spatial
+    buffer along the maritime corridor (bbox-batched via cluster_points_to_bboxes
+    + overpass_fetch_bbox, exact band post-filter, per-point fallback) + SHOM,
     dedup, upsert into `marinas_coll`. Returns summary.
+
+    Corridor 50 NM band (Phase 8): corridor points sampled every
+    `corridor_step_nm` NM (default 25) along maritime segments, covered with a
+    continuous ±`corridor_radius_nm` NM buffer (default 25 → 50 NM total band).
+    Waypoints keep the focused `radius_nm` (stop areas).
     """
     state.running = True
     state.started_at = time.time()
@@ -780,25 +966,26 @@ async def build_marinas(
         wps, maritime_lines = load_route(route_path)
         corridor = sample_corridor(maritime_lines, step_nm=corridor_step_nm) if include_corridor else []
 
-        # Small-radius `around:` queries for each waypoint (+ optional corridor points).
-        # We tried bbox-batched queries (5-8° spans) but the public Overpass mirrors
-        # 502 on them consistently. Sticking to per-point `around:` (18-20 km radius)
-        # gives the servers something they can handle quickly.
+        # Waypoints keep small per-point `around:` queries (focused stop areas);
+        # the corridor is covered by the bbox-batched band pass below.
         query_targets: list[tuple[str, float, float, str]] = []
         for w in wps:
             query_targets.append((f"wp:{w.name}", w.lat, w.lon, "waypoint"))
-        for i, cp in enumerate(corridor):
-            query_targets.append((f"corridor:{i}", cp.lat, cp.lon, "corridor"))
 
         state.total = len(query_targets)
+        state.progress = 0
         state.log(
             f"Loaded route: {len(wps)} waypoints "
             f"({sum(1 for w in wps if w.kind=='escale')} escales, {sum(1 for w in wps if w.kind=='intermediate')} intermediates), "
             f"{len(maritime_lines)} maritime segments → {len(corridor)} corridor points (step={corridor_step_nm} NM, corridor={'on' if include_corridor else 'off'})"
         )
-        state.log(f"Query targets: {state.total}  |  radius = {radius_nm:.1f} NM ({radius_nm*METERS_PER_NM:.0f} m)")
+        state.log(
+            f"Waypoint radius = {radius_nm:.1f} NM  |  corridor buffer = ±{corridor_radius_nm:.0f} NM "
+            f"({corridor_radius_nm*2:.0f} NM total band)"
+        )
 
         candidates: list[dict] = []
+        now_build_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         radius_m = int(radius_nm * METERS_PER_NM)
         overpass_errors = 0
 
@@ -827,12 +1014,41 @@ async def build_marinas(
                             n_kept += 1
                     if n_kept:
                         state.log(f"OSM {label} ({lat:.3f},{lon:.3f}): {n_kept} candidates")
+                        # Crash-safe: persist this waypoint's finds immediately
+                        await flush_docs_incremental(
+                            marinas_coll,
+                            [_marina_doc(c, wps, now_build_iso) for c in candidates[-n_kept:]],
+                        )
                 except Exception as e:
                     overpass_errors += 1
                     state.log(f"OSM {label}: {type(e).__name__}: {str(e)[:70]}")
                 counter["done"] += 1
                 state.progress = counter["done"]
                 await asyncio.sleep(3.0)  # AUP-compliant throttle
+
+            # ---- Corridor band pass (true ±corridor_radius_nm spatial buffer) ----
+            if include_corridor and corridor:
+                async def _persist_marina_batch(batch: list[dict]):
+                    docs = []
+                    for elem in batch:
+                        m = _overpass_elem_to_marina(elem)
+                        if m:
+                            docs.append(_marina_doc(m, wps, now_build_iso))
+                    if docs:
+                        await flush_docs_incremental(marinas_coll, docs)
+
+                corr_elements, corr_errors = await fetch_corridor_band(
+                    corridor, corridor_radius_nm, client, state=state,
+                    on_batch=_persist_marina_batch,
+                )
+                overpass_errors += corr_errors
+                n_corr = 0
+                for elem in corr_elements:
+                    m = _overpass_elem_to_marina(elem)
+                    if m:
+                        candidates.append(m)
+                        n_corr += 1
+                state.log(f"Corridor band total: {n_corr} marina candidates")
 
             # ---- SHOM pass (French territory: métropole + DROM-COM) ----
             # SHOM's INFORMATIONS_PORTUAIRES layer covers metropolitan France + Corsica +
@@ -854,14 +1070,27 @@ async def build_marinas(
                     shom_pts = await shom_fetch(bbox, client, logger=state.log)
                     kept = 0
                     for sp in shom_pts:
-                        if any(
+                        near_wp = any(
                             haversine_nm(sp["lat"], sp["lon"], wp.lat, wp.lon) <= radius_nm
                             for wp in wps
-                        ):
+                        )
+                        near_corr = bool(include_corridor and corridor) and any(
+                            haversine_nm(sp["lat"], sp["lon"], cp.lat, cp.lon) <= corridor_radius_nm
+                            for cp in corridor
+                        )
+                        if near_wp or near_corr:
                             candidates.append(sp)
                             kept += 1
                     shom_total += kept
-                    state.log(f"SHOM {label}: {len(shom_pts)} raw → {kept} within {radius_nm} NM of a waypoint")
+                    if kept:
+                        await flush_docs_incremental(
+                            marinas_coll,
+                            [_marina_doc(c, wps, now_build_iso) for c in candidates[-kept:]],
+                        )
+                    state.log(
+                        f"SHOM {label}: {len(shom_pts)} raw → {kept} within {radius_nm} NM of a waypoint "
+                        f"or ±{corridor_radius_nm:.0f} NM of the corridor"
+                    )
                 except Exception as e:
                     shom_errors += 1
                     state.log(f"SHOM {label} error: {type(e).__name__}: {str(e)[:80]}")
@@ -872,29 +1101,9 @@ async def build_marinas(
         by_key: dict[str, dict] = {}
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         for cand in candidates:
-            prio, nearest_wp, dist_nm = priority_for(cand["lat"], cand["lon"], wps)
             key = dedup_key(cand["name"], cand["lat"], cand["lon"])
             existing_cand = by_key.get(key)
-            new_doc = {
-                "_id": str(uuid.uuid4()),
-                "name": cand["name"],
-                "lat": cand["lat"],
-                "lon": cand["lon"],
-                "source": cand["source"],
-                "osm_id": cand.get("osm_id"),
-                "tags": cand.get("tags") or {},
-                "priority": prio,
-                "nearest_waypoint": {
-                    "id": nearest_wp.id,
-                    "name": nearest_wp.name,
-                    "kind": nearest_wp.kind,
-                    "distance_nm": round(dist_nm, 2),
-                },
-                "dedup_key": key,
-                "fetched_at": now_iso,
-                "enriched": False,
-                "stale": False,
-            }
+            new_doc = _marina_doc(cand, wps, now_iso)
             if existing_cand:
                 # Source preference: openstreetmap > shom > curated (curated is our fallback).
                 src_rank = {"openstreetmap": 3, "shom": 2, "curated": 1}
@@ -949,6 +1158,8 @@ async def build_marinas(
             "shom_errors": shom_errors,
             "radius_nm": radius_nm,
             "corridor_step_nm": corridor_step_nm if include_corridor else None,
+            "corridor_radius_nm": corridor_radius_nm if include_corridor else None,
+            "corridor_band_nm": corridor_radius_nm * 2 if include_corridor else None,
         }
         state.summary = summary
         state.log(f"Build complete: {json.dumps(summary)}")
