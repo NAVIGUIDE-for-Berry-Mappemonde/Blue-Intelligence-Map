@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
+TERRITORIES_FILE = ROOT_DIR / "data" / "territories.json"
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,12 @@ from pydantic import BaseModel
 from ai import extract_project, gatekeeper_check
 from categories import CATEGORY_GROUPS, normalize_category
 from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
+from formalities import (
+    load_territories,
+    seed_formalities,
+    serialise_doc as _formalities_serialise_doc,
+    serialise_list as _formalities_serialise_list,
+)
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from pipeline import Swarm, now_iso
@@ -1234,6 +1241,66 @@ async def donations_total():
     return {"total_eur": round(total, 2), "count": count}
 
 
+# ---------- Territories & Formalities (Phase 4A) ----------
+# Territories reference: static curated JSON, read-only. Cached in memory.
+_TERRITORIES_CACHE: dict | None = None
+
+
+def _load_territories_cached() -> dict:
+    global _TERRITORIES_CACHE
+    if _TERRITORIES_CACHE is None:
+        if not TERRITORIES_FILE.exists():
+            raise HTTPException(500, "territories.json missing")
+        _TERRITORIES_CACHE = load_territories(TERRITORIES_FILE)
+    return _TERRITORIES_CACHE
+
+
+@router.get("/territories")
+async def get_territories():
+    """
+    Curated territory reference: 13 territories covering the 16 unique escales
+    of route.geojson. Each entry ships regime, ports_of_entry (with ref_url),
+    escale_names mapping and official_domains whitelist for the Phase 4B
+    generator. Blacklist is exposed at the top level.
+    """
+    data = _load_territories_cached()
+    return JSONResponse(
+        data,
+        headers={
+            "Cache-Control": "public, max-age=3600, must-revalidate",
+            "X-Territories-Source": "Blue Intelligence curated (official gov sources)",
+        },
+    )
+
+
+@router.get("/formalities")
+async def list_formalities():
+    """All 13 formalities docs, one per territory_code. Freshly seeded rows
+    are `status: non_generee` with all inner fields null."""
+    docs = await db.formalities.find({}).to_list(50)
+    # Sort in the order of the territories.json file so the sidebar can walk
+    # them in a deterministic route-based order.
+    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
+    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+    return {"count": len(docs), "items": _formalities_serialise_list(docs)}
+
+
+@router.get("/formalities/{territory_code}")
+async def get_formalities(territory_code: str):
+    doc = await db.formalities.find_one({"territory_code": territory_code})
+    if not doc:
+        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
+    # Also embed the matching territory reference so the frontend has both in
+    # one call (avoids a race between /territories and /formalities/{code}).
+    terr_ref = next(
+        (t for t in _load_territories_cached().get("territories", []) if t.get("code") == territory_code),
+        None,
+    )
+    out = _formalities_serialise_doc(doc)
+    out["territory"] = terr_ref
+    return out
+
+
 app.include_router(router)
 
 # --- OpenAPI + static assets exposed under /api (Kubernetes ingress only forwards /api/*) ---
@@ -1299,3 +1366,27 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+
+
+@app.on_event("startup")
+async def _startup_seed_formalities():
+    """
+    Seed the `formalities` collection at boot with 13 blank docs (one per
+    territory in territories.json) if not already present. Idempotent.
+    Also ensures a unique index on `territory_code`.
+    """
+    try:
+        await db.formalities.create_index("territory_code", unique=True)
+    except Exception:
+        pass
+    if not TERRITORIES_FILE.exists():
+        return
+    try:
+        data = load_territories(TERRITORIES_FILE)
+        summary = await seed_formalities(db, data)
+        print(
+            f"[formalities-seed] inserted={summary['inserted']} "
+            f"existing={summary['existing']} total={summary['total']}"
+        )
+    except Exception as e:
+        print(f"[formalities-seed] FAILED: {type(e).__name__}: {e}")

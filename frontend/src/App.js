@@ -4,17 +4,18 @@ import { makeT } from "./i18n";
 import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
 import MarinasPanel from "./components/MarinasPanel";
+import FormalitiesPanel from "./components/FormalitiesPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import SettingsPanel from "./components/SettingsPanel";
 import { DonateModal, PaymentReturn } from "./components/Donations";
 import ReportModal from "./components/ReportModal";
 
-// Read the persisted mode on boot. Default = "projects".
+// Read the persisted mode on boot. Default = "projects". (Phase 4A — 3 modes)
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects") return v;
+    if (v === "marinas" || v === "projects" || v === "formalities") return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -40,6 +41,13 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [marinas, setMarinas] = useState({ type: "FeatureCollection", features: [] });
   const [flyToMarina, setFlyToMarina] = useState(null); // {id, lat, lon} used as a one-shot signal
+  // Phase 4A — Formalities mode data
+  const [route, setRoute] = useState({ type: "FeatureCollection", features: [] });
+  const [territories, setTerritories] = useState(null);
+  const [formalities, setFormalities] = useState([]);
+  const [selectedTerritory, setSelectedTerritory] = useState(null);
+  const [selectedEscale, setSelectedEscale] = useState(null);
+  const [flyToEscale, setFlyToEscale] = useState(null); // {name, lat, lon, ts}
   const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
   const t = makeT(lang);
   const lastTotalRef = useRef(-1);
@@ -99,6 +107,28 @@ export default function App() {
     try {
       const { data } = await api.get("/marinas");
       setMarinas(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  // ---- Phase 4A: route + territories + formalities ----
+  const fetchRoute = useCallback(async () => {
+    try {
+      const { data } = await api.get("/route");
+      setRoute(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  const fetchTerritories = useCallback(async () => {
+    try {
+      const { data } = await api.get("/territories");
+      setTerritories(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  const fetchFormalities = useCallback(async () => {
+    try {
+      const { data } = await api.get("/formalities");
+      setFormalities(data?.items || []);
     } catch (e) { /* transient */ }
   }, []);
 
@@ -233,6 +263,9 @@ export default function App() {
     fetchDonations();
     fetchCategories();
     fetchMarinas();
+    fetchRoute();
+    fetchTerritories();
+    fetchFormalities();
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(fetchProjects, 5000);
     const d = setInterval(fetchDonations, 10000);
@@ -240,11 +273,22 @@ export default function App() {
     // Marinas refresh only when a build might be running — a light 8s poll.
     const m = setInterval(fetchMarinas, 8000);
     return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas]);
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchRoute, fetchTerritories, fetchFormalities]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
     setFlyToMarina({ id, lat, lon, ts: Date.now() });
+  }, []);
+
+  // Phase 4A — Handler wired to both the sidebar rows and the map escale
+  // markers: opens the formality card for the given territory + centres the
+  // map on the escale coordinates.
+  const handleSelectEscale = useCallback((escaleName, territoryCode, coord) => {
+    setSelectedTerritory(territoryCode);
+    setSelectedEscale(escaleName);
+    if (coord && Array.isArray(coord)) {
+      setFlyToEscale({ name: escaleName, lat: coord[1], lon: coord[0], ts: Date.now() });
+    }
   }, []);
 
   return (
@@ -257,7 +301,7 @@ export default function App() {
         mode={mode} setMode={setMode}
       />
       <div className="flex flex-1 min-h-0">
-        {mode === "projects" ? (
+        {mode === "projects" && (
           <SwarmPanel
             t={t} projects={projects} funders={funders}
             funderFilter={funderFilter} setFunderFilter={setFunderFilter}
@@ -266,12 +310,24 @@ export default function App() {
             onDonate={(id, title) => setDonateTarget({ id, title })}
             onReport={() => setShowReport(true)}
           />
-        ) : (
+        )}
+        {mode === "marinas" && (
           <MarinasPanel
             t={t}
             marinas={marinas}
             onFlyTo={handleFlyToMarina}
             onRefresh={fetchMarinas}
+          />
+        )}
+        {mode === "formalities" && (
+          <FormalitiesPanel
+            t={t}
+            route={route}
+            formalities={formalities}
+            territories={territories}
+            selectedTerritory={selectedTerritory}
+            selectedEscale={selectedEscale}
+            onSelectEscale={handleSelectEscale}
           />
         )}
         <main className="flex-1 relative min-w-0">
@@ -280,7 +336,14 @@ export default function App() {
               mode={mode}
               projects={projects}
               marinas={marinas}
+              formalities={formalities}
+              territories={territories}
+              route={route}
+              selectedTerritory={selectedTerritory}
+              selectedEscale={selectedEscale}
+              onSelectEscale={handleSelectEscale}
               flyToMarina={flyToMarina}
+              flyToEscale={flyToEscale}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />

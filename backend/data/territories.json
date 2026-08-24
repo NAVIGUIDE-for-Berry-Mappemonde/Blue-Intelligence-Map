@@ -1,0 +1,362 @@
+{
+  "_source": "Curated territories reference for Blue Intelligence Map — Phase 4A. Territory-level customs and immigration facts, sourced from official government portals (douane.gouv.fr, service-public.fr/pf, douane.gouv.nc, taaf.fr, préfecture sites and the demarche.numerique.gouv.fr digital clearance portal). Every ports_of_entry entry cites its ref_url; no forum, blog, or Noonsite content is used here.",
+  "_generated_at": "2026-08-25",
+  "_curator": "Blue Intelligence — Phase 4A",
+  "content_language": "fr",
+  "blacklist_domains": [
+    "noonsite.com",
+    "cruisersforum.com",
+    "sail-world.com",
+    "forums.sailboatowners.com",
+    "reddit.com",
+    "yachtingworld.com",
+    "sailmagazine.com",
+    "wikipedia.org",
+    "wikivoyage.org",
+    "tripadvisor.com",
+    "lonelyplanet.com",
+    "voile-magazine.com",
+    "voile-et-voilier.com",
+    "bateaux.com"
+  ],
+  "territories": [
+    {
+      "code": "france_metropolitaine",
+      "name_fr": "France métropolitaine",
+      "name_en": "Metropolitan France",
+      "regime": "metropole",
+      "flag_emoji": "🇫🇷",
+      "escale_names": ["Saint-Maur (Berry, Indre)", "La Rochelle", "Ajaccio (Corse)"],
+      "ports_of_entry": [
+        {
+          "name": "Port de plaisance de La Rochelle",
+          "note": "Port de plaisance éligible au dispositif d'entrée en provenance/à destination d'un pays non-Schengen. Formulaire déclaratif à transmettre au bureau du port au moins 24 h avant l'arrivée (ou au départ si traversée < 24 h). Bureau douanier de référence : La Rochelle-Pallice.",
+          "ref_url": "https://www.douane.gouv.fr/sites/default/files/2025-02/28/Liste%20des%20ports%20de%20plaisance%20rattach%C3%A9s%20au%20dispositif.pdf"
+        },
+        {
+          "name": "Port Tino Rossi (Ajaccio)",
+          "note": "Port de plaisance rattaché au dispositif douanier français ; contrôle par la Police aux frontières (PAF). Formulaire déclaratif requis 24 h avant arrivée.",
+          "ref_url": "https://www.douane.gouv.fr/sites/default/files/2025-02/28/Liste%20des%20ports%20de%20plaisance%20rattach%C3%A9s%20au%20dispositif.pdf"
+        },
+        {
+          "name": "Port Charles Ornano (Ajaccio)",
+          "note": "Port de plaisance rattaché au dispositif douanier français ; contrôle par la Police aux frontières (PAF).",
+          "ref_url": "https://www.douane.gouv.fr/sites/default/files/2025-02/28/Liste%20des%20ports%20de%20plaisance%20rattach%C3%A9s%20au%20dispositif.pdf"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "service-public.fr",
+        "diplomatie.gouv.fr",
+        "interieur.gouv.fr",
+        "immigration.interieur.gouv.fr",
+        "legifrance.gouv.fr",
+        "ecologie.gouv.fr",
+        "developpement-durable.gouv.fr",
+        "prefectures-regions.gouv.fr"
+      ],
+      "notes": "Espace Schengen. Les formalités d'entrée maritime ne s'appliquent qu'aux arrivées en provenance d'un pays hors Schengen. Saint-Maur (Berry, Indre) est un point de départ terrestre — aucune formalité douanière maritime.",
+      "ref_url": "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
+    },
+    {
+      "code": "martinique",
+      "name_fr": "Martinique",
+      "name_en": "Martinique",
+      "regime": "drom",
+      "flag_emoji": "🇲🇶",
+      "escale_names": ["Fort-de-France (Martinique)"],
+      "ports_of_entry": [
+        {
+          "name": "Fort-de-France (Clearance numérique Antilles françaises)",
+          "note": "Depuis le 1er septembre 2024, la clearance est dématérialisée pour la Martinique. Déclaration électronique obligatoire via demarches-simplifiees.fr, puis impression du certificat (le PDF numérique n'est pas encore accepté par tous les États voisins). Contact : Direction Interrégionale des douanes Antilles-Guyane (Fort-de-France), sgi-antilles-guyane@douane.finances.gouv.fr.",
+          "ref_url": "https://demarche.numerique.gouv.fr/commencer/declaration-clearance-antilles"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "martinique.gouv.fr",
+        "dm.martinique.developpement-durable.gouv.fr",
+        "demarches-simplifiees.fr",
+        "demarche.numerique.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "DROM — territoire fiscal spécifique (octroi de mer). Espace Schengen mais formalités clearance obligatoires à l'arrivée depuis / au départ vers un port étranger.",
+      "ref_url": "https://www.martinique.gouv.fr/contenu/telechargement/22986/180253/file/Guide%20Boat%20-%20maj.%2010.09.24.pdf"
+    },
+    {
+      "code": "guadeloupe",
+      "name_fr": "Guadeloupe",
+      "name_en": "Guadeloupe",
+      "regime": "drom",
+      "flag_emoji": "🇬🇵",
+      "escale_names": ["Pointe-à-Pitre (Guadeloupe)"],
+      "ports_of_entry": [
+        {
+          "name": "Pointe-à-Pitre (Clearance numérique Antilles françaises)",
+          "note": "Clearance dématérialisée depuis le 01/09/2024. Déclaration via demarches-simplifiees.fr, certificat imprimé à présenter aux autorités. Point de clearance agréé si absence d'accès internet. Contact : Direction régionale des douanes de Guadeloupe (Basse-Terre), sgi-antilles-guyane@douane.finances.gouv.fr.",
+          "ref_url": "https://demarche.numerique.gouv.fr/commencer/declaration-clearance-antilles"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "guadeloupe.gouv.fr",
+        "demarches-simplifiees.fr",
+        "demarche.numerique.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "DROM — même dispositif de clearance dématérialisée que Martinique / Saint-Barthélemy / Saint-Martin.",
+      "ref_url": "https://www.saint-barth-saint-martin.gouv.fr/Actions-de-l-Etat/Mer-littoral-et-securite-maritime/Nouvelles-formalites-de-clearance-dans-les-iles-des-Antilles-francaises"
+    },
+    {
+      "code": "saint_barthelemy",
+      "name_fr": "Saint-Barthélemy",
+      "name_en": "Saint-Barthélemy",
+      "regime": "com",
+      "flag_emoji": "🇧🇱",
+      "escale_names": ["Gustavia (Saint-Barthélemy)"],
+      "ports_of_entry": [
+        {
+          "name": "Gustavia (Clearance numérique Antilles françaises)",
+          "note": "COM — clearance dématérialisée depuis le 01/09/2024, procédure identique aux autres îles françaises des Antilles. Déclaration via demarches-simplifiees.fr et certificat imprimé à présenter en capitainerie.",
+          "ref_url": "https://www.saint-barth-saint-martin.gouv.fr/Actions-de-l-Etat/Mer-littoral-et-securite-maritime/Nouvelles-formalites-de-clearance-dans-les-iles-des-Antilles-francaises"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "saint-barth-saint-martin.gouv.fr",
+        "demarches-simplifiees.fr",
+        "demarche.numerique.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr",
+        "comstbarth.fr"
+      ],
+      "notes": "Collectivité d'outre-mer (COM). Hors territoire fiscal de l'UE, avec fiscalité propre. Rattachée au dispositif clearance Antilles françaises.",
+      "ref_url": "https://demarche.numerique.gouv.fr/commencer/declaration-clearance-antilles"
+    },
+    {
+      "code": "saint_martin",
+      "name_fr": "Saint-Martin",
+      "name_en": "Saint-Martin (French)",
+      "regime": "com",
+      "flag_emoji": "🇲🇫",
+      "escale_names": ["Marigot (Saint-Martin)"],
+      "ports_of_entry": [
+        {
+          "name": "Marigot (Clearance numérique Antilles françaises)",
+          "note": "COM — clearance dématérialisée depuis le 01/09/2024. Déclaration via demarches-simplifiees.fr, certificat imprimé à présenter à Marigot. Attention : la partie néerlandaise (Sint Maarten / Philipsburg) est un pays séparé du royaume des Pays-Bas et impose ses propres formalités distinctes.",
+          "ref_url": "https://www.saint-barth-saint-martin.gouv.fr/Actions-de-l-Etat/Mer-littoral-et-securite-maritime/Nouvelles-formalites-de-clearance-dans-les-iles-des-Antilles-francaises"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "saint-barth-saint-martin.gouv.fr",
+        "demarches-simplifiees.fr",
+        "demarche.numerique.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "Collectivité d'outre-mer (COM) — partie française uniquement (Marigot). Franchise fiscale.",
+      "ref_url": "https://demarche.numerique.gouv.fr/commencer/declaration-clearance-antilles"
+    },
+    {
+      "code": "guyane",
+      "name_fr": "Guyane",
+      "name_en": "French Guiana",
+      "regime": "drom",
+      "flag_emoji": "🇬🇫",
+      "escale_names": ["Cayenne (Guyane)"],
+      "ports_of_entry": [
+        {
+          "name": "Cayenne — Port du Larivot",
+          "note": "DROM — territoire de l'Union européenne mais considéré comme territoire tiers sur le plan fiscal (octroi de mer). Déclaration en douane obligatoire à l'arrivée pour toute marchandise (y compris véhicules). Direction Interrégionale des douanes Antilles-Guyane compétente.",
+          "ref_url": "https://www.douane.gouv.fr/particuliers/vous-etes-en-outre-mer/guyane-preparer-son-arrivee-ou-son-retour-sur-le-territoire"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "guyane.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr",
+        "legifrance.gouv.fr"
+      ],
+      "notes": "DROM. Points de passage contrôlés répertoriés pour immigration. Fiscalité spécifique (octroi de mer).",
+      "ref_url": "https://www.douane.gouv.fr/particuliers/vous-etes-en-outre-mer/guyane-preparer-son-arrivee-ou-son-retour-sur-le-territoire"
+    },
+    {
+      "code": "saint_pierre_et_miquelon",
+      "name_fr": "Saint-Pierre-et-Miquelon",
+      "name_en": "Saint-Pierre and Miquelon",
+      "regime": "com",
+      "flag_emoji": "🇵🇲",
+      "escale_names": ["Saint-Pierre (Saint-Pierre-et-Miquelon)"],
+      "ports_of_entry": [
+        {
+          "name": "Saint-Pierre — Quai Mimosa",
+          "note": "COM — obligation de faire escale dans un port doté d'un bureau de douane. Prévenir les douanes par téléphone au moins 20 minutes avant l'arrivée. Arborer le pavillon Q à l'arrivée. Armes et munitions placées en dépôt au bureau de douane contre récépissé.",
+          "ref_url": "https://www.douane975.fr/navigation-maritime/"
+        },
+        {
+          "name": "Miquelon — Quai du Port",
+          "note": "COM — 2ᵉ port doté d'un bureau de douane. Même procédure : préavis téléphonique 20 min, pavillon Q, manifeste d'entrée + manifeste de pacotille au quai.",
+          "ref_url": "https://www.douane975.fr/navigation-maritime/"
+        }
+      ],
+      "official_domains": [
+        "douane975.fr",
+        "saint-pierre-et-miquelon.gouv.fr",
+        "saint-pierre-et-miquelon.developpement-durable.gouv.fr",
+        "douane.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "COM — hors territoire douanier de l'UE. Immigration : peut être effectuée avant ou après les formalités douanières. Documents fréquemment requis : déclaration maritime de santé, certificat de dératisation (ou exemption), liste d'équipage/passagers, certificat de tonnage/nationalité.",
+      "ref_url": "https://saint-pierre-et-miquelon.gouv.fr/Services-de-l-Etat/Les-services-de-l-Etat/Le-Service-des-Douanes"
+    },
+    {
+      "code": "polynesie_francaise",
+      "name_fr": "Polynésie française",
+      "name_en": "French Polynesia",
+      "regime": "com",
+      "flag_emoji": "🇵🇫",
+      "escale_names": ["Papeete (Polynésie française)"],
+      "ports_of_entry": [
+        {
+          "name": "Papeete — Port de premier accostage (Tahiti)",
+          "note": "COM — obligation de faire escale dans un port de premier accostage désigné pour effectuer les formalités douanières, d'immigration et de biosécurité. Pour Tahiti / Moorea : bureau des douanes du port de Papeete. Sur les autres îles autorisées à l'arrivée initiale : la brigade territoriale de gendarmerie assure les formalités. Admission temporaire du navire : 24 mois, prolongeable de 3 mois en cas de force majeure. Déclaration unique via demarche.numerique.gouv.fr.",
+          "ref_url": "https://www.service-public.pf/dpam/formalites-arrivees-maritimes-pf/"
+        }
+      ],
+      "official_domains": [
+        "service-public.pf",
+        "douane.gouv.fr",
+        "polynesie-francaise.pref.gouv.fr",
+        "demarche.numerique.gouv.fr",
+        "diplomatie.gouv.fr",
+        "outre-mer.gouv.fr",
+        "biosecurite.gov.pf"
+      ],
+      "notes": "COM — territoire fiscal autonome. À la sortie depuis Tahiti ou Moorea : déclaration de sortie auprès des douanes de Papeete + coordination avec la Police aux frontières (STPAF) à Faa'a. Depuis les autres îles : déclaration par email à dr-polynesie@douane.finances.gouv.fr.",
+      "ref_url": "https://demarche.numerique.gouv.fr/commencer/declaration-unique-plaisance-polynesie-francaise"
+    },
+    {
+      "code": "wallis_et_futuna",
+      "name_fr": "Wallis-et-Futuna",
+      "name_en": "Wallis and Futuna",
+      "regime": "com",
+      "flag_emoji": "🇼🇫",
+      "escale_names": ["Mata-Utu (Wallis-et-Futuna)"],
+      "ports_of_entry": [
+        {
+          "name": "Mata-Utu (Wallis)",
+          "note": "COM — activer l'AIS et contacter Wallis Radio à l'approche. Rejoindre le port de Mata-Utu pour les formalités immigration + douanes. En cas de météo défavorable, mouillage alternatif à Fakatoi (près de Halalo). Contacts douanes : Wallis +681 82 29 58, Futuna +681 82 32 42, dr-wallis-et-futuna@douane.finances.gouv.fr.",
+          "ref_url": "https://www.wallis-et-futuna.gouv.fr/Demarches/Espace-maritime-et-aerien/Demarches-et-consignes-a-l-attention-des-plaisanciers-et-arrivants-par-voie-maritime"
+        }
+      ],
+      "official_domains": [
+        "wallis-et-futuna.gouv.fr",
+        "douane.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "COM — territoire fiscal autonome. Futuna dispose de mouillages devant le port.",
+      "ref_url": "https://www.wallis-et-futuna.gouv.fr/Demarches/Espace-maritime-et-aerien/Demarches-et-consignes-a-l-attention-des-plaisanciers-et-arrivants-par-voie-maritime"
+    },
+    {
+      "code": "nouvelle_caledonie",
+      "name_fr": "Nouvelle-Calédonie",
+      "name_en": "New Caledonia",
+      "regime": "sui_generis",
+      "flag_emoji": "🇳🇨",
+      "escale_names": ["Nouméa (Nouvelle-Calédonie)"],
+      "ports_of_entry": [
+        {
+          "name": "Nouméa — Bureau des douanes (Port autonome)",
+          "note": "Sui generis — tout navire de plaisance à destination / en provenance d'un port étranger doit se présenter au bureau des douanes de Nouméa. Adresse : 4 rue Félix Russeil, Nouville (entrée du port autonome). Horaires : 08h30–11h00 et 13h30–15h00. Contact : (+687) 26.54.10 ou 26.54.13. Formalités régies par le Code des douanes de Nouvelle-Calédonie.",
+          "ref_url": "https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.nc",
+        "gouv.nc",
+        "nouvelle-caledonie.gouv.fr",
+        "service-public.nc",
+        "isee.nc",
+        "province-sud.nc",
+        "province-nord.nc",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "Collectivité sui generis. Territoire douanier et fiscal autonome, Code des douanes propre. Nouméa est LE port d'entrée obligatoire de la route Berry-Mappemonde.",
+      "ref_url": "https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance"
+    },
+    {
+      "code": "mayotte",
+      "name_fr": "Mayotte",
+      "name_en": "Mayotte",
+      "regime": "drom",
+      "flag_emoji": "🇾🇹",
+      "escale_names": ["Dzaoudzi (Mayotte)"],
+      "ports_of_entry": [
+        {
+          "name": "Dzaoudzi",
+          "note": "DROM — répertorié dans la liste ICS des points d'entrée français. Territoire de l'Union européenne mais considéré comme territoire tiers pour la fiscalité (déclaration douanière obligatoire pour marchandises et véhicules à l'arrivée).",
+          "ref_url": "https://www.douane.gouv.fr/sites/default/files/uploads/files/Services-en-ligne/ICS/ics-liste-points-d-entree-francais.pdf"
+        },
+        {
+          "name": "Longoni",
+          "note": "DROM — 2ᵉ point d'entrée mayotais répertorié ICS (port de commerce principal). Mêmes règles fiscales que Dzaoudzi.",
+          "ref_url": "https://www.douane.gouv.fr/sites/default/files/uploads/files/Services-en-ligne/ICS/ics-liste-points-d-entree-francais.pdf"
+        }
+      ],
+      "official_domains": [
+        "douane.gouv.fr",
+        "mayotte.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr"
+      ],
+      "notes": "DROM depuis 2011. Fiscalité spécifique.",
+      "ref_url": "https://www.douane.gouv.fr/particuliers/vous-etes-en-outre-mer/mayotte-preparer-son-arrivee-ou-son-retour-sur-le-territoire"
+    },
+    {
+      "code": "taaf",
+      "name_fr": "Terres australes et antarctiques françaises (TAAF)",
+      "name_en": "French Southern and Antarctic Lands (TAAF)",
+      "regime": "taaf",
+      "flag_emoji": "🇹🇫",
+      "escale_names": ["Tromelin (TAAF)", "Europa (TAAF)"],
+      "ports_of_entry": [],
+      "official_domains": [
+        "taaf.fr",
+        "outre-mer.gouv.fr",
+        "douane.gouv.fr"
+      ],
+      "notes": "AUCUN port d'entrée ouvert au trafic maritime privé. L'accès, le mouillage et le débarquement dans les Îles Éparses (Tromelin, Europa, Juan de Nova, Bassas da India, Glorieuses) sont soumis à autorisation préalable écrite du Préfet, administrateur supérieur des TAAF, à obtenir AVANT le départ. Pour Tromelin : mouillage possible sur le plateau NW sous conditions précises, débarquement interdit. Redevances de mouillage et taxe touristique territoriale dues à l'administration TAAF. Se référer aux Instructions Nautiques Volume L9.",
+      "ref_url": "https://taaf.fr/acceder-aux-territoires/demandes-dactivites-et-dacces/acces-et-mouillage-dans-les-eparses/"
+    },
+    {
+      "code": "la_reunion",
+      "name_fr": "La Réunion",
+      "name_en": "Réunion",
+      "regime": "drom",
+      "flag_emoji": "🇷🇪",
+      "escale_names": ["Saint-Gilles (La Réunion)"],
+      "ports_of_entry": [
+        {
+          "name": "Port de la Pointe des Galets (Port Réunion)",
+          "note": "DROM — tout navire arrivant d'un port étranger doit faire escale à la Pointe des Galets en premier. Préavis d'arrivée obligatoire à la capitainerie au moins 48 h avant l'arrivée, avec caractéristiques navire, liste équipage/passagers + passeports, marchandises à déclarer, ports précédent/suivant, horaires prévus. À l'arrivée : rejoindre immédiatement la capitainerie, équipage confiné à bord pendant 1 h pour contrôles PAF/douanes.",
+          "ref_url": "https://www.reunion.gouv.fr/index.php/contenu/telechargement/39644/295996/file/20170309%20-%20Arr%C3%AAt%C3%A9%20401-2017%20-%20Acc%C3%A8s%20plaisance.pdf"
+        }
+      ],
+      "official_domains": [
+        "reunion.gouv.fr",
+        "douane.gouv.fr",
+        "service-public.fr",
+        "outre-mer.gouv.fr",
+        "tco.re"
+      ],
+      "notes": "DROM. Saint-Gilles n'est PAS un port d'entrée international — c'est un port de plaisance secondaire ; l'arrivée officielle doit se faire à Pointe des Galets d'abord.",
+      "ref_url": "https://www.reunion.gouv.fr/index.php/contenu/telechargement/39644/295996/file/20170309%20-%20Arr%C3%AAt%C3%A9%20401-2017%20-%20Acc%C3%A8s%20plaisance.pdf"
+    }
+  ]
+}

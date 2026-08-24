@@ -21,6 +21,12 @@
   --marker-fill: #ff4a4a;
   --marker-stroke: #0f172a;
 }
+[data-mode="formalities"] {
+  --accent-rgb: 251 191 36;        /* #fbbf24 — amberx */
+  --accent-glow: rgba(251, 191, 36, 0.35);
+  --marker-fill: #fbbf24;
+  --marker-stroke: #0f172a;
+}
 
 html, body, #root {
   height: 100%;
@@ -132,5 +138,22 @@ html, body, #root {
   pointer-events: none;
 }
 .leaflet-tooltip.bi-route-escale-label::before { display: none; }
+
+/* Formalities mode — escale status ring badge for ports of entry */
+.bi-poe-ring {
+  filter: drop-shadow(0 0 4px rgba(248, 250, 252, 0.6));
+}
+/* Dashed border used for ia_sans_source escale markers */
+.bi-escale-marker--dashed {
+  stroke-dasharray: 3 3 !important;
+}
+
+/* Formalities mode — disclaimer banner */
+.bi-formalities-disclaimer {
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  font-family: "JetBrains Mono", monospace;
+}
 
 button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }

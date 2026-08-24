@@ -28,7 +28,27 @@ const ESCALE_STROKE = "#0f172a";
 const INTERMEDIATE_FILL = "#94a3b8";
 const INTERMEDIATE_STROKE = "#475569";
 
-export default function MapView({ mode = "projects", projects, marinas, flyToMarina, funderFilter, searchQuery, t, maxMarkers, minZoom, basemap, categories, categoryFilter }) {
+export default function MapView({
+  mode = "projects",
+  projects,
+  marinas,
+  formalities,
+  territories,
+  route,
+  selectedTerritory,
+  selectedEscale,
+  onSelectEscale,
+  flyToMarina,
+  flyToEscale,
+  funderFilter,
+  searchQuery,
+  t,
+  maxMarkers,
+  minZoom,
+  basemap,
+  categories,
+  categoryFilter,
+}) {
   const mapRef = useRef(null);
   const mapObj = useRef(null);
   const clusterRef = useRef(null);
@@ -44,6 +64,10 @@ export default function MapView({ mode = "projects", projects, marinas, flyToMar
   const mpaLoadingRef = useRef(false);
   const routeLayerRef = useRef(null);
   const routeLoadedRef = useRef(false);
+  // Phase 4A — Formalities layer
+  const formalitiesLayerRef = useRef(null);
+  const formalitiesMarkersByEscale = useRef(new Map());
+  const formalitiesSigRef = useRef("");
   const [mpaOn, setMpaOn] = useState(false);
   const [mpaZoomHint, setMpaZoomHint] = useState(false);
   const [routeOn, setRouteOn] = useState(true);
@@ -110,9 +134,10 @@ export default function MapView({ mode = "projects", projects, marinas, flyToMar
     });
     marinaClusterRef.current = marinaCluster;
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
-    // if the user is starting in the OTHER mode.
+    // if the user is starting in another mode. In "formalities" mode neither cluster is
+    // attached — only the route + the escale-status layer show.
     if (mode === "marinas") map.addLayer(marinaCluster);
-    else map.addLayer(cluster);
+    else if (mode !== "formalities") map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
     map.on("zoomend", () => {
@@ -485,18 +510,23 @@ export default function MapView({ mode = "projects", projects, marinas, flyToMar
     marinaCluster.addLayers(markers);
   }, [marinas, t]);
 
-  // ---------- Mode swap: attach the right cluster, hide the other ----------
+  // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A: 3 modes) ----------
   useEffect(() => {
     const map = mapObj.current;
     const proj = clusterRef.current;
     const mar = marinaClusterRef.current;
+    const form = formalitiesLayerRef.current;
     if (!map || !proj || !mar) return;
+    // Detach everything first, then attach only the layer for the current mode.
+    if (map.hasLayer(proj)) map.removeLayer(proj);
+    if (map.hasLayer(mar)) map.removeLayer(mar);
+    if (form && map.hasLayer(form)) map.removeLayer(form);
     if (mode === "marinas") {
-      if (map.hasLayer(proj)) map.removeLayer(proj);
-      if (!map.hasLayer(mar)) map.addLayer(mar);
+      map.addLayer(mar);
+    } else if (mode === "formalities") {
+      if (form) map.addLayer(form);
     } else {
-      if (map.hasLayer(mar)) map.removeLayer(mar);
-      if (!map.hasLayer(proj)) map.addLayer(proj);
+      map.addLayer(proj);
     }
     map.closePopup();
   }, [mode]);
@@ -510,6 +540,159 @@ export default function MapView({ mode = "projects", projects, marinas, flyToMar
     map.flyTo([flyToMarina.lat, flyToMarina.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
     setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToMarina]);
+
+  // ---------- Phase 4A — Formalities layer: escales coloured by status +
+  // white ring on ports of entry. Only rebuilt when the underlying data
+  // signature (routes / formalities status / territory mapping) changes.
+  useEffect(() => {
+    const map = mapObj.current;
+    if (!map) return;
+    if (!route?.features?.length || !territories?.territories?.length) {
+      // No data yet — bail out but do not tear down anything.
+      return;
+    }
+
+    // Colour tokens for escale status
+    const STATUS_FILL = {
+      non_generee:     "#64748b",   // slate-500
+      ia:              "#fbbf24",   // amberx solid
+      ia_sans_source:  "#fbbf24",   // amberx dashed (see stroke below)
+      verifiee:        "#39ff14",   // bio-green
+    };
+    const STATUS_STROKE = {
+      non_generee:     "#334155",
+      ia:              "#0f172a",
+      ia_sans_source:  "#fbbf24",
+      verifiee:        "#0f172a",
+    };
+
+    // territory lookup by escale name
+    const escaleToTerritory = {};
+    for (const terr of territories.territories) {
+      for (const en of terr.escale_names || []) {
+        escaleToTerritory[en] = terr;
+      }
+    }
+    // formalities by territory code
+    const forByCode = {};
+    for (const f of formalities || []) forByCode[f.territory_code] = f;
+
+    // Collect all escale features
+    const escaleFeats = route.features.filter(
+      (f) => f.geometry?.type === "Point" && f.properties?.point_type === "escale",
+    );
+    // Signature for skip-rebuild
+    const statusSig = escaleFeats.map((f) => {
+      const name = f.properties.name;
+      const terr = escaleToTerritory[name];
+      const forDoc = terr ? forByCode[terr.code] : null;
+      return `${name}|${terr?.code || ""}|${forDoc?.status || "none"}`;
+    }).join(";");
+    if (statusSig === formalitiesSigRef.current && formalitiesLayerRef.current) return;
+    formalitiesSigRef.current = statusSig;
+
+    // (Re)build the layer
+    if (formalitiesLayerRef.current && map.hasLayer(formalitiesLayerRef.current)) {
+      map.removeLayer(formalitiesLayerRef.current);
+    }
+    const layer = L.layerGroup();
+    formalitiesMarkersByEscale.current.clear();
+
+    // La Rochelle appears twice in the route; tag them départ/retour by order.
+    const laRochelleSeen = { count: 0 };
+    escaleFeats.forEach((feat) => {
+      const [lon, lat] = feat.geometry.coordinates;
+      const name = feat.properties.name;
+      const terr = escaleToTerritory[name];
+      const forDoc = terr ? forByCode[terr.code] : null;
+      const status = forDoc?.status || "non_generee";
+      const overlay = forDoc?.escale_overlays?.find((o) => o.escale_name === name);
+      const isPoe = !!overlay?.is_port_of_entry;
+      const dashed = status === "ia_sans_source";
+      const fill = STATUS_FILL[status] || STATUS_FILL.non_generee;
+      const stroke = STATUS_STROKE[status] || STATUS_STROKE.non_generee;
+
+      // Ring badge (port of entry) — drawn UNDER the marker
+      if (isPoe) {
+        const ring = L.circleMarker([lat, lon], {
+          radius: 11,
+          fill: false,
+          color: "#f8fafc",
+          weight: 2,
+          opacity: 0.95,
+          className: "bi-poe-ring",
+          interactive: false,
+        });
+        layer.addLayer(ring);
+      }
+
+      let leg = null;
+      if (name === "La Rochelle") {
+        laRochelleSeen.count += 1;
+        leg = laRochelleSeen.count === 1 ? "departure" : "return";
+      }
+
+      const marker = L.circleMarker([lat, lon], {
+        radius: 7,
+        color: stroke,
+        weight: dashed ? 2 : 1.5,
+        fillColor: fill,
+        fillOpacity: 0.9,
+        className: dashed ? "bi-escale-marker--dashed" : "",
+      });
+
+      const statusLabel = {
+        non_generee: t("formalitiesStatusNonGeneree"),
+        ia: t("formalitiesStatusIa"),
+        ia_sans_source: t("formalitiesStatusIaSansSource"),
+        verifiee: t("formalitiesStatusVerifiee"),
+      }[status];
+      const poeLabel = isPoe ? t("formalitiesPortOfEntry") : t("formalitiesNotPortOfEntry");
+      const legLabel = leg ? ` · ${leg === "departure" ? t("formalitiesLegDeparture") : t("formalitiesLegReturn")}` : "";
+      const noteHtml = overlay?.note
+        ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.4;">${overlay.note}</div>`
+        : "";
+      const flag = terr?.flag_emoji || "🏳️";
+
+      marker.bindPopup(
+        `<div style="min-width:220px;max-width:280px;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">
+            ${flag} ${name}${legLabel}
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin:4px 0 6px;">${terr?.name_fr || ""}</div>
+          <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${fill};border:1px solid ${fill}55;padding:2px 6px;border-radius:2px;">${statusLabel}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${isPoe ? "#f8fafc" : "#64748b"};border:1px solid ${isPoe ? "#f8fafc99" : "#33415555"};padding:2px 6px;border-radius:2px;">
+              ${isPoe ? "⚓ " : ""}${poeLabel}
+            </span>
+          </div>
+          ${noteHtml}
+        </div>`,
+        { maxWidth: 300, autoPan: false },
+      );
+
+      // Click on marker → open the corresponding territory card in the panel
+      marker.on("click", () => {
+        if (typeof onSelectEscale === "function" && terr?.code) {
+          onSelectEscale(name, terr.code, [lon, lat]);
+        }
+      });
+
+      layer.addLayer(marker);
+      formalitiesMarkersByEscale.current.set(name + (leg ? `::${leg}` : ""), marker);
+    });
+
+    formalitiesLayerRef.current = layer;
+    if (mode === "formalities") map.addLayer(layer);
+  }, [route, territories, formalities, t, mode, onSelectEscale]);
+
+  // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
+  useEffect(() => {
+    if (!flyToEscale) return;
+    const map = mapObj.current;
+    if (!map) return;
+    map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
+  }, [flyToEscale]);
 
   useEffect(() => {
     const cluster = clusterRef.current;

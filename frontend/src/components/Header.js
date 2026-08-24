@@ -1,4 +1,4 @@
-import { Anchor, HandCoins, Map as MapIcon, Moon, Radar, Sailboat, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, HandCoins, Map as MapIcon, Moon, Radar, Sailboat, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
@@ -27,7 +27,7 @@ export default function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* R-002 dual-mode switch */}
+        {/* R-002 tri-mode switch (Phase 4A) */}
         <div
           className="flex border border-line rounded-sm overflow-hidden"
           title={t("modeSwitchTitle")}
@@ -36,10 +36,10 @@ export default function Header({
           <button
             data-testid="mode-toggle-projects"
             onClick={() => setMode("projects")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
               mode === "projects"
-                ? "bg-sonar/15 text-sonar border-r border-sonar/40"
-                : "text-slate-400 hover:text-slate-200 hover:bg-raised border-r border-line"
+                ? "bg-sonar/15 text-sonar"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
             <Sailboat size={13} /> {t("modeProjects")}
@@ -47,13 +47,24 @@ export default function Header({
           <button
             data-testid="mode-toggle-marinas"
             onClick={() => setMode("marinas")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
               mode === "marinas"
                 ? "bg-alert/15 text-alert"
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
             <Anchor size={13} /> {t("modeMarinas")}
+          </button>
+          <button
+            data-testid="mode-toggle-formalities"
+            onClick={() => setMode("formalities")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+              mode === "formalities"
+                ? "bg-amberx/15 text-amberx"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <ScrollText size={13} /> {t("modeFormalities")}
           </button>
         </div>
         <div data-testid="donation-counter" title={t("donationCounterTitle")}

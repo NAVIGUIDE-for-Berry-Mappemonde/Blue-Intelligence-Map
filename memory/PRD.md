@@ -245,3 +245,81 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 
 ### Lesson learnt (à documenter dans les runbooks fork)
 - Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://codebase-scan-45.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
+
+
+## Update 2026-08-25 — Phase 4.0 (réanimation) + Phase 4A : mode "Formalités & Douanes"
+
+### Phase 4.0 — Réanimation
+- `/app/backend/.env` et `/app/frontend/.env` recréés (les fichiers avaient été perdus après relance du job). Clés API réinjectées : `TINYFISH_API_KEY`, `OPENROUTER_API_KEY`, `EMERGENT_LLM_KEY` (récupérée via l'integration manager, `sk-emergent-2BaBcC37a89984a811`), `STRIPE_API_KEY=sk_test_emergent` (sandbox), `RESEND_API_KEY=` vide, `CLOUDFLARE_ACCOUNT_ID=` et `CLOUDFLARE_API_TOKEN=` vides (fall-through voulu, tier CF dormant). `REACT_APP_BACKEND_URL=https://codebase-scan-45.preview.emergentagent.com` (slug public confirmé).
+- Dépendances Python réinstallées : `emergentintegrations` via l'extra-index-url officiel, puis `pip install fastapi motor pymongo httpx beautifulsoup4 readability-lxml resend python-dotenv uvicorn pydantic global-land-mask` pour couvrir ce qui manquait dans le venv du container relancé (le `requirements.txt` a un conflit litellm/emergentintegrations qui empêche `pip install -r` de résoudre — contourné en installant emergentintegrations d'abord seul, le reste ensuite).
+- `sudo supervisorctl restart all` → backend + frontend RUNNING.
+- Restauration data : la DB `blueintel_db` était vide (0 projet, 0 marina). `POST /api/marinas/build` (radius 10 NM, sans corridor) → **212 marinas insérées en 133 s** (124 OSM + 69 SHOM + 19 curated, répartition P1=192 · P2=17 · P3=3, 0 overpass_error). **Les 4 463 projets historiques restent à ré-importer par l'utilisateur via `POST /api/import/geojson` avec son GeoJSON de sauvegarde** — non fait cette phase (pas de sauvegarde locale disponible et hors périmètre 4A).
+- Vérifs post-réanimation : `GET /api/` HTTP 200, `GET /api/openapi.json` HTTP 200 (41 paths dont 5 Phase 4A), `GET /api/route` HTTP 200 (71 features), `GET /api/marinas` HTTP 200 (212 features), `GET /api/projects` HTTP 200 (0 features — vide, à re-seeder).
+
+### Phase 4A backend — Référentiel territoires + collection formalities
+
+- **Nouveau fichier statique `/app/backend/data/territories.json`** (~15 KB, `content_language: fr`, `_generated_at: 2026-08-25`) : 13 territoires curatés couvrant les 16 escales uniques (17 features) de la route.
+  - Champs par territoire : `code`, `name_fr`, `name_en`, `regime` (`metropole|drom|com|taaf|sui_generis`), `flag_emoji`, `escale_names[]` (mapping exact vers `waypoint.name` de route.geojson), `ports_of_entry[]` (chaque entrée avec `name`, `note`, `ref_url` sourcée), `official_domains[]` (whitelist pour la Phase 4B), `notes`, `ref_url` (source primaire du territoire).
+  - Blacklist top-level : noonsite.com, cruisersforum.com, sail-world.com, forums.sailboatowners.com, reddit.com, yachtingworld.com, sailmagazine.com, wikipedia.org, wikivoyage.org, tripadvisor.com, lonelyplanet.com, voile-magazine.com, voile-et-voilier.com, bateaux.com.
+  - **Sources officielles réellement recherchées via web_search** (2026-08-25) — extraits :
+    - France métropolitaine : douane.gouv.fr (PDF liste ports plaisance éligibles au dispositif Schengen), Port de La Rochelle + Port Tino Rossi + Port Charles Ornano.
+    - Martinique / Guadeloupe / Saint-Barthélemy / Saint-Martin : **clearance dématérialisée depuis 01/09/2024 via demarche.numerique.gouv.fr** (source martinique.gouv.fr Guide Boat + saint-barth-saint-martin.gouv.fr).
+    - Guyane (Cayenne Larivot) : douane.gouv.fr `guyane-preparer-son-arrivee` (territoire fiscal tiers, octroi de mer).
+    - Saint-Pierre-et-Miquelon : douane975.fr — Quai Mimosa + Quai du Port Miquelon, préavis 20 min, pavillon Q.
+    - Polynésie française : service-public.pf `formalites-arrivees-maritimes-pf` — Papeete port de premier accostage Tahiti/Moorea, admission temporaire 24 mois.
+    - Wallis-et-Futuna : wallis-et-futuna.gouv.fr — Mata-Utu, AIS obligatoire, mouillage alternatif Fakatoi.
+    - Nouvelle-Calédonie : douane.gouv.nc — Nouméa bureau des douanes 4 rue Félix Russeil.
+    - Mayotte : douane.gouv.fr ICS liste points d'entrée + `mayotte-preparer-son-arrivee` (Dzaoudzi + Longoni).
+    - **TAAF (Tromelin + Europa)** : taaf.fr `acces-et-mouillage-dans-les-eparses` → **`ports_of_entry: []`** — accès uniquement sur autorisation préalable écrite du Préfet TAAF, débarquement interdit à Tromelin.
+    - La Réunion : reunion.gouv.fr — Port de la Pointe des Galets (préavis 48 h obligatoire, Saint-Gilles NON port d'entrée).
+- **Nouveau module `/app/backend/formalities.py`** (~200 lignes) — schéma complet + factory de doc vide + seeder idempotent. `is_stale()` sur `generated_at` avec **max_age_days=180** (moitié du seuil marinas car les réglementations bougent plus vite). `_default_overlays()` calcule automatiquement `is_port_of_entry` en croisant `escale_name` avec `ports_of_entry`, avec 3 overrides ciblés : Saint-Maur (`false` + note « Départ terrestre — aucune formalité maritime. »), TAAF (`false` + « Débarquement soumis à autorisation préalable du Préfet des TAAF. »), Saint-Gilles (`false` + note « Port de plaisance secondaire — l'entrée officielle se fait à la Pointe des Galets. »).
+- **Collection Mongo `formalities`** — 13 docs seedés au démarrage via `@app.on_event("startup")` (idempotent, `db.formalities.create_index("territory_code", unique=True)`). Schéma verbatim : `_id (uuid), territory_code, status: "non_generee"|"ia"|"ia_sans_source"|"verifiee", entree{11 fields all null}, sortie{4}, cas_particuliers{3}, contacts[], liens_officiels[], immigration{fr,ca,us,gb} (chaque slot `null` en 4A ; 4B remplira `fr` par défaut), sources[], generated_at:null, verified_at:null, stale:bool, escale_overlays[{escale_name, is_port_of_entry, note}]`.
+- **Nouveaux endpoints** :
+  - `GET /api/territories` → référentiel curated complet (Cache-Control 1h, header `X-Territories-Source`).
+  - `GET /api/formalities` → `{count, items[]}` triés dans l'ordre de la route (France métro → Martinique → Guadeloupe → … → Réunion).
+  - `GET /api/formalities/{territory_code}` → doc complet + `territory` (référentiel du territoire embarqué en réponse pour éviter un double round-trip côté frontend). 404 si code inconnu.
+- **Pas d'endpoint de génération / vérification en 4A** — ce sera la Phase 4B (mission TinyFish + LLM pour remplir chaque `entree/sortie/…`, verrous per-territory-code, statut IA vs vérifiée).
+
+### Phase 4A frontend — Refonte switch → 3 modes (Projets / Marinas / Formalités)
+
+- **`Header.js`** — pill switch passé de 2 à **3 boutons**. 3ᵉ bouton `data-testid="mode-toggle-formalities"` avec icône `ScrollText` (lucide) + `bg-amberx/15 text-amberx` quand actif. Les 3 boutons ont maintenant des bordures uniformisées (`border-r border-line` sur les 2 premiers, plus de bordure sonar/40 spécifique).
+- **`App.js`** — `readInitialMode()` accepte désormais `"formalities"` comme valeur persistable, ternaire panel remplacé par 3 blocs `mode === "…" && (…)`. Trois nouveaux fetchers : `fetchRoute`, `fetchTerritories`, `fetchFormalities` (appelés au boot une seule fois — pas de polling car ces données changent rarement). Nouveaux states : `route, territories, formalities, selectedTerritory, selectedEscale, flyToEscale`. Nouveau handler `handleSelectEscale(escaleName, territoryCode, coord)` partagé entre sidebar et carte : ouvre la fiche + déclenche `flyToEscale` (signal one-shot avec timestamp).
+- **`index.css`** — nouveau bloc `[data-mode="formalities"] { --accent-rgb: 251 191 36; --accent-glow: rgba(251,191,36,0.35); ... }` (amberx `#fbbf24`, déjà défini dans tailwind.config.js). Ajout de 3 classes utilitaires : `.bi-poe-ring` (drop-shadow blanc pour les anneaux port d'entrée), `.bi-escale-marker--dashed` (`stroke-dasharray: 3 3 !important`), `.bi-formalities-disclaimer` (fond ambre translucide pour le bandeau permanent).
+- **Nouveau composant `/app/frontend/src/components/FormalitiesPanel.js`** (~430 lignes, sidebar dédiée) :
+  - Header : titre `Formalités` + compteur `17 escales` + subtitle bilingue.
+  - **Bandeau disclaimer permanent** `data-testid="formalities-disclaimer"` : « ⚠️ Informations indicatives — à vérifier auprès des autorités. » (bilingue).
+  - **Sélecteur nationalité global** `data-testid="nationality-selector"` : FR / CA / US / GB, persisté `localStorage.bi.nationality` (défaut FR). Le read initial fallback silencieusement à `"fr"`.
+  - **Liste ordonnée de 17 escale rows** (`formalities-row-{code}` ou `formalities-row-{code}-departure|-return` pour La Rochelle) — construite en lisant `route.features` dans l'ordre, en mappant chaque escale à son territoire via `escale_names`. La Rochelle apparaît **deux fois** (départ + retour) avec un tag `départ` / `retour`, les deux ouvrent la même fiche `france_metropolitaine`.
+  - Chaque row montre : drapeau emoji + nom + territoire + badges statut (`STATUS_COLOR` map cohérente avec MapView) + badge `PORT OF ENTRY` / `NOT A PORT OF ENTRY`. Sélection surlignée par une bordure gauche amberx.
+  - **Fiche territoire épinglée en bas** de la sidebar, ouverte au clic sur une escale :
+    - Titre : drapeau + `name_fr` + badges (status + regime i18n `Metropolitan France | DROM | COM | TAAF | Sui generis`).
+    - **Overlay de l'escale sélectionnée** (`data-testid="formalities-escale-overlay"`) : port d'entrée oui/non + note (spécifique à cette escale).
+    - **6 onglets** (`data-testid="formalities-tab-{entree|sortie|cas_particuliers|immigration|contacts|sources}"`). Contenu vide = placeholder « Non générée — disponible en Phase 4B » (bilingue).
+    - Onglet immigration lit `detail.immigration[nationality]` (piloté par le sélecteur global).
+    - Footer : whitelist des `official_domains` du territoire en chips (limité à 6 + compteur).
+- **`MapView.js`** — 3 changements majeurs :
+  1. Init cluster : `if (mode === "marinas") map.addLayer(marinaCluster); else if (mode !== "formalities") map.addLayer(cluster);` — aucun cluster n'est attaché quand on ouvre l'app en mode formalities.
+  2. **Mode-swap 3 branches** : détache TOUJOURS les 3 layers (proj + marina + formalities), puis attache uniquement celui du mode courant. `map.closePopup()` sur chaque switch.
+  3. **Nouveau `useEffect` de rendu de la couche Formalités** (~130 lignes) : construit un `L.layerGroup()` avec, pour chaque escale de `route.geojson` : (a) un premier `circleMarker r=11 fill:none stroke:#f8fafc weight:2` si `is_port_of_entry=true` (l'anneau blanc, class `.bi-poe-ring`), (b) un `circleMarker r=7` coloré selon le statut (`non_generee=#64748b`, `ia=#fbbf24`, `ia_sans_source=#fbbf24 dashed`, `verifiee=#39ff14`) — orthogonal du port d'entrée. Popup avec titre + statut + badge PoE + note d'overlay. Le clic sur le marker appelle `onSelectEscale(name, terr.code, coord)` — même handler que la sidebar. **Signature de skip-rebuild** basée sur `nom|code|status` par escale pour ne pas rebuild la couche à chaque re-render.
+  4. Nouveau `useEffect` FlyTo escale : anime la carte vers la coord one-shot `flyToEscale`.
+- **`i18n.js`** — ~55 nouvelles clés côté DICT.en ET DICT.fr : `modeFormalities, formalitiesSubtitle, formalitiesCount, formalitiesDisclaimer, formalitiesTab{Entree|Sortie|CasParticuliers|Contacts|Sources|Immigration}, formalitiesStatus{NonGeneree|Ia|IaSansSource|Verifiee}, formalitiesPortOfEntry, formalitiesNotPortOfEntry, formalitiesLeg{Departure|Return}, formalitiesRegime{Metropole|Drom|Com|Taaf|SuiGeneris}, formalitiesNotGenerated, formalitiesSelectHint, formalitiesFields{Preavis|PavillonQ|DemarchesArrivee|OuSAmarrer|Vhf|DouanesClearance|AdmissionTemporaire|Franchises|Biosecurite|Frais|Horaires|Clearance|Delais|Documents|OuObtenir|Animaux|Drones|Armes|Visa|DureeSejour|Esta|Notes}, formalitiesNationality{Fr|Ca|Us|Gb}, formalitiesEscaleOverlay, formalitiesOfficialDomains, formalitiesPortsOfEntryLabel, formalitiesEmpty, formalitiesTerritoryTitle, formalitiesEscaleTitle, refresh`. Décision actée : **le contenu des fiches restera FR uniquement**, seuls les libellés UI sont bilingues. Consigné dans `content_language: "fr"` du fichier territories.json.
+
+### Vérifications end-to-end (2026-08-25, live sur le slug public)
+
+- `GET /api/openapi.json` HTTP 200, 41 paths dont `/api/territories`, `/api/formalities`, `/api/formalities/{territory_code}`.
+- `GET /api/territories` HTTP 200 : 13 territoires renvoyés avec regime, ports_of_entry+ref_url sourcés, escale_names couvrant les 17 features escale (Saint-Maur, La Rochelle ×2, Ajaccio dans france_metropolitaine + 12 autres), official_domains non vides.
+- `GET /api/formalities` HTTP 200 : 13 docs `status: non_generee`. Répartition escale_overlays : france_metropolitaine=3, taaf=2, autres=1 chacun → 15 overlays uniques couvrant les 16 noms d'escale distincts. Vérifs ciblées : `formalities/taaf` → 2 overlays Tromelin+Europa `is_port_of_entry:false` avec note "Débarquement soumis à autorisation préalable du Préfet des TAAF" ; `formalities/france_metropolitaine` → Saint-Maur `is_port_of_entry:false` + note "Départ terrestre — aucune formalité maritime", La Rochelle et Ajaccio `true`.
+- Frontend E2E (Playwright, 1920×900) :
+  - Switch mode → header pill à 3 boutons OK, `data-mode="formalities"` sur `<html>`, `localStorage.bi.mode="formalities"` persisté.
+  - Sidebar formalités : 17 rows (`departure`/`return` sur La Rochelle #1/#2), disclaimer ambre visible, sélecteur nationalité fonctionnel (`us` sélectionné → `localStorage.bi.nationality="us"` persisté après reload).
+  - Carte en mode formalities : **0 project_clusters + 0 marina_clusters**, **13 poe_rings** (= tous les ports d'entrée : La Rochelle ×2, Ajaccio, Fort-de-France, Pointe-à-Pitre, Gustavia, Marigot, Cayenne, Saint-Pierre, Papeete, Mata-Utu, Nouméa, Dzaoudzi), 17 escale_tooltips, route Berry-Mappemonde visible.
+  - Clic sur Nouméa (sidebar OU carte) → fly-to + fiche territoire ouverte avec 6 onglets présents, overlay "PORT OF ENTRY — Nouméa (Nouvelle-Calédonie)", placeholder "Not generated yet — available in Phase 4B", chips whitelist (douane.gouv.nc, gouv.nc, nouvelle-caledonie.gouv.fr, service-public.nc, isee.nc, province-sud.nc, +2).
+  - Régression zéro : round-trip Formalités → Projets → Marinas → Formalités OK, chaque panneau retrouvé, aucune erreur console.
+  - Bascule EN → FR : subtitle "Douanes & entrée par territoire", disclaimer "⚠️ Informations indicatives — à vérifier auprès des autorités", tous les libellés UI traduits.
+
+### Non fait cette phase (backlog Phase 4B)
+- **Pipeline de génération LLM** — TinyFish + Kimi/OpenRouter avec whitelist `official_domains` + blacklist top-level, remplissage de `entree/sortie/cas_particuliers/immigration.fr`, calcul du `status` (`ia` si toutes sources dans la whitelist, `ia_sans_source` sinon), écriture de `sources[]` (URL + domain + collected_at), `generated_at`, verrou per-territory_code + endpoint `POST /api/formalities/{code}/generate` + `GET /api/formalities/{code}/generate/status`.
+- **Génération immigration à la demande** pour ca/us/gb (avec sélecteur nationalité qui déclencherait le job).
+- **Endpoint de validation manuelle** (bouton "Marquer comme vérifiée" côté UI, PUT `verified_at`).
+- **Ré-import projets** — pour l'instant `db.projects` est vide (perdu au relaunch), les utilisateurs doivent poster leur GeoJSON de sauvegarde sur `POST /api/import/geojson` pour restaurer les 4 463 projets. Aucune régression de code Projets — juste 0 features à afficher.
+- Rafraîchissement automatique cron des formalities `stale` (>180 j).
