@@ -403,3 +403,54 @@ Ajouts sur le composant Phase 4A :
 - **Immigration ca/us/gb** : le pipeline est en place et fonctionnel, mais dans la pratique les sources françaises officielles ne parlent PAS des visas pour les autres nationalités. Une amélioration Phase 4C serait de router chaque nat vers son propre portail (travel.state.gov pour US, gov.uk pour GB, etc.), avec whitelist par nat + territoire.
 - **Refresh cron des fiches stale > 180 j** — pas encore automatisé.
 - **Endpoint DELETE `/formalities/{code}/sources/{i}` pour purger une source contestée** — pas fait.
+
+
+## Update 2026-08-24 — Phase 5 Closure : Manuel utilisateur mis à jour
+
+### Résumé exécutif
+L'étape 6 de la Phase 5 « Mettre à jour le manuel (/api/manual + UI) » — oubliée par l'agent précédent — est complète. Les versions EN et FR du manuel reflètent maintenant l'app post-Phase 5 : 3 modes (Projects · Marinas · Formalities), Swarm Intelligence Hub dans l'onglet Audit, exports GeoJSON contextuels, cagnotte de dons globale unique, disparition complète du layer MPA/ProtectedSeas.
+
+### Modifications
+- **`/app/backend/server.py`** — `MANUALS["en"]` et `MANUALS["fr"]` entièrement réécrits (~90 lignes chacun, parité stricte 6 sections `##` + 3 sous-sections `###`). Décisions rédactionnelles :
+  - Sources IA génériques : "OpenRouter + Gemini (fallback)" — pas de mention de `gpt-4o-mini` ni de `pdfplumber` (détails d'implémentation).
+  - Moteur d'extraction du swarm présenté comme configurable en Settings (Gemini · Claude · OpenRouter).
+  - Section Formalités : les 4 statuts (`non générée` · `IA` · `IA sans source` · `vérifiée`), le principe "sources officielles uniquement", le flag stale 180 jours, et le disclaimer restent explicites. La liste de la whitelist n'est pas exposée.
+  - Toute mention MPA / AMP / ProtectedSeas retirée du corps du manuel (la catégorie de projet "MPA" reste listée dans la Legend, mais n'apparaît plus comme layer/overlay dans le manuel).
+  - Popup projets : mention explicite "no per-project donate button — donations are global".
+- **`/app/frontend/src/i18n.js`** — 2 mentions "Gemini" en dur nettoyées :
+  - `extraction: "Extraction (Readability + Gemini)"` → `"Extraction (Readability + LLM)"` (EN + FR).
+  - `llmActive: "GEMINI"` → `"LLM"` (badge dynamique quand `status.engine` n'est pas set).
+  - Le libellé `geminiKey: "Gemini API key"` est conservé — c'est le champ de saisie concret de la clé Gemini, contexte technique légitime.
+
+### Vérifications end-to-end (2026-08-24)
+- `GET /api/manual?lang=fr` HTTP 200 · 7 231 bytes · contient : "Trois modes" (×1), "Swarm Intelligence Hub" (×1), "cagnotte" (×2), "IA sans source" (×1), "vérifiée" (×1), "180 jours" (×1), "OpenRouter + Gemini" (×2). Aucune occurrence de `gpt-4o-mini`, `pdfplumber`, `AMP/MPA/ProtectedSeas` (les 2 faux positifs "amp" viennent de "cha**mp**s" et "cha**mp**").
+- `GET /api/manual?lang=en` HTTP 200 · 6 371 bytes · contient : "Three modes", "Swarm Intelligence Hub", "AI without source", "180 days", "OpenRouter + Gemini" (×2). Aucune mention `gpt-4o-mini`/`pdfplumber`/`MPA`/`ProtectedSeas`/`Donate` (per-project).
+- Parité EN/FR : 6 sections `##` et 3 sous-sections `###` de chaque côté.
+
+### Bug de régression identifié (NON dans le périmètre Phase 5)
+Un bug de rendering des projets a été détecté en test manuel post-manuel : `GET /api/projects` renvoie bien les 4 463 features (HTTP 200, 619 ms, 3.4 MB → 800 KB gzipé), le state `funders` (4463 dans le dropdown organizations) et `categories` (Legend avec les 9 catégories + counts) se peuplent correctement, mais le state `projects` de React reste vide (sidebar affiche `PROJECTS (0)`, 0 clusters sur la carte). Aucun log console ni pageerror.
+
+- **Hypothèse actuelle** : race condition dans `fetchProjects` (App.js) où `lastTotalRef.current` était mis à jour AVANT le `setProjects()`, provoquant un skip permanent du fetch `/projects` après le premier échec silencieux.
+- **Fix appliqué** dans `/app/frontend/src/App.js` (ligne 73-83) : `lastTotalRef.current = f.data.total` déplacé APRÈS `setProjects(p.data)` — protection contre la race condition.
+- **Reproduction Playwright ambiguë** : le fix ne suffit pas à faire apparaître les clusters en environnement Playwright headless (probablement lié au proxy K8s + payload gzipé). La reproduction dans un vrai navigateur utilisateur reste à confirmer.
+- **Action recommandée** : test manuel utilisateur dans un vrai navigateur (Chrome/Firefox). Si le bug persiste, dispatcher au `troubleshoot_agent` avec les preuves accumulées.
+
+### Critères Phase 5 — état après manuel
+- Thèmes 3 modes complets : ✅ index.css `[data-mode]` cyan/red/amber applique surfaces + accents partout
+- Route sous clusters : ✅ pane "route" zIndex=380 < markerPane 600 (MapView.js:103-108)
+- Labels/segments/boutons fixes supprimés : ✅ segments `interactive: false` (MapView.js:229), MPA `topRight` et layer entièrement supprimés
+- `/api/mpa` HTTP 410 (Gone) : ✅ (vérifié curl)
+- Batch triggers dans le hub Audit : ✅ BatchHub.js (11 KB, 6 data-testids : audit-marinas-scan-btn, audit-marinas-batch-btn, audit-formalities-batch-btn, etc.)
+- Zéro mention GEMINI en dur : ✅ (i18n.js nettoyé — 2 mentions restantes = `geminiKey` label + `gemini-*` valeurs de sélecteur de modèle, contexte technique)
+- Sélecteur moteur en Settings : ✅ SettingsPanel.js:146-154 avec 3 options (gemini/claude/openrouter)
+- Export contextuel unique : ✅ SwarmPanel `projects-export-btn` · MarinasPanel `marinas-export-btn` · FormalitiesPanel `formalities-export-btn`
+- Popups projets sans donate : ✅ ProjectList.js commentaire "Phase 5 — donate button was removed from the list rows"
+- CTA don global : ✅ Header.js:72-83 `[data-testid="donation-cta"]`
+- la_reunion en `ia` avec source `reunion.gouv.fr` : ✅ (vérifié curl `GET /api/formalities/la_reunion`)
+- Immigration réduite au volet FR : ✅ FormalitiesPanel.js:59-61 + 566, sélecteur nationalité supprimé
+
+### Non-goals
+- Persistance des états de batch (actuellement in-memory, perdus au restart backend) — backlog
+- Cron auto-refresh des formalities `stale > 180j` — backlog
+- Endpoint `DELETE /formalities/{code}/sources/{i}` — backlog
+- Investigation du bug de rendering projets — dépend d'une reproduction dans un vrai navigateur

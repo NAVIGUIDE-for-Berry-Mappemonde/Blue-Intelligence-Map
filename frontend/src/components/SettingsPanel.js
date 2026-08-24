@@ -141,6 +141,19 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
             <input data-testid="concurrency-input" type="range" min="1" max="20" value={form.extract_concurrency}
               onChange={(e) => set("extract_concurrency", e.target.value)} className="w-full accent-cyan-400" />
           </Field>
+          <Field label={t("extractionEngine")}>
+            <select
+              data-testid="extraction-engine-select"
+              value={form.extraction_engine || "gemini"}
+              onChange={(e) => set("extraction_engine", e.target.value)}
+              className={inputCls}
+            >
+              <option value="gemini">Gemini (via Emergent LLM key)</option>
+              <option value="gpt">GPT (via Emergent LLM key)</option>
+              <option value="claude">Claude (via Emergent LLM key)</option>
+              <option value="openrouter">OpenRouter · gpt-4o-mini</option>
+            </select>
+          </Field>
           <Field label={t("gatekeeperModel")}>
             <select data-testid="gatekeeper-model-select" value={form.gatekeeper_model} onChange={(e) => set("gatekeeper_model", e.target.value)} className={inputCls}>
               {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}

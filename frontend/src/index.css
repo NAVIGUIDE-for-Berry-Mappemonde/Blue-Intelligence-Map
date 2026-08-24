@@ -2,28 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---------- Dual-mode theme tokens (R-002) ----------
- * Projects mode → cyan/blue accent (matches existing app palette)
- * Marinas mode  → red accent
- * Anything using Tailwind class `accent` (bg-accent, text-accent, border-accent)
- * automatically follows this variable.
+/* ---------- Tri-mode theme tokens (Phase 5) ----------
+ * Projects mode    → cyan accent + neutral surfaces
+ * Marinas mode     → red accent + red-tinted surfaces
+ * Formalities mode → amberx accent + amber-tinted surfaces
+ *
+ * Every UI element uses `accent`/`surface`/`raised`/`line` (via Tailwind
+ * bindings in tailwind.config.js) so the whole app repaints on data-mode change.
+ * Hard-coded `alert`/`sonar`/`amberx` classes have been progressively removed
+ * from panels — the exceptions are semantic (icon color for "no source
+ * warning" alert red is intentional, kept as alert).
  */
 :root,
 [data-mode="projects"] {
   --accent-rgb: 0 240 255;         /* #00f0ff — cyan */
   --accent-glow: rgba(0, 240, 255, 0.35);
+  --accent-tint: rgba(0, 240, 255, 0.06);
+  --accent-tint-strong: rgba(0, 240, 255, 0.10);
+  --surface-rgb: 15 23 42;         /* #0f172a — slate-900 */
+  --raised-rgb: 30 41 59;          /* #1e293b — slate-800 */
+  --line-rgb: 51 65 85;            /* #334155 — slate-700 */
   --marker-fill: #00f0ff;
   --marker-stroke: #0f172a;
 }
 [data-mode="marinas"] {
   --accent-rgb: 255 74 74;         /* #ff4a4a — alert red */
   --accent-glow: rgba(255, 74, 74, 0.35);
+  --accent-tint: rgba(255, 74, 74, 0.05);
+  --accent-tint-strong: rgba(255, 74, 74, 0.08);
+  --surface-rgb: 24 15 18;         /* slate-900 tinted red */
+  --raised-rgb: 42 22 26;
+  --line-rgb: 82 43 49;
   --marker-fill: #ff4a4a;
   --marker-stroke: #0f172a;
 }
 [data-mode="formalities"] {
   --accent-rgb: 251 191 36;        /* #fbbf24 — amberx */
   --accent-glow: rgba(251, 191, 36, 0.35);
+  --accent-tint: rgba(251, 191, 36, 0.05);
+  --accent-tint-strong: rgba(251, 191, 36, 0.08);
+  --surface-rgb: 24 20 12;         /* slate-900 tinted amber */
+  --raised-rgb: 42 34 20;
+  --line-rgb: 82 62 33;
   --marker-fill: #fbbf24;
   --marker-stroke: #0f172a;
 }

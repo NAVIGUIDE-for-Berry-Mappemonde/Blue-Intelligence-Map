@@ -1,4 +1,4 @@
-import { Anchor, CheckCircle2, ChevronRight, Clock, Download, Globe, Loader2, MapPin, PlayCircle, RefreshCw, ScrollText, ShieldCheck, ShieldQuestion, Sparkles } from "lucide-react";
+import { Anchor, CheckCircle2, ChevronRight, Clock, Download, Globe, Loader2, MapPin, RefreshCw, ScrollText, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
@@ -56,23 +56,9 @@ const IMMIGRATION_FIELDS = [
   ["notes",            "formalitiesFieldsNotes"],
 ];
 
-const NATIONALITY_OPTIONS = [
-  { code: "fr", labelKey: "formalitiesNationalityFr" },
-  { code: "ca", labelKey: "formalitiesNationalityCa" },
-  { code: "us", labelKey: "formalitiesNationalityUs" },
-  { code: "gb", labelKey: "formalitiesNationalityGb" },
-];
-
-/** Persistence helpers for the global nationality selector. */
-const readInitialNationality = () => {
-  try {
-    const v = localStorage.getItem("bi.nationality");
-    if (v && ["fr", "ca", "us", "gb"].includes(v)) return v;
-  } catch (_) {
-    /* localStorage disabled */
-  }
-  return "fr";
-};
+// Phase 5 — nationality selector removed; NATIONALITY_OPTIONS/readInitialNationality
+// were used until Phase 4B, kept commented-out here for archaeology. The
+// Immigration tab now shows the FR slot only.
 
 /**
  * FormalitiesPanel — Phase 4A sidebar for the third mode.
@@ -96,23 +82,14 @@ export default function FormalitiesPanel({
   onSelectEscale,
   onFormalitiesRefresh,   // fn() — parent will refetch /api/formalities
 }) {
-  const [nationality, setNationalityRaw] = useState(readInitialNationality());
   const [activeTab, setActiveTab] = useState("entree");
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  // Phase 4B — batch + per-territory generation state
-  const [batchStatus, setBatchStatus] = useState(null);
-  const [batchStarting, setBatchStarting] = useState(false);
+  // Phase 4B — batch poller + per-territory refresh state (batch trigger moved to Audit view)
   const batchPollRef = useRef(null);
   const [refreshingCode, setRefreshingCode] = useState(null);   // territory_code being refreshed one-off
   const [refreshFeedback, setRefreshFeedback] = useState(null); // {code, msg, color}
   const [verifying, setVerifying] = useState(false);
-  const [immigrationBusy, setImmigrationBusy] = useState(null); // nat currently generating
-
-  const setNationality = (v) => {
-    setNationalityRaw(v);
-    try { localStorage.setItem("bi.nationality", v); } catch (_) { /* ignore */ }
-  };
 
   // Build the ordered list of escale rows from route.geojson features order —
   // La Rochelle is intentionally kept twice (départ / retour) per acceptance
@@ -183,48 +160,33 @@ export default function FormalitiesPanel({
       .catch(() => {});
   }, [formalities, selectedTerritory]);
 
-  // ---------- Phase 4B — Batch runner + poller ----------
-  const batchRunning = !!batchStatus?.running;
+  // ---------- Phase 4B — Formalities batch poller (kicks off in Audit view) ----------
+  // We keep a lightweight poller here so the sidebar + card + map recolour live
+  // while the Audit-triggered batch progresses.
+  const [batchRunning, setBatchRunning] = useState(false);
   useEffect(() => {
     let alive = true;
+    let wasRunning = false;
     const check = async () => {
       try {
         const { data } = await api.get("/formalities/generate-batch/status");
         if (!alive) return;
-        setBatchStatus(data);
-        if (!data.running) {
-          // On completion, propagate a formalities refetch so the sidebar + map recolour.
-          if (batchPollRef.current) {
-            clearInterval(batchPollRef.current);
-            batchPollRef.current = null;
-          }
+        setBatchRunning(!!data.running);
+        if (data.running) {
           if (onFormalitiesRefresh) onFormalitiesRefresh();
-        } else if (onFormalitiesRefresh) {
-          // Live refresh — each finished territory persists immediately.
+        } else if (wasRunning && onFormalitiesRefresh) {
           onFormalitiesRefresh();
         }
+        wasRunning = data.running;
       } catch (_) { /* transient */ }
     };
     check();
-    batchPollRef.current = setInterval(check, 2000);
+    batchPollRef.current = setInterval(check, 3000);
     return () => {
       alive = false;
       if (batchPollRef.current) clearInterval(batchPollRef.current);
     };
-  }, [batchStarting]);
-
-  const startBatch = async () => {
-    if (batchStarting || batchStatus?.running) return;
-    if (!window.confirm(t("formalitiesBatchConfirm"))) return;
-    setBatchStarting(true);
-    try {
-      await api.post("/formalities/generate-batch");
-    } catch (e) {
-      console.warn("Batch start failed", e);
-    } finally {
-      setTimeout(() => setBatchStarting(false), 800);
-    }
-  };
+  }, [onFormalitiesRefresh]);
 
   // ---------- Refresh a single territory ----------
   const refreshOne = async (code) => {
@@ -270,34 +232,6 @@ export default function FormalitiesPanel({
       }
     } finally {
       setVerifying(false);
-    }
-  };
-
-  // ---------- Immigration on-demand ----------
-  const generateImmigration = async (nat) => {
-    if (!selectedTerritory || immigrationBusy) return;
-    setImmigrationBusy(nat);
-    try {
-      const r = await window.__biGenerateImmigration?.(selectedTerritory, nat);
-      if (!r?.ok) {
-        setImmigrationBusy(null);
-        return;
-      }
-      // Poll the immigration status
-      for (let i = 0; i < 60; i++) {
-        await new Promise((res) => setTimeout(res, 2500));
-        try {
-          const st = await api.get(`/formalities/${selectedTerritory}/immigration/${nat}/status`);
-          if (st.data?.state === "done") {
-            const fresh = await api.get(`/formalities/${selectedTerritory}`);
-            setDetail(fresh.data);
-            break;
-          }
-          if (st.data?.state === "error") break;
-        } catch (_) { /* transient */ }
-      }
-    } finally {
-      setImmigrationBusy(null);
     }
   };
 
@@ -503,26 +437,10 @@ export default function FormalitiesPanel({
           {activeTab === "sortie" && renderFieldGroup(detail.sortie, SORTIE_FIELDS)}
           {activeTab === "cas_particuliers" && renderFieldGroup(detail.cas_particuliers, CAS_PARTICULIERS_FIELDS)}
           {activeTab === "immigration" && (() => {
-            const slot = detail.immigration ? detail.immigration[nationality] : null;
-            const isBusy = immigrationBusy === nationality;
-            const canGenerate = nationality !== "fr" && !slot;   // fr comes from main pipeline
-            return (
-              <div className="space-y-2">
-                {slot ? renderFieldGroup(slot, IMMIGRATION_FIELDS) : renderPlaceholder()}
-                {canGenerate && (
-                  <button
-                    data-testid="immigration-generate-btn"
-                    onClick={() => generateImmigration(nationality)}
-                    disabled={isBusy}
-                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 border border-amberx/40 bg-amberx/10 hover:bg-amberx/15 disabled:opacity-60 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
-                  >
-                    {isBusy
-                      ? <><Loader2 size={12} className="animate-spin" /> {t("formalitiesImmigrationRunning")}</>
-                      : <><Sparkles size={12} /> {t("formalitiesImmigrationGenerate")} {nationality.toUpperCase()}</>}
-                  </button>
-                )}
-              </div>
-            );
+            // Phase 5 — only the FR slot is exposed; ca/us/gb generation was abandoned.
+            const slot = (detail.immigration || {}).fr;
+            if (!slot) return renderPlaceholder();
+            return renderFieldGroup(slot, IMMIGRATION_FIELDS);
           })()}
           {activeTab === "contacts" && (
             (detail.contacts || []).length === 0 && (detail.liens_officiels || []).length === 0
@@ -645,76 +563,22 @@ export default function FormalitiesPanel({
           ⚠️ {t("formalitiesDisclaimer")}
         </div>
 
-        {/* Nationality selector */}
-        <div>
-          <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
-            {t("formalitiesNationalityLabel")}
-          </label>
-          <select
-            data-testid="nationality-selector"
-            value={nationality}
-            onChange={(e) => setNationality(e.target.value)}
-            className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-100 focus:outline-none focus:border-amberx/60"
-          >
-            {NATIONALITY_OPTIONS.map((opt) => (
-              <option key={opt.code} value={opt.code}>{t(opt.labelKey)}</option>
-            ))}
-          </select>
-        </div>
+        {/* Phase 5 — nationality selector removed. Immigration tab now shows FR only. */}
 
-        {/* Phase 4B — Batch generation */}
-        <div className="mt-3 pt-3 border-t border-line">
-          <div className="flex items-center gap-2 mb-2">
-            <PlayCircle size={13} className="text-amberx" />
-            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
-              {t("formalitiesBatchTitle")}
-            </span>
-          </div>
-          <button
-            data-testid="formalities-batch-btn"
-            onClick={startBatch}
-            disabled={batchRunning || batchStarting || !!refreshingCode}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-amberx/50 bg-amberx/10 hover:bg-amberx/15 disabled:opacity-70 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
+        {/* Phase 5 — Batch generation moved to Audit view. Sidebar keeps
+            per-fiche refresh/verify. Contextual export button below. */}
+        <div className="mt-3 pt-3 border-t border-line flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 flex-1">
+            {t("formalitiesBatchMovedToAudit")}
+          </span>
+          <a
+            data-testid="formalities-export-btn"
+            href={`${process.env.REACT_APP_BACKEND_URL}/api/export/formalities.geojson`}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent font-semibold text-xs rounded-sm"
+            title={t("exportGeoJsonTooltip")}
           >
-            {batchRunning ? (
-              <>
-                <Loader2 size={13} className="animate-spin" />
-                {t("formalitiesBatchRunning")} {batchStatus?.progress ?? 0}/{batchStatus?.total ?? 13}
-              </>
-            ) : (
-              <>
-                <Sparkles size={13} />
-                {t("formalitiesBatchStart")}
-              </>
-            )}
-          </button>
-          {batchStatus?.logs_tail && batchStatus.logs_tail.length > 0 && (batchRunning || batchStatus.finished_at) && (
-            <div
-              data-testid="formalities-batch-logs"
-              className="mt-2 text-[9px] font-mono text-slate-500 max-h-24 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
-            >
-              {batchStatus.logs_tail.slice(-10).map((l, i) => (
-                <div key={i} className="truncate">{l}</div>
-              ))}
-            </div>
-          )}
-          {/* Exports */}
-          <div className="mt-2 grid grid-cols-2 gap-1.5">
-            <a
-              data-testid="formalities-export-json"
-              href={`${process.env.REACT_APP_BACKEND_URL}/api/export/formalities.json`}
-              className="flex items-center justify-center gap-1 px-2 py-1 border border-line hover:border-amberx/40 hover:text-amberx text-slate-400 text-[10px] rounded-sm font-mono"
-            >
-              <Download size={10} /> .json
-            </a>
-            <a
-              data-testid="formalities-export-geojson"
-              href={`${process.env.REACT_APP_BACKEND_URL}/api/export/formalities.geojson`}
-              className="flex items-center justify-center gap-1 px-2 py-1 border border-line hover:border-amberx/40 hover:text-amberx text-slate-400 text-[10px] rounded-sm font-mono"
-            >
-              <Download size={10} /> .geojson
-            </a>
-          </div>
+            <Download size={12} /> {t("exportGeoJson")}
+          </a>
         </div>
       </div>
 

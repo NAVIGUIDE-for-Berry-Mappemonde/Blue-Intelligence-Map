@@ -18,7 +18,7 @@ Configured in `/app/backend/.env` and re-provisioned live on 2026-08-25 during P
 ## MongoDB
 - Local Mongo at `mongodb://localhost:27017`, DB name `blueintel_db`.
 - Collections (as of Phase 4B, 2026-08-24):
-  - `projects`: **4 463 documents** — restored via `POST /api/import/geojson` from the user's backup GeoJSON (Aug 24). Category distribution: MPA 402, Conservation 765, Research 895, Fisheries 361, Policy & Advocacy 490, Pollution 391, Coastal & Habitat 389, Education 301, Other 469. **Mode Projects is fully operational.**
+  - `projects`: **4 463 documents** — restored via `POST /api/import/geojson` from the user's backup GeoJSON (Aug 24). Category distribution: MPA 402, Conservation 765, Research 895, Fisheries 361, Policy & Advocacy 490, Pollution 391, Coastal & Habitat 389, Education 301, Other 469. API `/api/projects` renvoie bien les 4 463 features (curl 200 en 619 ms) ; un bug de rendering React empêche l'affichage sidebar/clusters — à investiguer dans un vrai navigateur (voir PRD.md Update 2026-08-24 — Phase 5 Closure).
   - `marinas`: **212 documents** — rebuilt Phase 4.0 (124 OSM + 69 SHOM + 19 curated, P1=192 · P2=17 · P3=3). None enriched yet.
   - `settings`: `_id="global"`.
   - `formalities`: **13 documents** (13 territoires seedés au Phase 4A). Après batch Phase 4B : **12/13 status=`ia`, 1/13 status=`ia_sans_source` (la_reunion)**. Distribution des sources : 18 URLs whitelistées au total, 0 hors whitelist, 0 blacklist. Unique index sur `territory_code`.

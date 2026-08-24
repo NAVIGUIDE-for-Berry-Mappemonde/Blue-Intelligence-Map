@@ -261,24 +261,92 @@ async def _run_tinyfish_mission(
 # The URL is ALWAYS a whitelisted one already picked by _select_source_urls, so the
 # resulting fact-blob is trustworthy source-wise.
 # --------------------------------------------------------------------------------
+# Cached local PDFs mapped to their canonical URL — used when the site is hard to
+# fetch live but a user-provided snapshot is available. The URL of the source[]
+# entry is ALWAYS the canonical remote URL, never the local file path.
+CACHED_PDF_MAP: dict[str, str] = {
+    "https://www.reunion.gouv.fr/":
+        "/app/backend/data/cached_pdfs/la_reunion_reunion_gouv_fr.pdf",
+}
+
+
+def _extract_pdf_text(pdf_bytes: bytes, max_chars: int = 12000) -> Optional[str]:
+    """Extract readable text from a PDF byte-stream. Returns None on failure."""
+    try:
+        import pdfplumber, io
+        text_parts = []
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages[:30]:   # cap at 30 pages
+                t = page.extract_text() or ""
+                if t.strip():
+                    text_parts.append(t)
+        text = "\n".join(text_parts)
+        # Collapse blank runs
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        cleaned = "\n".join(lines)
+        if len(cleaned) < 200:
+            return None
+        return cleaned[:max_chars]
+    except Exception:
+        return None
+
+
+def _extract_local_pdf(path: str, max_chars: int = 12000) -> Optional[str]:
+    try:
+        with open(path, "rb") as f:
+            return _extract_pdf_text(f.read(), max_chars=max_chars)
+    except Exception:
+        return None
+
+
 async def _fetch_readable(url: str, logger: Optional[Callable[[str], None]] = None,
                           max_chars: int = 8000) -> Optional[str]:
     """
-    Fetch url with httpx, extract readable text using BeautifulSoup. Cap at ~8k chars.
-    Returns None on any error / empty extract.
+    Fetch url with httpx, extract readable text.
+    - If a cached local PDF exists for that URL (CACHED_PDF_MAP), read it and parse
+      via pdfplumber — the source URL remains the canonical one.
+    - If the remote response is a PDF (Content-Type or .pdf extension), parse via
+      pdfplumber into text.
+    - Otherwise treat as HTML and BeautifulSoup-strip.
     """
+    # ---- Cached local PDF override (whitelist-preserving) -----------------------
+    if url in CACHED_PDF_MAP:
+        local = CACHED_PDF_MAP[url]
+        snippet = _extract_local_pdf(local, max_chars=max(max_chars, 12000))
+        if snippet:
+            if logger:
+                logger(f"[fallback-fetch/pdf-cache] {url}: {len(snippet)} chars from local cache")
+            return snippet
+        elif logger:
+            logger(f"[fallback-fetch/pdf-cache] local file empty/failed: {local}")
+
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; BlueIntelligence/1.0; +blue-intelligence-map)",
-            "Accept": "text/html,application/xhtml+xml",
+            "Accept": "text/html,application/xhtml+xml,application/pdf",
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
         }
         async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
             r = await client.get(url, headers=headers)
-        if r.status_code != 200 or not r.text:
+        if r.status_code != 200 or not r.content:
             if logger:
                 logger(f"[fallback-fetch] HTTP {r.status_code} on {url}")
             return None
+
+        # ---- PDF branch -----------------------------------------------------------
+        ct = (r.headers.get("content-type") or "").lower()
+        is_pdf = "pdf" in ct or url.lower().endswith(".pdf") or r.content[:4] == b"%PDF"
+        if is_pdf:
+            snippet = _extract_pdf_text(r.content, max_chars=max(max_chars, 12000))
+            if snippet:
+                if logger:
+                    logger(f"[fallback-fetch/pdf] {url}: {len(snippet)} chars extracted from PDF")
+                return snippet
+            if logger:
+                logger(f"[fallback-fetch/pdf] {url}: PDF parsing yielded nothing usable")
+            return None
+
+        # ---- HTML branch ---------------------------------------------------------
         try:
             from bs4 import BeautifulSoup
         except ImportError:
@@ -286,11 +354,9 @@ async def _fetch_readable(url: str, logger: Optional[Callable[[str], None]] = No
                 logger("[fallback-fetch] bs4 not available")
             return None
         soup = BeautifulSoup(r.text, "html.parser")
-        # Kill nav/footer/script/style
         for tag in soup(["script", "style", "nav", "footer", "aside", "form", "svg", "noscript"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
-        # Collapse blank lines
         lines = [ln for ln in text.split("\n") if ln.strip()]
         cleaned = "\n".join(lines)
         if len(cleaned) < 300:

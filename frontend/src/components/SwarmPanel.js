@@ -1,7 +1,7 @@
-import { Flag, Search } from "lucide-react";
+import { Download, Flag, Search } from "lucide-react";
 import ProjectList from "./ProjectList";
 
-export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onDonate, onReport }) {
+export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport }) {
   const legendCats = (categories || []).filter((c) => c.count > 0);
 
   return (
@@ -14,7 +14,7 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
             {legendCats.map((c) => (
               <button key={c.name} data-testid={`legend-item-${c.name}`}
                 onClick={() => setCategoryFilter(categoryFilter === c.name ? "All" : c.name)}
-                className={`flex items-center gap-2 py-1 px-1.5 rounded-sm text-left ${categoryFilter === c.name ? "bg-raised ring-1 ring-cyan-500/40" : "hover:bg-raised/60"}`}>
+                className={`flex items-center gap-2 py-1 px-1.5 rounded-sm text-left ${categoryFilter === c.name ? "bg-raised ring-1 ring-accent/40" : "hover:bg-raised/60"}`}>
                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: c.color, boxShadow: `0 0 6px ${c.color}66` }} />
                 <span className="text-[11px] text-slate-300 truncate">{t("cat_" + c.name)}</span>
                 <span className="font-mono text-[9px] text-slate-500 ml-auto">{c.count}</span>
@@ -30,7 +30,7 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
             data-testid="org-filter-select"
             value={funderFilter}
             onChange={(e) => setFunderFilter(e.target.value)}
-            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
           >
             <option value="All">{t("allOrgs")} ({funders.total} {t("projects")})</option>
             {funders.funders.map((f) => (
@@ -42,7 +42,7 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
             data-testid="category-filter-select"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
           >
             <option value="All">{t("allCategories")}</option>
             {legendCats.map((c) => (
@@ -57,16 +57,24 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t("searchPlaceholder")}
-              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
         </section>
 
-        <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} onDonate={onDonate} />
+        <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} />
       </div>
 
-      {/* Bottom action */}
-      <div className="shrink-0 p-3 border-t border-line bg-surface">
+      {/* Bottom actions — Phase 5: report + contextual GeoJSON export */}
+      <div className="shrink-0 p-3 border-t border-line bg-surface space-y-2">
+        <a
+          data-testid="projects-export-btn"
+          href={`${process.env.REACT_APP_BACKEND_URL}/api/export/geojson`}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10"
+          title={t("exportGeoJsonTooltip")}
+        >
+          <Download size={12} /> {t("exportGeoJson")}
+        </a>
         <button
           data-testid="report-project-btn"
           onClick={onReport}

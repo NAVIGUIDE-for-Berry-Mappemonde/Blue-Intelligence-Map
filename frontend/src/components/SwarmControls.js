@@ -40,8 +40,10 @@ export default function SwarmControls({ t, status, refresh }) {
           <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-sm border ${status?.tinyfish ? "text-sonar border-sonar/40" : "text-amberx border-amberx/40"}`}>
             {status?.tinyfish ? t("tfActive") : t("tfFallback")}
           </span>
-          <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-sm border ${status?.llm ? "text-sonar border-sonar/40" : "text-amberx border-amberx/40"}`}>
-            {status?.llm ? t("llmActive") : t("llmFallback")}
+          <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-sm border ${status?.llm ? "text-sonar border-sonar/40" : "text-amberx border-amberx/40"}`}
+            title={t("llmEngineTooltip")}
+          >
+            {status?.llm ? (status?.engine || "").toUpperCase() || t("llmActive") : t("llmFallback")}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-px bg-line border border-line mb-3">

@@ -1,4 +1,4 @@
-import { Anchor, ExternalLink, Loader2, MapPin, Play, RefreshCw, Search, Sparkles } from "lucide-react";
+import { Anchor, Download, ExternalLink, Loader2, MapPin, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
@@ -35,86 +35,52 @@ export default function MarinasPanel({
   const [query, setQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [sourceFilter, setSourceFilter] = useState("All");
-  const [buildStatus, setBuildStatus] = useState(null); // {running, progress, total, summary, error, logs_tail}
-  const [starting, setStarting] = useState(false);
-  // Phase 3 — enrichment batch state
-  const [batchStatus, setBatchStatus] = useState(null);
-  const [batchCount, setBatchCount] = useState(10);
-  const [batchStarting, setBatchStarting] = useState(false);
   const batchPollRef = useRef(null);
 
   const features = marinas?.features || [];
 
-  // Poll build status only while a build is running
+  // Poll build status — kept alive so the sidebar list re-fetches at end of a
+  // build that was kicked off from the Audit view (Phase 5).
   useEffect(() => {
     let live = true;
     let iv = null;
+    let wasRunning = false;
     const check = async () => {
       try {
         const { data } = await api.get("/marinas/build/status");
         if (!live) return;
-        setBuildStatus(data);
-        if (!data.running && iv) {
-          clearInterval(iv);
-          iv = null;
+        if (wasRunning && !data.running) {
           if (onRefresh) onRefresh();
         }
+        wasRunning = data.running;
       } catch (_) { /* transient */ }
     };
     check();
-    iv = setInterval(check, 2000);
+    iv = setInterval(check, 4000);
     return () => { live = false; if (iv) clearInterval(iv); };
-    // eslint-disable-next-line
-  }, [starting]);
+  }, [onRefresh]);
 
-  const startBuild = async () => {
-    if (starting) return;
-    setStarting(true);
-    try {
-      await api.post("/marinas/build", { include_corridor: false, clear_before: false });
-    } catch (e) {
-      console.warn("Build start failed", e);
-    } finally {
-      // trigger the polling effect to re-attach
-      setTimeout(() => setStarting(false), 500);
-    }
-  };
-
-  // ---------- Phase 3 : enrichment batch ----------
-  const startBatch = async () => {
-    if (batchStarting || batchStatus?.running || buildStatus?.running) return;
-    setBatchStarting(true);
-    try {
-      await api.post("/marinas/enrich-batch", { limit: parseInt(batchCount, 10) });
-    } catch (e) {
-      console.warn("Batch start failed", e);
-    } finally {
-      setTimeout(() => setBatchStarting(false), 500);
-    }
-  };
-
+  // Enrichment batch poller — same story, refresh the list at the end.
   useEffect(() => {
     let live = true;
+    let wasRunning = false;
     const check = async () => {
       try {
         const { data } = await api.get("/marinas/enrich-batch/status");
         if (!live) return;
-        setBatchStatus(data);
-        if (!data.running && batchPollRef.current) {
-          clearInterval(batchPollRef.current);
-          batchPollRef.current = null;
+        if (wasRunning && !data.running) {
           if (onRefresh) onRefresh();
         }
+        wasRunning = data.running;
       } catch (_) { /* transient */ }
     };
     check();
-    batchPollRef.current = setInterval(check, 2500);
+    batchPollRef.current = setInterval(check, 3000);
     return () => {
       live = false;
       if (batchPollRef.current) clearInterval(batchPollRef.current);
     };
-    // eslint-disable-next-line
-  }, [batchStarting]);
+  }, [onRefresh]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -203,90 +169,26 @@ export default function MarinasPanel({
           </div>
         </div>
 
-        {/* Scan button */}
-        <button
-          data-testid="marinas-scan-btn"
-          onClick={startBuild}
-          disabled={buildStatus?.running}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-alert/50 bg-alert/10 hover:bg-alert/15 disabled:opacity-70 disabled:cursor-not-allowed text-alert font-semibold text-xs rounded-sm"
-        >
-          {buildStatus?.running ? (
-            <>
-              <Loader2 size={13} className="animate-spin" />
-              {t("marinasScanning")} {buildStatus.progress}/{buildStatus.total}
-            </>
-          ) : (
-            <>
-              <Play size={13} />
-              {features.length === 0 ? t("marinasScan") : t("marinasScan")}
-            </>
-          )}
-        </button>
-        {buildStatus?.summary && !buildStatus.running && (
-          <div className="mt-2 text-[10px] text-slate-400 font-mono leading-relaxed">
-            <span className="text-bio">✓ {t("marinasScanDone")}</span> ·
-            &nbsp;OSM: {buildStatus.summary.by_source?.openstreetmap ?? 0} ·
-            SHOM: {buildStatus.summary.by_source?.shom ?? 0} ·
-            {t("marinasSourceCurated")}: {buildStatus.summary.by_source?.curated ?? 0}
-            {buildStatus.summary.overpass_errors ? (
-              <span className="text-alert"> · OSM errors: {buildStatus.summary.overpass_errors}</span>
-            ) : null}
-          </div>
-        )}
-
-        {/* Phase 3 — Enrichment batch */}
-        <div className="mt-3 pt-3 border-t border-line">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={13} className="text-alert" />
-            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{t("enrichBatchTitle")}</span>
-          </div>
-          <div className="flex gap-2">
-            <select
-              data-testid="marinas-batch-count"
-              value={batchCount}
-              onChange={(e) => setBatchCount(e.target.value)}
-              disabled={batchStatus?.running}
-              className="w-16 px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-100 focus:outline-none focus:border-alert/60 disabled:opacity-60"
-            >
-              <option value="5">5</option>
-              <option value="10">10</option>
-              <option value="25">25</option>
-            </select>
-            <button
-              data-testid="marinas-batch-btn"
-              onClick={startBatch}
-              disabled={batchStatus?.running || buildStatus?.running || batchStarting}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 border border-alert/40 bg-alert/5 hover:bg-alert/12 disabled:opacity-60 disabled:cursor-not-allowed text-alert font-semibold text-xs rounded-sm"
-            >
-              {batchStatus?.running ? (
-                <><Loader2 size={12} className="animate-spin" /> {batchStatus.progress}/{batchStatus.total}</>
-              ) : (
-                <><Sparkles size={12} /> {t("enrichBatchStart")}</>
-              )}
-            </button>
-          </div>
-          {batchStatus?.results && batchStatus.results.length > 0 && (
-            <div className="mt-2 text-[10px] font-mono text-slate-400 max-h-24 overflow-y-auto leading-relaxed">
-              {batchStatus.results.slice(-8).map((r, i) => (
-                <div key={i} className="truncate">
-                  <span className={r.enriched ? "text-bio" : (r.error ? "text-alert" : "text-slate-500")}>
-                    {r.enriched ? "✓" : (r.error ? "✗" : "·")}
-                  </span>
-                  &nbsp;{r.name}
-                  {r.source && <span className="text-slate-500"> · {r.source}</span>}
-                  {r.fields_filled && r.fields_filled.length > 0 && (
-                    <span className="text-slate-500"> · {r.fields_filled.length}/7</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+        {/* Phase 5 — Batch controls (scan + enrich) moved to the Audit view.
+            Sidebar keeps only the export button + a hint. */}
+        <div className="mt-3 pt-3 border-t border-line flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 flex-1">
+            {t("marinasBatchMovedToAudit")}
+          </span>
+          <a
+            data-testid="marinas-export-btn"
+            href={`${process.env.REACT_APP_BACKEND_URL}/api/export/marinas.geojson`}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent font-semibold text-xs rounded-sm"
+            title={t("exportGeoJsonTooltip")}
+          >
+            <Download size={12} /> {t("exportGeoJson")}
+          </a>
         </div>
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto" data-testid="marinas-list">
-        {features.length === 0 && !buildStatus?.running && (
+        {features.length === 0 && (
           <div className="p-6 text-center text-xs text-slate-500 leading-relaxed">
             <Anchor size={28} className="mx-auto mb-3 text-slate-600" />
             {t("marinasEmpty")}

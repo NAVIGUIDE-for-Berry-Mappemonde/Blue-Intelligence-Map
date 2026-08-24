@@ -31,19 +31,65 @@ def has_llm(settings: dict) -> bool:
     return bool(get_llm_key(settings))
 
 
-async def _gemini_json(prompt: str, model: str, key: str) -> dict:
+async def _llm_json(prompt: str, model: str, key: str, engine: str = "gemini") -> dict:
+    """
+    Unified JSON call. Routes through emergentintegrations for gemini/gpt/claude
+    (all three via the universal EMERGENT_LLM_KEY) — Phase 5.
+    Falls back to a bare httpx POST to OpenRouter when engine == "openrouter".
+    """
+    if engine == "openrouter":
+        import httpx
+        or_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+        if not or_key:
+            raise ValueError("OPENROUTER_API_KEY missing")
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {or_key}"},
+                json={
+                    "model": "openai/gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 900,
+                },
+            )
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"]
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            raise ValueError("no JSON in openrouter output")
+        return json.loads(m.group(0))
+    # ---- gemini / gpt / claude via emergentintegrations ---------------------
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # Emergent library expects (provider, model_id). We map "gpt"/"claude"
+    # to sensible defaults; the caller can still override `model`.
+    provider = engine if engine in ("gemini", "openai", "anthropic") else {
+        "gpt": "openai",
+        "claude": "anthropic",
+    }.get(engine, "gemini")
+    default_models = {
+        "gemini":    "gemini-2.5-flash",
+        "openai":    "gpt-4o-mini",
+        "anthropic": "claude-3-5-sonnet-20241022",
+    }
+    chosen_model = model if provider == "gemini" else default_models.get(provider, model)
     chat = LlmChat(
         api_key=key,
         session_id=str(uuid.uuid4()),
         system_message="You are the Blue Intelligence maritime OSINT engine. Reply ONLY with a single valid JSON object, no prose, no markdown fences.",
-    ).with_model("gemini", model)
+    ).with_model(provider, chosen_model)
     resp = await chat.send_message(UserMessage(text=prompt))
     text = resp if isinstance(resp, str) else str(resp)
     m = re.search(r"\{.*\}", text, re.S)
     if not m:
         raise ValueError("no JSON in model output")
     return json.loads(m.group(0))
+
+
+# Backward-compat alias
+async def _gemini_json(prompt: str, model: str, key: str) -> dict:
+    return await _llm_json(prompt, model, key, engine="gemini")
 
 
 def heuristic_gatekeeper(text: str, settings: dict) -> dict:
@@ -70,14 +116,15 @@ Page content (truncated):
 
 Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>"}}"""
     try:
-        out = await _gemini_json(prompt, settings.get("gatekeeper_model", "gemini-3-flash-preview"), key)
+        engine = settings.get("extraction_engine", "gemini")
+        out = await _llm_json(prompt, settings.get("gatekeeper_model", "gemini-3-flash-preview"), key, engine=engine)
         score = float(out.get("score", 0))
         return {"accepted": bool(out.get("marine")) and score >= float(settings.get("min_marine_score", 0.5)),
                 "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
-                "engine": "Gemini Gatekeeper"}
+                "engine": f"{engine.title()} Gatekeeper"}
     except Exception as e:
         res = heuristic_gatekeeper(f"{title} {text}", settings)
-        res["reason"] = f"gemini failed ({str(e)[:80]}), {res['reason']}"
+        res["reason"] = f"llm failed ({str(e)[:80]}), {res['reason']}"
         return res
 
 
@@ -135,7 +182,8 @@ Return JSON:
  "category": "<exactly one of: MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other>",
  "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
     try:
-        out = await _gemini_json(prompt, settings.get("extract_model", "gemini-3.1-pro-preview"), key)
+        engine = settings.get("extraction_engine", "gemini")
+        out = await _llm_json(prompt, settings.get("extract_model", "gemini-3.1-pro-preview"), key, engine=engine)
         return {
             "title": str(out.get("title") or title)[:200],
             "description": str(out.get("description") or "")[:250],
@@ -145,7 +193,7 @@ Return JSON:
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
             "category": str(out.get("category") or "Other"),
             "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
-            "engine": "Gemini Extractor",
+            "engine": f"{engine.title()} Extractor",
         }
     except Exception:
         return heuristic_extract(title, text, meta_desc, settings)

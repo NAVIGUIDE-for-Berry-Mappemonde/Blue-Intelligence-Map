@@ -14,8 +14,8 @@ const FALLBACK_COLORS = {
   "Coastal & Habitat": "#34d399", "Education": "#60a5fa", "Other": "#94a3b8",
 };
 
-const LFP_COLORS = { 1: "#60a5fa", 2: "#34d399", 3: "#fbbf24", 4: "#ef4444", 5: "#a855f7", 0: "#94a3b8" };
-const MPA_MIN_ZOOM = 5;
+// Phase 5 — MPA layer removed. LFP_COLORS/MPA_MIN_ZOOM constants deleted;
+// see /api/mpa endpoint removal + mpa_cache collection drop.
 
 // Neutral route styling that reads on both dark and light basemaps.
 // Two-layer stroke (dark casing + light main) gives contrast in every context.
@@ -59,21 +59,13 @@ export default function MapView({
   const sigRef = useRef("");
   const zoomingRef = useRef(false);
   const pendingRef = useRef(null);
-  const mpaLayerRef = useRef(null);
-  const mpaOnRef = useRef(false);
-  const mpaLoadingRef = useRef(false);
   const routeLayerRef = useRef(null);
   const routeLoadedRef = useRef(false);
   // Phase 4A — Formalities layer
   const formalitiesLayerRef = useRef(null);
   const formalitiesMarkersByEscale = useRef(new Map());
   const formalitiesSigRef = useRef("");
-  const [mpaOn, setMpaOn] = useState(false);
-  const [mpaZoomHint, setMpaZoomHint] = useState(false);
-  const [routeOn, setRouteOn] = useState(true);
-  const [lfpFilter, setLfpFilter] = useState({ 1: true, 2: true, 3: true, 4: true, 5: true });
-  const lfpFilterRef = useRef(lfpFilter);
-  const mpaDataRef = useRef(null);
+  const [routeOn] = useState(true);
 
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
@@ -107,6 +99,14 @@ export default function MapView({
     };
     fitMinZoom();
     map.on("resize", fitMinZoom);
+
+    // Phase 5 — dedicated Leaflet pane for the route, drawn UNDER the clusters
+    // and markers. Fixes "cluster 55 hovering over Europe hides the leg to Corsica".
+    map.createPane("route");
+    map.getPane("route").style.zIndex = 380;   // < markerPane (600) & tilePane (200 default)
+    map.createPane("formalities-escales");
+    map.getPane("formalities-escales").style.zIndex = 500;
+
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 50,
       chunkedLoading: true,
@@ -174,93 +174,9 @@ export default function MapView({
       setTimeout(() => adjustPopup(e.popup), 250);
       setTimeout(() => adjustPopup(e.popup), 800);
     });
-    // ProtectedSeas MPA overlay
-    const mpaLayer = L.geoJSON(null, {
-      style: (f) => ({
-        color: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
-        weight: 1.6,
-        fillColor: LFP_COLORS[f.properties.lfp] || LFP_COLORS[0],
-        fillOpacity: 0.28,
-      }),
-      onEachFeature: (f, layer) => {
-        const p = f.properties;
-        const col = LFP_COLORS[p.lfp] || LFP_COLORS[0];
-        layer.bindPopup(`
-          <div style="min-width:220px;max-width:270px;">
-            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.site_name || "MPA"}</div>
-            <div style="margin:5px 0;"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${col};border:1px solid ${col}66;padding:2px 6px;border-radius:2px;">LFP ${p.lfp || "?"} — ${t("lfp" + (p.lfp || 0))}</span></div>
-            <div style="font-size:11px;color:#94a3b8;line-height:1.5;">
-              ${p.designation ? p.designation + "<br/>" : ""}${p.country || ""}${p.managing_authority ? " · " + p.managing_authority : ""}
-            </div>
-            ${p.url ? `<a href="${p.url}" target="_blank" rel="noreferrer" style="font-size:11px;color:#00f0ff;font-weight:600;text-decoration:none;">${t("viewProject")} →</a>` : ""}
-            <div style="font-size:9px;color:#64748b;margin-top:6px;line-height:1.4;">${t("mpaDisclaimer")}<br/>ProtectedSeas Navigator® — CC BY 4.0</div>
-          </div>
-        `, { maxWidth: 280, autoPan: false });
-      },
-    });
-    mpaLayerRef.current = mpaLayer;
-    const renderMpa = () => {
-      const data = mpaDataRef.current;
-      mpaLayer.clearLayers();
-      if (!data) return;
-      const flt = lfpFilterRef.current;
-      mpaLayer.addData({
-        ...data,
-        features: (data.features || []).filter((f) => {
-          const s = f.properties.lfp;
-          return s >= 1 && s <= 5 ? flt[s] : true;
-        }),
-      });
-    };
-    map.__renderMpa = renderMpa;
-    const loadMpa = async () => {
-      if (!mpaOnRef.current || mpaLoadingRef.current) return;
-      if (map.getZoom() < MPA_MIN_ZOOM) {
-        setMpaZoomHint(true);
-        mpaDataRef.current = null;
-        mpaLayer.clearLayers();
-        return;
-      }
-      setMpaZoomHint(false);
-      mpaLoadingRef.current = true;
-      try {
-        const b = map.getBounds();
-        const bbox = `${b.getWest().toFixed(3)},${b.getSouth().toFixed(3)},${b.getEast().toFixed(3)},${b.getNorth().toFixed(3)}`;
-        const { data } = await api.get(`/mpa?bbox=${bbox}`, { timeout: 120000 });
-        mpaDataRef.current = data;
-        renderMpa();
-      } catch (e) { /* transient */ } finally {
-        mpaLoadingRef.current = false;
-      }
-    };
-    map.on("moveend", loadMpa);
-    map.__loadMpa = loadMpa;
     mapObj.current = map;
     clusterRef.current = cluster;
   }, [minZoom]);
-
-  useEffect(() => {
-    lfpFilterRef.current = lfpFilter;
-    if (mapObj.current && mapObj.current.__renderMpa && mpaOnRef.current) mapObj.current.__renderMpa();
-  }, [lfpFilter]);
-
-  useEffect(() => {
-    const map = mapObj.current;
-    const layer = mpaLayerRef.current;
-    if (!map || !layer) return;
-    mpaOnRef.current = mpaOn;
-    if (mpaOn) {
-      map.addLayer(layer);
-      map.attributionControl.addAttribution("ProtectedSeas Navigator® CC BY 4.0");
-      map.__loadMpa();
-    } else {
-      mpaDataRef.current = null;
-      layer.clearLayers();
-      map.removeLayer(layer);
-      map.attributionControl.removeAttribution("ProtectedSeas Navigator® CC BY 4.0");
-      setMpaZoomHint(false);
-    }
-  }, [mpaOn]);
 
   useEffect(() => {
     if (tileRef.current) tileRef.current.setUrl(TILE_URLS[basemap] || TILE_URLS.dark);
@@ -291,7 +207,8 @@ export default function MapView({
         if (g.type === "LineString") {
           const latlngs = g.coordinates.map(([lng, lat]) => [lat, lng]);
           const isOverland = p.type === "overland";
-          // dark casing for contrast on light basemap
+          // dark casing for contrast on light basemap — drawn in the "route" pane so
+          // it sits UNDER the marker clusters (fixes cluster 55 over Europe hiding the leg).
           L.polyline(latlngs, {
             color: ROUTE_CASING_COLOR,
             weight: ROUTE_CASING_WEIGHT,
@@ -299,8 +216,9 @@ export default function MapView({
             lineCap: "round",
             lineJoin: "round",
             interactive: false,
+            pane: "route",
           }).addTo(group);
-          // main stroke on top
+          // main stroke on top of the casing but still in the "route" pane
           const main = L.polyline(latlngs, {
             color: ROUTE_MAIN_COLOR,
             weight: ROUTE_MAIN_WEIGHT,
@@ -308,13 +226,9 @@ export default function MapView({
             dashArray: isOverland ? "6 6" : null,
             lineCap: "round",
             lineJoin: "round",
+            interactive: false,   // Phase 5: no hover tooltip on route segments
+            pane: "route",
           });
-          main.bindTooltip(
-            `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;">${
-              isOverland ? t("routeSegmentOverland") : t("routeSegmentMaritime")
-            }</span><br/><span style="font-size:10px;color:#cbd5e1;">${p.from || ""} → ${p.to || ""}</span>`,
-            { sticky: true, className: "bi-route-tt", direction: "top", opacity: 0.95 },
-          );
           main.addTo(group);
         } else if (g.type === "Point") {
           const [lng, lat] = g.coordinates;
@@ -323,7 +237,7 @@ export default function MapView({
           else intermediates.push({ lat, lng, name: p.name });
         }
       });
-      // Intermediate waypoints — small muted dots, hover tooltip only
+      // Intermediate waypoints — small muted dots (Phase 5: no tooltip, no popup — cleaner map)
       intermediates.forEach((w) => {
         const m = L.circleMarker([w.lat, w.lng], {
           radius: 2.5,
@@ -331,27 +245,12 @@ export default function MapView({
           weight: 1,
           fillColor: INTERMEDIATE_FILL,
           fillOpacity: 0.9,
+          interactive: false,
+          pane: "route",
         });
-        m.bindTooltip(
-          `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#cbd5e1;">${t(
-            "routeWaypointIntermediate",
-          )}</span><br/><span style="font-size:10px;">${w.name || ""}</span>`,
-          { direction: "top", className: "bi-route-tt", opacity: 0.95 },
-        );
-        m.bindPopup(
-          `<div style="min-width:180px;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">${t(
-              "routeWaypointIntermediate",
-            )}</div>
-            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:13px;color:#fff;line-height:1.3;margin-top:4px;">${
-              w.name || ""
-            }</div>
-          </div>`,
-          { maxWidth: 240, autoPan: false },
-        );
         m.addTo(group);
       });
-      // Escale waypoints — larger, permanent labels below the dot
+      // Escale waypoints — larger dots (Phase 5: no permanent label, popup on click only)
       escales.forEach((w) => {
         const m = L.circleMarker([w.lat, w.lng], {
           radius: 6,
@@ -359,22 +258,16 @@ export default function MapView({
           weight: 2,
           fillColor: ESCALE_FILL,
           fillOpacity: 1,
-        });
-        m.bindTooltip(w.name || "", {
-          direction: "bottom",
-          offset: [0, 6],
-          permanent: true,
-          className: "bi-route-escale-label",
+          pane: "route",
         });
         m.bindPopup(
           `<div style="min-width:200px;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#00f0ff;text-transform:uppercase;letter-spacing:0.1em;">${t(
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:rgb(var(--accent-rgb));text-transform:uppercase;letter-spacing:0.1em;">${t(
               "routeWaypointEscale",
             )}</div>
             <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;margin-top:4px;">${
               w.name || ""
             }</div>
-            <div style="font-size:9px;color:#64748b;margin-top:6px;line-height:1.4;">${t("routeAttribution")}</div>
           </div>`,
           { maxWidth: 260, autoPan: false },
         );
@@ -735,7 +628,6 @@ export default function MapView({
             <div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:6px;">${p.description || ""}</div>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:5px;flex-wrap:wrap;">
               <a href="${p.url}" target="_blank" rel="noreferrer" style="font-size:11px;color:#00f0ff;font-weight:600;text-decoration:none;">${t("viewProject")} →</a>
-              <button onclick="window.__biDonate && window.__biDonate('${p.id}')" data-testid="popup-donate-btn" style="font-size:10px;font-weight:600;color:#39ff14;background:rgba(57,255,20,0.08);border:1px solid rgba(57,255,20,0.4);border-radius:2px;padding:2px 8px;cursor:pointer;">${t("donate")}</button>
               <button onclick="window.__biEnrichProject && window.__biEnrichProject('${p.id}')" data-testid="popup-project-enrich-btn" style="font-size:10px;font-weight:600;color:#00f0ff;background:rgba(0,240,255,0.08);border:1px solid rgba(0,240,255,0.4);border-radius:2px;padding:2px 8px;cursor:pointer;">↻ ${t("projectEnrich")}</button>
               ${p.s_ocean != null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#39ff14;">S<sub>ocean</sub> ${p.s_ocean}</span>` : ""}
             </div>
@@ -758,34 +650,6 @@ export default function MapView({
   return (
     <div className="w-full h-full relative">
       <div ref={mapRef} data-testid="map-container" className="w-full h-full" />
-      {/* ProtectedSeas layer toggle */}
-      <div className="absolute top-3 right-3 z-[1000] flex flex-col items-end gap-2">
-        <button data-testid="route-toggle-btn" onClick={() => setRouteOn(!routeOn)}
-          className={`px-3 py-2 text-xs font-semibold border rounded-sm backdrop-blur-md ${routeOn ? "bg-slate-100/10 border-slate-300/50 text-slate-100" : "bg-surface/90 border-line text-slate-400 hover:text-white"}`}>
-          ⛵ {t("routeLayer")}
-        </button>
-        <button data-testid="mpa-toggle-btn" onClick={() => setMpaOn(!mpaOn)}
-          className={`px-3 py-2 text-xs font-semibold border rounded-sm backdrop-blur-md ${mpaOn ? "bg-sonar/20 border-sonar/60 text-sonar" : "bg-surface/90 border-line text-slate-300 hover:text-white"}`}>
-          🛡 {t("mpaLayer")}
-        </button>
-        {mpaOn && mpaZoomHint && (
-          <span data-testid="mpa-zoom-hint" className="px-2 py-1 text-[10px] font-mono bg-surface/90 border border-line rounded-sm text-amberx">{t("mpaZoomHint")}</span>
-        )}
-        {mpaOn && !mpaZoomHint && (
-          <div data-testid="mpa-legend" className="bg-surface/90 backdrop-blur-md border border-line rounded-sm p-2 text-right">
-            {[1, 2, 3, 4, 5].map((s) => (
-              <label key={s} data-testid={`lfp-checkbox-row-${s}`} className="flex items-center justify-end gap-1.5 py-0.5 cursor-pointer select-none hover:bg-raised/60 rounded-sm px-1">
-                <span className={`text-[10px] ${lfpFilter[s] ? "text-slate-300" : "text-slate-600 line-through"}`}>LFP {s} — {t("lfp" + s)}</span>
-                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: LFP_COLORS[s], opacity: lfpFilter[s] ? 1 : 0.25 }} />
-                <input type="checkbox" data-testid={`lfp-checkbox-${s}`} checked={lfpFilter[s]}
-                  onChange={(e) => setLfpFilter({ ...lfpFilter, [s]: e.target.checked })}
-                  className="accent-cyan-400 w-3 h-3" />
-              </label>
-            ))}
-            <p className="text-[8px] text-slate-500 mt-1 max-w-[190px]">{t("mpaDisclaimer")}</p>
-          </div>
-        )}
-      </div>
       {legendCats.length > 0 && false && (
         <div data-testid="map-legend"
           className="absolute bottom-6 left-3 z-[1000] bg-surface/90 backdrop-blur-md border border-line rounded-sm p-3 max-w-[210px]">

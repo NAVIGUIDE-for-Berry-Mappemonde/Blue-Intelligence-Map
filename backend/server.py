@@ -29,7 +29,6 @@ from formalities import (
     serialise_list as _formalities_serialise_list,
 )
 from formalities_gen import (
-    generate_immigration_slot,
     generate_territory_formality,
 )
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
@@ -71,6 +70,11 @@ DEFAULT_SETTINGS = {
     # `@cf/moonshotai/kimi-k2.6` after upgrading to Workers Paid activates Kimi with zero
     # code change.
     "cloudflare_model": "@cf/openai/gpt-oss-120b",
+    # Phase 5 — swarm extraction engine (used by ai.py). Defaults to gemini
+    # (unchanged historical behaviour). Alternates: "gpt" and "claude" (both via
+    # EMERGENT_LLM_KEY through emergentintegrations, zero config) and
+    # "openrouter" (uses OPENROUTER_API_KEY + openai/gpt-4o-mini).
+    "extraction_engine": "gemini",
 }
 
 
@@ -191,7 +195,16 @@ async def stop():
 
 @router.get("/swarm/status")
 async def status():
-    return swarm.status()
+    st = swarm.status()
+    # Phase 5 — expose the active LLM engine so the UI can render it dynamically
+    # instead of a hard-coded "GEMINI" badge.
+    try:
+        sdoc = await db.settings.find_one({"_id": "global"}) or {}
+        engine = sdoc.get("extraction_engine") or "gemini"
+    except Exception:
+        engine = "gemini"
+    st["engine"] = engine
+    return st
 
 
 @router.get("/stats")
@@ -982,70 +995,16 @@ async def get_reports():
     return docs
 
 
-ARCGIS_MPA_URL = "https://services9.arcgis.com/lm7wE8a9YA9rKfzy/arcgis/rest/services/Navigator_AllSites_010925_attributes/FeatureServer/0/query"
-MPA_FIELDS = ["SITE_ID", "site_name", "url", "country", "designation", "category_name", "managing_authority", "lfp", "protection_focus"]
+ARCGIS_MPA_URL = ""  # Removed in Phase 5 — MPA layer decommissioned.
+MPA_FIELDS: list[str] = []  # Deprecated in Phase 5: MPA layer removed entirely.
 
 
-@router.get("/mpa")
-async def get_mpa(bbox: str):
-    try:
-        min_lon, min_lat, max_lon, max_lat = [float(x) for x in bbox.split(",")]
-    except ValueError:
-        raise HTTPException(400, "bbox must be minLon,minLat,maxLon,maxLat")
-    key = f"{round(min_lon, 1)},{round(min_lat, 1)},{round(max_lon, 1)},{round(max_lat, 1)}"
-    offset = max(0.005, round((max_lon - min_lon) / 500, 4))
-    key = f"{key}|{offset}"
-    cached = await db.mpa_cache.find_one({"_id": key})
-    if cached:
-        age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(cached["ts"])).total_seconds() / 86400
-        if age_days < 3:
-            return JSONResponse(cached["geojson"])
-    params = {
-        "where": "1=1",
-        "geometry": f"{min_lon},{min_lat},{max_lon},{max_lat}",
-        "geometryType": "esriGeometryEnvelope",
-        "inSR": "4326", "outSR": "4326",
-        "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "*", "f": "geojson",
-        "resultRecordCount": "250",
-        "maxAllowableOffset": str(offset),
-        "geometryPrecision": "4",
-    }
-    import httpx as _httpx
-    try:
-        async with _httpx.AsyncClient(timeout=90) as c:
-            r = await c.get(ARCGIS_MPA_URL, params=params, headers={"Accept-Encoding": "gzip"})
-            data = r.json()
-    except Exception as e:
-        raise HTTPException(502, f"ProtectedSeas upstream error: {str(e)[:100]}")
-    if "features" not in data:
-        raise HTTPException(502, f"ProtectedSeas query error: {str(data.get('error'))[:150]}")
-    feats = []
-    for f in data["features"]:
-        p = f.get("properties") or {}
-        try:
-            lfp = int(float(p.get("lfp") or 0))
-        except (TypeError, ValueError):
-            lfp = 0
-        feats.append({
-            "type": "Feature",
-            "geometry": f["geometry"],
-            "properties": {
-                "ps_id": p.get("SITE_ID"),
-                "site_name": p.get("site_name"),
-                "url": p.get("url"),
-                "country": p.get("country"),
-                "designation": p.get("designation"),
-                "category_name": p.get("category_name"),
-                "managing_authority": p.get("managing_authority"),
-                "protection_focus": p.get("protection_focus"),
-                "lfp": lfp,
-            },
-        })
-    fc = {"type": "FeatureCollection", "features": feats,
-          "attribution": "The ProtectedSeas Navigator Map of Conservation Regulations, ProtectedSeas®, https://map.navigatormap.org — CC BY 4.0"}
-    await db.mpa_cache.update_one({"_id": key}, {"$set": {"geojson": fc, "ts": now_iso()}}, upsert=True)
-    return JSONResponse(fc)
+# ---------- MPA endpoint removed in Phase 5 (Protected Areas layer decommissioned). ----------
+# The /api/mpa endpoint returned MPA polygons from ArcGIS ProtectedSeas Navigator.
+# Kept as HTTP 410 for backward compatibility with older frontends that may still ping it.
+@router.get("/mpa", status_code=410, include_in_schema=False)
+async def mpa_deprecated(bbox: str = ""):
+    raise HTTPException(410, "MPA layer removed in Phase 5.")
 
 
 @router.get("/settings")
@@ -1081,86 +1040,130 @@ MANUALS = {
     "en": """# Blue Intelligence — User Manual
 
 ## Overview
-Blue Intelligence transforms the living web of maritime data into an executable geospatial database.
-TinyFish agents discover project pages on foundation portals; Readability + Gemini extract, filter (Gatekeeper Protocol) and score each project (S_ocean); results are mapped live and exportable as GeoJSON.
+Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers three complementary modes, an operator Audit console, contextual GeoJSON exports and a single global donation pot. AI-generated content is produced by an OpenRouter + Gemini (fallback) synthesis pipeline; the swarm extraction engine is configurable in Settings (Gemini default · Claude · OpenRouter).
 
-## Map View (default)
-- **World map**: single-world Leaflet dark map (light/dark toggle in the header ☀/🌙). Markers are colored by category and clustered.
-- **Popup**: click a marker → photo, title, funder, category, description, S_ocean score, "View project" link and a **Donate** button. The popup always stays fully on screen without moving the map.
+## Three modes (header switch)
+The header pill lets you switch between three modes. Each mode paints the app with its own accent theme (cyan · red · amber) and shows its dedicated sidebar and map layer.
+
+### 1) Projects (cyan)
+- **World map**: single-world Leaflet map with light/dark basemap toggle in the header. Project markers are colored by category and grouped into clusters. The Berry-Mappemonde route is drawn under the clusters as a neutral polyline.
+- **Popup**: click a marker → photo, title, funder, category, description, S_ocean score and a "View project" link. No per-project donate button — donations are global (see below). The popup always stays fully on screen without moving the map.
 - **Left sidebar**:
-  - *Legend*: 9 color-coded categories (MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other). Click a category to filter the map.
+  - *Legend*: 9 color-coded categories (Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Restoration, Other). Click a category to filter.
   - *Organization filter* and *Category filter* dropdowns.
   - *Instant search* across titles, descriptions, funders and locations.
-  - *Project list* with Donate buttons and source links.
-  - *"Missing project?"*: report a project we missed (name, URL, description). It is emailed to the Blue Intelligence team and queued for the next Swarm run.
+  - *Project list* with source links.
+  - *"Missing project?"*: report a project we missed. It is emailed to the team and queued for the next Swarm run.
+  - *Export GeoJSON* button — exports the projects visible in this mode.
 
-## Donations (Global Pot)
-The header shows the global donation counter in euros. Click **Donate** on any project, pick an amount (5–100 €) and pay through Stripe. Sandbox mode: test card 4242 4242 4242 4242.
+### 2) Marinas (red)
+- **Map**: red-tinted markers grouped into clusters, showing marinas and berthing points curated from OpenStreetMap and other open sources.
+- **Popup**: marina name, tags (fuel · water · haul-out · shore power · repair), coordinates and source link. Enriched fields (VHF channel, phone, website) appear once the enrichment batch has been run.
+- **Left sidebar**: search by name, filter by tag, marina list.
+- *Export GeoJSON* button — exports the marinas visible in this mode.
+- All batch actions (build, enrich) are triggered from the Audit hub (see below), not from the sidebar.
+
+### 3) Formalities (amber)
+- **Map**: escales along the Berry-Mappemonde route. A white ring around a marker means the escale is an official Port of Entry. The dot color reflects the formality file status.
+- **Left sidebar**: list of all escales with badges (departure / return on La Rochelle), an amber disclaimer ("Indicative information — verify with the authorities before departure"), and per-file refresh / verify buttons.
+- **Territory sheet** (right side, opens on click): 5 tabs — Entry · Exit · Special cases · Contacts · Sources. An Immigration tab covers French crew only. Each field is short, sourced and can be re-generated on demand.
+- **Status of a file** (4 possible values):
+  - `not generated` — grey, no AI content yet.
+  - `AI` — amber, at least one source in the official whitelist has been captured.
+  - `AI without source` — amber with dashed ring, LLM output but no official source could be captured (typical for PDF-only documents).
+  - `verified` — green, marked as reviewed by the crew via the Verify button.
+- **Stale flag**: any file older than 180 days shows a clock badge inviting a refresh.
+- **Sources**: only official government / customs / immigration domains are ever displayed. The internal whitelist is not exposed.
+- *Export GeoJSON* button — exports the 17 escales with their formality status.
+
+## Global donations pot
+The header shows a single donation CTA. Click it, pick an amount (5–100 €) and pay through Stripe. All donations feed one single global pot shown next to the button (running total in euros + donor count). No per-project donation button anywhere in the map or the sidebars.
 
 ## Swarm Intelligence Audit (header toggle)
-Operator console:
-- **Swarm Controls**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream.
-- **Live Swarm Console**: one card per agent (TinyFish discover / Readability extract) with status, live-view link and stream logs.
-- **Auto-Stop**: the swarm shuts down gracefully after N consecutive extractions without a new unique project (default 50) to save credits.
-- **Follow the Money**: agents detect partner/grantee NGOs on project pages and recursively queue their sites.
-- **KPIs**: total extractions, success rate, projects mapped.
-- **Telemetry table** and **Failed extractions** with per-URL Force Extract (TinyFish) or Force Extract All.
+Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
+- **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
+- **Marinas — Build & Enrich batch**: rebuild the marinas dataset from open sources, then enrich N marinas at a time (VHF, phone, website) with live progress and per-item status.
+- **Formalities — Generate batch**: (re)generate the 13 territory files in one click, with a live log tail and a per-territory progress list. Sources are captured and filtered against the official whitelist automatically.
+- **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
 ## Settings (right panel, gear icon)
 - **Documentation**: download this manual (EN/FR).
 - **Data**: Import GeoJSON (validates coordinates, counts and merges duplicates), Export GeoJSON, Clear all projects.
 - **Marine filtering**: max coast distance (km), minimum marine score.
-- **Extraction**: parallel TinyFish agents (1-2), extraction concurrency (1-20), Gemini model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
+- **Extraction**: parallel TinyFish agents (1–2), extraction concurrency (1–20), **extraction engine selector** (Gemini · Claude · OpenRouter), model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
 - **Map**: minimum zoom, max markers.
-- **API keys**: TinyFish and Gemini (stored server-side, never exposed).
+- **API keys**: TinyFish and LLM (stored server-side, never exposed).
 
 ## Pipeline (how it works)
-1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, crawler fallback).
-2. **Extraction**: Readability cleans the page → Gemini Gatekeeper rejects terrestrial/freshwater projects → Gemini extracts title, description (<250 chars), location, category, partners and S_ocean score.
-3. **Geocoding**: extracted GPS → Nominatim → Gemini smart geocoding → Point-in-Ocean test → coastal snapping when inland.
+1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, HTTP crawler fallback).
+2. **Extraction**: Readability cleans the page → LLM Gatekeeper rejects terrestrial/freshwater projects → LLM extracts title, description (<250 chars), location, category, partners and S_ocean score.
+3. **Geocoding**: extracted GPS → Nominatim → LLM smart geocoding → Point-in-Ocean test → coastal snapping when inland.
 4. **Deduplication**: URL match, spatial proximity (<500 m) + title similarity (>90%) → funders merged.
+5. **Formalities synthesis**: TinyFish visits the whitelisted official URLs of a territory, falls back to a readable-fetch when needed, then an OpenRouter + Gemini (fallback) LLM produces a strictly-sourced French summary. The pipeline never invents content.
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
 ## Vue d'ensemble
-Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable.
-Les agents TinyFish découvrent les fiches projets sur les portails des fondations ; Readability + Gemini extraient, filtrent (Protocole Gatekeeper) et notent chaque projet (S_ocean) ; les résultats sont cartographiés en direct et exportables en GeoJSON.
+Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose trois modes complémentaires, une console Audit opérateur, des exports GeoJSON contextuels et une cagnotte de dons globale unique. Les contenus produits par IA le sont via un pipeline de synthèse OpenRouter + Gemini (fallback) ; le moteur d'extraction du swarm est configurable dans les Paramètres (Gemini par défaut · Claude · OpenRouter).
 
-## Vue Carte (par défaut)
-- **Carte mondiale** : carte Leaflet sombre à monde unique (bascule clair/sombre dans l'en-tête ☀/🌙). Marqueurs colorés par catégorie et regroupés en clusters.
-- **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean, lien « Voir le projet » et bouton **Donner**. L'encadré reste toujours entièrement visible sans déplacer la carte.
+## Trois modes (bascule dans l'en-tête)
+La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habille l'app avec sa teinte d'accent propre (cyan · rouge · ambre) et affiche son bandeau et sa couche de carte dédiés.
+
+### 1) Projets (cyan)
+- **Carte mondiale** : carte Leaflet à monde unique, bascule fond clair/sombre dans l'en-tête. Marqueurs de projets colorés par catégorie et regroupés en clusters. La route Berry-Mappemonde est tracée sous les clusters sous forme d'une polyline neutre.
+- **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean et lien « Voir le projet ». Pas de bouton donner par projet — les dons sont globaux (voir ci-dessous). L'encadré reste toujours entièrement visible sans déplacer la carte.
 - **Bandeau gauche** :
-  - *Légende* : 9 catégories colorées (AMP, Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Autre). Cliquer une catégorie filtre la carte.
+  - *Légende* : 9 catégories colorées (Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Restauration, Autre). Cliquer une catégorie filtre la carte.
   - Menus *Filtre par organisation* et *Filtre par catégorie*.
   - *Recherche instantanée* sur titres, descriptions, financeurs et lieux.
-  - *Liste des projets* avec boutons Donner et liens sources.
-  - *« Projet manquant ? »* : signaler un projet oublié (nom, URL, description). Un email est envoyé à l'équipe Blue Intelligence et le projet est mis en file pour le prochain run du Swarm.
+  - *Liste des projets* avec liens sources.
+  - *« Projet manquant ? »* : signaler un projet oublié. Un email est envoyé à l'équipe et le projet est mis en file pour le prochain run du Swarm.
+  - Bouton *Export GeoJSON* — exporte les projets visibles dans ce mode.
 
-## Dons (Cagnotte globale)
-L'en-tête affiche le compteur global de dons en euros. Cliquez **Donner** sur un projet, choisissez un montant (5–100 €) et payez via Stripe. Mode sandbox : carte de test 4242 4242 4242 4242.
+### 2) Marinas (rouge)
+- **Carte** : marqueurs teintés rouge regroupés en clusters, représentant les marinas et points d'amarrage curatés depuis OpenStreetMap et d'autres sources ouvertes.
+- **Popup** : nom, tags (carburant · eau · levage · courant à quai · réparation), coordonnées et lien source. Les champs enrichis (canal VHF, téléphone, site web) apparaissent une fois le batch d'enrichissement lancé.
+- **Bandeau gauche** : recherche par nom, filtre par tag, liste des marinas.
+- Bouton *Export GeoJSON* — exporte les marinas visibles dans ce mode.
+- Toutes les actions batch (build, enrichissement) sont déclenchées depuis le hub Audit (voir plus bas), plus depuis le bandeau.
+
+### 3) Formalités (ambre)
+- **Carte** : escales de la route Berry-Mappemonde. Un anneau blanc autour d'un marqueur signale que l'escale est un port d'entrée officiel. La couleur du point reflète le statut de la fiche formalités.
+- **Bandeau gauche** : liste de toutes les escales avec pastilles (aller / retour sur La Rochelle), un disclaimer ambre (« Informations indicatives — à vérifier auprès des autorités avant le départ »), et par fiche des boutons rafraîchir / vérifier.
+- **Fiche territoire** (côté droit, s'ouvre au clic) : 5 onglets — Entrée · Sortie · Cas particuliers · Contacts · Sources. Un onglet Immigration couvre uniquement l'équipage français. Chaque champ est court, sourcé et peut être régénéré à la demande.
+- **Statut d'une fiche** (4 valeurs possibles) :
+  - `non générée` — gris, aucun contenu IA pour l'instant.
+  - `IA` — ambre, au moins une source de la whitelist officielle a été captée.
+  - `IA sans source` — ambre avec anneau pointillé, sortie LLM mais aucune source officielle n'a pu être captée (typique des documents en PDF seul).
+  - `vérifiée` — vert, marquée comme relue par l'équipage via le bouton Vérifier.
+- **Flag stale** : toute fiche datant de plus de 180 jours affiche un badge horloge invitant au rafraîchissement.
+- **Sources** : seuls les domaines officiels (gouvernement, douanes, immigration) sont affichés. La whitelist interne n'est pas exposée.
+- Bouton *Export GeoJSON* — exporte les 17 escales avec leur statut formalités.
+
+## Cagnotte de dons globale
+L'en-tête affiche un unique CTA de don. Cliquez, choisissez un montant (5–100 €) et payez via Stripe. Tous les dons alimentent une seule cagnotte globale affichée à côté du bouton (total courant en euros + nombre de donateurs). Aucun bouton donner par projet, ni dans la carte ni dans les bandeaux.
 
 ## Audit Swarm Intelligence (bascule dans l'en-tête)
-Console opérateur :
-- **Contrôles du Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct.
-- **Console Swarm en direct** : une carte par agent (découverte TinyFish / extraction Readability) avec statut, lien « Voir l'agent » et logs.
-- **Auto-Stop** : le swarm s'arrête proprement après N extractions consécutives sans nouveau projet unique (50 par défaut) pour économiser les crédits.
-- **Follow the Money** : les agents détectent les ONG partenaires/bénéficiaires sur les pages et explorent récursivement leurs sites.
-- **KPIs** : extractions totales, taux de succès, projets cartographiés.
-- **Table de télémétrie** et **Extractions échouées** avec Force Extract (TinyFish) par URL ou global.
+Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
+- **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
+- **Marinas — Build & Enrich batch** : reconstruit le jeu marinas depuis les sources ouvertes, puis enrichit N marinas à la fois (VHF, téléphone, site web) avec progression en direct et statut par item.
+- **Formalités — Generate batch** : (re)génère les 13 fiches territoire en un clic, avec logs live et liste de progression par territoire. Les sources sont captées et filtrées automatiquement contre la whitelist officielle.
+- **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 
 ## Paramètres (bandeau droit, icône engrenage)
 - **Documentation** : télécharger ce manuel (EN/FR).
 - **Données** : Importer GeoJSON (validation des coordonnées, comptage et fusion des doublons), Exporter GeoJSON, Effacer tous les projets.
 - **Filtrage marin** : distance max à la côte (km), score marin minimum.
-- **Extraction** : agents TinyFish en parallèle (1-2), concurrence des extractions (1-20), modèle Gemini par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
+- **Extraction** : agents TinyFish en parallèle (1–2), concurrence des extractions (1–20), **sélecteur de moteur d'extraction** (Gemini · Claude · OpenRouter), modèle par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
 - **Carte** : zoom minimum, marqueurs max.
-- **Clés API** : TinyFish et Gemini (stockées côté serveur, jamais exposées).
+- **Clés API** : TinyFish et LLM (stockées côté serveur, jamais exposées).
 
 ## Pipeline (fonctionnement)
-1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler).
-2. **Extraction** : Readability nettoie la page → le Gatekeeper Gemini rejette les projets terrestres/eau douce → Gemini extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
-3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent Gemini → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
+1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler HTTP).
+2. **Extraction** : Readability nettoie la page → un LLM Gatekeeper rejette les projets terrestres/eau douce → un LLM extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
+3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent par LLM → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
 4. **Déduplication** : URL identique, proximité spatiale (<500 m) + similarité de titre (>90 %) → financeurs fusionnés.
+5. **Synthèse formalités** : TinyFish visite les URLs officielles whitelistées d'un territoire, replie sur un readable-fetch si nécessaire, puis un LLM OpenRouter + Gemini (fallback) produit un résumé en français strictement sourcé. Le pipeline n'invente jamais de contenu.
 """,
 }
 
@@ -1309,7 +1312,6 @@ async def get_formalities(territory_code: str):
 # Per-territory task registry + lock. Same pattern as MARINA_ENRICH_TASKS.
 FORMALITIES_GEN_TASKS: dict[str, dict] = {}
 FORMALITIES_LOCKS: set[str] = set()
-IMMIGRATION_LOCKS: set[str] = set()  # keyed by f"{code}:{nat}"
 
 
 class FormalitiesBatchState:
@@ -1531,75 +1533,11 @@ async def formalities_verify(territory_code: str):
     return _formalities_serialise_doc(fresh)
 
 
-@router.post("/formalities/{territory_code}/immigration/{nat}", status_code=202)
-async def formalities_generate_immigration(territory_code: str, nat: str):
-    """Generate the immigration slot for a given nationality (ca|us|gb).
-    FR is generated in the main pipeline; this endpoint rejects nat=fr."""
-    if nat not in ("ca", "us", "gb"):
-        raise HTTPException(400, "nat must be one of ca|us|gb")
-    territories = _load_territories_cached()
-    if not any(t.get("code") == territory_code for t in territories.get("territories", [])):
-        raise HTTPException(404, f"territory '{territory_code}' unknown")
-    lock_key = f"{territory_code}:{nat}"
-    if lock_key in IMMIGRATION_LOCKS:
-        raise HTTPException(409, "immigration generation already in progress")
-    _prune_tasks(FORMALITIES_GEN_TASKS)
-    task_key = f"immigration:{lock_key}"
-    IMMIGRATION_LOCKS.add(lock_key)
-    FORMALITIES_GEN_TASKS[task_key] = {
-        "state": "running",
-        "started_at": time.time(),
-        "finished_at": None,
-        "result": None,
-        "error": None,
-        "logs": [],
-    }
-    tf_key, or_key, emg_key = _keys_gen()
-
-    async def _runner():
-        task = FORMALITIES_GEN_TASKS[task_key]
-
-        def log_fn(msg: str):
-            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-            if len(task["logs"]) > 200:
-                task["logs"] = task["logs"][-200:]
-
-        try:
-            doc = await generate_immigration_slot(
-                db, territory_code, nat, territories,
-                logger=log_fn, tinyfish_key=tf_key,
-                openrouter_key=or_key, emergent_key=emg_key,
-            )
-            task["result"] = _formalities_serialise_doc(doc) if doc else None
-            task["state"] = "done"
-        except Exception as e:
-            task["error"] = f"{type(e).__name__}: {e}"
-            task["state"] = "error"
-            log_fn(f"FATAL: {task['error']}")
-        finally:
-            task["finished_at"] = time.time()
-            IMMIGRATION_LOCKS.discard(lock_key)
-
-    asyncio.create_task(_runner())
-    return {"status": "started", "territory_code": territory_code, "nat": nat}
-
-
-@router.get("/formalities/{territory_code}/immigration/{nat}/status")
-async def formalities_immigration_status(territory_code: str, nat: str):
-    task_key = f"immigration:{territory_code}:{nat}"
-    task = FORMALITIES_GEN_TASKS.get(task_key)
-    if not task:
-        return {"state": "idle", "territory_code": territory_code, "nat": nat}
-    return {
-        "state": task["state"],
-        "territory_code": territory_code,
-        "nat": nat,
-        "started_at": task["started_at"],
-        "finished_at": task["finished_at"],
-        "result": task["result"],
-        "error": task["error"],
-        "logs_tail": task["logs"][-30:],
-    }
+@router.post("/formalities/{territory_code}/immigration/{nat}", status_code=410, include_in_schema=False)
+async def formalities_immigration_deprecated(territory_code: str, nat: str):
+    """Deprecated in Phase 5 — the immigration-on-demand feature for ca/us/gb was
+    removed. Kept as HTTP 410 for backwards compatibility with older clients."""
+    raise HTTPException(410, "Immigration ca/us/gb generation is no longer supported (Phase 5).")
 
 
 # ---------- Formalities exports (Phase 4B) ----------
@@ -1753,6 +1691,13 @@ async def _startup_seed_formalities():
         await db.formalities.create_index("territory_code", unique=True)
     except Exception:
         pass
+    # Phase 5 cleanup: drop the now-defunct mpa_cache collection if it still exists.
+    try:
+        if "mpa_cache" in await db.list_collection_names():
+            await db.drop_collection("mpa_cache")
+            print("[startup] dropped legacy mpa_cache collection")
+    except Exception as e:
+        print(f"[startup] mpa_cache drop failed (non-fatal): {e}")
     if not TERRITORIES_FILE.exists():
         return
     try:

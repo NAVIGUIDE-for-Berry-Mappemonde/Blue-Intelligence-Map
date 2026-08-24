@@ -1,9 +1,10 @@
-import { Anchor, HandCoins, Map as MapIcon, Moon, Radar, Sailboat, ScrollText, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, Compass, HandCoins, Heart, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
   status, t, basemap, setBasemap, donations,
   mode, setMode,
+  onOpenDonate,
 }) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
@@ -27,7 +28,7 @@ export default function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* R-002 tri-mode switch (Phase 4A) */}
+        {/* Tri-mode switch (Phase 4A → 5, all three buttons follow the active theme) */}
         <div
           className="flex border border-line rounded-sm overflow-hidden"
           title={t("modeSwitchTitle")}
@@ -42,7 +43,7 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <Sailboat size={13} /> {t("modeProjects")}
+            <Compass size={13} /> {t("modeProjects")}
           </button>
           <button
             data-testid="mode-toggle-marinas"
@@ -67,14 +68,21 @@ export default function Header({
             <ScrollText size={13} /> {t("modeFormalities")}
           </button>
         </div>
-        <div data-testid="donation-counter" title={t("donationCounterTitle")}
-          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/5 rounded-sm">
-          <HandCoins size={14} className="text-bio" />
-          <span className="font-heading font-black text-sm text-bio">
-            {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} €
-          </span>
-          <span className="font-mono text-[9px] uppercase tracking-wide text-bio/70">{t("donationsLabel")} ({donations?.count ?? 0})</span>
-        </div>
+        {/* Phase 5: donation CTA in header — opens Stripe checkout via App.js */}
+        <button
+          data-testid="donation-cta"
+          onClick={onOpenDonate}
+          title={t("donationCtaTooltip")}
+          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/15 rounded-sm text-bio font-semibold text-xs transition-colors"
+        >
+          <Heart size={13} className="fill-bio/30" />
+          <span className="hidden md:inline">{t("donationCta")}</span>
+          {donations?.count > 0 && (
+            <span className="font-mono text-[9px] text-bio/70 uppercase tracking-wide">
+              {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} € · {donations.count}
+            </span>
+          )}
+        </button>
         <div className="flex border border-line rounded-sm overflow-hidden">
           <button
             data-testid="view-toggle-map"

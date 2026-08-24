@@ -346,6 +346,11 @@
           "name": "Port de la Pointe des Galets (Port Réunion)",
           "note": "DROM — tout navire arrivant d'un port étranger doit faire escale à la Pointe des Galets en premier. Préavis d'arrivée obligatoire à la capitainerie au moins 48 h avant l'arrivée, avec caractéristiques navire, liste équipage/passagers + passeports, marchandises à déclarer, ports précédent/suivant, horaires prévus. À l'arrivée : rejoindre immédiatement la capitainerie, équipage confiné à bord pendant 1 h pour contrôles PAF/douanes.",
           "ref_url": "https://www.reunion.gouv.fr/index.php/contenu/telechargement/39644/295996/file/20170309%20-%20Arr%C3%AAt%C3%A9%20401-2017%20-%20Acc%C3%A8s%20plaisance.pdf"
+        },
+        {
+          "name": "Portail préfectoral La Réunion (services de l'État)",
+          "note": "Portail principal des services de l'État à La Réunion — préfecture, sous-préfectures, DEAL, DDPP, DMSOI. Cache PDF local disponible pour dégradation gracieuse quand le site est indisponible.",
+          "ref_url": "https://www.reunion.gouv.fr/"
         }
       ],
       "official_domains": [

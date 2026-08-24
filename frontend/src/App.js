@@ -75,9 +75,9 @@ export default function App() {
       const f = await api.get("/funders");
       setFunders(f.data);
       if (force || f.data.total !== lastTotalRef.current) {
-        lastTotalRef.current = f.data.total;
         const p = await api.get("/projects");
         setProjects(p.data);
+        lastTotalRef.current = f.data.total;
       }
     } catch (e) { /* transient */ }
   }, []);
@@ -334,6 +334,7 @@ export default function App() {
         status={status} t={t} basemap={basemap} setBasemap={setBasemap}
         donations={donations}
         mode={mode} setMode={setMode}
+        onOpenDonate={() => setDonateTarget({ id: null, title: null, global: true })}
       />
       <div className="flex flex-1 min-h-0">
         {mode === "projects" && (
@@ -342,7 +343,6 @@ export default function App() {
             funderFilter={funderFilter} setFunderFilter={setFunderFilter}
             searchQuery={searchQuery} setSearchQuery={setSearchQuery}
             categories={categories} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter}
-            onDonate={(id, title) => setDonateTarget({ id, title })}
             onReport={() => setShowReport(true)}
           />
         )}
@@ -384,7 +384,7 @@ export default function App() {
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
-            <AuditView t={t} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} />
+            <AuditView t={t} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities} />
           )}
         </main>
           {showSettings && (
