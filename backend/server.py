@@ -964,21 +964,56 @@ def _keys() -> tuple[str | None, str | None, str | None, str | None]:
     )
 
 
+_MARINA_ENGINE_LABELS = {
+    "tinyfish": "TinyFish",
+    "cloudflare": "Cloudflare AI",
+    "openrouter": "OpenRouter",
+    "fallback": "OSM Fallback",
+}
+
+
+async def _marina_telemetry(marina: dict, status: str, duration_ms: float, engine: str, results: int, detail: str):
+    """Telemetry row tagged dataset=marinas so the Audit table tracks each enrichment."""
+    tags = marina.get("tags") or {}
+    target = tags.get("website") or tags.get("contact:website") or tags.get("url") or f"marina:{marina.get('name')}"
+    await db.telemetry.insert_one({
+        "_id": str(uuid.uuid4()), "url": target, "engine": engine, "status": status,
+        "duration_ms": int(duration_ms), "results": results, "detail": str(detail)[:500],
+        "ts": now_iso(), "dataset": "marinas",
+    })
+
+
 async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
     """Run the enrichment chain and upsert the enriched fields on the marina doc."""
     tf_key, or_key, cf_account, cf_token = _keys()
-    result = await enrich_marina(
-        marina,
-        tinyfish_key=tf_key,
-        openrouter_key=or_key,
-        cf_account=cf_account,
-        cf_token=cf_token,
-        min_credit_usd=min_credit_usd,
-        logger=log_fn,
-        skip_tinyfish=skip_tinyfish,
-    )
+    t0 = time.time()
+    try:
+        result = await enrich_marina(
+            marina,
+            tinyfish_key=tf_key,
+            openrouter_key=or_key,
+            cf_account=cf_account,
+            cf_token=cf_token,
+            min_credit_usd=min_credit_usd,
+            logger=log_fn,
+            skip_tinyfish=skip_tinyfish,
+        )
+    except Exception as e:
+        await _marina_telemetry(marina, "FAILED", (time.time() - t0) * 1000, "Enrichment", 0,
+                                f"{marina.get('name')} — {type(e).__name__}: {e}")
+        raise
     update = {**result, "stale": False}
     await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+    src = result.get("enrichment_source") or ""
+    filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
+    await _marina_telemetry(
+        marina,
+        "SUCCESS" if result.get("enriched") else "FAILED",
+        (time.time() - t0) * 1000,
+        _MARINA_ENGINE_LABELS.get(src, src or "?"),
+        len(filled),
+        f"{marina.get('name')} — champs: {', '.join(filled) or 'aucun'}",
+    )
     return result
 
 

@@ -740,3 +740,8 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - Bug : la vue Marinas du Swarm Intelligence Audit affichait la télémétrie des anciens runs projets (293 lignes legacy sans champ `dataset` dans la base preview). Le code était identique à emergent4 ; seule la donnée en base différait.
 - Fix : `GET /api/telemetry?mode=` et `GET /api/failed?mode=` filtrent désormais par dataset via `_dataset_filter()` (même logique que `/api/stats`). Frontend `AuditView.js` passe `mode` aux deux appels.
 - Vérifié curl : marinas/formalities → 0 lignes ; projects → 200 lignes legacy conservées.
+
+## Update 2026-06 — Télémétrie des enrichissements marinas
+- `_run_marina_enrich_one()` (server.py) écrit désormais une ligne de télémétrie `dataset:"marinas"` par marina enrichie : url cible (site web OSM ou `marina:{nom}`), engine (TinyFish / Cloudflare AI / OpenRouter / OSM Fallback), status SUCCESS/FAILED, durée, nb de champs remplis, détail. Couvre l'enrichissement unitaire ET par lot (même fonction).
+- Les KPIs `/api/stats?mode=marinas` (total extractions, success rate) reflètent maintenant les lots d'enrichissement.
+- Vérifié e2e : enrichissement réel de "Anse à Rodrigue" → ligne visible dans `/api/telemetry?mode=marinas` + KPI total_extractions=1.
