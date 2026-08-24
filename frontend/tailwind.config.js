@@ -9,14 +9,20 @@ module.exports = {
       },
       colors: {
         abyss: "#020617",
-        surface: "#0f172a",
-        raised: "#1e293b",
-        line: "#334155",
+        // These 3 are now bound to CSS variables that switch with data-mode
+        // (see index.css: [data-mode="marinas"] and [data-mode="formalities"]).
+        // The old static hex values remain the fallback for the projects mode.
+        surface: "rgb(var(--surface-rgb, 15 23 42) / <alpha-value>)",
+        raised:  "rgb(var(--raised-rgb, 30 41 59) / <alpha-value>)",
+        line:    "rgb(var(--line-rgb, 51 65 85) / <alpha-value>)",
         sonar: "#00f0ff",
         bio: "#39ff14",
         alert: "#ff4a4a",
         amberx: "#fbbf24",
         funder: "#c084fc",
+        // Semantic "accent" — RGB channels come from --accent-rgb which switches
+        // between projects (cyan) / marinas (red) / formalities (amberx) via [data-mode].
+        accent: "rgb(var(--accent-rgb) / <alpha-value>)",
       },
     },
   },

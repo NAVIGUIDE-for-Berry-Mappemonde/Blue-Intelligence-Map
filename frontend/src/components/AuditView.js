@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Trash2, Zap } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
 import api from "../api";
-import SwarmControls from "./SwarmControls";
+import BatchHub from "./BatchHub";
+import AgentConsole from "./AgentConsole";
 
 const STATUS_COLORS = {
   SUCCESS: "text-bio",
@@ -11,34 +12,50 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
-export default function AuditView({ t, status, refresh }) {
-  const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0 });
+export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
+  const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0, items_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
   const [forcing, setForcing] = useState({});
+  const [settings, setSettings] = useState(null);
 
+  // Bug-fix 2026-08-24 — the KPI card previously always showed the projects
+  // count (4463) regardless of the active mode. `/api/stats?mode={mode}` now
+  // returns items_mapped scoped to the mode (17 formalities / 212 marinas /
+  // 4463 projects) and mode-scoped extractions/success_rate.
   const load = useCallback(async () => {
     try {
       const [s, tm, f] = await Promise.all([
-        api.get("/stats"), api.get("/telemetry"), api.get("/failed"),
+        api.get("/stats", { params: { mode: mode || "projects" } }),
+        api.get("/telemetry"),
+        api.get("/failed"),
       ]);
       setStats(s.data);
       setTelemetry(tm.data);
       setFailed(f.data);
     } catch (e) { /* transient */ }
+  }, [mode]);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const r = await api.get("/settings");
+      setSettings(r.data);
+    } catch (e) { /* transient */ }
   }, []);
 
   useEffect(() => {
     load();
+    loadSettings();
     const i = setInterval(load, 5000);
     return () => clearInterval(i);
-  }, [load]);
+  }, [load, loadSettings]);
 
   const clearAudit = async () => {
     if (!window.confirm(t("clearAuditConfirm"))) return;
     await api.delete("/audit");
     load();
   };
+  void clearAudit; // kept for potential re-enable; button removed 2026-06
 
   const forceOne = async (id) => {
     setForcing((f) => ({ ...f, [id]: true }));
@@ -50,19 +67,36 @@ export default function AuditView({ t, status, refresh }) {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-5 space-y-5" data-testid="audit-view">
+    <div className="h-full overflow-y-auto p-5 space-y-5 bi-audit-themed" data-testid="audit-view">
       <div className="flex items-center justify-between">
-        <h2 className="font-heading font-black text-xl text-white">{t("audit")}</h2>
-        <button data-testid="clear-audit-btn" onClick={clearAudit}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
-          <Trash2 size={12} /> {t("clearAll")}
-        </button>
+        <h2 className="font-heading font-black text-xl text-accent">{t("audit")}</h2>
+        {/* "Clear database" button removed 2026-06 per user request */}
       </div>
 
-      {/* Swarm operations */}
-      <SwarmControls t={t} status={status} refresh={refresh} />
+      {/* Phase 7 — Contextual Swarm Intelligence Hub: only the active mode's card
+          is rendered. BG + border of the audit view adopt the active-mode accent. */}
+      <BatchHub
+        t={t}
+        mode={mode}
+        status={status}
+        refresh={refresh}
+        settings={settings}
+        onSettingsSaved={loadSettings}
+        onFormalitiesRefresh={onFormalitiesRefresh}
+        showAnchorages={showAnchorages}
+        setShowAnchorages={setShowAnchorages}
+        anchoragesCount={anchoragesCount}
+      />
 
-      {/* KPIs */}
+      {/* Live agent console — 2026-06 UX: only rendered while the swarm is
+          actually deployed (conditional rendering, less visual noise). */}
+      {(status?.running || (status?.agents || []).length > 0) && (
+        <div className="border border-line bg-surface overflow-hidden">
+          <AgentConsole t={t} agents={status?.agents || []} />
+        </div>
+      )}
+
+      {/* KPIs — Phase 6: "Items mapped" replaces the Projects-only label. */}
       <div className="grid grid-cols-3 gap-px bg-line border border-line">
         <div className="bg-surface p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("totalExtractions")}</p>
@@ -73,12 +107,13 @@ export default function AuditView({ t, status, refresh }) {
           <p data-testid="kpi-success-rate" className="font-heading font-black text-3xl text-bio mt-1">{stats.success_rate}%</p>
         </div>
         <div className="bg-surface p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("projectsMapped")}</p>
-          <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.projects_mapped}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("itemsMapped")}</p>
+          <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.items_mapped ?? stats.projects_mapped}</p>
         </div>
       </div>
 
-      {/* Telemetry table */}
+      {/* Telemetry table — 2026-06 UX: hidden while no extraction has run */}
+      {telemetry.length > 0 && (
       <div className="border border-line bg-surface">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{t("telemetry")}</p>
@@ -105,15 +140,14 @@ export default function AuditView({ t, status, refresh }) {
                   <td className="px-4 py-2 font-mono text-[11px] text-slate-300">{r.results}</td>
                 </tr>
               ))}
-              {telemetry.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-500">—</td></tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
+      )}
 
-      {/* Failed extractions */}
+      {/* Failed extractions — 2026-06 UX: hidden when there is nothing failed */}
+      {failed.length > 0 && (
       <div className="border border-line bg-surface">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">
@@ -126,9 +160,6 @@ export default function AuditView({ t, status, refresh }) {
             </button>
           )}
         </div>
-        {failed.length === 0 && (
-          <p className="px-4 py-5 text-xs text-slate-500">{t("noFailed")}</p>
-        )}
         <div className="divide-y divide-line/50 max-h-[300px] overflow-y-auto">
           {failed.map((f) => (
             <div key={f.id} className="px-4 py-2.5 flex items-center gap-3 hover:bg-raised/50">
@@ -147,6 +178,7 @@ export default function AuditView({ t, status, refresh }) {
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

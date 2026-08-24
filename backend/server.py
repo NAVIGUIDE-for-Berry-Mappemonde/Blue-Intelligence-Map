@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
+TERRITORIES_FILE = ROOT_DIR / "data" / "territories.json"
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,25 @@ from pydantic import BaseModel
 
 from ai import extract_project, gatekeeper_check
 from categories import CATEGORY_GROUPS, normalize_category
+from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
+from formalities import (
+    load_territories,
+    seed_formalities,
+    serialise_doc as _formalities_serialise_doc,
+    serialise_list as _formalities_serialise_list,
+)
+from formalities_gen import (
+    generate_territory_formality,
+)
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
+from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
+from anchorages import build_anchorages as run_build_anchorages, anchorages_to_geojson
+from zee import (
+    EEZ_FILE,
+    build_zee_crossings as run_build_zee_crossings,
+    crossings_to_summary as zee_crossings_summary,
+    filter_french_territories,
+)
 from pipeline import Swarm, now_iso
 from tinyfish_client import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 
@@ -48,6 +68,20 @@ DEFAULT_SETTINGS = {
     "max_partner_orgs": 5,
     "saturation_limit": 50,
     "rescan_after_days": 7,
+    "marina_search_radius_nm": 10.0,
+    "marina_batch_concurrency": 2,
+    "openrouter_min_credits_usd": 0.5,
+    "enrich_stale_days": 365,
+    # Cloudflare Workers AI: dormant while the provided token is rejected + Kimi is paywalled
+    # on Free tier. Default model is the free-plan-eligible gpt-oss-120b. Switching to
+    # `@cf/moonshotai/kimi-k2.6` after upgrading to Workers Paid activates Kimi with zero
+    # code change.
+    "cloudflare_model": "@cf/openai/gpt-oss-120b",
+    # Phase 5 — swarm extraction engine (used by ai.py). Defaults to gemini
+    # (unchanged historical behaviour). Alternates: "gpt" and "claude" (both via
+    # EMERGENT_LLM_KEY through emergentintegrations, zero config) and
+    # "openrouter" (uses OPENROUTER_API_KEY + openai/gpt-4o-mini).
+    "extraction_engine": "gemini",
 }
 
 
@@ -83,6 +117,11 @@ class SettingsBody(BaseModel):
     max_partner_orgs: int | None = None
     saturation_limit: int | None = None
     rescan_after_days: float | None = None
+    marina_search_radius_nm: float | None = None
+    marina_batch_concurrency: int | None = None
+    openrouter_min_credits_usd: float | None = None
+    enrich_stale_days: int | None = None
+    cloudflare_model: str | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -163,16 +202,65 @@ async def stop():
 
 @router.get("/swarm/status")
 async def status():
-    return swarm.status()
+    st = swarm.status()
+    # Phase 5 — expose the active LLM engine so the UI can render it dynamically
+    # instead of a hard-coded "GEMINI" badge.
+    try:
+        sdoc = await db.settings.find_one({"_id": "global"}) or {}
+        engine = sdoc.get("extraction_engine") or "gemini"
+    except Exception:
+        engine = "gemini"
+    st["engine"] = engine
+    return st
 
 
 @router.get("/stats")
-async def stats():
-    total = await db.telemetry.count_documents({})
-    success = await db.telemetry.count_documents({"status": {"$in": ["SUCCESS", "MERGED"]}})
-    projects = await db.projects.count_documents({})
-    return {"total_extractions": total, "success_rate": round(success / total * 100, 1) if total else 0.0,
-            "projects_mapped": projects}
+async def stats(mode: str = "projects"):
+    """KPI counters shown in the Swarm Intelligence Audit view.
+
+    Bug-fix 2026-08-24 — `projects_mapped` used to always return
+    `db.projects.count_documents({})` (4463), regardless of the active mode.
+    The Audit view now passes `?mode=marinas|formalities|projects` so the
+    counter reflects the actual dataset the user is looking at. Extractions
+    and success_rate are read from a mode-scoped `dataset` field in the
+    telemetry collection when present; legacy rows without that field are
+    counted for projects only (backwards-compat).
+    """
+    m = (mode or "projects").lower()
+    if m == "marinas":
+        items = await db.marinas.count_documents({})
+        tele_filter = {"dataset": "marinas"}
+    elif m == "formalities":
+        # 1 fiche per escale, 17 escales in the route (SPM, La Rochelle×2, …).
+        # We report the number of escales currently rendered on the map to
+        # match the sidebar count the user sees ("17 escales").
+        items = 0
+        try:
+            import json as _json
+            if ROUTE_FILE.exists():
+                route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+                items = sum(
+                    1 for f in (route.get("features") or [])
+                    if (f.get("geometry") or {}).get("type") == "Point"
+                    and (f.get("properties") or {}).get("point_type") == "escale"
+                )
+        except Exception:
+            items = await db.formalities.count_documents({})
+        tele_filter = {"dataset": "formalities"}
+    else:  # projects (default)
+        items = await db.projects.count_documents({})
+        # Legacy rows have no `dataset` field — count them as projects.
+        tele_filter = {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}
+
+    total = await db.telemetry.count_documents(tele_filter)
+    success = await db.telemetry.count_documents({**tele_filter, "status": {"$in": ["SUCCESS", "MERGED"]}})
+    return {
+        "mode": m,
+        "total_extractions": total,
+        "success_rate": round(success / total * 100, 1) if total else 0.0,
+        "projects_mapped": items,  # legacy key kept for backwards-compat
+        "items_mapped": items,
+    }
 
 
 @router.get("/telemetry")
@@ -309,6 +397,25 @@ async def import_geojson(fc: dict = Body(...)):
                 invalid += 1
                 continue
             if url in seen_urls:
+                # URL already imported — silent backfill of category/category_group if missing.
+                incoming_cat = p.get("category")
+                incoming_grp = p.get("category_group") or normalize_category(incoming_cat)
+                if incoming_cat or incoming_grp:
+                    update_set = {}
+                    if incoming_cat:
+                        update_set["category"] = incoming_cat
+                    if incoming_grp:
+                        update_set["category_group"] = incoming_grp
+                    if update_set:
+                        await db.projects.update_one(
+                            {"url": url, "$or": [
+                                {"category_group": {"$exists": False}},
+                                {"category_group": None},
+                                {"category_group": ""},
+                                {"category_group": "Other"},
+                            ]},
+                            {"$set": update_set},
+                        )
                 skipped += 1
                 continue
             s = p.get("s_ocean", p.get("s_ocean_score", p.get("relevance_score", 0.5)))
@@ -326,7 +433,15 @@ async def import_geojson(fc: dict = Body(...)):
                     break
             if dup:
                 funders = list(set((dup.get("funders") or []) + [funder]))
-                await db.projects.update_one({"_id": dup["_id"]}, {"$set": {"funders": funders}})
+                update_set = {"funders": funders}
+                # Backfill category & category_group on already-imported docs (fixes historical import loss)
+                incoming_cat = p.get("category")
+                incoming_grp = p.get("category_group") or normalize_category(incoming_cat)
+                if incoming_cat and not dup.get("category"):
+                    update_set["category"] = incoming_cat
+                if incoming_grp and not dup.get("category_group"):
+                    update_set["category_group"] = incoming_grp
+                await db.projects.update_one({"_id": dup["_id"]}, {"$set": update_set})
                 merged += 1
                 seen_urls.add(url)
                 continue
@@ -337,7 +452,9 @@ async def import_geojson(fc: dict = Body(...)):
                 "location": p.get("location"), "lat": lat, "lon": lon,
                 "s_ocean": s, "snapped": bool(p.get("snapped") or p.get("snapped_coastal") or False),
                 "geo_source": "import", "image": p.get("image") or p.get("image_url"),
-                "category": p.get("category"), "engine": "GeoJSON Import", "created_at": now_iso(),
+                "category": p.get("category"),
+                "category_group": p.get("category_group") or normalize_category(p.get("category")),
+                "engine": "GeoJSON Import", "created_at": now_iso(),
             }
             docs.append(doc)
             seen_urls.add(url)
@@ -352,6 +469,202 @@ async def import_geojson(fc: dict = Body(...)):
     return {"imported": imported, "merged": merged, "skipped_existing": skipped, "invalid": invalid, "total_projects": total}
 
 
+# ---------------------------------------------------------------------------
+# Import — Marinas GeoJSON (2026-08-24 bug-fix: previously only projects had
+# an import endpoint; the sidebar "Import GeoJSON" button silently sent
+# marinas/formalities exports to the projects endpoint, discarding them).
+# Accepts the `FeatureCollection` produced by `/api/export/marinas.geojson`.
+# Each feature.properties.id is used as the Mongo `_id` for idempotent
+# upserts, so re-importing the same file is a no-op (updated count grows,
+# imported stays at 0).
+# ---------------------------------------------------------------------------
+@router.post("/import/marinas.geojson")
+async def import_marinas_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    imported = updated = invalid = 0
+    for f in feats:
+        try:
+            geom = f.get("geometry") or {}
+            if geom.get("type") != "Point":
+                invalid += 1
+                continue
+            coords = geom.get("coordinates") or []
+            if len(coords) < 2:
+                invalid += 1
+                continue
+            lon, lat = float(coords[0]), float(coords[1])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                invalid += 1
+                continue
+            p = f.get("properties") or {}
+            name = str(p.get("name") or "").strip()
+            if not name:
+                invalid += 1
+                continue
+            mid = str(p.get("id") or "").strip() or str(uuid.uuid4())
+            doc = {
+                "_id": mid,
+                "name": name,
+                "lat": lat,
+                "lon": lon,
+                "source": p.get("source") or "curated",
+                "priority": int(p.get("priority") or 3),
+                "nearest_waypoint": p.get("nearest_waypoint") or {},
+                "tags": p.get("tags") or {},
+                "osm_id": p.get("osm_id"),
+                "enriched": bool(p.get("enriched")),
+                "enrichment_source": p.get("enrichment_source"),
+                "enriched_at": p.get("enriched_at"),
+                "stale": bool(p.get("stale")),
+                "canal_vhf": p.get("canal_vhf"),
+                "places_visiteurs": p.get("places_visiteurs"),
+                "tirant_eau_max_metres": p.get("tirant_eau_max_metres"),
+                "score_protection_meteo": p.get("score_protection_meteo"),
+                "services_disponibles": p.get("services_disponibles"),
+                "telephone_capitainerie": p.get("telephone_capitainerie"),
+                "resume_avis": p.get("resume_avis"),
+                "fetched_at": p.get("fetched_at") or now_iso(),
+            }
+            existing = await db.marinas.find_one({"_id": mid})
+            if existing:
+                await db.marinas.update_one({"_id": mid}, {"$set": doc})
+                updated += 1
+            else:
+                await db.marinas.insert_one(doc)
+                imported += 1
+        except Exception:
+            invalid += 1
+    total = await db.marinas.count_documents({})
+    swarm.log(f"Marinas GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid", "success")
+    return {"imported": imported, "merged": updated, "skipped_existing": 0, "invalid": invalid, "total_marinas": total}
+
+
+# ---------------------------------------------------------------------------
+# Import — Formalities GeoJSON (2026-08-24 bug-fix companion).
+# Accepts the `FeatureCollection` produced by `/api/export/formalities.geojson`.
+# That export ships 1 Point per escale (17 features), and each feature only
+# carries META (status, is_port_of_entry, generated_at, verified_at, stale)
+# — NOT the full fiche content (entree/sortie/…). Import therefore RESTORES
+# per-territory status and rebuilds `escale_overlays[]` from the meta, but
+# leaves fiche content fields untouched (they stay whatever was in the seed
+# or a previous generate/verify run).
+# Features are grouped by `territory_code` before upsert, so the 17 escale
+# features collapse to 13 territory documents (matches the seed cardinality).
+# ---------------------------------------------------------------------------
+@router.post("/import/formalities.geojson")
+async def import_formalities_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+
+    # Group features by territory_code
+    # Bug-fix 2026-08-24 — the export was extended to ship the full fiche
+    # content (entree/sortie/…/contacts/sources). To keep the round-trip
+    # export → import → restore identical, we now propagate those fields when
+    # they're present in the imported file. Backwards-compat: files produced
+    # by the older meta-only export still work — the content fields simply
+    # stay untouched (never overwritten with null).
+    CONTENT_FIELDS = ("entree", "sortie", "cas_particuliers", "immigration",
+                      "contacts", "liens_officiels", "sources")
+    by_code: dict[str, dict] = {}
+    invalid = 0
+    for f in feats:
+        try:
+            p = f.get("properties") or {}
+            code = str(p.get("territory_code") or "").strip()
+            escale_name = str(p.get("escale_name") or "").strip()
+            if not code or not escale_name:
+                invalid += 1
+                continue
+            entry = by_code.setdefault(code, {
+                "territory_code": code,
+                "escale_overlays": [],
+                "status": p.get("status") or "non_generee",
+                "generated_at": p.get("generated_at"),
+                "verified_at": p.get("verified_at"),
+                "content": {},  # only set fields with a real value survive
+            })
+            # First non-empty status wins (all escales of a territory share the
+            # same status in the export).
+            if p.get("status") and entry["status"] in (None, "non_generee"):
+                entry["status"] = p.get("status")
+            if p.get("generated_at") and not entry.get("generated_at"):
+                entry["generated_at"] = p.get("generated_at")
+            if p.get("verified_at") and not entry.get("verified_at"):
+                entry["verified_at"] = p.get("verified_at")
+            # Capture fiche content (identical across all escales of a
+            # territory — take the first non-null value seen).
+            for cf in CONTENT_FIELDS:
+                if cf in p and p[cf] not in (None, [], {}) and cf not in entry["content"]:
+                    entry["content"][cf] = p[cf]
+            # Escale overlay: preserve is_port_of_entry flag per escale. If the
+            # new export shipped `escale_overlay`, use it; otherwise fall back
+            # to the legacy top-level `is_port_of_entry` field.
+            legacy_overlay = p.get("escale_overlay") or {
+                "escale_name": escale_name,
+                "is_port_of_entry": bool(p.get("is_port_of_entry")),
+                "note": None,
+            }
+            # Ensure escale_name is set (older files might omit it inside overlay)
+            if not legacy_overlay.get("escale_name"):
+                legacy_overlay["escale_name"] = escale_name
+            entry["escale_overlays"].append(legacy_overlay)
+        except Exception:
+            invalid += 1
+            continue
+
+    imported = updated = 0
+    for code, entry in by_code.items():
+        existing = await db.formalities.find_one({"territory_code": code})
+        # Update META fields + any content fields explicitly present in the
+        # import. Content fields NOT present in the import are never touched.
+        update_set = {
+            "status": entry["status"],
+            "escale_overlays": entry["escale_overlays"],
+        }
+        if entry.get("generated_at"):
+            update_set["generated_at"] = entry["generated_at"]
+        if entry.get("verified_at"):
+            update_set["verified_at"] = entry["verified_at"]
+        # Merge fiche content (bug-fix 2026-08-24 round-trip).
+        for cf, val in (entry.get("content") or {}).items():
+            update_set[cf] = val
+        if existing:
+            await db.formalities.update_one(
+                {"territory_code": code}, {"$set": update_set},
+            )
+            updated += 1
+        else:
+            # Territory not seeded yet — create a minimal doc so the meta
+            # survives. Fiche content stays null unless the import carried it.
+            new_doc = {
+                "_id": str(uuid.uuid4()),
+                "territory_code": code,
+                "entree": None, "sortie": None, "cas_particuliers": None,
+                "immigration": None, "contacts": [], "liens_officiels": [],
+                "sources": [],
+                **update_set,
+            }
+            await db.formalities.insert_one(new_doc)
+            imported += 1
+    total = await db.formalities.count_documents({})
+    swarm.log(
+        f"Formalities GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid, "
+        f"{len(by_code)} territories",
+        "success",
+    )
+    return {
+        "imported": imported,
+        "merged": updated,
+        "skipped_existing": 0,
+        "invalid": invalid,
+        "total_formalities": total,
+        "territories_touched": len(by_code),
+    }
+
+
 @router.get("/categories")
 async def get_categories():
     rows = await db.projects.aggregate([
@@ -359,6 +672,625 @@ async def get_categories():
     ]).to_list(50)
     counts = {r["_id"] or "Other": r["n"] for r in rows}
     return {"groups": [{"name": g, "color": c, "count": counts.get(g, 0)} for g, c in CATEGORY_GROUPS.items()]}
+
+
+# ---------- Marinas (Phase 2) ----------
+MARINA_BUILD_STATE = BuildState()
+# Phase 8 — Anchorages (Mouillages)
+ANCHORAGE_BUILD_STATE = BuildState()
+
+
+@router.get("/marinas")
+async def list_marinas(
+    priority: int | None = None,
+    source: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if source:
+        q["source"] = source
+    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return marinas_to_geojson(docs)
+
+
+@router.get("/export/marinas.geojson")
+async def export_marinas():
+    docs = await db.marinas.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = marinas_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
+    )
+
+
+@router.get("/export/route.geojson")
+async def export_route():
+    if not ROUTE_FILE.exists():
+        raise HTTPException(404, "route.geojson not found")
+    import json as _json
+    data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    return JSONResponse(
+        data,
+        headers={"Content-Disposition": "attachment; filename=route.geojson"},
+    )
+
+
+class MarinasBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    # Phase 8 — continuous 50 NM band: 25 NM sampling step × ±25 NM buffer
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
+
+
+@router.post("/marinas/build")
+async def marinas_build_start(body: MarinasBuildBody | None = None):
+    if MARINA_BUILD_STATE.running:
+        raise HTTPException(409, "A marinas build is already running")
+    body = body or MarinasBuildBody()
+    settings = await get_settings()
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.marinas.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_marinas(
+                marinas_coll=db.marinas,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=MARINA_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
+
+
+@router.get("/marinas/build/status")
+async def marinas_build_status():
+    s = MARINA_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/marinas/count")
+async def marinas_count():
+    return {
+        "total": await db.marinas.count_documents({}),
+        "by_priority": {
+            "1": await db.marinas.count_documents({"priority": 1}),
+            "2": await db.marinas.count_documents({"priority": 2}),
+            "3": await db.marinas.count_documents({"priority": 3}),
+        },
+        "by_source": {
+            "openstreetmap": await db.marinas.count_documents({"source": "openstreetmap"}),
+            "shom": await db.marinas.count_documents({"source": "shom"}),
+            "curated": await db.marinas.count_documents({"source": "curated"}),
+        },
+        "enriched": await db.marinas.count_documents({"enriched": True}),
+    }
+
+
+# ---------- Anchorages (Phase 8 — Mouillages) ----------
+
+class AnchoragesBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    # Same corridor defaults as marinas: ±25 NM band (25 NM step × ±25 NM buffer)
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
+
+
+@router.get("/anchorages")
+async def list_anchorages(
+    priority: int | None = None,
+    anchorage_type: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if anchorage_type:
+        q["anchorage_type"] = anchorage_type
+    docs = await db.anchorages.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return anchorages_to_geojson(docs)
+
+
+@router.get("/export/anchorages.geojson")
+async def export_anchorages():
+    docs = await db.anchorages.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = anchorages_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=anchorages.geojson"},
+    )
+
+
+@router.post("/anchorages/build")
+async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
+    if ANCHORAGE_BUILD_STATE.running:
+        raise HTTPException(409, "An anchorages build is already running")
+    body = body or AnchoragesBuildBody()
+    settings = await get_settings()
+    # Reuse marina_search_radius_nm as default waypoint radius for anchorages too
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.anchorages.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_anchorages(
+                anchorages_coll=db.anchorages,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=ANCHORAGE_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
+
+
+@router.get("/anchorages/build/status")
+async def anchorages_build_status():
+    s = ANCHORAGE_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/anchorages/count")
+async def anchorages_count():
+    return {
+        "total": await db.anchorages.count_documents({}),
+        "by_priority": {
+            "1": await db.anchorages.count_documents({"priority": 1}),
+            "2": await db.anchorages.count_documents({"priority": 2}),
+            "3": await db.anchorages.count_documents({"priority": 3}),
+        },
+        "by_type": {
+            "anchorage": await db.anchorages.count_documents({"anchorage_type": "anchorage"}),
+            "anchor_berth": await db.anchorages.count_documents({"anchorage_type": "anchor_berth"}),
+            "bay": await db.anchorages.count_documents({"anchorage_type": "bay"}),
+        },
+    }
+
+
+# ---------- Marina enrichment (Phase 3) ----------
+# Per-id lock so the SAME marina can't be enriched concurrently.
+ENRICH_LOCKS: set[str] = set()
+# Per-id state registry for on-demand tasks (marinas + projects). Kept in-memory,
+# TTL-cleaned when a new task starts.
+MARINA_ENRICH_TASKS: dict[str, dict] = {}
+PROJECT_ENRICH_TASKS: dict[str, dict] = {}
+
+
+def _prune_tasks(registry: dict, max_age_s: int = 3600):
+    """Drop tasks that finished more than max_age_s ago to bound memory."""
+    now = time.time()
+    for k in list(registry.keys()):
+        t = registry.get(k) or {}
+        finished = t.get("finished_at") or 0
+        if finished and (now - finished) > max_age_s:
+            registry.pop(k, None)
+
+
+class MarinaEnrichBatchBody(BaseModel):
+    limit: int = 10
+    priority: int | None = None
+    include_enriched: bool = False   # if True, re-enrich already-enriched ones
+    stale_only: bool = False   # if True, filter to stale-only (needs enriched_at)
+
+
+class EnrichBatchState:
+    """Progress state for the running batch."""
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.progress: int = 0
+        self.total: int = 0
+        self.results: list[dict] = []
+        self.logs: list[str] = []
+        self.error: str | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 400:
+            self.logs = self.logs[-400:]
+
+
+ENRICH_BATCH_STATE = EnrichBatchState()
+
+
+def _keys() -> tuple[str | None, str | None, str | None, str | None]:
+    return (
+        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
+        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
+        (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip() or None,
+        (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip() or None,
+    )
+
+
+async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
+    """Run the enrichment chain and upsert the enriched fields on the marina doc."""
+    tf_key, or_key, cf_account, cf_token = _keys()
+    result = await enrich_marina(
+        marina,
+        tinyfish_key=tf_key,
+        openrouter_key=or_key,
+        cf_account=cf_account,
+        cf_token=cf_token,
+        min_credit_usd=min_credit_usd,
+        logger=log_fn,
+        skip_tinyfish=skip_tinyfish,
+    )
+    update = {**result, "stale": False}
+    await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+    return result
+
+
+@router.post("/marinas/{marina_id}/enrich", status_code=202)
+async def marina_enrich_one(marina_id: str):
+    """
+    Start marina enrichment as a background task and return 202 immediately.
+    Poll GET /api/marinas/{marina_id}/enrich/status for progress/result.
+    """
+    if marina_id in ENRICH_LOCKS:
+        raise HTTPException(409, "Enrichment already in progress for this marina")
+    marina = await db.marinas.find_one({"_id": marina_id})
+    if not marina:
+        raise HTTPException(404, "marina not found")
+    settings = await get_settings()
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+
+    _prune_tasks(MARINA_ENRICH_TASKS)
+    ENRICH_LOCKS.add(marina_id)
+    MARINA_ENRICH_TASKS[marina_id] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+
+    async def _runner():
+        task = MARINA_ENRICH_TASKS[marina_id]
+
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 200:
+                task["logs"] = task["logs"][-200:]
+
+        try:
+            await _run_marina_enrich_one(marina, min_credit, log_fn)
+            fresh = await db.marinas.find_one({"_id": marina_id})
+            task["result"] = {
+                k: fresh.get(k) for k in (
+                    "_id", "name", "lat", "lon", "source", "priority",
+                    "nearest_waypoint", "tags", "osm_id", "enriched",
+                    "enrichment_source", "enriched_at", "stale",
+                    *ENRICH_FIELDS,
+                )
+            }
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+        finally:
+            task["finished_at"] = time.time()
+            ENRICH_LOCKS.discard(marina_id)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "marina_id": marina_id}
+
+
+@router.get("/marinas/{marina_id}/enrich/status")
+async def marina_enrich_status(marina_id: str):
+    """Poll the state of an on-demand marina enrichment. Returns 'idle' if no task."""
+    task = MARINA_ENRICH_TASKS.get(marina_id)
+    if not task:
+        return {"state": "idle", "marina_id": marina_id}
+    return {
+        "state": task["state"],
+        "marina_id": marina_id,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
+
+
+@router.post("/marinas/enrich-batch")
+async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
+    if ENRICH_BATCH_STATE.running:
+        raise HTTPException(409, "A marinas enrichment batch is already running")
+    body = body or MarinaEnrichBatchBody()
+    settings = await get_settings()
+    concurrency = int(settings.get("marina_batch_concurrency") or 2)
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+    stale_days = int(settings.get("enrich_stale_days") or 365)
+
+    # Selection query
+    q: dict = {}
+    if body.priority is not None:
+        q["priority"] = int(body.priority)
+    if body.stale_only:
+        # cutoff timestamp
+        cutoff = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(time.time() - stale_days * 86400),
+        )
+        q["$or"] = [{"enriched_at": {"$lt": cutoff}}, {"enriched": {"$ne": True}}]
+    elif not body.include_enriched:
+        q["$or"] = [{"enriched": {"$ne": True}}, {"enriched": False}]
+
+    candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(int(body.limit) or 10)
+
+    ENRICH_BATCH_STATE.running = True
+    ENRICH_BATCH_STATE.started_at = time.time()
+    ENRICH_BATCH_STATE.finished_at = None
+    ENRICH_BATCH_STATE.progress = 0
+    ENRICH_BATCH_STATE.total = len(candidates)
+    ENRICH_BATCH_STATE.results = []
+    ENRICH_BATCH_STATE.logs = []
+    ENRICH_BATCH_STATE.error = None
+
+    async def _runner():
+        try:
+            ENRICH_BATCH_STATE.log(
+                f"Selected {len(candidates)} marinas (concurrency={concurrency}, "
+                f"limit={body.limit}, priority={body.priority}, min_credit=${min_credit})"
+            )
+            sem = asyncio.Semaphore(max(1, concurrency))
+            counter = {"i": 0}
+
+            async def _one(m):
+                async with sem:
+                    if m["_id"] in ENRICH_LOCKS:
+                        ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: already locked")
+                        return
+                    ENRICH_LOCKS.add(m["_id"])
+                    ENRICH_BATCH_STATE.log(f"→ {m['name']} (P{m.get('priority')})")
+                    per_logs: list[str] = []
+                    try:
+                        result = await _run_marina_enrich_one(
+                            m, min_credit,
+                            lambda s: (per_logs.append(s), ENRICH_BATCH_STATE.log(f"  {s}")),
+                        )
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"],
+                            "source": result.get("enrichment_source"),
+                            "enriched": result.get("enriched"),
+                            "fields_filled": [k for k in ENRICH_FIELDS if result.get(k) is not None],
+                        })
+                    except Exception as e:
+                        ENRICH_BATCH_STATE.log(f"  FAILED: {type(e).__name__}: {e}")
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"], "error": f"{type(e).__name__}: {e}",
+                        })
+                    finally:
+                        ENRICH_LOCKS.discard(m["_id"])
+                        counter["i"] += 1
+                        ENRICH_BATCH_STATE.progress = counter["i"]
+
+            await asyncio.gather(*(_one(m) for m in candidates))
+            by_src = {"tinyfish": 0, "openrouter": 0, "fallback": 0}
+            for r in ENRICH_BATCH_STATE.results:
+                s = r.get("source")
+                if s in by_src:
+                    by_src[s] += 1
+            ENRICH_BATCH_STATE.log(f"Done. Sources: {by_src}")
+        except Exception as e:
+            ENRICH_BATCH_STATE.error = f"{type(e).__name__}: {e}"
+            ENRICH_BATCH_STATE.log(f"FATAL {ENRICH_BATCH_STATE.error}")
+        finally:
+            ENRICH_BATCH_STATE.finished_at = time.time()
+            ENRICH_BATCH_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"started": True, "selected": len(candidates), "concurrency": concurrency}
+
+
+@router.get("/marinas/enrich-batch/status")
+async def marina_enrich_batch_status():
+    s = ENRICH_BATCH_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "results": s.results,
+        "logs_tail": s.logs[-60:],
+        "error": s.error,
+    }
+
+
+# ---------- On-demand project enrich (Phase 3, async as of Phase 3.1) ----------
+async def _run_project_enrich(project_id: str, task: dict):
+    """Actual enrichment work — runs in background."""
+
+    def log_fn(msg: str):
+        task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(task["logs"]) > 200:
+            task["logs"] = task["logs"][-200:]
+
+    proj = await db.projects.find_one({"_id": project_id})
+    if not proj:
+        task["state"] = "error"
+        task["error"] = "project not found"
+        task["finished_at"] = time.time()
+        return
+    url = proj.get("url")
+    if not url:
+        task["state"] = "error"
+        task["error"] = "project has no URL"
+        task["finished_at"] = time.time()
+        return
+    log_fn(f"Refreshing {url}")
+
+    import httpx as _httpx
+    from bs4 import BeautifulSoup as _BS
+    from readability import Document as _Doc
+    from ai import extract_project as _extract, gatekeeper_check as _gk
+    from pipeline import UA as _UA, pick_image as _pick_image
+
+    try:
+        settings = await get_settings()
+        async with _httpx.AsyncClient(timeout=25, follow_redirects=True, headers=_UA) as c:
+            r = await c.get(url)
+            html = r.text
+        doc = _Doc(html)
+        page_title = (doc.short_title() or "").strip() or proj.get("title") or url
+        summary_html = doc.summary()
+        soup = _BS(summary_html, "html.parser")
+        import re as _re
+        text = _re.sub(r"\s+", " ", soup.get_text(" ")).strip()
+        full = _BS(html, "html.parser")
+        if len(text) < 200:
+            text = _re.sub(r"\s+", " ", full.get_text(" ")).strip()[:8000]
+        meta = full.find("meta", attrs={"name": "description"}) or full.find("meta", attrs={"property": "og:description"})
+        meta_desc = meta.get("content", "").strip() if meta else ""
+        image = _pick_image(full, soup, url)
+        log_fn(f"Fetched + Readability: {len(text)} chars")
+        gk = await _gk(page_title, text, settings)
+        if not gk["accepted"]:
+            log_fn(f"Gatekeeper REJECTED: {gk['reason'][:80]}")
+            task["state"] = "error"
+            task["error"] = f"gatekeeper: {gk['reason']}"
+            task["finished_at"] = time.time()
+            return
+        funder = proj.get("funder") or (proj.get("funders") or ["Unknown"])[0]
+        extracted = await _extract(page_title, text, meta_desc, url, funder, settings)
+        log_fn(f"Extraction engine={extracted.get('engine')}, title='{(extracted.get('title') or '')[:60]}'")
+
+        update: dict = {}
+        for field, key in [
+            ("title", "title"),
+            ("description", "description"),
+            ("location", "location"),
+            ("category", "category"),
+        ]:
+            new_v = extracted.get(key)
+            if new_v and str(new_v).strip() and str(new_v) != str(proj.get(field) or ""):
+                update[field] = str(new_v).strip()[:250 if field == "description" else 200]
+        if extracted.get("category"):
+            update["category_group"] = normalize_category(extracted["category"])
+        if image and (not proj.get("image") or image != proj.get("image")):
+            update["image"] = image
+        try:
+            new_s = extracted.get("s_ocean")
+            if new_s is not None:
+                update["s_ocean"] = round(float(new_s), 3)
+        except (TypeError, ValueError):
+            pass
+        update["enriched"] = True
+        update["enriched_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        update["enrichment_source"] = extracted.get("engine", "unknown")
+        await db.projects.update_one({"_id": project_id}, {"$set": update})
+        log_fn(f"Updated fields: {list(update.keys())}")
+        fresh = await db.projects.find_one({"_id": project_id})
+        task["result"] = {
+            "project": project_to_feature(fresh),
+            "updates": list(update.keys()),
+        }
+        task["state"] = "done"
+    except Exception as e:
+        log_fn(f"FAILED: {type(e).__name__}: {str(e)[:200]}")
+        task["state"] = "error"
+        task["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        task["finished_at"] = time.time()
+
+
+@router.post("/projects/{project_id}/enrich", status_code=202)
+async def project_enrich_one(project_id: str):
+    """
+    Kick off project re-extraction as a background task.
+    Returns 202 immediately; poll GET /api/projects/{project_id}/enrich/status.
+    """
+    proj = await db.projects.find_one({"_id": project_id})
+    if not proj:
+        raise HTTPException(404, "project not found")
+    if not proj.get("url"):
+        raise HTTPException(400, "project has no URL")
+
+    existing = PROJECT_ENRICH_TASKS.get(project_id)
+    if existing and existing.get("state") == "running":
+        raise HTTPException(409, "Enrichment already in progress for this project")
+
+    _prune_tasks(PROJECT_ENRICH_TASKS)
+    PROJECT_ENRICH_TASKS[project_id] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+    asyncio.create_task(_run_project_enrich(project_id, PROJECT_ENRICH_TASKS[project_id]))
+    return {"status": "started", "project_id": project_id}
+
+
+@router.get("/projects/{project_id}/enrich/status")
+async def project_enrich_status(project_id: str):
+    task = PROJECT_ENRICH_TASKS.get(project_id)
+    if not task:
+        return {"state": "idle", "project_id": project_id}
+    return {
+        "state": task["state"],
+        "project_id": project_id,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
 
 
 class ReportBody(BaseModel):
@@ -422,77 +1354,23 @@ async def get_reports():
     return docs
 
 
-ARCGIS_MPA_URL = "https://services9.arcgis.com/lm7wE8a9YA9rKfzy/arcgis/rest/services/Navigator_AllSites_010925_attributes/FeatureServer/0/query"
-MPA_FIELDS = ["SITE_ID", "site_name", "url", "country", "designation", "category_name", "managing_authority", "lfp", "protection_focus"]
+ARCGIS_MPA_URL = ""  # Removed in Phase 5 — MPA layer decommissioned.
+MPA_FIELDS: list[str] = []  # Deprecated in Phase 5: MPA layer removed entirely.
 
 
-@router.get("/mpa")
-async def get_mpa(bbox: str):
-    try:
-        min_lon, min_lat, max_lon, max_lat = [float(x) for x in bbox.split(",")]
-    except ValueError:
-        raise HTTPException(400, "bbox must be minLon,minLat,maxLon,maxLat")
-    key = f"{round(min_lon, 1)},{round(min_lat, 1)},{round(max_lon, 1)},{round(max_lat, 1)}"
-    offset = max(0.005, round((max_lon - min_lon) / 500, 4))
-    key = f"{key}|{offset}"
-    cached = await db.mpa_cache.find_one({"_id": key})
-    if cached:
-        age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(cached["ts"])).total_seconds() / 86400
-        if age_days < 3:
-            return JSONResponse(cached["geojson"])
-    params = {
-        "where": "1=1",
-        "geometry": f"{min_lon},{min_lat},{max_lon},{max_lat}",
-        "geometryType": "esriGeometryEnvelope",
-        "inSR": "4326", "outSR": "4326",
-        "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "*", "f": "geojson",
-        "resultRecordCount": "250",
-        "maxAllowableOffset": str(offset),
-        "geometryPrecision": "4",
-    }
-    import httpx as _httpx
-    try:
-        async with _httpx.AsyncClient(timeout=90) as c:
-            r = await c.get(ARCGIS_MPA_URL, params=params, headers={"Accept-Encoding": "gzip"})
-            data = r.json()
-    except Exception as e:
-        raise HTTPException(502, f"ProtectedSeas upstream error: {str(e)[:100]}")
-    if "features" not in data:
-        raise HTTPException(502, f"ProtectedSeas query error: {str(data.get('error'))[:150]}")
-    feats = []
-    for f in data["features"]:
-        p = f.get("properties") or {}
-        try:
-            lfp = int(float(p.get("lfp") or 0))
-        except (TypeError, ValueError):
-            lfp = 0
-        feats.append({
-            "type": "Feature",
-            "geometry": f["geometry"],
-            "properties": {
-                "ps_id": p.get("SITE_ID"),
-                "site_name": p.get("site_name"),
-                "url": p.get("url"),
-                "country": p.get("country"),
-                "designation": p.get("designation"),
-                "category_name": p.get("category_name"),
-                "managing_authority": p.get("managing_authority"),
-                "protection_focus": p.get("protection_focus"),
-                "lfp": lfp,
-            },
-        })
-    fc = {"type": "FeatureCollection", "features": feats,
-          "attribution": "The ProtectedSeas Navigator Map of Conservation Regulations, ProtectedSeas®, https://map.navigatormap.org — CC BY 4.0"}
-    await db.mpa_cache.update_one({"_id": key}, {"$set": {"geojson": fc, "ts": now_iso()}}, upsert=True)
-    return JSONResponse(fc)
+# ---------- MPA endpoint removed in Phase 5 (Protected Areas layer decommissioned). ----------
+# The /api/mpa endpoint returned MPA polygons from ArcGIS ProtectedSeas Navigator.
+# Kept as HTTP 410 for backward compatibility with older frontends that may still ping it.
+@router.get("/mpa", status_code=410, include_in_schema=False)
+async def mpa_deprecated(bbox: str = ""):
+    raise HTTPException(410, "MPA layer removed in Phase 5.")
 
 
 @router.get("/settings")
 async def read_settings():
     s = await get_settings()
     s.pop("_id", None)
-    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
+    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY"):
         s["gemini_api_key_set"] = True
         s["gemini_api_key"] = ""
     else:
@@ -521,86 +1399,130 @@ MANUALS = {
     "en": """# Blue Intelligence — User Manual
 
 ## Overview
-Blue Intelligence transforms the living web of maritime data into an executable geospatial database.
-TinyFish agents discover project pages on foundation portals; Readability + Gemini extract, filter (Gatekeeper Protocol) and score each project (S_ocean); results are mapped live and exportable as GeoJSON.
+Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers three complementary modes, an operator Audit console, contextual GeoJSON exports and a single global donation pot. AI-generated content is produced by an OpenRouter + Gemini (fallback) synthesis pipeline; the swarm extraction engine is configurable in Settings (Gemini default · Claude · OpenRouter).
 
-## Map View (default)
-- **World map**: single-world Leaflet dark map (light/dark toggle in the header ☀/🌙). Markers are colored by category and clustered.
-- **Popup**: click a marker → photo, title, funder, category, description, S_ocean score, "View project" link and a **Donate** button. The popup always stays fully on screen without moving the map.
+## Three modes (header switch)
+The header pill lets you switch between three modes. Each mode paints the app with its own accent theme (cyan · red · amber) and shows its dedicated sidebar and map layer.
+
+### 1) Projects (cyan)
+- **World map**: single-world Leaflet map with light/dark basemap toggle in the header. Project markers are colored by category and grouped into clusters. The Berry-Mappemonde route is drawn under the clusters as a neutral polyline.
+- **Popup**: click a marker → photo, title, funder, category, description, S_ocean score and a "View project" link. No per-project donate button — donations are global (see below). The popup always stays fully on screen without moving the map.
 - **Left sidebar**:
-  - *Legend*: 9 color-coded categories (MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other). Click a category to filter the map.
+  - *Legend*: 9 color-coded categories (Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Restoration, Other). Click a category to filter.
   - *Organization filter* and *Category filter* dropdowns.
   - *Instant search* across titles, descriptions, funders and locations.
-  - *Project list* with Donate buttons and source links.
-  - *"Missing project?"*: report a project we missed (name, URL, description). It is emailed to the Blue Intelligence team and queued for the next Swarm run.
+  - *Project list* with source links.
+  - *"Missing project?"*: report a project we missed. It is emailed to the team and queued for the next Swarm run.
+  - *Export GeoJSON* button — exports the projects visible in this mode.
 
-## Donations (Global Pot)
-The header shows the global donation counter in euros. Click **Donate** on any project, pick an amount (5–100 €) and pay through Stripe. Sandbox mode: test card 4242 4242 4242 4242.
+### 2) Marinas (red)
+- **Map**: red-tinted markers grouped into clusters, showing marinas and berthing points curated from OpenStreetMap and other open sources.
+- **Popup**: marina name, tags (fuel · water · haul-out · shore power · repair), coordinates and source link. Enriched fields (VHF channel, phone, website) appear once the enrichment batch has been run.
+- **Left sidebar**: search by name, filter by tag, marina list.
+- *Export GeoJSON* button — exports the marinas visible in this mode.
+- All batch actions (build, enrich) are triggered from the Audit hub (see below), not from the sidebar.
+
+### 3) Formalities (amber)
+- **Map**: escales along the Berry-Mappemonde route. A white ring around a marker means the escale is an official Port of Entry. The dot color reflects the formality file status.
+- **Left sidebar**: list of all escales with badges (departure / return on La Rochelle), an amber disclaimer ("Indicative information — verify with the authorities before departure"), and per-file refresh / verify buttons.
+- **Territory sheet** (right side, opens on click): 5 tabs — Entry · Exit · Special cases · Contacts · Sources. An Immigration tab covers French crew only. Each field is short, sourced and can be re-generated on demand.
+- **Status of a file** (4 possible values):
+  - `not generated` — grey, no AI content yet.
+  - `AI` — amber, at least one source in the official whitelist has been captured.
+  - `AI without source` — amber with dashed ring, LLM output but no official source could be captured (typical for PDF-only documents).
+  - `verified` — green, marked as reviewed by the crew via the Verify button.
+- **Stale flag**: any file older than 180 days shows a clock badge inviting a refresh.
+- **Sources**: only official government / customs / immigration domains are ever displayed. The internal whitelist is not exposed.
+- *Export GeoJSON* button — exports the 17 escales with their formality status.
+
+## Global donations pot
+The header shows a single donation CTA. Click it, pick an amount (5–100 €) and pay through Stripe. All donations feed one single global pot shown next to the button (running total in euros + donor count). No per-project donation button anywhere in the map or the sidebars.
 
 ## Swarm Intelligence Audit (header toggle)
-Operator console:
-- **Swarm Controls**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream.
-- **Live Swarm Console**: one card per agent (TinyFish discover / Readability extract) with status, live-view link and stream logs.
-- **Auto-Stop**: the swarm shuts down gracefully after N consecutive extractions without a new unique project (default 50) to save credits.
-- **Follow the Money**: agents detect partner/grantee NGOs on project pages and recursively queue their sites.
-- **KPIs**: total extractions, success rate, projects mapped.
-- **Telemetry table** and **Failed extractions** with per-URL Force Extract (TinyFish) or Force Extract All.
+Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
+- **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
+- **Marinas — Build & Enrich batch**: rebuild the marinas dataset from open sources, then enrich N marinas at a time (VHF, phone, website) with live progress and per-item status.
+- **Formalities — Generate batch**: (re)generate the 13 territory files in one click, with a live log tail and a per-territory progress list. Sources are captured and filtered against the official whitelist automatically.
+- **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
 ## Settings (right panel, gear icon)
 - **Documentation**: download this manual (EN/FR).
 - **Data**: Import GeoJSON (validates coordinates, counts and merges duplicates), Export GeoJSON, Clear all projects.
 - **Marine filtering**: max coast distance (km), minimum marine score.
-- **Extraction**: parallel TinyFish agents (1-2), extraction concurrency (1-20), Gemini model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
+- **Extraction**: parallel TinyFish agents (1–2), extraction concurrency (1–20), **extraction engine selector** (Gemini · Claude · OpenRouter), model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
 - **Map**: minimum zoom, max markers.
-- **API keys**: TinyFish and Gemini (stored server-side, never exposed).
+- **API keys**: TinyFish and LLM (stored server-side, never exposed).
 
 ## Pipeline (how it works)
-1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, crawler fallback).
-2. **Extraction**: Readability cleans the page → Gemini Gatekeeper rejects terrestrial/freshwater projects → Gemini extracts title, description (<250 chars), location, category, partners and S_ocean score.
-3. **Geocoding**: extracted GPS → Nominatim → Gemini smart geocoding → Point-in-Ocean test → coastal snapping when inland.
+1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, HTTP crawler fallback).
+2. **Extraction**: Readability cleans the page → LLM Gatekeeper rejects terrestrial/freshwater projects → LLM extracts title, description (<250 chars), location, category, partners and S_ocean score.
+3. **Geocoding**: extracted GPS → Nominatim → LLM smart geocoding → Point-in-Ocean test → coastal snapping when inland.
 4. **Deduplication**: URL match, spatial proximity (<500 m) + title similarity (>90%) → funders merged.
+5. **Formalities synthesis**: TinyFish visits the whitelisted official URLs of a territory, falls back to a readable-fetch when needed, then an OpenRouter + Gemini (fallback) LLM produces a strictly-sourced French summary. The pipeline never invents content.
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
 ## Vue d'ensemble
-Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable.
-Les agents TinyFish découvrent les fiches projets sur les portails des fondations ; Readability + Gemini extraient, filtrent (Protocole Gatekeeper) et notent chaque projet (S_ocean) ; les résultats sont cartographiés en direct et exportables en GeoJSON.
+Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose trois modes complémentaires, une console Audit opérateur, des exports GeoJSON contextuels et une cagnotte de dons globale unique. Les contenus produits par IA le sont via un pipeline de synthèse OpenRouter + Gemini (fallback) ; le moteur d'extraction du swarm est configurable dans les Paramètres (Gemini par défaut · Claude · OpenRouter).
 
-## Vue Carte (par défaut)
-- **Carte mondiale** : carte Leaflet sombre à monde unique (bascule clair/sombre dans l'en-tête ☀/🌙). Marqueurs colorés par catégorie et regroupés en clusters.
-- **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean, lien « Voir le projet » et bouton **Donner**. L'encadré reste toujours entièrement visible sans déplacer la carte.
+## Trois modes (bascule dans l'en-tête)
+La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habille l'app avec sa teinte d'accent propre (cyan · rouge · ambre) et affiche son bandeau et sa couche de carte dédiés.
+
+### 1) Projets (cyan)
+- **Carte mondiale** : carte Leaflet à monde unique, bascule fond clair/sombre dans l'en-tête. Marqueurs de projets colorés par catégorie et regroupés en clusters. La route Berry-Mappemonde est tracée sous les clusters sous forme d'une polyline neutre.
+- **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean et lien « Voir le projet ». Pas de bouton donner par projet — les dons sont globaux (voir ci-dessous). L'encadré reste toujours entièrement visible sans déplacer la carte.
 - **Bandeau gauche** :
-  - *Légende* : 9 catégories colorées (AMP, Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Autre). Cliquer une catégorie filtre la carte.
+  - *Légende* : 9 catégories colorées (Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Restauration, Autre). Cliquer une catégorie filtre la carte.
   - Menus *Filtre par organisation* et *Filtre par catégorie*.
   - *Recherche instantanée* sur titres, descriptions, financeurs et lieux.
-  - *Liste des projets* avec boutons Donner et liens sources.
-  - *« Projet manquant ? »* : signaler un projet oublié (nom, URL, description). Un email est envoyé à l'équipe Blue Intelligence et le projet est mis en file pour le prochain run du Swarm.
+  - *Liste des projets* avec liens sources.
+  - *« Projet manquant ? »* : signaler un projet oublié. Un email est envoyé à l'équipe et le projet est mis en file pour le prochain run du Swarm.
+  - Bouton *Export GeoJSON* — exporte les projets visibles dans ce mode.
 
-## Dons (Cagnotte globale)
-L'en-tête affiche le compteur global de dons en euros. Cliquez **Donner** sur un projet, choisissez un montant (5–100 €) et payez via Stripe. Mode sandbox : carte de test 4242 4242 4242 4242.
+### 2) Marinas (rouge)
+- **Carte** : marqueurs teintés rouge regroupés en clusters, représentant les marinas et points d'amarrage curatés depuis OpenStreetMap et d'autres sources ouvertes.
+- **Popup** : nom, tags (carburant · eau · levage · courant à quai · réparation), coordonnées et lien source. Les champs enrichis (canal VHF, téléphone, site web) apparaissent une fois le batch d'enrichissement lancé.
+- **Bandeau gauche** : recherche par nom, filtre par tag, liste des marinas.
+- Bouton *Export GeoJSON* — exporte les marinas visibles dans ce mode.
+- Toutes les actions batch (build, enrichissement) sont déclenchées depuis le hub Audit (voir plus bas), plus depuis le bandeau.
+
+### 3) Formalités (ambre)
+- **Carte** : escales de la route Berry-Mappemonde. Un anneau blanc autour d'un marqueur signale que l'escale est un port d'entrée officiel. La couleur du point reflète le statut de la fiche formalités.
+- **Bandeau gauche** : liste de toutes les escales avec pastilles (aller / retour sur La Rochelle), un disclaimer ambre (« Informations indicatives — à vérifier auprès des autorités avant le départ »), et par fiche des boutons rafraîchir / vérifier.
+- **Fiche territoire** (côté droit, s'ouvre au clic) : 5 onglets — Entrée · Sortie · Cas particuliers · Contacts · Sources. Un onglet Immigration couvre uniquement l'équipage français. Chaque champ est court, sourcé et peut être régénéré à la demande.
+- **Statut d'une fiche** (4 valeurs possibles) :
+  - `non générée` — gris, aucun contenu IA pour l'instant.
+  - `IA` — ambre, au moins une source de la whitelist officielle a été captée.
+  - `IA sans source` — ambre avec anneau pointillé, sortie LLM mais aucune source officielle n'a pu être captée (typique des documents en PDF seul).
+  - `vérifiée` — vert, marquée comme relue par l'équipage via le bouton Vérifier.
+- **Flag stale** : toute fiche datant de plus de 180 jours affiche un badge horloge invitant au rafraîchissement.
+- **Sources** : seuls les domaines officiels (gouvernement, douanes, immigration) sont affichés. La whitelist interne n'est pas exposée.
+- Bouton *Export GeoJSON* — exporte les 17 escales avec leur statut formalités.
+
+## Cagnotte de dons globale
+L'en-tête affiche un unique CTA de don. Cliquez, choisissez un montant (5–100 €) et payez via Stripe. Tous les dons alimentent une seule cagnotte globale affichée à côté du bouton (total courant en euros + nombre de donateurs). Aucun bouton donner par projet, ni dans la carte ni dans les bandeaux.
 
 ## Audit Swarm Intelligence (bascule dans l'en-tête)
-Console opérateur :
-- **Contrôles du Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct.
-- **Console Swarm en direct** : une carte par agent (découverte TinyFish / extraction Readability) avec statut, lien « Voir l'agent » et logs.
-- **Auto-Stop** : le swarm s'arrête proprement après N extractions consécutives sans nouveau projet unique (50 par défaut) pour économiser les crédits.
-- **Follow the Money** : les agents détectent les ONG partenaires/bénéficiaires sur les pages et explorent récursivement leurs sites.
-- **KPIs** : extractions totales, taux de succès, projets cartographiés.
-- **Table de télémétrie** et **Extractions échouées** avec Force Extract (TinyFish) par URL ou global.
+Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
+- **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
+- **Marinas — Build & Enrich batch** : reconstruit le jeu marinas depuis les sources ouvertes, puis enrichit N marinas à la fois (VHF, téléphone, site web) avec progression en direct et statut par item.
+- **Formalités — Generate batch** : (re)génère les 13 fiches territoire en un clic, avec logs live et liste de progression par territoire. Les sources sont captées et filtrées automatiquement contre la whitelist officielle.
+- **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 
 ## Paramètres (bandeau droit, icône engrenage)
 - **Documentation** : télécharger ce manuel (EN/FR).
 - **Données** : Importer GeoJSON (validation des coordonnées, comptage et fusion des doublons), Exporter GeoJSON, Effacer tous les projets.
 - **Filtrage marin** : distance max à la côte (km), score marin minimum.
-- **Extraction** : agents TinyFish en parallèle (1-2), concurrence des extractions (1-20), modèle Gemini par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
+- **Extraction** : agents TinyFish en parallèle (1–2), concurrence des extractions (1–20), **sélecteur de moteur d'extraction** (Gemini · Claude · OpenRouter), modèle par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
 - **Carte** : zoom minimum, marqueurs max.
-- **Clés API** : TinyFish et Gemini (stockées côté serveur, jamais exposées).
+- **Clés API** : TinyFish et LLM (stockées côté serveur, jamais exposées).
 
 ## Pipeline (fonctionnement)
-1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler).
-2. **Extraction** : Readability nettoie la page → le Gatekeeper Gemini rejette les projets terrestres/eau douce → Gemini extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
-3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent Gemini → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
+1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler HTTP).
+2. **Extraction** : Readability nettoie la page → un LLM Gatekeeper rejette les projets terrestres/eau douce → un LLM extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
+3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent par LLM → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
 4. **Déduplication** : URL identique, proximité spatiale (<500 m) + similarité de titre (>90 %) → financeurs fusionnés.
+5. **Synthèse formalités** : TinyFish visite les URLs officielles whitelistées d'un territoire, replie sur un readable-fetch si nécessaire, puis un LLM OpenRouter + Gemini (fallback) produit un résumé en français strictement sourcé. Le pipeline n'invente jamais de contenu.
 """,
 }
 
@@ -608,7 +1530,14 @@ Console opérateur :
 @router.get("/manual")
 async def manual(lang: str = "en"):
     text = MANUALS.get(lang, MANUALS["en"])
-    return PlainTextResponse(text, headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"})
+    # Phase 7bis — serve Markdown with a semantic content-type so browsers /
+    # editors / IDEs render it correctly. The frontend Manual EN/FR buttons
+    # still work (they window.open() the URL — no Accept header check).
+    return PlainTextResponse(
+        text,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"},
+    )
 
 
 # ---------- Donations (Stripe sandbox) ----------
@@ -685,7 +1614,661 @@ async def donations_total():
     return {"total_eur": round(total, 2), "count": count}
 
 
+# ---------- Territories & Formalities (Phase 4A) ----------
+# Territories reference: static curated JSON, read-only. Cached in memory.
+_TERRITORIES_CACHE: dict | None = None
+
+
+def _load_territories_cached() -> dict:
+    global _TERRITORIES_CACHE
+    if _TERRITORIES_CACHE is None:
+        if not TERRITORIES_FILE.exists():
+            raise HTTPException(500, "territories.json missing")
+        _TERRITORIES_CACHE = load_territories(TERRITORIES_FILE)
+    return _TERRITORIES_CACHE
+
+
+@router.get("/territories")
+async def get_territories():
+    """
+    Curated territory reference: 13 territories covering the 16 unique escales
+    of route.geojson. Each entry ships regime, ports_of_entry (with ref_url),
+    escale_names mapping and official_domains whitelist for the Phase 4B
+    generator. Blacklist is exposed at the top level.
+    """
+    data = _load_territories_cached()
+    return JSONResponse(
+        data,
+        headers={
+            "Cache-Control": "public, max-age=3600, must-revalidate",
+            "X-Territories-Source": "Blue Intelligence curated (official gov sources)",
+        },
+    )
+
+
+@router.get("/formalities")
+async def list_formalities():
+    """All 13 formalities docs, one per territory_code. Freshly seeded rows
+    are `status: non_generee` with all inner fields null."""
+    docs = await db.formalities.find({}).to_list(50)
+    # Sort in the order of the territories.json file so the sidebar can walk
+    # them in a deterministic route-based order.
+    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
+    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+    return {"count": len(docs), "items": _formalities_serialise_list(docs)}
+
+
+@router.get("/formalities/{territory_code}")
+async def get_formalities(territory_code: str):
+    doc = await db.formalities.find_one({"territory_code": territory_code})
+    if not doc:
+        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
+    # Also embed the matching territory reference so the frontend has both in
+    # one call (avoids a race between /territories and /formalities/{code}).
+    terr_ref = next(
+        (t for t in _load_territories_cached().get("territories", []) if t.get("code") == territory_code),
+        None,
+    )
+    out = _formalities_serialise_doc(doc)
+    out["territory"] = terr_ref
+    return out
+
+
+# ---------- Formalities generation (Phase 4B) ----------
+# Per-territory task registry + lock. Same pattern as MARINA_ENRICH_TASKS.
+FORMALITIES_GEN_TASKS: dict[str, dict] = {}
+FORMALITIES_LOCKS: set[str] = set()
+
+
+class FormalitiesBatchState:
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.progress: int = 0
+        self.total: int = 0
+        self.results: list[dict] = []
+        self.logs: list[str] = []
+        self.error: str | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 800:
+            self.logs = self.logs[-800:]
+
+
+FORMALITIES_BATCH_STATE = FormalitiesBatchState()
+
+
+def _keys_gen() -> tuple[str | None, str | None, str | None]:
+    return (
+        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
+        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
+        (os.environ.get("EMERGENT_LLM_KEY") or "").strip() or None,
+    )
+
+
+class FormalitiesBatchBody(BaseModel):
+    stale_only: bool = False
+
+
+@router.post("/formalities/{territory_code}/generate", status_code=202)
+async def formalities_generate(territory_code: str):
+    """Start generation for one territory as a background task."""
+    territories = _load_territories_cached()
+    if not any(t.get("code") == territory_code for t in territories.get("territories", [])):
+        raise HTTPException(404, f"territory '{territory_code}' unknown")
+    if territory_code in FORMALITIES_LOCKS:
+        raise HTTPException(409, "Generation already in progress for this territory")
+
+    _prune_tasks(FORMALITIES_GEN_TASKS)
+    FORMALITIES_LOCKS.add(territory_code)
+    FORMALITIES_GEN_TASKS[territory_code] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+    tf_key, or_key, emg_key = _keys_gen()
+
+    async def _runner():
+        task = FORMALITIES_GEN_TASKS[territory_code]
+
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 400:
+                task["logs"] = task["logs"][-400:]
+
+        try:
+            doc = await generate_territory_formality(
+                db, territory_code, territories,
+                logger=log_fn,
+                tinyfish_key=tf_key,
+                openrouter_key=or_key,
+                emergent_key=emg_key,
+            )
+            task["result"] = _formalities_serialise_doc(doc) if doc else None
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+            log_fn(f"FATAL: {task['error']}")
+        finally:
+            task["finished_at"] = time.time()
+            FORMALITIES_LOCKS.discard(territory_code)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "territory_code": territory_code}
+
+
+@router.get("/formalities/{territory_code}/generate/status")
+async def formalities_generate_status(territory_code: str):
+    task = FORMALITIES_GEN_TASKS.get(territory_code)
+    if not task:
+        return {"state": "idle", "territory_code": territory_code}
+    return {
+        "state": task["state"],
+        "territory_code": territory_code,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-40:],
+    }
+
+
+@router.post("/formalities/generate-batch")
+async def formalities_generate_batch(body: FormalitiesBatchBody | None = None):
+    if FORMALITIES_BATCH_STATE.running:
+        raise HTTPException(409, "A formalities batch is already running")
+    body = body or FormalitiesBatchBody()
+    territories = _load_territories_cached()
+
+    # Selection
+    all_docs = await db.formalities.find({}).to_list(50)
+    from formalities import is_stale as _is_stale_formality
+    if body.stale_only:
+        candidates = [d for d in all_docs if _is_stale_formality(d)]
+    else:
+        candidates = all_docs
+    # Sort in route order
+    order = {t["code"]: i for i, t in enumerate(territories.get("territories", []))}
+    candidates.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+
+    tf_key, or_key, emg_key = _keys_gen()
+
+    FORMALITIES_BATCH_STATE.running = True
+    FORMALITIES_BATCH_STATE.started_at = time.time()
+    FORMALITIES_BATCH_STATE.finished_at = None
+    FORMALITIES_BATCH_STATE.progress = 0
+    FORMALITIES_BATCH_STATE.total = len(candidates)
+    FORMALITIES_BATCH_STATE.results = []
+    FORMALITIES_BATCH_STATE.logs = []
+    FORMALITIES_BATCH_STATE.error = None
+
+    async def _runner():
+        try:
+            FORMALITIES_BATCH_STATE.log(
+                f"Selected {len(candidates)} territories (concurrency=2, stale_only={body.stale_only})"
+            )
+            sem = asyncio.Semaphore(2)
+            counter = {"i": 0}
+
+            async def _one(d):
+                code = d.get("territory_code")
+                async with sem:
+                    if code in FORMALITIES_LOCKS:
+                        FORMALITIES_BATCH_STATE.log(f"SKIP {code}: already locked")
+                        return
+                    FORMALITIES_LOCKS.add(code)
+                    FORMALITIES_BATCH_STATE.log(f"→ generating {code}")
+                    try:
+                        def batch_log(msg: str):
+                            FORMALITIES_BATCH_STATE.log(f"  [{code}] {msg}")
+                        doc = await generate_territory_formality(
+                            db, code, territories,
+                            logger=batch_log,
+                            tinyfish_key=tf_key,
+                            openrouter_key=or_key,
+                            emergent_key=emg_key,
+                        )
+                        FORMALITIES_BATCH_STATE.results.append({
+                            "territory_code": code,
+                            "status": (doc or {}).get("status"),
+                            "sources_count": len((doc or {}).get("sources") or []),
+                        })
+                    except Exception as e:
+                        FORMALITIES_BATCH_STATE.log(f"  [{code}] FAILED: {type(e).__name__}: {e}")
+                        FORMALITIES_BATCH_STATE.results.append({
+                            "territory_code": code,
+                            "error": f"{type(e).__name__}: {e}",
+                        })
+                    finally:
+                        FORMALITIES_LOCKS.discard(code)
+                        counter["i"] += 1
+                        FORMALITIES_BATCH_STATE.progress = counter["i"]
+
+            await asyncio.gather(*(_one(d) for d in candidates))
+            by_status = {}
+            for r in FORMALITIES_BATCH_STATE.results:
+                s = r.get("status") or "error"
+                by_status[s] = by_status.get(s, 0) + 1
+            FORMALITIES_BATCH_STATE.log(f"Done. Statuses: {by_status}")
+        except Exception as e:
+            FORMALITIES_BATCH_STATE.error = f"{type(e).__name__}: {e}"
+            FORMALITIES_BATCH_STATE.log(f"FATAL: {FORMALITIES_BATCH_STATE.error}")
+        finally:
+            FORMALITIES_BATCH_STATE.finished_at = time.time()
+            FORMALITIES_BATCH_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"started": True, "selected": len(candidates), "concurrency": 2}
+
+
+@router.get("/formalities/generate-batch/status")
+async def formalities_generate_batch_status():
+    s = FORMALITIES_BATCH_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "results": s.results,
+        "logs_tail": s.logs[-80:],
+        "error": s.error,
+    }
+
+
+@router.put("/formalities/{territory_code}/verify")
+async def formalities_verify(territory_code: str):
+    """Flip status to `verifiee` + stamp verified_at. Only meaningful for ia/ia_sans_source."""
+    doc = await db.formalities.find_one({"territory_code": territory_code})
+    if not doc:
+        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
+    if doc.get("status") == "non_generee":
+        raise HTTPException(400, "cannot verify a non-generated territory")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    await db.formalities.update_one(
+        {"territory_code": territory_code},
+        {"$set": {"status": "verifiee", "verified_at": now}},
+    )
+    fresh = await db.formalities.find_one({"territory_code": territory_code})
+    return _formalities_serialise_doc(fresh)
+
+
+@router.post("/formalities/{territory_code}/immigration/{nat}", status_code=410, include_in_schema=False)
+async def formalities_immigration_deprecated(territory_code: str, nat: str):
+    """Deprecated in Phase 5 — the immigration-on-demand feature for ca/us/gb was
+    removed. Kept as HTTP 410 for backwards compatibility with older clients."""
+    raise HTTPException(410, "Immigration ca/us/gb generation is no longer supported (Phase 5).")
+
+
+# ---------- Formalities exports (Phase 4B) ----------
+@router.get("/export/formalities.json")
+async def export_formalities_json():
+    docs = await db.formalities.find({}).to_list(50)
+    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
+    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+    payload = {
+        "type": "FormalitiesCollection",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "count": len(docs),
+        "items": _formalities_serialise_list(docs),
+    }
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": "attachment; filename=formalities.json"},
+    )
+
+
+@router.get("/export/formalities.geojson")
+async def export_formalities_geojson():
+    """1 Point per escale (all 17 features from route.geojson) with formality meta
+    AND full fiche content (entree / sortie / cas_particuliers / immigration /
+    contacts / liens_officiels / sources).
+
+    Bug-fix 2026-08-24 — previously the export only shipped the 8 META fields
+    (status, is_port_of_entry, generated_at, verified_at, stale, escale_name,
+    leg, territory_code). All AI-generated content was silently dropped,
+    breaking the round-trip export → import → identical restore.
+    """
+    if not ROUTE_FILE.exists():
+        raise HTTPException(500, "route.geojson missing")
+    import json as _json
+    route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    territories = _load_territories_cached()
+    escale_to_code = {}
+    for terr in territories.get("territories", []):
+        for en in terr.get("escale_names", []):
+            escale_to_code[en] = terr.get("code")
+    docs = await db.formalities.find({}).to_list(50)
+    by_code = {d.get("territory_code"): d for d in docs}
+    features = []
+    la_rochelle_seen = {"count": 0}
+    for feat in route.get("features", []):
+        if feat.get("geometry", {}).get("type") != "Point":
+            continue
+        props = feat.get("properties") or {}
+        if props.get("point_type") != "escale":
+            continue
+        name = props.get("name")
+        code = escale_to_code.get(name)
+        d = by_code.get(code) or {}
+        overlay = next(
+            (o for o in (d.get("escale_overlays") or []) if o.get("escale_name") == name),
+            None,
+        )
+        leg = None
+        if name == "La Rochelle":
+            la_rochelle_seen["count"] += 1
+            leg = "departure" if la_rochelle_seen["count"] == 1 else "return"
+        from formalities import is_stale as _fs
+        features.append({
+            "type": "Feature",
+            "geometry": feat["geometry"],
+            "properties": {
+                # ---- META (unchanged) ----
+                "escale_name": name,
+                "leg": leg,
+                "territory_code": code,
+                "status": d.get("status") or "non_generee",
+                "is_port_of_entry": bool(overlay and overlay.get("is_port_of_entry")),
+                "stale": _fs(d) if d else False,
+                "generated_at": d.get("generated_at"),
+                "verified_at": d.get("verified_at"),
+                # ---- FULL FICHE CONTENT (bug-fix) ----
+                "entree":            d.get("entree"),
+                "sortie":            d.get("sortie"),
+                "cas_particuliers":  d.get("cas_particuliers"),
+                "immigration":       d.get("immigration"),
+                "contacts":          d.get("contacts") or [],
+                "liens_officiels":   d.get("liens_officiels") or [],
+                "sources":           d.get("sources") or [],
+                # `escale_overlays` is exported at the FEATURE level (per escale)
+                # rather than duplicated on every escale of a multi-escale
+                # territory — the import endpoint re-groups them by territory.
+                "escale_overlay": overlay,
+            },
+        })
+    fc = {"type": "FeatureCollection", "features": features}
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=formalities.geojson"},
+    )
+
+
+# ---------- ZEE Detection (Phase 8) ----------
+
+class ZeeComputeState:
+    """État de la tâche de calcul ZEE. In-memory; la dernière snapshot complète
+    est persistée dans MongoDB (collection zee_crossings, _id="latest")."""
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.error: str | None = None
+        self.logs: list[str] = []
+        self.result: dict | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 600:
+            self.logs = self.logs[-600:]
+
+
+ZEE_COMPUTE_STATE = ZeeComputeState()
+
+
+@router.get("/zee/crossings")
+async def zee_get_crossings(french_only: bool = False):
+    """
+    Traversées ZEE calculées pour la route Berry-Mappemonde (cache MongoDB).
+    404 si aucun calcul n'a encore été lancé (POST /api/zee/compute).
+    `french_only=true` ne garde que les ZEE françaises (territory_code non null).
+    """
+    cached = await db.zee_crossings.find_one({"_id": "latest"})
+    if not cached:
+        raise HTTPException(404, "No ZEE crossings computed yet. Call POST /api/zee/compute first.")
+    crossings: list[dict] = cached.get("crossings") or []
+    if french_only:
+        crossings = filter_french_territories(crossings)
+    return {
+        "computed_at": cached.get("computed_at"),
+        "eez_source": cached.get("eez_source"),
+        "detection_method": cached.get("detection_method"),
+        "summary": zee_crossings_summary(crossings),
+        "crossings": crossings,
+    }
+
+
+class ZeeComputeBody(BaseModel):
+    force_download: bool = False
+    use_point_api_fallback: bool = True
+
+
+@router.post("/zee/compute")
+async def zee_compute(body: ZeeComputeBody | None = None):
+    """
+    Lance le calcul des traversées ZEE en tâche de fond :
+      1. charge les polygones EEZ (fichier local MarineRegions v12, sinon WFS),
+      2. intersecte les segments maritimes (shapely, thread),
+      3. persiste dans MongoDB (zee_crossings, _id="latest").
+    409 si un calcul est déjà en cours ; suivre via GET /api/zee/compute/status.
+    """
+    if ZEE_COMPUTE_STATE.running:
+        raise HTTPException(409, "A ZEE computation is already running")
+    body = body or ZeeComputeBody()
+
+    ZEE_COMPUTE_STATE.running = True
+    ZEE_COMPUTE_STATE.started_at = time.time()
+    ZEE_COMPUTE_STATE.finished_at = None
+    ZEE_COMPUTE_STATE.error = None
+    ZEE_COMPUTE_STATE.logs = []
+    ZEE_COMPUTE_STATE.result = None
+
+    async def _runner():
+        try:
+            crossings = await run_build_zee_crossings(
+                route_path=ROUTE_FILE,
+                eez_path=EEZ_FILE,
+                force_download=body.force_download,
+                use_point_api_fallback=body.use_point_api_fallback,
+                logger=ZEE_COMPUTE_STATE.log,
+            )
+            summary = zee_crossings_summary(crossings)
+            method = crossings[0]["detection_method"] if crossings else "none"
+            eez_source = (
+                "MarineRegions Maritime Boundaries v12 (local, CC-BY 4.0)"
+                if EEZ_FILE.exists() else "MarineRegions REST API"
+            )
+            doc = {
+                "_id": "latest",
+                "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "eez_source": eez_source,
+                "detection_method": method,
+                "crossings": crossings,
+                "summary": summary,
+            }
+            await db.zee_crossings.replace_one({"_id": "latest"}, doc, upsert=True)
+            ZEE_COMPUTE_STATE.result = doc
+            ZEE_COMPUTE_STATE.log(
+                f"ZEE compute complete — {summary['total_crossings']} crossings, "
+                f"{summary['unique_territories']} unique FR territories: {summary['territory_codes']}"
+            )
+        except Exception as exc:
+            ZEE_COMPUTE_STATE.error = f"{type(exc).__name__}: {exc}"
+            ZEE_COMPUTE_STATE.log(f"FATAL: {ZEE_COMPUTE_STATE.error}")
+        finally:
+            ZEE_COMPUTE_STATE.finished_at = time.time()
+            ZEE_COMPUTE_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "force_download": body.force_download,
+        "use_point_api_fallback": body.use_point_api_fallback,
+    }
+
+
+@router.get("/zee/compute/status")
+async def zee_compute_status():
+    s = ZEE_COMPUTE_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "error": s.error,
+        "logs_tail": s.logs[-60:],
+        "result_summary": s.result.get("summary") if s.result else None,
+    }
+
+
+@router.post("/zee/trigger-formalities")
+async def zee_trigger_formalities(stale_only: bool = False):
+    """
+    Déclenche la génération des formalités pour tous les territoires FRANÇAIS
+    détectés dans les traversées ZEE calculées (seed déterministe — remplace le
+    seeding manuel). non_generee → génère ; stale_only=True → régénère aussi
+    les fiches ia stales ; les fiches verrouillées ou à jour sont sautées.
+    """
+    cached = await db.zee_crossings.find_one({"_id": "latest"})
+    if not cached:
+        raise HTTPException(404, "No ZEE crossings available. Call POST /api/zee/compute first.")
+
+    crossings = cached.get("crossings") or []
+    french = filter_french_territories(crossings)
+    detected_codes: list[str] = []
+    for c in french:
+        code = c.get("territory_code")
+        if code and code not in detected_codes:
+            detected_codes.append(code)
+
+    territories_data = _load_territories_cached()
+    tf_key, or_key, emg_key = _keys_gen()
+    from formalities import is_stale as _is_stale_formality
+
+    triggered: list[str] = []
+    skipped_uptodate: list[str] = []
+    skipped_locked: list[str] = []
+    not_in_db: list[str] = []
+
+    for code in detected_codes:
+        if not any(t.get("code") == code for t in territories_data.get("territories", [])):
+            not_in_db.append(code)
+            continue
+        doc = await db.formalities.find_one({"territory_code": code})
+        if not doc:
+            not_in_db.append(code)
+            continue
+
+        current_status = doc.get("status", "non_generee")
+        should_generate = (
+            current_status == "non_generee"
+            or (stale_only and _is_stale_formality(doc) and current_status != "verifiee")
+        )
+        if not should_generate:
+            skipped_uptodate.append(code)
+            continue
+        if code in FORMALITIES_LOCKS:
+            skipped_locked.append(code)
+            continue
+
+        _prune_tasks(FORMALITIES_GEN_TASKS)
+        FORMALITIES_LOCKS.add(code)
+        FORMALITIES_GEN_TASKS[code] = {
+            "state": "running",
+            "started_at": time.time(),
+            "finished_at": None,
+            "result": None,
+            "error": None,
+            "logs": [],
+        }
+
+        async def _runner(territory_code: str = code):
+            task = FORMALITIES_GEN_TASKS[territory_code]
+
+            def log_fn(msg: str):
+                task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+                if len(task["logs"]) > 400:
+                    task["logs"] = task["logs"][-400:]
+
+            try:
+                result_doc = await generate_territory_formality(
+                    db, territory_code, territories_data,
+                    logger=log_fn,
+                    tinyfish_key=tf_key,
+                    openrouter_key=or_key,
+                    emergent_key=emg_key,
+                )
+                task["result"] = _formalities_serialise_doc(result_doc) if result_doc else None
+                task["state"] = "done"
+            except Exception as exc:
+                task["error"] = f"{type(exc).__name__}: {exc}"
+                task["state"] = "error"
+            finally:
+                task["finished_at"] = time.time()
+                FORMALITIES_LOCKS.discard(territory_code)
+
+        asyncio.create_task(_runner())
+        triggered.append(code)
+
+    return {
+        "detected_territory_codes": detected_codes,
+        "triggered": triggered,
+        "skipped_uptodate": skipped_uptodate,
+        "skipped_locked": skipped_locked,
+        "not_in_db": not_in_db,
+        "stale_only": stale_only,
+    }
+
+
+@router.delete("/zee/crossings")
+async def zee_clear_crossings(delete_eez_file: bool = False):
+    """Supprime le cache crossings (et optionnellement le fichier EEZ local)."""
+    res = await db.zee_crossings.delete_one({"_id": "latest"})
+    eez_deleted = False
+    if delete_eez_file and EEZ_FILE.exists():
+        try:
+            EEZ_FILE.unlink()
+            eez_deleted = True
+        except Exception:
+            pass
+    return {"cache_deleted": res.deleted_count > 0, "eez_file_deleted": eez_deleted}
+
+
 app.include_router(router)
+
+# --- OpenAPI + static assets exposed under /api (Kubernetes ingress only forwards /api/*) ---
+@app.get("/api/openapi.json")
+async def openapi_under_api():
+    return JSONResponse(app.openapi())
+
+
+ROUTE_FILE_ENDPOINT_TARGET = ROUTE_FILE  # kept for clarity; original variable is defined at top
+
+
+@app.get("/api/route")
+async def get_route():
+    """Serve the official Berry-Mappemonde expedition route (static, read-only)."""
+    if not ROUTE_FILE.exists():
+        raise HTTPException(404, "route.geojson not found")
+    import json as _json
+    try:
+        data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"invalid route geojson: {e}")
+    return JSONResponse(
+        data,
+        headers={
+            # Static official route: safe to cache 1h publicly + revalidate on redeploy
+            "Cache-Control": "public, max-age=3600, must-revalidate",
+            "X-Route-Source": "Naviguide Berry-Mappemonde (official)",
+        },
+    )
+
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1500)
@@ -721,3 +2304,34 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+
+
+@app.on_event("startup")
+async def _startup_seed_formalities():
+    """
+    Seed the `formalities` collection at boot with 13 blank docs (one per
+    territory in territories.json) if not already present. Idempotent.
+    Also ensures a unique index on `territory_code`.
+    """
+    try:
+        await db.formalities.create_index("territory_code", unique=True)
+    except Exception:
+        pass
+    # Phase 5 cleanup: drop the now-defunct mpa_cache collection if it still exists.
+    try:
+        if "mpa_cache" in await db.list_collection_names():
+            await db.drop_collection("mpa_cache")
+            print("[startup] dropped legacy mpa_cache collection")
+    except Exception as e:
+        print(f"[startup] mpa_cache drop failed (non-fatal): {e}")
+    if not TERRITORIES_FILE.exists():
+        return
+    try:
+        data = load_territories(TERRITORIES_FILE)
+        summary = await seed_formalities(db, data)
+        print(
+            f"[formalities-seed] inserted={summary['inserted']} "
+            f"existing={summary['existing']} total={summary['total']}"
+        )
+    except Exception as e:
+        print(f"[formalities-seed] FAILED: {type(e).__name__}: {e}")
