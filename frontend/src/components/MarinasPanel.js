@@ -1,4 +1,4 @@
-import { Anchor, Download, ExternalLink, Loader2, MapPin, RefreshCw, Search } from "lucide-react";
+import { Anchor, ExternalLink, Loader2, MapPin, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
@@ -116,9 +116,6 @@ export default function MarinasPanel({
             {features.length} {t("marinasCount")}
           </span>
         </div>
-        <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 mb-3">
-          {t("marinasSubtitle")}
-        </p>
 
         {/* Search */}
         <div className="relative mb-3">
@@ -169,21 +166,8 @@ export default function MarinasPanel({
           </div>
         </div>
 
-        {/* Phase 5 — Batch controls (scan + enrich) moved to the Audit view.
-            Sidebar keeps only the export button + a hint. */}
-        <div className="mt-3 pt-3 border-t border-line flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 flex-1">
-            {t("marinasBatchMovedToAudit")}
-          </span>
-          <a
-            data-testid="marinas-export-btn"
-            href={`${process.env.REACT_APP_BACKEND_URL}/api/export/marinas.geojson`}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent font-semibold text-xs rounded-sm"
-            title={t("exportGeoJsonTooltip")}
-          >
-            <Download size={12} /> {t("exportGeoJson")}
-          </a>
-        </div>
+        {/* Phase 6 — Batch controls migrated to Audit view; sidebar keeps only the list.
+            Export button removed from the sidebar (available in Settings). */}
       </div>
 
       {/* List */}

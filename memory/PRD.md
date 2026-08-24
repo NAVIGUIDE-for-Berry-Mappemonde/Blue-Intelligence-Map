@@ -454,3 +454,96 @@ Un bug de rendering des projets a été détecté en test manuel post-manuel : `
 - Cron auto-refresh des formalities `stale > 180j` — backlog
 - Endpoint `DELETE /formalities/{code}/sources/{i}` — backlog
 - Investigation du bug de rendering projets — dépend d'une reproduction dans un vrai navigateur
+
+## Update 2026-08-24 — Phase 6 : Consolidation UX/UI (partie 2)
+
+### Livrables
+Refactor UI/UX complet en accord avec le brief Phase 6, sans régression sur les 3 modes ni sur les données (4463 projets · 212 marinas · 13 fiches formalités).
+
+### 1) Palette & identité visuelle
+- **Scrollbars thémées** (`index.css`) : `--accent-rgb` alimente `::-webkit-scrollbar-thumb` + `scrollbar-color` — bleu/rouge/ambre selon le mode actif.
+- **Popups Leaflet themés** : border-color + box-shadow accent, `::selection` accent, `leaflet-bar` accent.
+- **Icône Compass** ajoutée en tête de la sidebar Projects (`SwarmPanel.js` — data-testid `projects-panel-header`), même rang visuel que l'ancre Marinas et le rouleau Formalités.
+- **Sous-titres supprimés** : `marinasSubtitle` retiré de MarinasPanel (ligne 119-121 supprimée) ; `formalitiesSubtitle` retiré de FormalitiesPanel.
+- **Settings panel themé** : `SettingsPanel.js` réécrit — le titre, les section headers, l'icône X, les boutons manuel/import/export et le Save adoptent tous `text-accent`/`border-accent`/`bg-accent`.
+
+### 2) Carte & popups
+- **MIGRATION FORMALITÉS** : `FormalitiesPanel.js` réécrit en version slim (156 lignes, était 656 lignes). Sidebar conserve UNIQUEMENT :
+  - Header (icône + title + count 17)
+  - Disclaimer amber permanent
+  - Hint « Cliquez une escale dans le bandeau pour y voler et ouvrir la fiche »
+  - Liste ordonnée des 17 escales avec badges statut + PoE + stale
+  - Clic sur une ligne → `onSelectEscale()` → `flyTo` + ouverture automatique du popup carte (nouveau timer 1150 ms dans `MapView.js`).
+- **Popup carte Formalités** (`MapView.js` — fonction `buildPopup`) enrichie :
+  - Header : drapeau + nom escale + territoire + status pill + PoE pill + stale badge + generated_at/verified_at
+  - Boutons `formalities-refresh-btn` et `formalities-verify-btn` en tête de popup, câblés à `window.__biFormalityPopupRefresh` / `window.__biFormalityPopupVerify` (App.js) — polling generate/status jusqu'à `done`, avec feedback inline.
+  - 5 sections empilées avec titres : Entrée (11 champs) · Sortie (4 champs) · Cas particuliers (3 champs) · Immigration FR (4 champs) · Contacts + Liens officiels · Sources utilisées.
+  - Section « Sources utilisées » : liste réelle des sources captées (URL cliquable + domaine + date `collected_at`) — PAS la whitelist backend.
+  - Bandeau « Aucune source officielle trouvée » (rouge) pour `ia_sans_source`.
+  - Placeholder « Cette fiche n'a pas encore été générée » pour `non_generee`.
+- **Popups scrollables (3 modes)** : `index.css` — `.leaflet-popup-content { max-height: 62vh; overflow-y: auto; scrollbar-color: rgba(var(--accent-rgb),.5) rgba(15,23,42,.4) }` avec scrollbar webkit teintée par mode.
+- **Alignement visuel markers Formalités** : `MapView.js` — radius 7, weight 2, fillOpacity 0.6 (mêmes valeurs que projets/marinas). Couleur par statut conservée (slate-500 / amberx / amberx-dashed / bio-green) + ring blanche PoE conservée.
+- **Bloc whitelist retiré** de la sidebar Formalités (respect de la décision antérieure : la whitelist backend n'est exposée nulle part).
+
+### 3) Swarm Intelligence Audit — restructuration des 3 encadrés
+- **`SwarmControls.js` supprimé** — son contenu migre dans la carte Projects de `BatchHub.js`.
+- **`BatchHub.js` refactorisé** (grid-cols-1 lg:grid-cols-3, items-start) :
+  - **Card Projects (cyan)** : status pills (idle/running · tinyfish · LLM engine) + Actifs/En file counters + Test/Full toggle + « Vider la base » checkbox + Deploy TinyFish Swarm / Stop Swarm + log stream scanlines (h-32) + section « Réglages d'extraction » (data-testid `audit-extraction-settings`) contenant TOUS les paramètres du swarm exclusifs (TinyFish agents, concurrence, extraction engine, gatekeeper model, extract model, follow-the-money + max partners, auto-stop limit, rescan days) + bouton Save (`save-swarm-settings-btn`).
+  - **Card Marinas (rouge)** : scan + enrich batch (inchangé).
+  - **Card Formalities (ambre)** : generate batch (inchangé).
+- **`AuditView.js` refactorisé** :
+  - `SwarmControls` supprimé de l'import
+  - `AgentConsole` importé directement et rendu en pleine largeur SOUS le hub
+  - Fetch `/api/settings` local (loadSettings) — settings passés à BatchHub comme prop
+  - **`t("projectsMapped")` → `t("itemsMapped")`** dans la KPI (data-testid `kpi-projects-mapped` inchangé pour compat)
+- **`SettingsPanel.js` réécrit** — plus mince : documentation, data (import + export contextuel), marine filtering, map, api keys. Section « Extraction » complète supprimée (migrée dans le Projects card de BatchHub).
+
+### 4) Export
+- **Suppression des 3 boutons contextuels de sidebar** : `projects-export-btn`, `marinas-export-btn`, `formalities-export-btn` — tous retirés.
+- **Nouveau bouton unique** dans SettingsPanel : `data-testid="settings-export-btn"` — l'URL cible est calculée dynamiquement via la prop `mode` (`projects → /api/export/geojson`, `marinas → /api/export/marinas.geojson`, `formalities → /api/export/formalities.geojson`).
+- **Hint contextuel** sous le bouton : `data-testid="settings-export-context-hint"` avec label mode-aware « Exporte les données du mode actuellement actif · MARINAS/PROJETS/FORMALITÉS ».
+
+### 5) i18n — nouvelles clés (parité EN/FR)
+- `itemsMapped` / `Items Mapped` · `Éléments cartographiés`
+- `formalitiesPopupHint` / `formalitiesPopupEntreeTitle` / `formalitiesPopupSortieTitle` / `formalitiesPopupCasTitle` / `formalitiesPopupImmigrationTitle` / `formalitiesPopupContactsTitle` / `formalitiesPopupLinksTitle` / `formalitiesPopupSourcesTitle` / `formalitiesPopupNotGenerated` / `formalitiesPopupNoSectionData`
+- `auditProjectsCardTitle` / `auditExtractionSettingsTitle`
+- `settingsExportContextHint`
+
+### Critères d'acceptation — état
+- ✅ Scrollbars et Settings teintés au thème du mode actif (vérifié en Marinas — screenshot `/tmp/phase6_settings_marinas.png`).
+- ✅ Icône Compass en tête de sidebar Projects, sous-titres absents (EN et FR).
+- ✅ Sidebar Formalités : aucune fiche ni bloc whitelist, seulement liste 17 escales + disclaimer + hint (`whitelist_in_sidebar: false`, `formalities_card: false`, `formalities_export_btn: false`).
+- ✅ Popup Formalités : buildPopup contient toutes les sections + boutons refresh/verify + sources utilisées + placeholder pour non_generee.
+- ✅ Popups des 3 modes scrollables (max-height 62vh via CSS, scrollbar accent).
+- ✅ Markers Formalités : radius 7, weight 2, fillOpacity 0.6 (unifié avec projets/marinas), status color + PoE ring conservés.
+- ✅ Vue Audit : Card Projects avec Deploy/Stop, Test/Full, Clear DB, log stream + extraction settings inline (screenshot full-page `/tmp/phase6_audit_extraction2.png`). Marinas/Formalities cards intactes. Label ITEMS MAPPED / ÉLÉMENTS CARTOGRAPHIÉS confirmé.
+- ✅ Aucun bouton export dans les sidebars ; Settings unique `settings-export-btn` avec hint contextuel visible (screenshot `/tmp/phase6_settings_marinas.png` montre « · MARINAS »).
+- ✅ Régression zéro backend : `curl /api/funders → 4463`, `curl /api/marinas → 212`, `curl /api/formalities → 13`, `curl /api/manual?lang=fr → HTTP 200`, `curl /api/formalities/la_reunion → status=ia`. Sidebar Projects FR affiche 4463 projets listés.
+
+### Screenshots produits
+- `/tmp/phase6_projects.png` — mode Projects avec header Compass
+- `/tmp/phase6_settings_projects.png` / `phase6_settings_marinas.png` — Settings themé, hint « · MARINAS/PROJECTS »
+- `/tmp/phase6_audit.png` / `phase6_audit_extraction.png` / `phase6_audit_extraction2.png` — Audit avec les 3 cards + extraction settings inline
+- `/tmp/phase6_formalities_sidebar.png` — sidebar Formalités épurée
+- `/tmp/phase6_fr_audit.png` — Audit en FR (parité complète)
+
+### Fichiers modifiés (Phase 6)
+- `/app/frontend/src/index.css` (scrollbars + popup themés)
+- `/app/frontend/src/i18n.js` (10+ clés Phase 6, parité EN/FR)
+- `/app/frontend/src/App.js` (`__biFormalityPopupRefresh`/`__biFormalityPopupVerify` window handlers + prop `mode` passée à SettingsPanel)
+- `/app/frontend/src/components/Header.js` (inchangé)
+- `/app/frontend/src/components/SwarmPanel.js` (Compass icon, export button retiré)
+- `/app/frontend/src/components/MarinasPanel.js` (subtitle retiré, export button retiré)
+- `/app/frontend/src/components/FormalitiesPanel.js` (réécrit — slim 156 lignes)
+- `/app/frontend/src/components/MapView.js` (buildPopup enrichi, flyToEscale + open popup, markers unifiés)
+- `/app/frontend/src/components/SettingsPanel.js` (réécrit — sans extraction section, contextual export, themé)
+- `/app/frontend/src/components/AuditView.js` (SwarmControls remplacé par BatchHub + AgentConsole)
+- `/app/frontend/src/components/BatchHub.js` (réécrit — Projects card avec swarm ops + extraction settings)
+- `/app/frontend/src/components/SwarmControls.js` — **SUPPRIMÉ** (contenu migré)
+
+### Non-goals & TODO
+- Rendering intermittent de projects.features en environnement Playwright headless (résolu en runtime réel, cf. screenshot FR audit qui affiche 4463 projets).
+- Persistance des états de batch (in-memory) — backlog.
+- Cron auto-refresh des formalities `stale > 180j` — backlog.
+- Endpoint `DELETE /formalities/{code}/sources/{i}` — backlog.
+

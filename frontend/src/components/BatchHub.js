@@ -1,34 +1,102 @@
 import { useEffect, useRef, useState } from "react";
-import { Anchor, Compass, Loader2, PlayCircle, ScrollText, Sparkles } from "lucide-react";
+import {
+  Anchor, Check, Compass, Loader2, Play, PlayCircle, ScrollText, Sparkles, Square,
+} from "lucide-react";
 import api from "../api";
 
 /**
- * BatchHub — Phase 5 tri-mode audit block.
+ * BatchHub — Phase 6 tri-mode audit block.
  *
- * Regroups the batch triggers previously living in the Marinas / Formalities
- * sidebars. Each block owns:
- *   - Its "start" button
- *   - Its running progress bar / counter
- *   - A live log tail (last 8 lines)
+ * The Projects card hosts:
+ *   - Swarm status pills (running / tinyfish / LLM engine)
+ *   - Test/Full toggle, Clear DB checkbox, Deploy/Stop buttons
+ *   - Live log stream (scanlines)
+ *   - Project-swarm-exclusive extraction settings (moved from SettingsPanel)
+ *     · TinyFish agents, Extraction concurrency
+ *     · Extraction engine, Gatekeeper model, Extract model
+ *     · Follow the Money, Max partner orgs
+ *     · Auto-Stop limit, Rescan days
+ *     · Save button
  *
- * Unit-level actions (per-marina "Enrich", per-fiche "Refresh") stay in the
- * sidebars — only the *batch* triggers moved here.
+ * Marinas + Formalities cards keep the batch triggers introduced in Phase 5.
  */
-export default function BatchHub({ t, onFormalitiesRefresh }) {
-  // Marinas — build
+const MODELS = [
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+];
+const smallInput = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50";
+
+export default function BatchHub({ t, status, refresh, settings, onSettingsSaved, onFormalitiesRefresh }) {
+  // ---- Projects — swarm controls ----
+  const [mode, setMode] = useState("test");
+  const [clearDb, setClearDb] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const running = status?.running;
+  // Extraction settings form (only the swarm-exclusive fields)
+  const [form, setForm] = useState(null);
+  const [savedFlag, setSavedFlag] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setForm((f) => f || {
+        tinyfish_agents: settings.tinyfish_agents,
+        extract_concurrency: settings.extract_concurrency,
+        extraction_engine: settings.extraction_engine || "gemini",
+        gatekeeper_model: settings.gatekeeper_model,
+        extract_model: settings.extract_model,
+        follow_the_money: !!settings.follow_the_money,
+        max_partner_orgs: settings.max_partner_orgs,
+        saturation_limit: settings.saturation_limit,
+        rescan_after_days: settings.rescan_after_days,
+      });
+    }
+  }, [settings]);
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const deploy = async () => {
+    setBusy(true);
+    try {
+      await api.post("/swarm/deploy", { mode, clear_db: clearDb });
+      refresh && refresh();
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    } finally { setBusy(false); }
+  };
+  const stop = async () => {
+    setBusy(true);
+    try { await api.post("/swarm/stop"); refresh && refresh(); } finally { setBusy(false); }
+  };
+  const saveExtraction = async () => {
+    if (!form) return;
+    const body = { ...form };
+    ["tinyfish_agents", "extract_concurrency", "max_partner_orgs", "saturation_limit"].forEach(
+      (k) => { body[k] = parseInt(body[k], 10) || undefined; });
+    body.rescan_after_days = parseFloat(body.rescan_after_days);
+    try {
+      await api.put("/settings", body);
+      setSavedFlag(true);
+      setTimeout(() => setSavedFlag(false), 2000);
+      onSettingsSaved && onSettingsSaved();
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    }
+  };
+
+  // ---- Marinas — build + enrich batch ----
   const [buildStatus, setBuildStatus] = useState(null);
   const [buildStarting, setBuildStarting] = useState(false);
-  // Marinas — enrich batch
   const [marinaBatchStatus, setMarinaBatchStatus] = useState(null);
   const [marinaBatchStarting, setMarinaBatchStarting] = useState(false);
   const [marinaBatchCount, setMarinaBatchCount] = useState(10);
-  // Formalities — batch
+  // ---- Formalities — generate batch ----
   const [formalitiesBatchStatus, setFormalitiesBatchStatus] = useState(null);
   const [formalitiesBatchStarting, setFormalitiesBatchStarting] = useState(false);
-
   const pollRefs = useRef({});
 
-  // Marinas build poll
   useEffect(() => {
     let alive = true;
     const check = async () => {
@@ -41,8 +109,6 @@ export default function BatchHub({ t, onFormalitiesRefresh }) {
     pollRefs.current.build = setInterval(check, 3000);
     return () => { alive = false; clearInterval(pollRefs.current.build); };
   }, []);
-
-  // Marinas enrich batch poll
   useEffect(() => {
     let alive = true;
     const check = async () => {
@@ -55,8 +121,6 @@ export default function BatchHub({ t, onFormalitiesRefresh }) {
     pollRefs.current.marinasBatch = setInterval(check, 3000);
     return () => { alive = false; clearInterval(pollRefs.current.marinasBatch); };
   }, []);
-
-  // Formalities batch poll
   useEffect(() => {
     let alive = true;
     let wasRunning = false;
@@ -76,70 +140,213 @@ export default function BatchHub({ t, onFormalitiesRefresh }) {
     return () => { alive = false; clearInterval(pollRefs.current.formalitiesBatch); };
   }, [onFormalitiesRefresh]);
 
-  // ---- Kick actions ----
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
     setBuildStarting(true);
-    try {
-      await api.post("/marinas/build", { include_corridor: false, clear_before: false });
-    } catch (e) {
-      console.warn("build start failed", e);
-    } finally {
-      setTimeout(() => setBuildStarting(false), 800);
-    }
+    try { await api.post("/marinas/build", { include_corridor: false, clear_before: false }); }
+    catch (e) { console.warn("build start failed", e); }
+    finally { setTimeout(() => setBuildStarting(false), 800); }
   };
   const startMarinaBatch = async () => {
     if (marinaBatchStarting || marinaBatchStatus?.running || buildStatus?.running) return;
     setMarinaBatchStarting(true);
-    try {
-      await api.post("/marinas/enrich-batch", { limit: parseInt(marinaBatchCount, 10) });
-    } catch (e) {
-      console.warn("marina batch start failed", e);
-    } finally {
-      setTimeout(() => setMarinaBatchStarting(false), 800);
-    }
+    try { await api.post("/marinas/enrich-batch", { limit: parseInt(marinaBatchCount, 10) }); }
+    catch (e) { console.warn("marina batch start failed", e); }
+    finally { setTimeout(() => setMarinaBatchStarting(false), 800); }
   };
   const startFormalitiesBatch = async () => {
     if (formalitiesBatchStarting || formalitiesBatchStatus?.running) return;
     if (!window.confirm(t("formalitiesBatchConfirm"))) return;
     setFormalitiesBatchStarting(true);
-    try {
-      await api.post("/formalities/generate-batch");
-    } catch (e) {
-      console.warn("formalities batch start failed", e);
-    } finally {
-      setTimeout(() => setFormalitiesBatchStarting(false), 800);
-    }
+    try { await api.post("/formalities/generate-batch"); }
+    catch (e) { console.warn("formalities batch start failed", e); }
+    finally { setTimeout(() => setFormalitiesBatchStarting(false), 800); }
   };
 
-  const modeCard = (title, icon, bodyClass, children, accentClass) => (
-    <div className={`border border-line bg-surface ${accentClass}`}>
+  // ---- Card wrapper ----
+  const modeCard = (title, icon, children, accentClass) => (
+    <div className={`border border-line bg-surface flex flex-col ${accentClass}`}>
       <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
         {icon}
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{title}</p>
       </div>
-      <div className={`p-4 space-y-3 ${bodyClass}`}>{children}</div>
+      <div className="p-4 space-y-3 flex-1">{children}</div>
     </div>
   );
 
   return (
-    <div data-testid="audit-batch-hub" className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* ---- Projects (Swarm status only for now; SwarmControls stays above) ---- */}
+    <div data-testid="audit-batch-hub" className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      {/* ---- PROJECTS — full swarm ops + swarm-exclusive settings ---- */}
       {modeCard(
-        t("modeProjects"),
+        t("auditProjectsCardTitle"),
         <Compass size={14} className="text-sonar" />,
-        "",
-        <div className="text-[11px] text-slate-400 leading-relaxed">
-          {t("auditProjectsHint")}
-        </div>,
+        <>
+          {/* Status pills */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              data-testid="swarm-status-badge"
+              className={`font-mono text-[10px] px-2 py-0.5 rounded-sm border ${running ? "text-bio border-bio/40 bg-bio/5" : "text-slate-400 border-line bg-raised"}`}
+            >
+              {running ? t("runningStatus") : t("idle")}
+            </span>
+            <span
+              className={`font-mono text-[10px] px-1.5 py-0.5 rounded-sm border ${status?.tinyfish ? "text-sonar border-sonar/40" : "text-amberx border-amberx/40"}`}
+            >
+              {status?.tinyfish ? t("tfActive") : t("tfFallback")}
+            </span>
+            <span
+              className={`font-mono text-[10px] px-1.5 py-0.5 rounded-sm border ${status?.llm ? "text-sonar border-sonar/40" : "text-amberx border-amberx/40"}`}
+              title={t("llmEngineTooltip")}
+            >
+              {status?.llm ? (status?.engine || "").toUpperCase() || t("llmActive") : t("llmFallback")}
+            </span>
+          </div>
+
+          {/* Active/Queued counters */}
+          <div className="grid grid-cols-2 gap-px bg-line border border-line">
+            <div className="bg-surface p-2">
+              <p className="font-mono text-[9px] text-slate-500 uppercase">{t("active")}</p>
+              <p data-testid="active-agents-count" className="font-heading font-black text-lg text-sonar">{status?.active ?? 0}</p>
+            </div>
+            <div className="bg-surface p-2">
+              <p className="font-mono text-[9px] text-slate-500 uppercase">{t("queued")}</p>
+              <p data-testid="queued-count" className="font-heading font-black text-lg text-slate-200">{status?.queued ?? 0}</p>
+            </div>
+          </div>
+
+          {/* Test/Full + Clear DB + Deploy/Stop */}
+          <div className="flex gap-2">
+            <button
+              data-testid="mode-test-btn"
+              onClick={() => setMode("test")}
+              className={`flex-1 py-1.5 text-xs font-semibold border rounded-sm ${mode === "test" ? "border-sonar/50 bg-sonar/10 text-sonar" : "border-line text-slate-400 hover:bg-raised"}`}
+            >{t("modeTest")}</button>
+            <button
+              data-testid="mode-full-btn"
+              onClick={() => setMode("full")}
+              className={`flex-1 py-1.5 text-xs font-semibold border rounded-sm ${mode === "full" ? "border-sonar/50 bg-sonar/10 text-sonar" : "border-line text-slate-400 hover:bg-raised"}`}
+            >{t("modeFull")}</button>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input data-testid="clear-db-checkbox" type="checkbox" checked={clearDb} onChange={(e) => setClearDb(e.target.checked)} className="accent-cyan-400" />
+            {t("clearBefore")}
+          </label>
+          <button
+            data-testid="deploy-swarm-btn"
+            onClick={deploy}
+            disabled={busy || running}
+            className="w-full flex items-center justify-center gap-2 py-2 font-heading font-bold text-sm rounded-sm bg-sonar/15 border border-sonar/60 text-sonar hover:bg-sonar/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Play size={14} /> {t("deploy")}
+          </button>
+          <button
+            data-testid="stop-swarm-btn"
+            onClick={stop}
+            disabled={busy || !running}
+            className="w-full flex items-center justify-center gap-2 py-1.5 font-semibold text-xs rounded-sm border border-alert/50 text-alert hover:bg-alert/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Square size={12} /> {t("stopSwarm")}
+          </button>
+
+          {/* Log stream */}
+          <div className="console-scanlines bg-black/60 border border-line rounded-sm h-32 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed" data-testid="swarm-log-stream">
+            {(status?.logs || []).slice(-40).map((l, i) => (
+              <div key={i} className={
+                l.level === "error" ? "text-alert" :
+                l.level === "warn" ? "text-amberx" :
+                l.level === "success" ? "text-bio" : "text-sonar/80"
+              }>
+                <span className="text-slate-600">{l.ts?.slice(11, 19)}</span> {l.msg}
+              </div>
+            ))}
+            {running && <span className="text-bio cursor-blink">▊</span>}
+          </div>
+
+          {/* --- Extraction settings (migrated from SettingsPanel) --- */}
+          {form && (
+            <div className="pt-3 mt-2 border-t border-line space-y-2.5" data-testid="audit-extraction-settings">
+              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/80">
+                {t("auditExtractionSettingsTitle")}
+              </p>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("tinyfishAgents")}</label>
+                <select data-testid="tinyfish-agents-select" value={form.tinyfish_agents} onChange={(e) => set("tinyfish_agents", e.target.value)} className={smallInput}>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">
+                  {t("concurrency")} ({form.extract_concurrency})
+                </label>
+                <input data-testid="concurrency-input" type="range" min="1" max="20" value={form.extract_concurrency}
+                  onChange={(e) => set("extract_concurrency", e.target.value)} className="w-full accent-cyan-400" />
+              </div>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("extractionEngine")}</label>
+                <select
+                  data-testid="extraction-engine-select"
+                  value={form.extraction_engine || "gemini"}
+                  onChange={(e) => set("extraction_engine", e.target.value)}
+                  className={smallInput}
+                >
+                  <option value="gemini">Gemini (via Emergent LLM key)</option>
+                  <option value="gpt">GPT (via Emergent LLM key)</option>
+                  <option value="claude">Claude (via Emergent LLM key)</option>
+                  <option value="openrouter">OpenRouter</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("gatekeeperModel")}</label>
+                <select data-testid="gatekeeper-model-select" value={form.gatekeeper_model} onChange={(e) => set("gatekeeper_model", e.target.value)} className={smallInput}>
+                  {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("extractModel")}</label>
+                <select data-testid="extract-model-select" value={form.extract_model} onChange={(e) => set("extract_model", e.target.value)} className={smallInput}>
+                  {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input data-testid="follow-money-checkbox" type="checkbox" checked={!!form.follow_the_money}
+                  onChange={(e) => set("follow_the_money", e.target.checked)} className="accent-cyan-400" />
+                {t("followMoney")}
+              </label>
+              {form.follow_the_money && (
+                <div>
+                  <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("maxPartnerOrgs")}</label>
+                  <input data-testid="max-partner-orgs-input" type="number" min="1" max="20" value={form.max_partner_orgs}
+                    onChange={(e) => set("max_partner_orgs", e.target.value)} className={smallInput} />
+                </div>
+              )}
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("autoStopLimit")}</label>
+                <input data-testid="saturation-limit-input" type="number" min="0" max="500" value={form.saturation_limit}
+                  onChange={(e) => set("saturation_limit", e.target.value)} className={smallInput} />
+              </div>
+              <div>
+                <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("rescanDays")}</label>
+                <input data-testid="rescan-days-input" type="number" min="0" max="365" step="0.5" value={form.rescan_after_days}
+                  onChange={(e) => set("rescan_after_days", e.target.value)} className={smallInput} />
+              </div>
+              <button
+                data-testid="save-swarm-settings-btn"
+                onClick={saveExtraction}
+                className="w-full flex items-center justify-center gap-2 py-1.5 text-xs font-semibold rounded-sm bg-sonar/15 border border-sonar/60 text-sonar hover:bg-sonar/25"
+              >
+                {savedFlag ? <><Check size={12} /> {t("saved")}</> : t("save")}
+              </button>
+            </div>
+          )}
+        </>,
         "border-l-2 border-l-sonar/50",
       )}
 
-      {/* ---- Marinas — build + enrich batch ---- */}
+      {/* ---- MARINAS — build + enrich batch ---- */}
       {modeCard(
         t("modeMarinas"),
         <Anchor size={14} className="text-alert" />,
-        "",
         <>
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
@@ -209,11 +416,10 @@ export default function BatchHub({ t, onFormalitiesRefresh }) {
         "border-l-2 border-l-alert/50",
       )}
 
-      {/* ---- Formalities — generate batch ---- */}
+      {/* ---- FORMALITIES — generate batch ---- */}
       {modeCard(
         t("modeFormalities"),
         <ScrollText size={14} className="text-amberx" />,
-        "",
         <>
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">

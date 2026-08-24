@@ -1,12 +1,24 @@
-import { Download, Flag, Search } from "lucide-react";
+import { Compass, Flag, Search } from "lucide-react";
 import ProjectList from "./ProjectList";
 
 export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport }) {
   const legendCats = (categories || []).filter((c) => c.count > 0);
+  const totalVisible = (projects.features || []).length;
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0" data-testid="swarm-panel">
       <div className="flex-1 overflow-y-auto min-h-0">
+        {/* Phase 6 — Sidebar header (Compass icon aligned with Marinas anchor + Formalities scroll) */}
+        <section className="p-4 border-b border-line" data-testid="projects-panel-header">
+          <div className="flex items-center gap-2">
+            <Compass size={18} className="text-sonar" />
+            <h2 className="font-heading font-bold text-white text-base">{t("modeProjects")}</h2>
+            <span className="ml-auto font-mono text-[10px] text-sonar/80 uppercase tracking-widest">
+              {totalVisible} {t("projects")}
+            </span>
+          </div>
+        </section>
+
         {/* Legend (clickable) */}
         <section className="p-4 border-b border-line" data-testid="map-legend">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">{t("legend")}</p>
@@ -65,16 +77,8 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
         <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} />
       </div>
 
-      {/* Bottom actions — Phase 5: report + contextual GeoJSON export */}
-      <div className="shrink-0 p-3 border-t border-line bg-surface space-y-2">
-        <a
-          data-testid="projects-export-btn"
-          href={`${process.env.REACT_APP_BACKEND_URL}/api/export/geojson`}
-          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10"
-          title={t("exportGeoJsonTooltip")}
-        >
-          <Download size={12} /> {t("exportGeoJson")}
-        </a>
+      {/* Bottom action — Phase 6: only report button kept, export moved to Settings */}
+      <div className="shrink-0 p-3 border-t border-line bg-surface">
         <button
           data-testid="report-project-btn"
           onClick={onReport}

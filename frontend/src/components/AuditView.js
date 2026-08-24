@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Trash2, Zap } from "lucide-react";
 import api from "../api";
-import SwarmControls from "./SwarmControls";
 import BatchHub from "./BatchHub";
+import AgentConsole from "./AgentConsole";
 
 const STATUS_COLORS = {
   SUCCESS: "text-bio",
@@ -17,6 +17,7 @@ export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) 
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
   const [forcing, setForcing] = useState({});
+  const [settings, setSettings] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -29,11 +30,19 @@ export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) 
     } catch (e) { /* transient */ }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const r = await api.get("/settings");
+      setSettings(r.data);
+    } catch (e) { /* transient */ }
+  }, []);
+
   useEffect(() => {
     load();
+    loadSettings();
     const i = setInterval(load, 5000);
     return () => clearInterval(i);
-  }, [load]);
+  }, [load, loadSettings]);
 
   const clearAudit = async () => {
     if (!window.confirm(t("clearAuditConfirm"))) return;
@@ -60,13 +69,24 @@ export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) 
         </button>
       </div>
 
-      {/* Swarm operations */}
-      <SwarmControls t={t} status={status} refresh={refresh} />
+      {/* Phase 6 — Tri-mode Swarm Intelligence Hub. Projects card now hosts:
+          Deploy/Stop, Test/Full, Clear DB + swarm-exclusive extraction settings.
+          Marinas + Formalities cards keep their batch triggers. */}
+      <BatchHub
+        t={t}
+        status={status}
+        refresh={refresh}
+        settings={settings}
+        onSettingsSaved={loadSettings}
+        onFormalitiesRefresh={onFormalitiesRefresh}
+      />
 
-      {/* Phase 5 — Tri-mode batch hub (projects/marinas/formalities) */}
-      <BatchHub t={t} onFormalitiesRefresh={onFormalitiesRefresh} />
+      {/* Live agent console — auxiliary info kept full-width below the hub */}
+      <div className="border border-line bg-surface overflow-hidden">
+        <AgentConsole t={t} agents={status?.agents || []} />
+      </div>
 
-      {/* KPIs */}
+      {/* KPIs — Phase 6: "Items mapped" replaces the Projects-only label. */}
       <div className="grid grid-cols-3 gap-px bg-line border border-line">
         <div className="bg-surface p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("totalExtractions")}</p>
@@ -77,7 +97,7 @@ export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) 
           <p data-testid="kpi-success-rate" className="font-heading font-black text-3xl text-bio mt-1">{stats.success_rate}%</p>
         </div>
         <div className="bg-surface p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("projectsMapped")}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("itemsMapped")}</p>
           <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.projects_mapped}</p>
         </div>
       </div>

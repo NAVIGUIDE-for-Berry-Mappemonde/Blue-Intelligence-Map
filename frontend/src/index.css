@@ -57,11 +57,16 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #0f172a; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #00f0ff66; }
+::-webkit-scrollbar-track { background: rgb(var(--surface-rgb)); }
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.35);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.65); }
+* { scrollbar-color: rgba(var(--accent-rgb), 0.4) rgb(var(--surface-rgb)); }
 
-::selection { background: #00f0ff33; color: #00f0ff; }
+::selection { background: rgba(var(--accent-rgb), 0.20); color: rgb(var(--accent-rgb)); }
 
 .console-scanlines {
   position: relative;
@@ -92,18 +97,32 @@ html, body, #root {
 .leaflet-popup-content-wrapper {
   background: rgba(15, 23, 42, 0.95);
   color: #e2e8f0;
-  border: 1px solid rgba(51, 65, 85, 0.8);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
   border-radius: 4px;
   backdrop-filter: blur(16px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 22px rgba(var(--accent-rgb), 0.10);
 }
-.leaflet-popup-tip { background: #0f172a; border: 1px solid #334155; }
-.leaflet-popup-content { margin: 12px 14px; }
+.leaflet-popup-tip { background: #0f172a; border: 1px solid rgba(var(--accent-rgb), 0.4); }
+/* Phase 6 — popups scrollable from top to bottom, themed scrollbar */
+.leaflet-popup-content {
+  margin: 12px 14px;
+  max-height: 62vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--accent-rgb), 0.5) rgba(15, 23, 42, 0.4);
+}
+.leaflet-popup-content::-webkit-scrollbar { width: 6px; }
+.leaflet-popup-content::-webkit-scrollbar-track { background: transparent; }
+.leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.4);
+  border-radius: 3px;
+}
+.leaflet-popup-content::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.7); }
 .leaflet-popup-close-button { color: #94a3b8 !important; }
 .leaflet-bar a {
   background: #0f172a !important;
-  color: #00f0ff !important;
-  border-color: #334155 !important;
+  color: rgb(var(--accent-rgb)) !important;
+  border-color: rgba(var(--accent-rgb), 0.35) !important;
 }
 .leaflet-bar a:hover { background: #1e293b !important; }
 

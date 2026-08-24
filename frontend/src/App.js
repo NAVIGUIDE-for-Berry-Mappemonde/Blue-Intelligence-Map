@@ -265,6 +265,54 @@ export default function App() {
         return { ok: false, code: e?.response?.status || 0, msg: e?.message };
       }
     };
+    // Phase 6 — button handlers wired to the map popup (formalities fiche
+    // was migrated from the sidebar to the popup). They kick the async
+    // generate / verify pipelines and update the button label so the user
+    // sees feedback without leaving the popup.
+    window.__biFormalityPopupRefresh = async (code) => {
+      const btn = document.querySelector('[data-testid="formalities-refresh-btn"]');
+      const setBtn = (label, disabled = true) => {
+        if (!btn) return;
+        btn.disabled = disabled;
+        btn.textContent = label;
+      };
+      const kick = await window.__biGenerateFormality(code);
+      if (!kick.ok && kick.code !== 409) {
+        setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), false);
+        return;
+      }
+      setBtn("↻ " + (lang === "fr" ? "Rafraîchissement…" : "Refreshing…"));
+      // Poll status until done — up to ~6 min
+      for (let i = 0; i < 120; i++) {
+        await new Promise((res) => setTimeout(res, 3000));
+        try {
+          const st = await api.get(`/formalities/${code}/generate/status`);
+          if (st.data?.state === "done") {
+            await fetchFormalities();
+            setBtn("✓ " + (lang === "fr" ? "Rafraîchie" : "Refreshed"), false);
+            break;
+          }
+          if (st.data?.state === "error") {
+            setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), false);
+            break;
+          }
+        } catch (_) { /* transient */ }
+      }
+    };
+    window.__biFormalityPopupVerify = async (code) => {
+      const btn = document.querySelector('[data-testid="formalities-verify-btn"]');
+      if (btn) btn.disabled = true;
+      const r = await window.__biVerifyFormality(code);
+      if (!r?.ok) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "✓ " + (lang === "fr" ? "Échec" : "Failed");
+        }
+        return;
+      }
+      // Refetch formalities so the popup rebuilds with status=verifiee (green).
+      await fetchFormalities();
+    };
     window.__biGenerateImmigration = async (code, nat) => {
       try {
         const r = await api.post(`/formalities/${code}/immigration/${nat}`);
@@ -281,6 +329,8 @@ export default function App() {
       delete window.__biGenerateFormality;
       delete window.__biVerifyFormality;
       delete window.__biGenerateImmigration;
+      delete window.__biFormalityPopupRefresh;
+      delete window.__biFormalityPopupVerify;
     };
   }, [fetchMarinas, fetchProjects, fetchFormalities, lang]);
 
@@ -388,7 +438,7 @@ export default function App() {
           )}
         </main>
           {showSettings && (
-          <SettingsPanel t={t} lang={lang} settings={settings}
+          <SettingsPanel t={t} lang={lang} mode={mode} settings={settings}
             onSaved={fetchSettings} onImported={() => fetchProjects(true)}
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
         )}

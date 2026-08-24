@@ -42,6 +42,7 @@ export const DICT = {
     totalExtractions: "Total Extractions",
     successRate: "Success Rate",
     projectsMapped: "Projects Mapped",
+    itemsMapped: "Items Mapped",
     telemetry: "Extraction Telemetry",
     targetUrl: "Target URL",
     engine: "Engine",
@@ -298,6 +299,22 @@ export const DICT = {
     formalitiesImmigrationRunning: "Generating…",
     formalitiesNoSourceWarning: "No official source found — AI-generated content, verify with the authorities before departure.",
     formalitiesNoSourceEmpty: "No source recorded yet.",
+    // Phase 6 — popup sections (formality sheet migrated to map popup)
+    formalitiesPopupHint: "Click a stopover on the sidebar to fly here and open the sheet.",
+    formalitiesPopupEntreeTitle: "Arrival — customs & procedures",
+    formalitiesPopupSortieTitle: "Departure — clearance",
+    formalitiesPopupCasTitle: "Special cases",
+    formalitiesPopupImmigrationTitle: "Immigration (French crew)",
+    formalitiesPopupContactsTitle: "Contacts",
+    formalitiesPopupLinksTitle: "Official links",
+    formalitiesPopupSourcesTitle: "Sources used",
+    formalitiesPopupNotGenerated: "This fiche has not been generated yet. Use the Audit → Formalities batch to produce it.",
+    formalitiesPopupNoSectionData: "—",
+    // Phase 6 — Audit view — Projects card (swarm controls migrated here)
+    auditProjectsCardTitle: "Projects — Swarm & extraction",
+    auditExtractionSettingsTitle: "Extraction settings",
+    // Phase 6 — Settings panel accent hint
+    settingsExportContextHint: "Exports the data of the currently active mode.",
     refresh: "Refresh",
   },
   fr: {
@@ -343,6 +360,7 @@ export const DICT = {
     totalExtractions: "Extractions totales",
     successRate: "Taux de succès",
     projectsMapped: "Projets cartographiés",
+    itemsMapped: "Éléments cartographiés",
     telemetry: "Télémétrie d'extraction",
     targetUrl: "URL cible",
     engine: "Moteur",
@@ -596,6 +614,22 @@ export const DICT = {
     formalitiesImmigrationRunning: "Génération…",
     formalitiesNoSourceWarning: "Aucune source officielle trouvée — contenu IA à vérifier impérativement avant le départ.",
     formalitiesNoSourceEmpty: "Aucune source enregistrée pour l'instant.",
+    // Phase 6 — sections popup (fiche formalités migrée dans la popup carte)
+    formalitiesPopupHint: "Cliquez une escale dans le bandeau pour y voler et ouvrir la fiche.",
+    formalitiesPopupEntreeTitle: "Entrée — douanes & procédures",
+    formalitiesPopupSortieTitle: "Sortie — clearance",
+    formalitiesPopupCasTitle: "Cas particuliers",
+    formalitiesPopupImmigrationTitle: "Immigration (équipage français)",
+    formalitiesPopupContactsTitle: "Contacts",
+    formalitiesPopupLinksTitle: "Liens officiels",
+    formalitiesPopupSourcesTitle: "Sources utilisées",
+    formalitiesPopupNotGenerated: "Cette fiche n'a pas encore été générée. Utilisez le batch Audit → Formalités pour la produire.",
+    formalitiesPopupNoSectionData: "—",
+    // Phase 6 — Audit view — carte Projects (commandes swarm migrées ici)
+    auditProjectsCardTitle: "Projets — Swarm & extraction",
+    auditExtractionSettingsTitle: "Réglages d'extraction",
+    // Phase 6 — indication d'export contextuel dans le panneau Settings
+    settingsExportContextHint: "Exporte les données du mode actuellement actif.",
     refresh: "Rafraîchir",
   },
 };

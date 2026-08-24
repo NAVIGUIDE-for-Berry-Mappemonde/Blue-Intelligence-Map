@@ -434,9 +434,12 @@ export default function MapView({
     setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToMarina]);
 
-  // ---------- Phase 4A — Formalities layer: escales coloured by status +
-  // white ring on ports of entry. Only rebuilt when the underlying data
-  // signature (routes / formalities status / territory mapping) changes.
+  // ---------- Phase 4A → Phase 6 — Formalities layer.
+  // Escales coloured by status + white ring on ports of entry, unified with
+  // Projects/Marinas circleMarker style (radius 7, weight 2, fillOpacity 0.6).
+  // The popup now embeds the FULL fiche (entrée, sortie, cas particuliers,
+  // immigration FR, contacts, liens officiels, sources) with refresh + verify
+  // buttons — Phase 6 migration from the sidebar.
   useEffect(() => {
     const map = mapObj.current;
     if (!map) return;
@@ -474,12 +477,13 @@ export default function MapView({
     const escaleFeats = route.features.filter(
       (f) => f.geometry?.type === "Point" && f.properties?.point_type === "escale",
     );
-    // Signature for skip-rebuild
+    // Signature for skip-rebuild — Phase 6 also includes stale/verified_at so the
+    // popup body refreshes when the fiche is regenerated or verified.
     const statusSig = escaleFeats.map((f) => {
       const name = f.properties.name;
       const terr = escaleToTerritory[name];
       const forDoc = terr ? forByCode[terr.code] : null;
-      return `${name}|${terr?.code || ""}|${forDoc?.status || "none"}`;
+      return `${name}|${terr?.code || ""}|${forDoc?.status || "none"}|${forDoc?.generated_at || ""}|${forDoc?.verified_at || ""}|${forDoc?.stale ? "1" : "0"}`;
     }).join(";");
     if (statusSig === formalitiesSigRef.current && formalitiesLayerRef.current) return;
     formalitiesSigRef.current = statusSig;
@@ -490,6 +494,189 @@ export default function MapView({
     }
     const layer = L.layerGroup();
     formalitiesMarkersByEscale.current.clear();
+
+    // ---- Field ordering — mirrors the pre-Phase-6 sidebar tabs ----
+    const ENTREE_FIELDS = [
+      ["preavis",              "formalitiesFieldsPreavis"],
+      ["pavillon_q",           "formalitiesFieldsPavillonQ"],
+      ["demarches_arrivee",    "formalitiesFieldsDemarchesArrivee"],
+      ["ou_s_amarrer",         "formalitiesFieldsOuSAmarrer"],
+      ["vhf",                  "formalitiesFieldsVhf"],
+      ["douanes_clearance",    "formalitiesFieldsDouanesClearance"],
+      ["admission_temporaire", "formalitiesFieldsAdmissionTemporaire"],
+      ["franchises",           "formalitiesFieldsFranchises"],
+      ["biosecurite",          "formalitiesFieldsBiosecurite"],
+      ["frais",                "formalitiesFieldsFrais"],
+      ["horaires",             "formalitiesFieldsHoraires"],
+    ];
+    const SORTIE_FIELDS = [
+      ["clearance",   "formalitiesFieldsClearance"],
+      ["delais",      "formalitiesFieldsDelais"],
+      ["documents",   "formalitiesFieldsDocuments"],
+      ["ou_obtenir",  "formalitiesFieldsOuObtenir"],
+    ];
+    const CAS_FIELDS = [
+      ["animaux", "formalitiesFieldsAnimaux"],
+      ["drones",  "formalitiesFieldsDrones"],
+      ["armes",   "formalitiesFieldsArmes"],
+    ];
+    const IMMI_FIELDS = [
+      ["visa",             "formalitiesFieldsVisa"],
+      ["duree_sejour",     "formalitiesFieldsDureeSejour"],
+      ["equivalent_esta",  "formalitiesFieldsEsta"],
+      ["notes",            "formalitiesFieldsNotes"],
+    ];
+
+    // ---- Small HTML builders (inline styles keep popup self-contained) ----
+    const esc = (s) => {
+      if (s === null || s === undefined) return "";
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    };
+    const groupHtml = (title, source, fields) => {
+      if (!source) return "";
+      const rows = fields
+        .filter(([k]) => source[k] !== null && source[k] !== undefined && source[k] !== "")
+        .map(([k, labelKey]) => `
+          <div style="margin-top:6px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:1px;">${esc(t(labelKey))}</div>
+            <div style="font-size:11px;color:#e2e8f0;line-height:1.5;">${esc(source[k])}</div>
+          </div>`)
+        .join("");
+      if (!rows) return "";
+      return `
+        <div style="margin-top:10px;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(title)}</div>
+          ${rows}
+        </div>`;
+    };
+    const contactsHtml = (contacts, links) => {
+      const cItems = (contacts || []).map((c) => `
+        <div style="font-size:11px;color:#e2e8f0;margin-top:4px;">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;margin-right:6px;">${esc(c.type || "")}</span>
+          ${esc(c.label || "")}: <span style="color:#fff;">${esc(c.value || "")}</span>
+        </div>`).join("");
+      const lItems = (links || []).map((l) => `
+        <div style="margin-top:4px;"><a href="${esc(l.url)}" target="_blank" rel="noreferrer" style="font-size:11px;color:#00f0ff;text-decoration:none;">${esc(l.label || l.url)} →</a></div>`).join("");
+      if (!cItems && !lItems) return "";
+      return `
+        <div style="margin-top:10px;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupContactsTitle"))}</div>
+          ${cItems}
+          ${lItems ? `<div style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">${esc(t("formalitiesPopupLinksTitle"))}</div>${lItems}` : ""}
+        </div>`;
+    };
+    const sourcesHtml = (sources, status) => {
+      const isNoSource = status === "ia_sans_source";
+      const warn = isNoSource
+        ? `<div style="margin-top:6px;padding:4px 6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.35);color:#fecaca;font-size:10px;line-height:1.4;border-radius:2px;">⚠️ ${esc(t("formalitiesNoSourceWarning"))}</div>`
+        : "";
+      if (!sources || sources.length === 0) {
+        return `
+          <div style="margin-top:10px;">
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupSourcesTitle"))}</div>
+            ${warn}
+            <div style="margin-top:4px;font-size:11px;color:#94a3b8;font-style:italic;">${esc(t("formalitiesNoSourceEmpty"))}</div>
+          </div>`;
+      }
+      const items = sources.map((s) => `
+        <div style="margin-top:4px;font-size:11px;line-height:1.4;">
+          <a href="${esc(s.url)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${esc(s.url)}</a>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;margin-top:1px;">
+            ${esc(s.domain || "")}${s.collected_at ? " · " + esc(String(s.collected_at).slice(0, 10)) : ""}
+          </div>
+        </div>`).join("");
+      return `
+        <div style="margin-top:10px;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupSourcesTitle"))}</div>
+          ${warn}
+          ${items}
+        </div>`;
+    };
+
+    // ---- Popup HTML builder for a full territory fiche ----
+    const buildPopup = (feat, meta) => {
+      const {
+        name, leg, terr, forDoc, isPoe, status, fill, overlay,
+      } = meta;
+      const statusLabel = {
+        non_generee: t("formalitiesStatusNonGeneree"),
+        ia: t("formalitiesStatusIa"),
+        ia_sans_source: t("formalitiesStatusIaSansSource"),
+        verifiee: t("formalitiesStatusVerifiee"),
+      }[status];
+      const poeLabel = isPoe ? t("formalitiesPortOfEntry") : t("formalitiesNotPortOfEntry");
+      const legLabel = leg
+        ? ` · ${leg === "departure" ? t("formalitiesLegDeparture") : t("formalitiesLegReturn")}`
+        : "";
+      const noteHtml = overlay?.note
+        ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.4;">${esc(overlay.note)}</div>`
+        : "";
+      const flag = terr?.flag_emoji || "🏳️";
+      const genDate = forDoc?.generated_at ? String(forDoc.generated_at).slice(0, 10) : null;
+      const verDate = forDoc?.verified_at ? String(forDoc.verified_at).slice(0, 10) : null;
+      const staleBadge = forDoc?.stale
+        ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.5);background:rgba(251,191,36,0.1);padding:2px 6px;border-radius:2px;">⏰ ${esc(t("formalitiesStale"))}</span>`
+        : "";
+
+      // Refresh + verify buttons (only when a territory code exists)
+      const code = terr?.code || "";
+      const canVerify = status === "ia" || status === "ia_sans_source";
+      const refreshBtn = code
+        ? `<button
+            data-testid="formalities-refresh-btn"
+            onclick="window.__biFormalityPopupRefresh && window.__biFormalityPopupRefresh('${esc(code)}')"
+            style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
+            ↻ ${esc(t("formalitiesRefreshBtn"))}
+          </button>`
+        : "";
+      const verifyBtn = code && canVerify
+        ? `<button
+            data-testid="formalities-verify-btn"
+            onclick="window.__biFormalityPopupVerify && window.__biFormalityPopupVerify('${esc(code)}')"
+            style="font-size:10px;font-weight:600;color:#39ff14;background:rgba(57,255,20,0.10);border:1px solid rgba(57,255,20,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
+            ✓ ${esc(t("formalitiesVerifyBtn"))}
+          </button>`
+        : "";
+
+      // Body — either "not generated" hint OR all sections
+      let body = "";
+      if (!forDoc || status === "non_generee") {
+        body = `<div style="margin-top:10px;padding:8px;background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.30);color:#94a3b8;font-size:11px;line-height:1.5;border-radius:2px;">${esc(t("formalitiesPopupNotGenerated"))}</div>`;
+      } else {
+        const entree = groupHtml(t("formalitiesPopupEntreeTitle"), forDoc.entree, ENTREE_FIELDS);
+        const sortie = groupHtml(t("formalitiesPopupSortieTitle"), forDoc.sortie, SORTIE_FIELDS);
+        const cas = groupHtml(t("formalitiesPopupCasTitle"), forDoc.cas_particuliers, CAS_FIELDS);
+        const immiSlot = (forDoc.immigration || {}).fr;
+        const immi = immiSlot ? groupHtml(t("formalitiesPopupImmigrationTitle"), immiSlot, IMMI_FIELDS) : "";
+        const contacts = contactsHtml(forDoc.contacts, forDoc.liens_officiels);
+        const sources = sourcesHtml(forDoc.sources, status);
+        body = entree + sortie + cas + immi + contacts + sources;
+        if (!body) {
+          body = `<div style="margin-top:10px;font-size:11px;color:#94a3b8;font-style:italic;">${esc(t("formalitiesPopupNoSectionData"))}</div>`;
+        }
+      }
+
+      return `
+        <div style="min-width:280px;max-width:340px;font-family:Manrope,sans-serif;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">
+            ${flag} ${esc(name)}${legLabel}
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin:4px 0 6px;">${esc(terr?.name_fr || "")}</div>
+          <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${fill};border:1px solid ${fill}55;padding:2px 6px;border-radius:2px;">${esc(statusLabel)}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${isPoe ? "#f8fafc" : "#64748b"};border:1px solid ${isPoe ? "#f8fafc99" : "#33415555"};padding:2px 6px;border-radius:2px;">${isPoe ? "⚓ " : ""}${esc(poeLabel)}</span>
+            ${staleBadge}
+          </div>
+          ${genDate ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${esc(t("formalitiesGeneratedAt"))}: ${esc(genDate)}${verDate ? ` · <span style=\"color:#39ff14;\">${esc(t("formalitiesVerifiedAt"))}: ${esc(verDate)}</span>` : ""}</div>` : ""}
+          ${(refreshBtn || verifyBtn)
+            ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${refreshBtn}${verifyBtn}</div>`
+            : ""}
+          ${noteHtml}
+          ${body}
+        </div>`;
+    };
 
     // La Rochelle appears twice in the route; tag them départ/retour by order.
     const laRochelleSeen = { count: 0 };
@@ -525,46 +712,22 @@ export default function MapView({
         leg = laRochelleSeen.count === 1 ? "departure" : "return";
       }
 
+      // Phase 6 — unified marker style with projects/marinas (radius 7, weight 2, fillOpacity 0.6)
       const marker = L.circleMarker([lat, lon], {
         radius: 7,
         color: stroke,
-        weight: dashed ? 2 : 1.5,
+        weight: 2,
         fillColor: fill,
-        fillOpacity: 0.9,
+        fillOpacity: 0.6,
         className: dashed ? "bi-escale-marker--dashed" : "",
       });
 
-      const statusLabel = {
-        non_generee: t("formalitiesStatusNonGeneree"),
-        ia: t("formalitiesStatusIa"),
-        ia_sans_source: t("formalitiesStatusIaSansSource"),
-        verifiee: t("formalitiesStatusVerifiee"),
-      }[status];
-      const poeLabel = isPoe ? t("formalitiesPortOfEntry") : t("formalitiesNotPortOfEntry");
-      const legLabel = leg ? ` · ${leg === "departure" ? t("formalitiesLegDeparture") : t("formalitiesLegReturn")}` : "";
-      const noteHtml = overlay?.note
-        ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.4;">${overlay.note}</div>`
-        : "";
-      const flag = terr?.flag_emoji || "🏳️";
-
       marker.bindPopup(
-        `<div style="min-width:220px;max-width:280px;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">
-            ${flag} ${name}${legLabel}
-          </div>
-          <div style="font-size:11px;color:#94a3b8;margin:4px 0 6px;">${terr?.name_fr || ""}</div>
-          <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${fill};border:1px solid ${fill}55;padding:2px 6px;border-radius:2px;">${statusLabel}</span>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${isPoe ? "#f8fafc" : "#64748b"};border:1px solid ${isPoe ? "#f8fafc99" : "#33415555"};padding:2px 6px;border-radius:2px;">
-              ${isPoe ? "⚓ " : ""}${poeLabel}
-            </span>
-          </div>
-          ${noteHtml}
-        </div>`,
-        { maxWidth: 300, autoPan: false },
+        buildPopup(feat, { name, leg, terr, forDoc, isPoe, status, fill, overlay }),
+        { maxWidth: 360, minWidth: 280, autoPan: false, className: "bi-formalities-popup" },
       );
 
-      // Click on marker → open the corresponding territory card in the panel
+      // Click on marker → tell App to fly there + tag the row in the sidebar.
       marker.on("click", () => {
         if (typeof onSelectEscale === "function" && terr?.code) {
           onSelectEscale(name, terr.code, [lon, lat]);
@@ -580,11 +743,30 @@ export default function MapView({
   }, [route, territories, formalities, t, mode, onSelectEscale]);
 
   // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
+  // Phase 6 — also open the popup of the target escale so the fiche is visible
+  // straight away (the fiche now lives inside the popup, not the sidebar).
   useEffect(() => {
     if (!flyToEscale) return;
     const map = mapObj.current;
     if (!map) return;
     map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
+    // Wait for the flyTo to end then open the marker's popup
+    const openTimer = setTimeout(() => {
+      const markers = formalitiesMarkersByEscale.current;
+      if (!markers || markers.size === 0) return;
+      // Look up: exact "name::leg" if leg is known, else just by name (first match wins)
+      let target = null;
+      if (flyToEscale.name && flyToEscale.leg) {
+        target = markers.get(`${flyToEscale.name}::${flyToEscale.leg}`) || null;
+      }
+      if (!target && flyToEscale.name) {
+        target = markers.get(flyToEscale.name)
+          || markers.get(`${flyToEscale.name}::departure`)
+          || markers.get(`${flyToEscale.name}::return`);
+      }
+      if (target && typeof target.openPopup === "function") target.openPopup();
+    }, 1150);
+    return () => clearTimeout(openTimer);
   }, [flyToEscale]);
 
   useEffect(() => {
