@@ -27,8 +27,8 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
     try {
       const [s, tm, f] = await Promise.all([
         api.get("/stats", { params: { mode: mode || "projects" } }),
-        api.get("/telemetry"),
-        api.get("/failed"),
+        api.get("/telemetry", { params: { mode: mode || "projects" } }),
+        api.get("/failed", { params: { mode: mode || "projects" } }),
       ]);
       setStats(s.data);
       setTelemetry(tm.data);

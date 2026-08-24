@@ -735,3 +735,8 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - Bouton "Save Settings" SUPPRIMÉ → auto-sauvegarde au blur de chaque champ (min zoom, max markers, clés API) + indicateur "✓ Saved" transitoire dans l'en-tête du panneau.
 - Toggle "Show anchorages on the map" (⚓ count) déplacé de la sidebar Marinas vers la carte SIA marinas (props showAnchorages/setShowAnchorages/anchoragesCount passées App→AuditView→BatchHub, data-testids conservés).
 - Dédup validée en réel : re-scan marinas lancé par le user → total 809 → 810 (+1 découverte, 0 doublon, upserts par dedup_key).
+
+## Update 2026-06 — Télémétrie filtrée par mode
+- Bug : la vue Marinas du Swarm Intelligence Audit affichait la télémétrie des anciens runs projets (293 lignes legacy sans champ `dataset` dans la base preview). Le code était identique à emergent4 ; seule la donnée en base différait.
+- Fix : `GET /api/telemetry?mode=` et `GET /api/failed?mode=` filtrent désormais par dataset via `_dataset_filter()` (même logique que `/api/stats`). Frontend `AuditView.js` passe `mode` aux deux appels.
+- Vérifié curl : marinas/formalities → 0 lignes ; projects → 200 lignes legacy conservées.

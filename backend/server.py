@@ -263,17 +263,27 @@ async def stats(mode: str = "projects"):
     }
 
 
+def _dataset_filter(mode: str) -> dict:
+    """Mode-scoped telemetry filter — mirrors /api/stats (legacy rows = projects)."""
+    m = (mode or "projects").lower()
+    if m == "marinas":
+        return {"dataset": "marinas"}
+    if m == "formalities":
+        return {"dataset": "formalities"}
+    return {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}
+
+
 @router.get("/telemetry")
-async def telemetry():
-    docs = await db.telemetry.find({}).sort("ts", -1).to_list(200)
+async def telemetry(mode: str = "projects"):
+    docs = await db.telemetry.find(_dataset_filter(mode)).sort("ts", -1).to_list(200)
     for d in docs:
         d["id"] = d.pop("_id")
     return docs
 
 
 @router.get("/failed")
-async def failed():
-    docs = await db.failed.find({}).sort("ts", -1).to_list(200)
+async def failed(mode: str = "projects"):
+    docs = await db.failed.find(_dataset_filter(mode)).sort("ts", -1).to_list(200)
     for d in docs:
         d["id"] = d.pop("_id")
     return docs
