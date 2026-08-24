@@ -576,6 +576,9 @@ export default function MapView({
     ];
 
     // ---- Small HTML builders (inline styles keep popup self-contained) ----
+    // i18n lazy-binding fix (2026-08-24): each helper reads `tRef.current` at
+    // CALL time (not effect-run time), so section titles AND field labels all
+    // reflect the CURRENT UI language when the popup is opened or refreshed.
     const esc = (s) => {
       if (s === null || s === undefined) return "";
       return String(s)
@@ -584,6 +587,7 @@ export default function MapView({
     };
     const groupHtml = (title, source, fields) => {
       if (!source) return "";
+      const t = tRef.current;
       const rows = fields
         .filter(([k]) => source[k] !== null && source[k] !== undefined && source[k] !== "")
         .map(([k, labelKey]) => `
@@ -600,6 +604,7 @@ export default function MapView({
         </div>`;
     };
     const contactsHtml = (contacts, links) => {
+      const t = tRef.current;
       const cItems = (contacts || []).map((c) => `
         <div style="font-size:11px;color:#e2e8f0;margin-top:4px;">
           <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;margin-right:6px;">${esc(c.type || "")}</span>
@@ -616,6 +621,7 @@ export default function MapView({
         </div>`;
     };
     const sourcesHtml = (sources, status) => {
+      const t = tRef.current;
       const isNoSource = status === "ia_sans_source";
       const warn = isNoSource
         ? `<div style="margin-top:6px;padding:4px 6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.35);color:#fecaca;font-size:10px;line-height:1.4;border-radius:2px;">⚠️ ${esc(t("formalitiesNoSourceWarning"))}</div>`
@@ -852,13 +858,19 @@ export default function MapView({
       if (!target || cancelled) return;
       // Attempt 1: standard openPopup (works when the marker has an _icon
       // attached in the DOM — the common case for close/visible escales).
+      // openPopup() implicitly closes any currently-open popup first.
       try { target.openPopup(); } catch (_) { /* map or marker not ready */ }
-      // Attempt 2: after a short delay, if the popup is still not on the DOM
-      // (marker was clustered or its _icon hadn't been attached by
-      // leaflet.markercluster after the pan), attach the marker's own bound
-      // popup directly to the map via `popup.setLatLng().openOn(map)`. This
-      // is the DEFINITIVE fallback — it works regardless of whether the
-      // marker is currently rendered in the DOM.
+      // Attempt 2: after a short delay, if the popup currently open is NOT
+      // for our target (either because openPopup silently no-op'd on a marker
+      // whose _icon hadn't been attached yet, OR because a different marker's
+      // popup is still on the map), force-attach the target's own bound popup
+      // directly to the map via `popup.setLatLng().openOn(map)`.
+      //
+      // Note: we check `map._popup._source === target` and NOT just "is there
+      // any popup on the DOM". Otherwise clicking a sidebar row while another
+      // popup is still open would let the previous popup persist (regression
+      // detected 2026-08-24 during i18n test — clicking Papeete after opening
+      // Martinique kept the Martinique popup on screen).
       //
       // We deliberately DO NOT `target.fire("click")` here — that would
       // re-trigger the sidebar's onSelectEscale handler, which re-sets
@@ -866,8 +878,9 @@ export default function MapView({
       // loop for far-away escales whose _icon never gets attached.
       setTimeout(() => {
         if (cancelled) return;
-        const domHasPopup = !!document.querySelector(".leaflet-popup");
-        if (!domHasPopup) forceOpenPopupOnMap(target);
+        const currentPopup = map._popup;
+        const isForTarget = !!(currentPopup && currentPopup._source === target);
+        if (!isForTarget) forceOpenPopupOnMap(target);
       }, 250);
     };
 
@@ -904,6 +917,22 @@ export default function MapView({
     };
   }, [flyToEscale]);
 
+  // ---------- Lang change → refresh any currently open popup ----------
+  // i18n lazy-binding fix (2026-08-24): when the user toggles FR ↔ EN, if a
+  // popup is already open its content is static HTML (built at the previous
+  // language). We call `popup.update()` which re-invokes the bindPopup(fn)
+  // content function — that function now reads `tRef.current` (updated at
+  // every render above) and returns HTML in the new language. This does NOT
+  // touch any marker or cluster — zero rebuild, zero DOM chum on markers.
+  useEffect(() => {
+    const map = mapObj.current;
+    if (!map) return;
+    const popup = map._popup;
+    if (popup && typeof popup.update === "function") {
+      try { popup.update(); } catch (_) { /* map/popup detached — noop */ }
+    }
+  }, [t]);
+
   useEffect(() => {
     const cluster = clusterRef.current;
     const map = mapObj.current;
@@ -934,9 +963,16 @@ export default function MapView({
           fillOpacity: 0.6,
         });
         const img = p.image ? `<img src="${p.image}" referrerpolicy="no-referrer" style="width:100%;height:110px;object-fit:cover;border-radius:3px;margin-bottom:8px;" onerror="this.remove()" />` : "";
-        const snapped = p.snapped ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid #fbbf2455;padding:1px 5px;border-radius:2px;margin-left:6px;">${t("snappedBadge")}</span>` : "";
-        const cat = p.category_group ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:1px 5px;border-radius:2px;">${t("cat_" + p.category_group)}</span>` : "";
-        marker.bindPopup(`
+        // i18n lazy-binding fix (2026-08-24): bindPopup(FN) so the HTML is
+        // rebuilt at each open with the CURRENT `t` via `tRef.current`. This
+        // lets FR ↔ EN switching update every future popup open without
+        // rebuilding markers, and allows the lang-change refresh effect
+        // (below) to refresh an ALREADY-open popup via `popup.update()`.
+        marker.bindPopup(() => {
+          const t = tRef.current;
+          const snapped = p.snapped ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid #fbbf2455;padding:1px 5px;border-radius:2px;margin-left:6px;">${t("snappedBadge")}</span>` : "";
+          const cat = p.category_group ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:1px 5px;border-radius:2px;">${t("cat_" + p.category_group)}</span>` : "";
+          return `
           <div style="min-width:220px;max-width:270px;">
             ${img}
             <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.title}</div>
@@ -949,7 +985,8 @@ export default function MapView({
               ${p.s_ocean != null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#39ff14;">S<sub>ocean</sub> ${p.s_ocean}</span>` : ""}
             </div>
           </div>
-        `, { maxWidth: 280, autoPan: false });
+        `;
+        }, { maxWidth: 280, autoPan: false });
         return marker;
       });
       cluster.addLayers(markers);
@@ -960,7 +997,11 @@ export default function MapView({
     } else {
       apply();
     }
-  }, [projects, funderFilter, categoryFilter, searchQuery, maxMarkers, t]); // eslint-disable-line
+    // i18n lazy-binding fix (2026-08-24): deps are DATA-ONLY. `t` is
+    // intentionally excluded — the popup content function reads
+    // `tRef.current` at open time, so language changes never trigger a
+    // marker rebuild.
+  }, [projects, funderFilter, categoryFilter, searchQuery, maxMarkers]); // eslint-disable-line
 
   const legendCats = [];
 

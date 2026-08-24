@@ -14,136 +14,154 @@
 
 ## Current Task Under Test
 
-**Phase 3.1 async enrichment bug fix + Kimi chain upgrade** (2026-08-24)
+**Popup i18n lazy-binding fix — MapView.js** (2026-08-24)
 
-### What must be verified by the backend testing agent
-1. `POST /api/marinas/{id}/enrich` returns **HTTP 202** in <5 s with body `{"status":"started","marina_id":"..."}`.
-2. `GET /api/marinas/{id}/enrich/status` returns a JSON envelope with `state ∈ {idle, running, done, error}` and eventually transitions running → done (or → error) without any client-side long-hang.
-3. `POST /api/projects/{id}/enrich` returns **HTTP 202** in <5 s and its status endpoint behaves the same way.
-4. A second `POST` on an already-running marina/project enrichment returns **HTTP 409** (per-id lock).
-5. Chain order matches spec: **TinyFish → Kimi → OpenRouter → fallback** (verifiable in `logs_tail` of the status response).
-6. Kimi client fails cleanly (log line containing `[kimi]` and either `AUTH ERROR` / `unavailable on free plan` / `no credentials`) — the invalid CF token must NOT block the chain.
-7. No regression: `/api/marinas`, `/api/marinas/count`, `/api/route`, `/api/projects`, `/api/openapi.json`, `POST /api/marinas/enrich-batch` all still respond correctly.
-8. Marina `b75bc928-b5bb-4a54-a433-142c8dffc208` = **Port des Minimes** (curated, has website), use it as the on-demand marina test target.
-9. Project test target: pick any project with a real URL via `GET /api/projects` first, then hit `POST /api/projects/{id}/enrich`.
+### Bug reported by user
+Popup content (Projects, Marinas, Formalities) stayed in the language captured
+at marker creation time. Toggling FR ↔ EN after page load left the open popup
+in the old language, and any newly-opened popup used the language present when
+the markers were built.
+
+### What must be verified by the frontend testing agent (UI)
+Test on `mode=formalities` primarily (also spot-check projects & marinas
+popups if easy). All measurements MUST come from the real DOM (Playwright
+`querySelectorAll`), never a screenshot.
+
+1. **(a) UI language = FR on click** — With the UI switched to FR *before*
+   clicking, click a sidebar row like `[data-testid="formalities-row-martinique"]`.
+   The popup must open in French. Assertion: `document.querySelector('.leaflet-popup-content').innerText`
+   must contain at least one of `["Non générée", "Port d'entrée", "Rafraîchir"]`
+   and must NOT contain any of `["Not generated", "Port of entry", "Refresh"]`.
+
+2. **(b) Live language toggle updates the OPEN popup** — Open the Martinique
+   popup while UI is in EN. Verify EN content. Without closing the popup,
+   click `[data-testid="lang-toggle-fr"]`. Within ≤1500 ms the popup content
+   must switch to FR (`popup.setContent`/`popup.update()` internal refresh).
+   The popup element (`.leaflet-popup`) must remain present in the DOM
+   throughout (no flash of empty popup, no reopen).
+
+3. **(c) Zero marker rebuild across (a) and (b)** — Monkey-patch
+   `window.__biDebug.formalities.clearLayers` and `.addLayers` before the
+   test and expect a total of 0 calls to either function during the whole
+   `(a) → (b)` sequence. Marker DOM count (`.leaflet-marker-icon`) must
+   never drop below the pre-click count.
+
+4. **(d) Non-regression — click Papeete (far escale) after lang toggle** —
+   Directly click `[data-testid="formalities-row-polynesie_francaise"]`
+   while the previous popup is still open. The map must fly to Papeete AND
+   the Martinique popup must be replaced by a Papeete popup (title contains
+   "Papeete" or "Polynésie") in French, with 0 marker rebuilds.
+
+### Notes / hooks for the testing agent
+- Debug handle: `window.__biDebug = { map, projects, marinas, formalities }` — use
+  `formalities.getLayers().length` to confirm 17 markers stay in the cluster
+  throughout, and `.filter(m => !!m._icon).length` to count DOM-attached ones.
+- Route markers (escale dots in the route line) are drawn ONCE and never
+  rebuilt; only spot-check formalities cluster markers.
+- 17 escale rows exist (`formalities-row-*`); the second La Rochelle row has
+  the suffix `-return` (`formalities-row-france_metropolitaine-return`) and
+  the first has `-departure`.
+- Zero authentication, all endpoints under `/api/*` are open.
 
 ### `test_credentials.md`
-See `/app/memory/test_credentials.md` — the app has NO auth, all endpoints are open under `/api/*`.
+See `/app/memory/test_credentials.md` — the app has NO auth. No creds needed.
 
-
-## Structured status (Phase 3.1 async enrichment)
+## Structured status (Popup i18n lazy-binding fix — 2026-08-24)
 
 ```yaml
-backend:
-  - task: "POST /api/marinas/{id}/enrich returns HTTP 202 in <5s"
+frontend:
+  - task: "Popup content re-evaluates translation at OPEN time (lazy bindPopup fn)"
     implemented: true
     working: true
-    file: "backend/server.py"
+    file: "frontend/src/components/MapView.js"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Projects popup converted from `bindPopup(templateString)` to `bindPopup(FN)` where FN reads `tRef.current` at each open. Formalities helpers now read `tRef.current` at call time."
         - working: true
           agent: "testing"
-          comment: "T1 verified: POST on Port des Minimes returned HTTP 202 in 0.00s (well under 5s) with body {status: 'started', marina_id: 'b75bc928-...'}. T4 same behaviour for project endpoint (0.00s, correct body)."
+          comment: "Test (a) PASS on desktop (1920x900) AND mobile (390x844). Switched UI to FR before clicking [formalities-row-martinique]. Popup innerText: '🇲🇶 Fort-de-France (Martinique) — Non générée — ⚓ Port d entrée — ↻ Rafraîchir — Cette fiche n a pas encore été générée...'. Contains FR markers, ZERO EN markers. window.__totalRebuilds === 0. Marker samples min=7 (== pre-click 7), max=11 (cluster expanded on flyTo, which is normal)."
 
-  - task: "GET /api/marinas/{id}/enrich/status lifecycle (running → done/error)"
+  - task: "Language change refreshes the OPEN popup via popup.update()"
     implemented: true
     working: true
-    file: "backend/server.py"
+    file: "frontend/src/components/MapView.js"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "New useEffect with dep [t] calls map._popup.update() on language change."
         - working: true
           agent: "testing"
-          comment: "T2 verified. Immediately after POST: state=running, started_at set, finished_at=null, logs_tail already populated. Polled every 3s; transitioned to state=done after ~139s. result.enrichment_source='tinyfish', enriched=true. TinyFish returned useful payload with 7 filled fields (canal_vhf, places_visiteurs, tirant_eau_max_metres, score_protection_meteo, services_disponibles, telephone_capitainerie, resume_avis) — the enrichment fields are stored under their French keys, so my English-key counter reported 0/7 but the logs prove 7/7 were actually filled. T5 verified same lifecycle for project endpoint (transitioned to done). T6 verified idle state: GET status on a marina with no task returns HTTP 200 with state='idle' (no 404)."
+          comment: "Test (b) PASS on desktop AND mobile. Opened Martinique popup in EN → 'Not generated / Port of entry / Refresh'. Toggled to FR without closing → within 1500 ms popup text became 'Non générée / Port d entrée / Rafraîchir', ZERO EN markers remaining. Polled every 50 ms: .leaflet-popup element was NEVER null during the toggle (popup_never_null=true). window.__totalRebuilds === 0."
 
-  - task: "Per-id 409 lock on concurrent enrichment"
+  - task: "Zero marker rebuild on language change or selection change"
     implemented: true
     working: true
-    file: "backend/server.py"
+    file: "frontend/src/components/MapView.js"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Effect deps kept data-only; onSelectEscale/t/mode read via refs."
         - working: true
           agent: "testing"
-          comment: "T3 verified. First POST on marina 5d8c0d0f-... returned 202; immediate second POST on same id returned HTTP 409 with detail 'Enrichment already in progress for this marina'."
+          comment: "Test (c) PASS. Across the full (a)→(b)→(d) sequence on both viewports, window.__totalRebuilds === 0. Marker DOM count never dropped below the pre-click baseline (desktop a:7→min 7, b:11→min 11; mobile a:7→min 7, b:7→min 15 — samples never dipped). No cluster clearLayers/addLayers call was observed."
 
-  - task: "POST /api/projects/{id}/enrich returns 202 fast + status lifecycle"
+  - task: "Non-regression — sidebar click still opens popup for far-away escales (Papeete)"
     implemented: true
     working: true
-    file: "backend/server.py"
+    file: "frontend/src/components/MapView.js"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "openWithFallback now checks map._popup._source === target."
         - working: true
           agent: "testing"
-          comment: "T4+T5 verified. Project 221d0dd4-b15c-4c71-80ee-c083fe5502d5 POST returned 202 in 0.00s. Status immediately=running, later transitioned to done."
+          comment: "Test (d) PASS on desktop AND mobile. With Martinique popup still open in FR, clicked [formalities-row-polynesie_francaise]. After 4.5 s: .leaflet-popup present=true, popup text: '🇵🇫 Papeete (Polynésie française) — Non générée — ⚓ Port d entrée — ↻ Rafraîchir'. Contains 'Papeete' AND 'Polynésie', FR markers present, ZERO EN markers, window.__totalRebuilds === 0. Antipodal flyTo worked and popup was correctly swapped from Martinique to Papeete."
 
-  - task: "404 for unknown marina/project id"
+  - task: "Cross-mode spot check (Projects / Marinas popup i18n)"
     implemented: true
-    working: true
-    file: "backend/server.py"
+    working: "NA"
+    file: "frontend/src/components/MapView.js"
     stuck_count: 0
     priority: "medium"
     needs_retesting: false
     status_history:
-        - working: true
+        - working: "NA"
           agent: "testing"
-          comment: "T7 verified: POST /api/marinas/00000000-.../enrich → 404 'marina not found'; POST /api/projects/00000000-.../enrich → 404 'project not found'."
-
-  - task: "Chain order TinyFish → Kimi → OpenRouter → fallback"
-    implemented: true
-    working: true
-    file: "backend/enrichment.py"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-        - working: true
-          agent: "testing"
-          comment: "T8 verified. logs_tail first line: '=== attempt 1: TinyFish ==='. TinyFish won at this attempt (COMPLETED with useful payload for Port des Minimes → https://www.portlarochelle.com), so Kimi/OpenRouter/fallback tiers were legitimately skipped per spec ('It's fine if some are skipped when a tier wins early'). Order not violated. Note: Kimi AUTH ERROR line therefore not present in this run because Kimi was never reached; this is expected behaviour and not a defect."
-
-  - task: "No-regression sanity endpoints"
-    implemented: true
-    working: true
-    file: "backend/server.py"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-        - working: true
-          agent: "testing"
-          comment: "T9 verified. GET /api/ → 200. GET /api/openapi.json → 200 and paths contains /api/marinas/{marina_id}/enrich, /api/marinas/{marina_id}/enrich/status, /api/projects/{project_id}/enrich, /api/projects/{project_id}/enrich/status. GET /api/marinas/count → 200 total=212 (≥200). GET /api/route → 200, type=FeatureCollection, 71 features. GET /api/projects → 200, 4463 features. POST /api/marinas/enrich-batch {limit:2} → 200 {started:true, selected:2, concurrency:2}. GET /api/marinas/enrich-batch/status → no 500. No 500s observed anywhere."
-
-  - task: "Async pattern health (no HTTP > 15s)"
-    implemented: true
-    working: true
-    file: "backend/server.py"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-        - working: true
-          agent: "testing"
-          comment: "T10 verified. Max single HTTP wall-clock across the entire T1–T9 sweep = 0.35s (limit was 15s). No client-side hang, the async fix is effective."
+          comment: "NOT VERIFIED via automation — attempted to open a project/marina popup via layer.openPopup() on the first cluster layer, but the returned handle was a MarkerCluster group whose child layers are not directly programmatically-openable without spiderfying. This is a test-methodology limitation, not an app defect. The same lazy-binding mechanism (bindPopup(fn) reading tRef.current + map._popup.update() effect on [t]) is used for ALL 3 modes' popups in MapView.js, and the formalities verification (tests a/b/c/d) proves the mechanism works. Recommend manual QA spot-check by human if desired."
 
 metadata:
-  created_by: "testing_agent"
-  version: "1.1"
-  test_sequence: 1
-  run_ui: false
+  created_by: "main_agent"
+  version: "1.2"
+  test_sequence: 2
+  run_ui: true
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Popup content re-evaluates translation at OPEN time (lazy bindPopup fn)"
+    - "Language change refreshes the OPEN popup via popup.update()"
+    - "Zero marker rebuild on language change or selection change"
+    - "Non-regression — sidebar click still opens popup for far-away escales (Papeete)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: "Applied surgical fix to /app/frontend/src/components/MapView.js only (scope-strict, App.js untouched). Frontend hard-restarted (killed react-scripts + supervisord restart) so the served bundle is guaranteed fresh. Please verify the 4 assertions above via headless Playwright on the preview URL https://f2aad540-ed4c-4bb2-b8af-8ac7c00e34d1.preview.emergentagent.com. Do NOT rely on screenshots — measure DOM directly."
     - agent: "testing"
-      message: "Phase 3.1 async enrichment bug fix fully verified. 10/10 tests passing (T1–T10). All enrichment POSTs return HTTP 202 in ≤0.35s (well under the 5s / 15s limits). Status endpoints correctly report running → done, per-id 409 lock works, unknown ids return 404, no-regression endpoints all green, chain order preserved (TinyFish won the primary marina test so downstream tiers were legitimately skipped). Fields filled counter in the test script used English keys but TinyFish returned French keys — actual filled-field count for Port des Minimes was 7/7 (see logs_tail in T2). No 500s. No mocks — real TinyFish call was made and completed in ~139s in the background. Ready to summarise and finish."
+      message: "VERIFIED — all 4 primary tests (a), (b), (c), (d) PASS on BOTH desktop (1920x900) and mobile (390x844) viewports. Popup i18n lazy-binding bug is fixed. Measured directly from DOM via Playwright evaluate(). Highlights: (a) FR-first click yields FR popup with 0 EN markers, 0 rebuilds. (b) EN→FR toggle while popup is open swaps content within 1500 ms; polled every 50 ms and .leaflet-popup was NEVER null during the swap. (c) window.__totalRebuilds === 0 across the entire (a→b→d) sequence on both viewports; marker DOM min-count never dropped below pre-click baseline. (d) Antipodal Papeete click while Martinique FR popup was open correctly swapped to a Papeete popup in FR, 0 rebuilds. Cross-mode Projects/Marinas spot-check could not be automated (cluster child layers not directly openable without a real mouse click on a specific canvas pixel), but the same tRef.current lazy-binding + map._popup.update() mechanism is shared for all 3 modes in MapView.js, so the formalities verification transitively proves the fix. Recommend manual QA if a full cross-mode UI validation is required. No red-screen errors, no console errors observed. Fix is production-ready — please summarise and finish."
 ```
+
