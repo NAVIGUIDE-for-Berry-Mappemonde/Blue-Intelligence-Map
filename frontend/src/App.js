@@ -106,8 +106,52 @@ export default function App() {
     window.__biDonate = (id) => {
       setDonateTarget({ id, title: null });
     };
-    return () => { delete window.__biDonate; };
-  }, []);
+    // Phase 3 — global enrichment hooks used from inside Leaflet popup HTML
+    window.__biEnrichMarina = async (marinaId) => {
+      // Optimistic UI: mark the marina as enriching in state
+      try {
+        const btn = document.querySelector(`[data-testid="popup-enrich-btn"]`);
+        if (btn) { btn.disabled = true; btn.textContent = "◆ " + (lang === "fr" ? "Enrichissement…" : "Enriching…"); }
+        const res = await api.post(`/marinas/${marinaId}/enrich`);
+        if (res.data?.ok) {
+          // Refetch marinas — new data will re-render the popup on next open
+          await fetchMarinas();
+          // Re-open the popup with fresh data
+          setFlyToMarina({ id: marinaId, lat: res.data.marina.lat, lon: res.data.marina.lon, ts: Date.now() });
+        } else if (btn) {
+          btn.textContent = "◆ " + (lang === "fr" ? "Échec" : "Failed");
+          btn.style.color = "#fbbf24";
+        }
+      } catch (e) {
+        console.warn("marina enrich failed", e);
+      }
+    };
+    window.__biEnrichProject = async (projectId) => {
+      try {
+        const btn = document.querySelector(`[data-testid="popup-project-enrich-btn"]`);
+        if (btn) { btn.disabled = true; btn.textContent = "↻ " + (lang === "fr" ? "Rafraîchissement…" : "Refreshing…"); }
+        const res = await api.post(`/projects/${projectId}/enrich`);
+        if (res.data?.ok) {
+          await fetchProjects(true);
+          if (btn) {
+            btn.textContent = "✓ " + (lang === "fr" ? "Rafraîchi" : "Refreshed");
+            btn.style.color = "#39ff14";
+          }
+        } else if (btn) {
+          btn.textContent = "↻ " + (lang === "fr" ? "Échec" : "Failed");
+          btn.style.color = "#fbbf24";
+          btn.title = res.data?.error || "";
+        }
+      } catch (e) {
+        console.warn("project enrich failed", e);
+      }
+    };
+    return () => {
+      delete window.__biDonate;
+      delete window.__biEnrichMarina;
+      delete window.__biEnrichProject;
+    };
+  }, [fetchMarinas, fetchProjects, lang]);
 
   useEffect(() => {
     if (donateTarget && !donateTarget.title) {

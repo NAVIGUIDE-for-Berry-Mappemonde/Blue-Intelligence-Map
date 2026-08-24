@@ -113,3 +113,63 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - **Non fait cette phase** (backlog Phase 3) : enrichissement TinyFish/OpenRouter des marinas ; refresh planifié de la collection ; UI d'édition/CRUD des marinas ; drawing on map ; scan sur zone géographique arbitraire (hors route).
 - **Polish parasite corrigé** : le bouton "Report missing project" existait mais son `<ReportModal>` n'était jamais rendu — corrigé.
 
+
+## Update 2026-08 — Phase 3 : Enrichment (TinyFish + OpenRouter + fallback) + fixes SHOM/Overpass
+### Fix parasite #1 — SHOM WFS était le mauvais endpoint, PAS un problème d'auth
+- Le 401 précédent venait de typenames inventés (`SMCFAC_TS_PORT_HARBOUR_BDD_WFS`, `smcfac:smcfac_point`, `MOUILLAGE_FR_WFS`…). Le service `https://services.data.shom.fr/INSPIRE/wfs` est bien **public, Licence Ouverte Etalab, sans auth**.
+- GetCapabilities réel → 181 FeatureTypes. Bons typenames identifiés : `INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point` (S-57 Small Craft Facilities — 291 features Métropole) + `hrbfac_point` (Harbour Facilities — 636 Métropole).
+- 2 gotchas techniques : (a) bbox exige **LON-FIRST** (`west,south,east,north`) malgré la convention WFS 2.0, et (b) données renvoyées en **EPSG:3857 Web Mercator** malgré `srsName=EPSG:4326` → conversion Merc→WGS84 côté client (formule inverse standard, sans dépendance).
+- Table de correspondance S-57 `catscf` → labels français ajoutée (Marina, Ponton, Yacht club, Atelier, Bureau des douanes, Grue, etc.), exposée en tag `shom:category`.
+- Requêtes multi-régions : Métropole+Corsica, Antilles+Saint-Pierre, Guyane, Polynésie, Réunion+Mayotte+TAAF.
+
+### Fix parasite #2 — Overpass : UA compliant + /api/status pre-flight
+- User-Agent conforme à l'OSM API Usage Policy : `BerryMappemonde-BlueIntelligence/1.0 (+https://berrymappemonde.org; contact: clementfilisetti@berrymappemonde.org)`.
+- Nouveau pre-flight `GET /api/status` (parsage slots disponibles + waits), `overpass_await_slot()` respecte les cool-downs annoncés, back-off Retry-After sur 429.
+- Concurrency=1 (strictement séquentiel), throttle 3s entre requêtes, timeout `[out:json][timeout:60]` dans chaque QL.
+- Endpoints testés depuis l'IP de ce container avec l'UA compliant :
+  - `overpass-api.de` → **TCP CONN REFUSED** sur les 2 IPs Hetzner (blocage réseau — DNS OK, TCP KO)
+  - `overpass.kumi.systems` → connect OK mais `/api/interpreter` → 502 permanent (upstream daemon inaccessible depuis notre AS)
+  - **`overpass.openstreetmap.fr` → HTTP 200, marche impeccablement**. Adopté comme endpoint primaire.
+
+### Build marinas ré-exécuté (résultats réels) — build fondamental utilisé par Phase 3
+- 36 waypoints × per-point `around:` r=10 NM, 133 s au total, 0 error, 232 raw features, 20 duplicates fusionnés → **212 marinas insérées**.
+- **Répartition finale** : OSM **124**, SHOM **69**, Curated **19**. Par priorité : P1 **192**, P2 **17**, P3 **3**.
+- Exemples OSM par escale : La Rochelle 15 (Port des Minimes, Port du Plomb, Bassins des Chalutiers/Marillac/Lazaret, Havre d'échouage…), Ajaccio 13, Fort-de-France 8, Pointe-à-Pitre 18, Marigot **26**, Papeete 6, Nouméa 9, Mata-Utu 1, détroit de Torres 1, Seychelles 2, Dzaoudzi 1, Saint-Gilles 6, Halifax (intermédiaire) 16, Saint-Pierre 1. Guyane (Cayenne) 3.
+- SHOM totaux (post-filtre 10 NM) : Métropole 25, Antilles+SPM 27, Guyane 2, Polynésie 6, Réunion+Mayotte+TAAF 11 = 71.
+
+### Phase 3 backend — enrichment chain per R-001
+- Nouveau module `/app/backend/enrichment.py` (~330 lignes) implémentant la chaîne **TinyFish → OpenRouter → OSM-tags fallback** avec `MARINA_ENRICH_SCHEMA` (7 champs : `canal_vhf`, `places_visiteurs`, `tirant_eau_max_metres`, `score_protection_meteo` (1-5), `services_disponibles` (list), `telephone_capitainerie`, `resume_avis`) + normaliser strict qui traite les `""` / `0` / `0.0` comme null (schéma TinyFish n'accepte pas les union types ni les descriptions sur les propriétés — les vides deviennent nulls dans notre code).
+- **TinyFish** : approche `run-async + poll every 4s (budget 210s)`. URL hint = tag `website` OSM prioritairement, sinon recherche DuckDuckGo HTML (`https://html.duckduckgo.com/html/`, sans clé). Détection COMPLETED/FAILED via polling.
+- **OpenRouter** : credit-guard avant tout appel (`GET /v1/key`, respecte `openrouter_min_credits_usd` setting, défaut 0.5 USD ; si `limit=null` → key illimitée, on passe). Modèle `openai/gpt-4o-mini`, `response_format=json_object`, temperature=0. Contexte : URL DDG-picked → readability → titre + texte (max 6000 chars) + tags OSM + prompt strict "return null if not present, never fabricate". Coût ~$0.00013 par marina.
+- **Fallback OSM tags** : traduit `shower`→`douches`, `drinking_water`→`eau`, `electricity`→`électricité`, `fuel`→`carburant`, etc. Extrait `vhf_channel`, `capacity`, `max_depth`, `phone`. `score_protection_meteo` et `resume_avis` toujours null (jamais inféré du néant). `enriched: false` si aucun champ tiré des tags.
+- **Nouveaux endpoints** : `POST /api/marinas/{id}/enrich` (on-demand, verrou per-id, retourne le doc mis à jour + logs), `POST /api/marinas/enrich-batch` (params `limit`, `priority`, `include_enriched`, `stale_only`, background task, concurrency depuis setting), `GET /api/marinas/enrich-batch/status` (progress, results per-marina, logs_tail), `POST /api/projects/{id}/enrich` (rejoue le pipeline extraction complet — httpx + readability + Gatekeeper + Gemini/emergentintegrations — met à jour title/description/location/category/category_group/image/s_ocean).
+- Nouveaux settings : `marina_batch_concurrency` (défaut 2), `openrouter_min_credits_usd` (défaut 0.5), `enrich_stale_days` (défaut 365). Champ `stale` calculable via `is_stale()`.
+- `marinas_to_geojson()` étendu — les 7 champs d'enrichissement + `enrichment_source` + `enriched_at` + `stale` exposés dans les properties.
+
+### Preuves d'enrichissement réel — verbatim (2026-08-24) 
+- **Port des Minimes (La Rochelle)** → **source: tinyfish**, 5/7 champs remplis : canal_vhf='9' · places_visiteurs=400 · score_protection_meteo=1 · services=['eau','électricité','carburant','douches','wifi','capitainerie','grue'] · telephone_capitainerie='00 33 (0)5 46 44 41 20 (Choix 3)' · tirant_eau_max_metres=null · resume_avis=null. Temps ~70 s.
+- **Rodney Bay Marina (Sainte-Lucie)** → **source: tinyfish**, **7/7 champs remplis** : canal_vhf='16' · places_visiteurs=253 · tirant_eau_max_metres=3.9 · score_protection_meteo=4 (★★★★☆) · services=['carburant','douches','wifi','provisionnement','grue (chantier naval)','restaurant','capitainerie'] · telephone_capitainerie='+1 758-458-7200' · resume_avis="Tout le personnel de la réception est formidable, tout comme celui du quai. Nous avons tout apprécié lors de nos différents séjours à la marina." Temps ~110 s.
+- **Marina Bas-du-Fort (Guadeloupe)** → **source: tinyfish**, **7/7 champs remplis** : canal_vhf='9' · places_visiteurs=1260 · tirant_eau_max_metres=4.5 · score_protection_meteo=5 (★★★★★) · services=['eau','électricité','carburant','douches','wifi','capitainerie','grue','carénage','restaurant'] · telephone_capitainerie='0590 936 620' · resume_avis="La Marina de Bas-du-Fort est la plus ancienne et la plus importante marina de Guadeloupe, construite en 1977 pour la Route du Rhum. Située dans le Petit Cul-de-Sac Marin, elle offre un emplacement idéal…"
+- **Marina Rubicon (Lanzarote)** → tentative TinyFish timeout après 210s → **fallback OpenRouter** (credit-guard PASS, limit=null, usage cumulé $0.0011), 2/7 champs : canal_vhf='9' · places_visiteurs=500 · reste null. Coût $0.00013. Honnête : Readability n'a récupéré que ~500 chars sur cette page JS lourde, le modèle n'a rempli que ce qu'il pouvait justifier.
+- **Batch de 5** (concurrency=2, 217s au total) : 5 entrées OSM anonymes (Anse à Rodrigue, Any Way Marine, Aquamania, Aspretto, Atelier SHOM @ ...) sans tag `website` → TinyFish DDG-picked URLs mais pages non exploitables → tous **source: fallback**, 0 champ rempli, **`enriched: false`**. **Pas d'invention** — la chaîne a correctement échoué et signalé le fallback.
+- **Projet réel enrichi** — Oceana Marine Conservation (Packard grantee) → titre corrigé de "Oceana Marine Conservation - Mexico and Chile" à "Oceana Grants" (vrai titre de la page), description remplacée par un vrai résumé, `engine=Gemini Extractor` (via EMERGENT_LLM_KEY), 15s.
+
+### Phase 3 frontend
+- **Popup marina** enrichi : bloc "◆ ENRICHED via tinyfish/openrouter/fallback" affichant les 7 champs quand non-null (étoiles pour la météo, chips pour les services), tag "stale" si applicable, **bouton "◆ Enrich"** qui appelle `POST /api/marinas/{id}/enrich` avec spinner + re-fetch + réouverture popup automatique.
+- **Popup projet** : **bouton "↻ Rafraîchir / Ré-extraire"** appelant `POST /api/projects/{id}/enrich`, à côté du bouton Donate existant. Feedback in-place (✓ Rafraîchi / échec).
+- **MarinasPanel** section "Enrich Next Batch" : sélecteur count (5/10/25) + bouton "Enrich all (by priority)". Pendant l'exécution : progress `n/total` + spinner + liste live des 8 derniers résultats avec ✓/✗/· + source + `fields_filled/7`.
+- Badge ◆ rouge sur les lignes de marinas déjà enrichies.
+- Hooks globaux `window.__biEnrichMarina(id)` et `window.__biEnrichProject(id)` (mêmes patterns que `__biDonate` existant).
+- i18n EN/FR complet (~25 nouveaux libellés : `enrichAction`, `enrichSourceTinyfish/OpenRouter/Fallback`, `enrichVHF`, `enrichBerths`, `enrichDraft`, `enrichWeather`, `enrichServices`, `enrichPhone`, `enrichReview`, `enrichBatchTitle`, `enrichBatchStart`, `enrichBatchRunning`, `enrichStale`, `enrichNever`, `projectEnrich`, `projectEnriching`, `projectEnrichDone`, `projectEnrichFailed`, etc.).
+
+### Vérifié end-to-end (2026-08-24)
+- Frontend en mode Marinas → 212 marinas listées, 3 avec badge ◆ (les 3 tests TinyFish réussis), Popup Rodney Bay affiche tous les 7 champs enrichis + étoiles + services chips + review verbatim + bouton Enrich rouge.
+- Section batch visible avec sélecteur 5/10/25 + bouton "Enrich all (by priority)".
+- Aucune régression Phase 1 ni Phase 2 : switch mode, route + escale labels, MPA toggle, EN/FR, clusters projets, categories, donations, import/export intacts.
+
+### Non fait cette phase (backlog Phase 4+)
+- Cron scheduler pour rafraîchissement automatique (report produit).
+- UI de Settings pour ajuster `marina_batch_concurrency`, `openrouter_min_credits_usd`, `enrich_stale_days` (les paramètres existent en base mais l'écran Settings ne les expose pas encore).
+- CRUD manuel des marinas + drawing on map.
+- Backup Overpass via extraits Geofabrik PBF (documenté comme alternative future — hors scope tant que openstreetmap.fr suffit).
+

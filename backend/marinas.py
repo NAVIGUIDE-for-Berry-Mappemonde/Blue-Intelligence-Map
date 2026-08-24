@@ -40,19 +40,70 @@ METERS_PER_NM = 1852.0
 FRANCE_METRO_BBOX = (41.0, -6.0, 52.0, 10.0)  # (south, west, north, east)
 
 # Public Overpass endpoints — round-robin on failure.
-# NB: overpass-api.de and .ru are often blocked from cloud/CI IPs; kumi.systems is the most
-# reliable public mirror. We keep it first, then fall back.
+# NB verified 2026-08-24 from this container's egress IP:
+#   * overpass-api.de   → TCP CONN REFUSED at network layer (both /24s of Hetzner IPs blocked)
+#   * overpass.kumi.systems → TCP connects but /api/interpreter returns 502 for all queries
+#   * overpass.openstreetmap.fr → WORKS. Used as primary.
 OVERPASS_ENDPOINTS = [
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
 ]
+OVERPASS_STATUS_URL = "https://overpass-api.de/api/status"
 
 SHOM_WFS = "https://services.data.shom.fr/INSPIRE/wfs"
 
+# SHOM public INSPIRE WFS — verified 2026-08. Free (Licence Ouverte Etalab), no auth.
+# Data is stored in EPSG:3857 (Web Mercator meters); bbox must be given as
+# `west,south,east,north,EPSG:4326` (LON-FIRST despite the WFS 2.0 axis-order convention).
+# The `INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point` layer is the S-57 "Small Craft Facilities"
+# — marinas, yacht clubs, pontoons, workshops. Available for métropole + Antilles + Polynésie
+# + Réunion/Mayotte. Guyane not covered.
+SHOM_TYPENAMES = [
+    "INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point",
+    "INFORMATIONS_PORTUAIRES_BDD_WFS:hrbfac_point",
+]
+
+# S-57 "catscf" (category of small craft facility) → French label used as fallback name/tag.
+SHOM_CATSCF_LABELS = {
+    "1": "Ponton",
+    "2": "Yacht club",
+    "3": "Marina",
+    "4": "Bassin de plaisance",
+    "5": "Port",
+    "6": "Capitainerie",
+    "7": "Ship chandler",
+    "8": "Station carburant",
+    "9": "Service de mise à l'eau",
+    "10": "Déchets",
+    "11": "Grue",
+    "12": "Mécanicien",
+    "13": "Atelier",
+    "14": "Sanitaires",
+    "16": "Slip",
+    "17": "Hangar",
+    "18": "Zone d'hivernage",
+    "20": "Cales",
+    "22": "Café / Bar",
+    "23": "Bureau des douanes",
+    "24": "Restaurant",
+    "25": "Hôtel",
+    "26": "Épicerie",
+    "27": "Bureau de tourisme",
+    "28": "Poste de secours",
+    "29": "Base nautique",
+    "30": "Point d'eau",
+}
+
+
 CURATED_SEED_FILE = Path(__file__).parent / "data" / "curated_marinas.json"
 
-USER_AGENT = "BlueIntelligenceMap/2.0 (contact: berry-mappemonde)"
+# Compliant User-Agent per https://wiki.openstreetmap.org/wiki/API_usage_policy
+# — identify the app + a contact so mirror operators can reach us if needed.
+USER_AGENT = (
+    "BerryMappemonde-BlueIntelligence/1.0 "
+    "(+https://berrymappemonde.org; contact: clementfilisetti@berrymappemonde.org)"
+)
 
 # Tags we keep on the marina document (raw useful OSM tags)
 KEPT_TAGS = (
@@ -282,45 +333,135 @@ def cluster_points_to_bboxes(
     return out
 
 
+async def overpass_status(client: httpx.AsyncClient, logger=None) -> dict:
+    """
+    Fetch overpass-api.de's /api/status. The response is plain text like:
+        Connected as: 1234567
+        Current time: 2026-08-24T07:11:22Z
+        Rate limit: 2
+        3 slots available now.
+        Currently running queries (pid, space limit, time limit, start time):
+    We parse it into {slots_available, waits: [seconds], running: int}.
+    """
+    out = {"slots_available": None, "waits": [], "running": 0, "raw": ""}
+    try:
+        r = await client.get(
+            OVERPASS_STATUS_URL,
+            headers={"User-Agent": USER_AGENT},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            if logger:
+                logger(f"[overpass-status] HTTP {r.status_code}")
+            return out
+        out["raw"] = r.text
+        for line in r.text.splitlines():
+            line = line.strip()
+            m1 = re.match(r"(\d+)\s+slots?\s+available\s+now", line)
+            if m1:
+                out["slots_available"] = int(m1.group(1))
+                continue
+            m2 = re.match(r"Slot available after:.*in\s+(\d+)\s+seconds", line)
+            if m2:
+                out["waits"].append(int(m2.group(1)))
+                continue
+            m3 = re.match(r"Currently running queries \((\d+)", line)
+            if m3:
+                out["running"] = int(m3.group(1))
+        if logger:
+            summary = f"slots={out['slots_available']} waits={out['waits']} running={out['running']}"
+            logger(f"[overpass-status] {summary}")
+    except Exception as e:
+        if logger:
+            logger(f"[overpass-status] error: {type(e).__name__}: {str(e)[:80]}")
+    return out
+
+
+async def overpass_await_slot(client: httpx.AsyncClient, logger=None, cap_s: int = 60) -> bool:
+    """
+    Consult /api/status; if no slot available, sleep up to `cap_s` seconds
+    waiting for one, respecting the reported wait times.
+    Returns True if a slot is likely free, False if we gave up.
+    """
+    st = await overpass_status(client, logger=logger)
+    if st["slots_available"] and st["slots_available"] > 0:
+        return True
+    # No status info or 0 slots — wait a bit, respecting reported wait.
+    wait = min(cap_s, (min(st["waits"]) if st["waits"] else 5))
+    if logger:
+        logger(f"[overpass-status] no slot; sleeping {wait}s")
+    await asyncio.sleep(max(1, wait))
+    st = await overpass_status(client, logger=logger)
+    return bool(st["slots_available"] and st["slots_available"] > 0)
+
+
 async def overpass_fetch(
     lat: float,
     lon: float,
     radius_m: int,
     client: httpx.AsyncClient,
-    max_retries: int = 2,
+    max_retries: int = 3,
     logger=None,
 ) -> list[dict]:
     """
-    POST an Overpass QL query, rotating through endpoints on failure, with
-    exponential backoff on 429/504/timeout. Returns the raw `elements` list.
-    Aggressive short timeouts so a blocked endpoint doesn't stall the whole build.
+    Compliant `around:` query, one small radius at a time, sequential.
+    Steps per attempt:
+      1. GET /api/status → wait for a free slot (or up to 60s).
+      2. POST /api/interpreter with the tiny query and long UA.
+      3. On 429/504: honour the returned Retry-After / cool-down before retrying.
+      4. On 500/502: rotate to the next mirror.
     """
     body = _overpass_query_body(lat, lon, radius_m)
     last_err: Exception | None = None
     for attempt in range(max_retries):
         endpoint = OVERPASS_ENDPOINTS[attempt % len(OVERPASS_ENDPOINTS)]
         try:
+            # Preflight slot check — only meaningful for the canonical .de endpoint,
+            # but harmless to skip for mirrors.
+            if endpoint.startswith("https://overpass-api.de"):
+                ok = await overpass_await_slot(client, logger=logger)
+                if not ok and logger:
+                    logger("[overpass] proceeding despite no reported slot")
             r = await client.post(
                 endpoint,
                 data={"data": body},
-                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-                timeout=httpx.Timeout(connect=8.0, read=45.0, write=15.0, pool=8.0),
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                timeout=httpx.Timeout(connect=10.0, read=90.0, write=15.0, pool=8.0),
             )
             if r.status_code == 200:
                 data = r.json()
                 return data.get("elements") or []
-            if r.status_code in (429, 502, 503, 504):
-                sleep_s = 2 * (2 ** attempt)
+            if r.status_code == 429:
+                retry_after = r.headers.get("Retry-After")
+                sleep_s = int(retry_after) if retry_after and retry_after.isdigit() else 30
                 if logger:
-                    logger(f"Overpass {r.status_code} on {endpoint}, backoff {sleep_s}s")
+                    logger(f"[overpass] 429 on {endpoint}, Retry-After={sleep_s}s")
                 await asyncio.sleep(sleep_s)
+                continue
+            if r.status_code in (502, 503, 504):
+                sleep_s = 5 * (attempt + 1)
+                if logger:
+                    logger(f"[overpass] {r.status_code} on {endpoint}, backoff {sleep_s}s")
+                await asyncio.sleep(sleep_s)
+                continue
+            if r.status_code == 500:
+                # 500 with generic-UA is often an auto-ban; with the compliant UA it means the
+                # server actually rejected the query. Log and give up on this endpoint.
+                if logger:
+                    logger(f"[overpass] 500 on {endpoint}: {r.text[:120]}")
+                last_err = RuntimeError(f"HTTP 500: {r.text[:120]}")
+                await asyncio.sleep(3)
                 continue
             last_err = RuntimeError(f"HTTP {r.status_code}: {r.text[:120]}")
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             last_err = e
             if logger and attempt == 0:
-                logger(f"Overpass {type(e).__name__} on {endpoint}: {str(e)[:60]}")
-            await asyncio.sleep(1)
+                logger(f"[overpass] {type(e).__name__} on {endpoint}: {str(e)[:60]}")
+            await asyncio.sleep(3)
     if last_err:
         raise last_err
     return []
@@ -369,29 +510,22 @@ def _overpass_elem_to_marina(elem: dict) -> dict | None:
 # SHOM WFS client (best-effort; failures are non-fatal)
 # ------------------------------------------------------------------------
 
-# SHOM public typenames (INSPIRE profile). SMCFAC = "Signalisation Maritime et Culturelle
-# et Facilités portuaires". We try several candidate layers — SHOM's public schema has
-# rotated over the years; if none respond we log and return [].
-SHOM_TYPENAMES = [
-    "SMCFAC_TS_PORT_HARBOUR_BDD_WFS",
-    "smcfac:smcfac_point",
-    "MOUILLAGE_FR_WFS",
-    "MOUILLAGE_ORGANISE_FR_WFS",
-]
-
-
 async def shom_fetch(
     bbox: tuple[float, float, float, float],
     client: httpx.AsyncClient,
     logger=None,
 ) -> list[dict]:
     """
-    Query SHOM WFS for port/harbour points inside `bbox`.
-    Returns list of dicts {name, lat, lon, source='shom', tags{}}.
-    Silently returns [] on any error — SHOM is best-effort.
+    Query SHOM WFS for small-craft-facility / harbour points inside `bbox`.
+    bbox is (south, west, north, east) in WGS84 — we convert to LON-FIRST
+    per SHOM's expected axis order.
+    Coordinates in the response are EPSG:3857 metres → converted to WGS84 here.
+    Returns list of {name, lat, lon, source='shom', osm_id=None, tags{}}.
     """
     s, w, n, e = bbox
-    bbox_str = f"{s},{w},{n},{e},EPSG:4326"
+    # SHOM expects west,south,east,north (LON-FIRST), not the WFS 2.0 default
+    bbox_str = f"{w:.6f},{s:.6f},{e:.6f},{n:.6f},EPSG:4326"
+    out: list[dict] = []
     for typename in SHOM_TYPENAMES:
         try:
             params = {
@@ -401,14 +535,13 @@ async def shom_fetch(
                 "typenames": typename,
                 "bbox": bbox_str,
                 "outputFormat": "application/json",
-                "srsName": "EPSG:4326",
-                "count": "500",
+                "count": "2000",
             }
             r = await client.get(
                 SHOM_WFS,
                 params=params,
                 headers={"User-Agent": USER_AGENT},
-                timeout=45,
+                timeout=60,
             )
             if r.status_code != 200 or "json" not in r.headers.get("content-type", "").lower():
                 if logger:
@@ -416,41 +549,66 @@ async def shom_fetch(
                 continue
             fc = r.json()
             feats = fc.get("features") or []
-            if not feats:
-                continue
-            out = []
+            if logger:
+                logger(f"SHOM {typename}: {len(feats)} features returned "
+                       f"(totalFeatures={fc.get('totalFeatures')})")
             for f in feats:
                 geom = f.get("geometry") or {}
                 props = f.get("properties") or {}
-                if geom.get("type") == "Point":
-                    lon, lat = geom["coordinates"][:2]
-                elif geom.get("type") == "MultiPoint" and geom.get("coordinates"):
-                    lon, lat = geom["coordinates"][0][:2]
+                coords = geom.get("coordinates")
+                if geom.get("type") == "Point" and coords:
+                    x, y = coords[:2]
+                elif geom.get("type") == "MultiPoint" and coords:
+                    x, y = coords[0][:2]
                 else:
                     continue
+                # Response comes in EPSG:3857 Web Mercator despite srsName request
+                lat, lon = _merc_to_wgs84(float(x), float(y))
+                # Name resolution:
+                # 1. objnam (S-57 name) if present
+                # 2. inform / ninfom (informative text)
+                # 3. SHOM cst / toponyme (SPM_PORTS_WFS style)
+                # 4. Fallback: S-57 category label + rounded coordinates
+                catscf = str(props.get("catscf") or "").strip()
+                cat_label = SHOM_CATSCF_LABELS.get(catscf, f"cat {catscf}") if catscf else "SMCFAC"
                 name = (
-                    props.get("nom") or props.get("name") or props.get("libelle")
-                    or props.get("TOPONYME") or props.get("PORT_NAME")
-                    or f"SHOM @ {lat:.3f},{lon:.3f}"
+                    props.get("objnam")
+                    or props.get("nobjnm")
+                    or props.get("inform")
+                    or props.get("toponyme")
+                    or f"{cat_label} SHOM @ {lat:.4f},{lon:.4f}"
                 )
+                # Keep the raw + labelled tags for the UI
+                tags = {"shom:catscf": catscf, "shom:category": cat_label}
+                for k, v in props.items():
+                    if v is None or isinstance(v, (dict, list)):
+                        continue
+                    val = str(v).strip()
+                    if not val or val in ("null", "None"):
+                        continue
+                    tags[f"shom:{k}"] = val[:120]
                 out.append({
                     "name": str(name)[:120],
-                    "lat": float(lat),
-                    "lon": float(lon),
+                    "lat": lat,
+                    "lon": lon,
                     "source": "shom",
                     "osm_id": None,
-                    "tags": {f"shom:{k}": str(v)[:80] for k, v in props.items() if v and not isinstance(v, (dict, list))},
+                    "tags": tags,
                 })
-            if logger:
-                logger(f"SHOM {typename}: {len(out)} features returned")
-            return out
         except (httpx.HTTPError, httpx.TimeoutException, ValueError) as e:
             if logger:
-                logger(f"SHOM {typename}: {type(e).__name__}: {str(e)[:80]}")
+                logger(f"SHOM {typename}: {type(e).__name__}: {str(e)[:100]}")
             continue
-    if logger:
-        logger("SHOM: no typename returned data — continuing with OSM only")
-    return []
+    if logger and not out:
+        logger("SHOM: no candidates returned from any typename")
+    return out
+
+
+def _merc_to_wgs84(x: float, y: float) -> tuple[float, float]:
+    """Convert EPSG:3857 Web Mercator meters → WGS84 (lat, lon)."""
+    lon = x / 20037508.34 * 180.0
+    lat = math.atan(math.exp(y / 20037508.34 * math.pi)) * 360.0 / math.pi - 90.0
+    return lat, lon
 
 
 # ------------------------------------------------------------------------
@@ -650,58 +808,65 @@ async def build_marinas(
         state.log(f"Curated seed: loaded {len(curated)} known marinas")
 
         async with httpx.AsyncClient() as client:
-            # ---- OSM pass: sequential per-point around: queries.
-            # Bounded concurrency via a semaphore keeps us polite (max 2 in flight).
-            sem = asyncio.Semaphore(2)
+            # ---- OSM pass ----
+            # Overpass Acceptable-Use compliance:
+            #   * concurrency = 1 (strictly sequential)
+            #   * throttle 3s between requests
+            #   * per-request /api/status pre-flight (see overpass_await_slot)
+            #   * compliant UA with contact
             counter = {"done": 0}
 
-            async def _one(label: str, lat: float, lon: float, _kind: str):
-                async with sem:
-                    try:
-                        elements = await overpass_fetch(lat, lon, radius_m, client, logger=state.log)
-                        n_kept = 0
-                        for elem in elements:
-                            m = _overpass_elem_to_marina(elem)
-                            if m:
-                                candidates.append(m)
-                                n_kept += 1
-                        if n_kept:
-                            state.log(f"OSM {label} ({lat:.3f},{lon:.3f}): {n_kept} candidates")
-                    except Exception as e:
-                        nonlocal overpass_errors
-                        overpass_errors += 1
-                        state.log(f"OSM {label}: {type(e).__name__}: {str(e)[:60]}")
-                    counter["done"] += 1
-                    state.progress = counter["done"]
-                    # small stagger inside the semaphore
-                    await asyncio.sleep(0.3)
+            for label, lat, lon, _kind in query_targets:
+                try:
+                    elements = await overpass_fetch(lat, lon, radius_m, client, logger=state.log)
+                    n_kept = 0
+                    for elem in elements:
+                        m = _overpass_elem_to_marina(elem)
+                        if m:
+                            candidates.append(m)
+                            n_kept += 1
+                    if n_kept:
+                        state.log(f"OSM {label} ({lat:.3f},{lon:.3f}): {n_kept} candidates")
+                except Exception as e:
+                    overpass_errors += 1
+                    state.log(f"OSM {label}: {type(e).__name__}: {str(e)[:70]}")
+                counter["done"] += 1
+                state.progress = counter["done"]
+                await asyncio.sleep(3.0)  # AUP-compliant throttle
 
-            # Launch all — the semaphore keeps only 2 in flight.
-            await asyncio.gather(*(_one(*t) for t in query_targets))
-
-            # ---- SHOM pass (best-effort, metropolitan France only) ----
+            # ---- SHOM pass (French territory: métropole + DROM-COM) ----
+            # SHOM's INFORMATIONS_PORTUAIRES layer covers metropolitan France + Corsica +
+            # Antilles + Polynésie + Réunion / Mayotte. We query per-region so each bbox
+            # stays small enough for the server (single global bbox would return >10k features).
             shom_errors = 0
-            fr_wps = [w for w in wps if in_bbox(w.lat, w.lon, FRANCE_METRO_BBOX)]
-            if fr_wps:
-                lats = [w.lat for w in fr_wps]
-                lons = [w.lon for w in fr_wps]
-                pad = radius_nm / 60.0
-                bbox = (
-                    max(-90.0, min(lats) - pad),
-                    max(-180.0, min(lons) - pad),
-                    min(90.0, max(lats) + pad),
-                    min(180.0, max(lons) + pad),
-                )
-                state.log(f"SHOM WFS bbox {bbox} — {len(fr_wps)} France-metro waypoints in scope")
+            shom_regions = [
+                ("Métropole+Corsica", (-6.0, 41.0, 10.5, 52.0)),
+                ("Antilles+Saint-Pierre", (-63.5, 14.0, -55.0, 47.5)),
+                ("Guyane", (-54.5, 2.0, -51.0, 6.5)),
+                ("Polynésie", (-155.0, -25.0, -134.0, -7.0)),
+                ("Réunion+Mayotte+TAAF", (41.0, -25.0, 58.0, -10.0)),
+            ]
+            # Each bbox is (west, south, east, north) but shom_fetch() takes (south, west, north, east)
+            shom_total = 0
+            for label, (w, s, e, n) in shom_regions:
+                bbox = (s, w, n, e)
                 try:
                     shom_pts = await shom_fetch(bbox, client, logger=state.log)
+                    kept = 0
                     for sp in shom_pts:
-                        if any(haversine_nm(sp["lat"], sp["lon"], w.lat, w.lon) <= radius_nm for w in wps):
+                        if any(
+                            haversine_nm(sp["lat"], sp["lon"], wp.lat, wp.lon) <= radius_nm
+                            for wp in wps
+                        ):
                             candidates.append(sp)
-                    state.log(f"SHOM: {len(shom_pts)} raw → filtered by {radius_nm} NM radius from waypoints")
+                            kept += 1
+                    shom_total += kept
+                    state.log(f"SHOM {label}: {len(shom_pts)} raw → {kept} within {radius_nm} NM of a waypoint")
                 except Exception as e:
                     shom_errors += 1
-                    state.log(f"SHOM error: {type(e).__name__}: {str(e)[:80]}")
+                    state.log(f"SHOM {label} error: {type(e).__name__}: {str(e)[:80]}")
+                await asyncio.sleep(0.5)
+            state.log(f"SHOM total kept: {shom_total} candidates")
 
         # ---- Dedup + priority + upsert ----
         by_key: dict[str, dict] = {}
@@ -818,6 +983,17 @@ def marinas_to_geojson(docs: Iterable[dict]) -> dict:
                 "tags": d.get("tags") or {},
                 "osm_id": d.get("osm_id"),
                 "enriched": bool(d.get("enriched")),
+                "enrichment_source": d.get("enrichment_source"),
+                "enriched_at": d.get("enriched_at"),
+                "stale": bool(d.get("stale")),
+                # Phase 3 enrichment fields (null if unknown)
+                "canal_vhf": d.get("canal_vhf"),
+                "places_visiteurs": d.get("places_visiteurs"),
+                "tirant_eau_max_metres": d.get("tirant_eau_max_metres"),
+                "score_protection_meteo": d.get("score_protection_meteo"),
+                "services_disponibles": d.get("services_disponibles"),
+                "telephone_capitainerie": d.get("telephone_capitainerie"),
+                "resume_avis": d.get("resume_avis"),
                 "fetched_at": d.get("fetched_at"),
             },
         })

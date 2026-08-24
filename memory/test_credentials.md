@@ -16,12 +16,21 @@ Configured in `/app/backend/.env` and validated live on 2026-08-24:
 
 ## MongoDB
 - Local Mongo at `mongodb://localhost:27017`, DB name `blueintel_db`.
-- Collections (as of Phase 2, 2026-08-24):
-  - `projects`: 4463 documents (all with correct `category_group` after import bugfix). Distribution: Research 890, Conservation 765, Policy 490, Other 474, MPA 402, Pollution 391, Coastal 389, Fisheries 361, Education 301.
-  - `marinas`: 19 documents, all `source: "curated"` (Overpass + SHOM unreachable at build time — see PRD Update 2026-08 Phase 2 for full verdict). Split: 16 priority-1 (near escale), 0 priority-2, 3 priority-3 (TAAF remote mooring, Ilet la Mère). Indexes: unique on `dedup_key`, compound on `(priority, name)`.
-  - `settings`: `_id: "global"` with 21 tunables (including new `marina_search_radius_nm: 10.0`).
-- **Feature flags for the testing agent to know**:
-  - Global mode switch in header: `[data-testid="mode-toggle-projects"]` and `[data-testid="mode-toggle-marinas"]`. Persisted in `localStorage["bi.mode"]`.
-  - The `<html>` element carries `data-mode="projects|marinas"` — CSS var `--accent-rgb` reads `0 240 255` in Projects, `255 74 74` in Marinas.
-  - Marinas mode sidebar test-ids: `marinas-panel`, `marinas-search-input`, `marinas-filter-priority`, `marinas-filter-source`, `marinas-scan-btn`, `marinas-list`, `marina-row-<uuid>`.
-  - Map layer test-ids preserved: `map-container`, `mpa-toggle-btn`, `route-toggle-btn`.
+- Collections (as of Phase 3, 2026-08-24):
+  - `projects`: 4463 documents with correct `category_group`.
+  - `marinas`: **212 documents** — 124 OSM + 69 SHOM + 19 curated. Priority split: 192 P1, 17 P2, 3 P3. Enriched: 3 (Port des Minimes, Rodney Bay Marina, Marina Bas-du-Fort — all via TinyFish, 5-7 fields filled each). Indexes: unique `dedup_key`, compound `(priority, name)`.
+  - `settings`: `_id="global"` with 23 tunables (Phase 3 added `marina_batch_concurrency`, `openrouter_min_credits_usd`, `enrich_stale_days`).
+- **Feature flags for the testing agent**:
+  - Global mode switch header: `[data-testid="mode-toggle-projects"]`, `[data-testid="mode-toggle-marinas"]`. Persisted in `localStorage["bi.mode"]`.
+  - `<html data-mode="projects|marinas">` drives CSS var `--accent-rgb` (`0 240 255` vs `255 74 74`).
+  - Marinas sidebar (mode=marinas): `marinas-panel`, `marinas-search-input`, `marinas-filter-priority`, `marinas-filter-source`, `marinas-scan-btn`, `marinas-batch-btn`, `marinas-batch-count`, `marinas-list`, `marina-row-<uuid>`.
+  - Marina popup: `popup-enrich-btn` (red, calls `window.__biEnrichMarina('<id>')` → `POST /api/marinas/{id}/enrich`).
+  - Project popup: `popup-donate-btn`, `popup-project-enrich-btn` (calls `window.__biEnrichProject('<id>')` → `POST /api/projects/{id}/enrich`).
+  - Map layers: `map-container`, `mpa-toggle-btn`, `route-toggle-btn`.
+- **API endpoints added in Phase 3**:
+  - `POST /api/marinas/{id}/enrich` — on-demand, per-id lock, 409 if in progress.
+  - `POST /api/marinas/enrich-batch` — background task with `limit`, `priority`, `include_enriched`, `stale_only`.
+  - `GET /api/marinas/enrich-batch/status` — running/progress/results/logs.
+  - `POST /api/projects/{id}/enrich` — re-run extraction (Readability + Gemini) on the project URL.
+- **Overpass status**: `overpass-api.de` and `kumi.systems` are unreachable from this container (TCP refused / 502). **`overpass.openstreetmap.fr` is the working endpoint** — the marinas.py client uses it as primary. Do NOT expect `overpass-api.de` to answer.
+- **SHOM WFS**: `https://services.data.shom.fr/INSPIRE/wfs` is public, no auth, but requires **LON-first bbox** and returns coords in **EPSG:3857**. Typenames: `INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point` + `hrbfac_point`.

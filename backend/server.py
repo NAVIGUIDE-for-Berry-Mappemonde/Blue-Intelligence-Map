@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from ai import extract_project, gatekeeper_check
 from categories import CATEGORY_GROUPS, normalize_category
+from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from pipeline import Swarm, now_iso
@@ -51,6 +52,9 @@ DEFAULT_SETTINGS = {
     "saturation_limit": 50,
     "rescan_after_days": 7,
     "marina_search_radius_nm": 10.0,
+    "marina_batch_concurrency": 2,
+    "openrouter_min_credits_usd": 0.5,
+    "enrich_stale_days": 365,
 }
 
 
@@ -87,6 +91,9 @@ class SettingsBody(BaseModel):
     saturation_limit: int | None = None
     rescan_after_days: float | None = None
     marina_search_radius_nm: float | None = None
+    marina_batch_concurrency: int | None = None
+    openrouter_min_credits_usd: float | None = None
+    enrich_stale_days: int | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -498,7 +505,295 @@ async def marinas_count():
             "shom": await db.marinas.count_documents({"source": "shom"}),
             "curated": await db.marinas.count_documents({"source": "curated"}),
         },
+        "enriched": await db.marinas.count_documents({"enriched": True}),
     }
+
+
+# ---------- Marina enrichment (Phase 3) ----------
+# Per-id lock so the SAME marina can't be enriched concurrently.
+ENRICH_LOCKS: set[str] = set()
+
+
+class MarinaEnrichBatchBody(BaseModel):
+    limit: int = 10
+    priority: int | None = None
+    include_enriched: bool = False   # if True, re-enrich already-enriched ones
+    stale_only: bool = False   # if True, filter to stale-only (needs enriched_at)
+
+
+class EnrichBatchState:
+    """Progress state for the running batch."""
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.progress: int = 0
+        self.total: int = 0
+        self.results: list[dict] = []
+        self.logs: list[str] = []
+        self.error: str | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 400:
+            self.logs = self.logs[-400:]
+
+
+ENRICH_BATCH_STATE = EnrichBatchState()
+
+
+def _keys() -> tuple[str | None, str | None]:
+    return (
+        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
+        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
+    )
+
+
+async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn) -> dict:
+    """Run the enrichment chain and upsert the enriched fields on the marina doc."""
+    tf_key, or_key = _keys()
+    result = await enrich_marina(
+        marina,
+        tinyfish_key=tf_key,
+        openrouter_key=or_key,
+        min_credit_usd=min_credit_usd,
+        logger=log_fn,
+    )
+    update = {**result, "stale": False}
+    await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+    return result
+
+
+@router.post("/marinas/{marina_id}/enrich")
+async def marina_enrich_one(marina_id: str):
+    if marina_id in ENRICH_LOCKS:
+        raise HTTPException(409, "Enrichment already in progress for this marina")
+    marina = await db.marinas.find_one({"_id": marina_id})
+    if not marina:
+        raise HTTPException(404, "marina not found")
+    settings = await get_settings()
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+    ENRICH_LOCKS.add(marina_id)
+    logs: list[str] = []
+
+    def log_fn(msg: str):
+        logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+    try:
+        result = await _run_marina_enrich_one(marina, min_credit, log_fn)
+        # Return the updated document merged with the enrichment result
+        fresh = await db.marinas.find_one({"_id": marina_id})
+        return {
+            "ok": True,
+            "marina": {
+                **{k: fresh.get(k) for k in (
+                    "_id", "name", "lat", "lon", "source", "priority",
+                    "nearest_waypoint", "tags", "osm_id", "enriched",
+                    "enrichment_source", "enriched_at", "stale",
+                    *ENRICH_FIELDS,
+                )},
+            },
+            "logs": logs,
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "logs": logs}
+    finally:
+        ENRICH_LOCKS.discard(marina_id)
+
+
+@router.post("/marinas/enrich-batch")
+async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
+    if ENRICH_BATCH_STATE.running:
+        raise HTTPException(409, "A marinas enrichment batch is already running")
+    body = body or MarinaEnrichBatchBody()
+    settings = await get_settings()
+    concurrency = int(settings.get("marina_batch_concurrency") or 2)
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+    stale_days = int(settings.get("enrich_stale_days") or 365)
+
+    # Selection query
+    q: dict = {}
+    if body.priority is not None:
+        q["priority"] = int(body.priority)
+    if body.stale_only:
+        # cutoff timestamp
+        cutoff = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(time.time() - stale_days * 86400),
+        )
+        q["$or"] = [{"enriched_at": {"$lt": cutoff}}, {"enriched": {"$ne": True}}]
+    elif not body.include_enriched:
+        q["$or"] = [{"enriched": {"$ne": True}}, {"enriched": False}]
+
+    candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(int(body.limit) or 10)
+
+    ENRICH_BATCH_STATE.running = True
+    ENRICH_BATCH_STATE.started_at = time.time()
+    ENRICH_BATCH_STATE.finished_at = None
+    ENRICH_BATCH_STATE.progress = 0
+    ENRICH_BATCH_STATE.total = len(candidates)
+    ENRICH_BATCH_STATE.results = []
+    ENRICH_BATCH_STATE.logs = []
+    ENRICH_BATCH_STATE.error = None
+
+    async def _runner():
+        try:
+            ENRICH_BATCH_STATE.log(
+                f"Selected {len(candidates)} marinas (concurrency={concurrency}, "
+                f"limit={body.limit}, priority={body.priority}, min_credit=${min_credit})"
+            )
+            sem = asyncio.Semaphore(max(1, concurrency))
+            counter = {"i": 0}
+
+            async def _one(m):
+                async with sem:
+                    if m["_id"] in ENRICH_LOCKS:
+                        ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: already locked")
+                        return
+                    ENRICH_LOCKS.add(m["_id"])
+                    ENRICH_BATCH_STATE.log(f"→ {m['name']} (P{m.get('priority')})")
+                    per_logs: list[str] = []
+                    try:
+                        result = await _run_marina_enrich_one(
+                            m, min_credit,
+                            lambda s: (per_logs.append(s), ENRICH_BATCH_STATE.log(f"  {s}")),
+                        )
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"],
+                            "source": result.get("enrichment_source"),
+                            "enriched": result.get("enriched"),
+                            "fields_filled": [k for k in ENRICH_FIELDS if result.get(k) is not None],
+                        })
+                    except Exception as e:
+                        ENRICH_BATCH_STATE.log(f"  FAILED: {type(e).__name__}: {e}")
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"], "error": f"{type(e).__name__}: {e}",
+                        })
+                    finally:
+                        ENRICH_LOCKS.discard(m["_id"])
+                        counter["i"] += 1
+                        ENRICH_BATCH_STATE.progress = counter["i"]
+
+            await asyncio.gather(*(_one(m) for m in candidates))
+            by_src = {"tinyfish": 0, "openrouter": 0, "fallback": 0}
+            for r in ENRICH_BATCH_STATE.results:
+                s = r.get("source")
+                if s in by_src:
+                    by_src[s] += 1
+            ENRICH_BATCH_STATE.log(f"Done. Sources: {by_src}")
+        except Exception as e:
+            ENRICH_BATCH_STATE.error = f"{type(e).__name__}: {e}"
+            ENRICH_BATCH_STATE.log(f"FATAL {ENRICH_BATCH_STATE.error}")
+        finally:
+            ENRICH_BATCH_STATE.finished_at = time.time()
+            ENRICH_BATCH_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"started": True, "selected": len(candidates), "concurrency": concurrency}
+
+
+@router.get("/marinas/enrich-batch/status")
+async def marina_enrich_batch_status():
+    s = ENRICH_BATCH_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "results": s.results,
+        "logs_tail": s.logs[-60:],
+        "error": s.error,
+    }
+
+
+# ---------- On-demand project enrich (Phase 3) ----------
+@router.post("/projects/{project_id}/enrich")
+async def project_enrich_one(project_id: str):
+    """
+    Re-run the extraction chain on a single project's URL and update the doc in place.
+    Uses the same TinyFish → OpenRouter fallback that pipeline._process_url uses,
+    but scoped to this project only. Returns the updated project + logs.
+    """
+    proj = await db.projects.find_one({"_id": project_id})
+    if not proj:
+        raise HTTPException(404, "project not found")
+    url = proj.get("url")
+    if not url:
+        raise HTTPException(400, "project has no URL")
+    settings = await get_settings()
+    logs: list[str] = []
+
+    def log_fn(msg: str):
+        logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+    log_fn(f"Refreshing {url}")
+
+    # Import inside — pipeline dependencies are heavy
+    import httpx as _httpx
+    from bs4 import BeautifulSoup as _BS
+    from readability import Document as _Doc
+    from ai import extract_project as _extract, gatekeeper_check as _gk
+    from pipeline import UA as _UA, pick_image as _pick_image
+
+    try:
+        async with _httpx.AsyncClient(timeout=25, follow_redirects=True, headers=_UA) as c:
+            r = await c.get(url)
+            html = r.text
+        doc = _Doc(html)
+        page_title = (doc.short_title() or "").strip() or proj.get("title") or url
+        summary_html = doc.summary()
+        soup = _BS(summary_html, "html.parser")
+        import re as _re
+        text = _re.sub(r"\s+", " ", soup.get_text(" ")).strip()
+        full = _BS(html, "html.parser")
+        if len(text) < 200:
+            text = _re.sub(r"\s+", " ", full.get_text(" ")).strip()[:8000]
+        meta = full.find("meta", attrs={"name": "description"}) or full.find("meta", attrs={"property": "og:description"})
+        meta_desc = meta.get("content", "").strip() if meta else ""
+        image = _pick_image(full, soup, url)
+        log_fn(f"Fetched + Readability: {len(text)} chars")
+        gk = await _gk(page_title, text, settings)
+        if not gk["accepted"]:
+            log_fn(f"Gatekeeper REJECTED: {gk['reason'][:80]}")
+            return {"ok": False, "error": f"gatekeeper: {gk['reason']}", "logs": logs}
+        funder = proj.get("funder") or (proj.get("funders") or ["Unknown"])[0]
+        extracted = await _extract(page_title, text, meta_desc, url, funder, settings)
+        log_fn(f"Extraction engine={extracted.get('engine')}, title='{(extracted.get('title') or '')[:60]}'")
+
+        update: dict = {}
+        # Only overwrite when the new value looks meaningful and different
+        for field, key in [
+            ("title", "title"),
+            ("description", "description"),
+            ("location", "location"),
+            ("category", "category"),
+        ]:
+            new_v = extracted.get(key)
+            if new_v and str(new_v).strip() and str(new_v) != str(proj.get(field) or ""):
+                update[field] = str(new_v).strip()[:250 if field == "description" else 200]
+        if extracted.get("category"):
+            update["category_group"] = normalize_category(extracted["category"])
+        # New image only if we didn't have one OR the extracted one is different + valid
+        if image and (not proj.get("image") or image != proj.get("image")):
+            update["image"] = image
+        # S_ocean: overwrite if the new one is a valid float
+        try:
+            new_s = extracted.get("s_ocean")
+            if new_s is not None:
+                update["s_ocean"] = round(float(new_s), 3)
+        except (TypeError, ValueError):
+            pass
+        update["enriched"] = True
+        update["enriched_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        update["enrichment_source"] = extracted.get("engine", "unknown")
+        await db.projects.update_one({"_id": project_id}, {"$set": update})
+        log_fn(f"Updated fields: {list(update.keys())}")
+        fresh = await db.projects.find_one({"_id": project_id})
+        return {"ok": True, "project": project_to_feature(fresh), "updates": list(update.keys()), "logs": logs}
+    except Exception as e:
+        log_fn(f"FAILED: {type(e).__name__}: {str(e)[:200]}")
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "logs": logs}
 
 
 class ReportBody(BaseModel):
