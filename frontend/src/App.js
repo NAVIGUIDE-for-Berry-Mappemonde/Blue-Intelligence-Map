@@ -106,44 +106,110 @@ export default function App() {
     window.__biDonate = (id) => {
       setDonateTarget({ id, title: null });
     };
-    // Phase 3 — global enrichment hooks used from inside Leaflet popup HTML
+    // Phase 3.1 — async enrichment via 202 + poll status.
+    // Polls every 2.5s until state != "running" (max ~180s).
+    const pollUntilDone = async (endpoint, onDone, onErr, maxAttempts = 72) => {
+      for (let i = 0; i < maxAttempts; i++) {
+        // 2.5s between polls
+        await new Promise((res) => setTimeout(res, 2500));
+        try {
+          const st = await api.get(endpoint);
+          const s = st.data?.state;
+          if (s === "done") { onDone(st.data); return; }
+          if (s === "error") { onErr(st.data?.error || "enrichment failed"); return; }
+        } catch (e) { /* transient */ }
+      }
+      onErr("timeout after ~3min");
+    };
+
     window.__biEnrichMarina = async (marinaId) => {
-      // Optimistic UI: mark the marina as enriching in state
+      const btn = document.querySelector(`[data-testid="popup-enrich-btn"]`);
+      const setBtn = (label, color) => {
+        if (!btn) return;
+        btn.textContent = label;
+        if (color) btn.style.color = color;
+      };
       try {
-        const btn = document.querySelector(`[data-testid="popup-enrich-btn"]`);
-        if (btn) { btn.disabled = true; btn.textContent = "◆ " + (lang === "fr" ? "Enrichissement…" : "Enriching…"); }
-        const res = await api.post(`/marinas/${marinaId}/enrich`);
-        if (res.data?.ok) {
-          // Refetch marinas — new data will re-render the popup on next open
-          await fetchMarinas();
-          // Re-open the popup with fresh data
-          setFlyToMarina({ id: marinaId, lat: res.data.marina.lat, lon: res.data.marina.lon, ts: Date.now() });
-        } else if (btn) {
-          btn.textContent = "◆ " + (lang === "fr" ? "Échec" : "Failed");
-          btn.style.color = "#fbbf24";
+        if (btn) btn.disabled = true;
+        setBtn("◆ " + (lang === "fr" ? "Enrichissement…" : "Enriching…"));
+        // 202 kick-off (<5s)
+        const kick = await api.post(`/marinas/${marinaId}/enrich`);
+        if (kick.status !== 202 && kick.status !== 200) {
+          setBtn("◆ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+          return;
         }
+        // Poll
+        await pollUntilDone(
+          `/marinas/${marinaId}/enrich/status`,
+          async (data) => {
+            await fetchMarinas();
+            const m = data.result || {};
+            setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
+          },
+          (err) => {
+            setBtn("◆ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+            if (btn) btn.title = String(err).slice(0, 200);
+          },
+        );
       } catch (e) {
-        console.warn("marina enrich failed", e);
+        // 409 = already running — attach the poller anyway
+        if (e?.response?.status === 409) {
+          await pollUntilDone(
+            `/marinas/${marinaId}/enrich/status`,
+            async (data) => {
+              await fetchMarinas();
+              const m = data.result || {};
+              setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
+            },
+            (err) => setBtn("◆ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24"),
+          );
+        } else {
+          setBtn("◆ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+          console.warn("marina enrich failed", e);
+        }
       }
     };
+
     window.__biEnrichProject = async (projectId) => {
+      const btn = document.querySelector(`[data-testid="popup-project-enrich-btn"]`);
+      const setBtn = (label, color) => {
+        if (!btn) return;
+        btn.textContent = label;
+        if (color) btn.style.color = color;
+      };
       try {
-        const btn = document.querySelector(`[data-testid="popup-project-enrich-btn"]`);
-        if (btn) { btn.disabled = true; btn.textContent = "↻ " + (lang === "fr" ? "Rafraîchissement…" : "Refreshing…"); }
-        const res = await api.post(`/projects/${projectId}/enrich`);
-        if (res.data?.ok) {
-          await fetchProjects(true);
-          if (btn) {
-            btn.textContent = "✓ " + (lang === "fr" ? "Rafraîchi" : "Refreshed");
-            btn.style.color = "#39ff14";
-          }
-        } else if (btn) {
-          btn.textContent = "↻ " + (lang === "fr" ? "Échec" : "Failed");
-          btn.style.color = "#fbbf24";
-          btn.title = res.data?.error || "";
+        if (btn) btn.disabled = true;
+        setBtn("↻ " + (lang === "fr" ? "Rafraîchissement…" : "Refreshing…"));
+        const kick = await api.post(`/projects/${projectId}/enrich`);
+        if (kick.status !== 202 && kick.status !== 200) {
+          setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+          return;
         }
+        await pollUntilDone(
+          `/projects/${projectId}/enrich/status`,
+          async () => {
+            await fetchProjects(true);
+            setBtn("✓ " + (lang === "fr" ? "Rafraîchi" : "Refreshed"), "#39ff14");
+          },
+          (err) => {
+            setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+            if (btn) btn.title = String(err).slice(0, 200);
+          },
+        );
       } catch (e) {
-        console.warn("project enrich failed", e);
+        if (e?.response?.status === 409) {
+          await pollUntilDone(
+            `/projects/${projectId}/enrich/status`,
+            async () => {
+              await fetchProjects(true);
+              setBtn("✓ " + (lang === "fr" ? "Rafraîchi" : "Refreshed"), "#39ff14");
+            },
+            (err) => setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24"),
+          );
+        } else {
+          setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), "#fbbf24");
+          console.warn("project enrich failed", e);
+        }
       }
     };
     return () => {

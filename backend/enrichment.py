@@ -60,6 +60,20 @@ DDG_UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+# Cloudflare Workers AI — model-configurable tier (between TinyFish and OpenRouter).
+# Default is @cf/openai/gpt-oss-120b (free-plan eligible). To activate Kimi later without
+# code changes, upgrade the account to Workers Paid then set the `cloudflare_model` setting
+# to `@cf/moonshotai/kimi-k2.6`.
+DEFAULT_CF_MODEL = "@cf/openai/gpt-oss-120b"
+# Legacy fallback candidates — only tried if the configured model returns 404 (wrong slug).
+CF_MODEL_FALLBACKS = (
+    "@cf/openai/gpt-oss-120b",
+    "@cf/openai/gpt-oss-20b",
+    "@cf/meta/llama-3.1-8b-instruct",
+)
+# Sticky cache: once a model actually returns 200, we prefer it for the rest of the process.
+_CF_WORKING_MODEL: str | None = None
+
 
 def marina_enrich_goal(marina: dict) -> str:
     return (
@@ -266,6 +280,193 @@ async def enrich_via_tinyfish(
     if logger:
         logger(f"[tinyfish] TIMEOUT after {total_budget_s:.0f}s (last status={last_status})")
     return None
+
+
+# ------------------------------------------------------------------
+# Cloudflare Workers AI — Kimi K2 tier
+# ------------------------------------------------------------------
+async def enrich_via_kimi(
+    marina: dict,
+    cf_account: Optional[str],
+    cf_token: Optional[str],
+    model: Optional[str] = None,
+    logger: Optional[Callable[[str], None]] = None,
+) -> Optional[dict]:
+    """
+    Cloudflare Workers AI tier (between TinyFish and OpenRouter).
+    Model is configurable via the `cloudflare_model` setting (default gpt-oss-120b,
+    free-tier eligible). Kimi K2 is available by switching the setting after a
+    Workers Paid upgrade — zero code change required.
+
+    Guards per spec:
+      - No creds → log "cf skipped (no credentials)" and return None (fall through).
+      - HTTP 401/403 auth error → log the code and return None.
+      - HTTP 5035 (free-plan restriction) → log "cf model unavailable on free plan" and return None.
+      - HTTP 429 → single backoff retry then None.
+      - HTTP 404 → try one legacy fallback slug, else None.
+      - Any exception → return None. Never blocks the chain.
+    """
+    global _CF_WORKING_MODEL
+    if not cf_account or not cf_token:
+        if logger:
+            logger("[cf] skipped (no credentials)")
+        return None
+
+    # Model precedence: sticky-cached > configured > default
+    configured = (model or "").strip() or DEFAULT_CF_MODEL
+    ordered: list[str] = []
+    for m in (_CF_WORKING_MODEL, configured, *CF_MODEL_FALLBACKS):
+        if m and m not in ordered:
+            ordered.append(m)
+
+    tags = marina.get("tags") or {}
+    url = tags.get("website") or tags.get("contact:website") or tags.get("url")
+    page_title = ""
+    text = ""
+    async with httpx.AsyncClient(timeout=45) as client:
+        if not url:
+            hits = await duckduckgo_html_search(f"marina {marina['name']} port", client)
+            url = hits[0]["url"] if hits else None
+            if url and logger:
+                logger(f"[cf] DDG picked {url}")
+        if url:
+            try:
+                page_title, text = await fetch_readable(url, client)
+                if logger:
+                    logger(f"[cf] readability got {len(text)} chars from {url}")
+            except Exception as e:
+                if logger:
+                    logger(f"[cf] readability failed: {type(e).__name__}: {str(e)[:80]}")
+
+        tags_str = json.dumps(
+            {k: v for k, v in tags.items() if isinstance(v, str)},
+            ensure_ascii=False,
+        )
+        prompt = (
+            "Extract factual marina information. Return STRICT JSON with these keys "
+            "(null if not present in source):\n"
+            "  canal_vhf (string), places_visiteurs (integer), tirant_eau_max_metres (number),\n"
+            "  score_protection_meteo (integer 1-5), services_disponibles (string[]),\n"
+            "  telephone_capitainerie (string), resume_avis (string, max 200 chars, French).\n\n"
+            f"Marina: {marina['name']}\nCoordinates: {marina['lat']}, {marina['lon']}\n"
+            f"OSM tags: {tags_str}\n\nSource ({url or 'n/a'}) title: {page_title}\nContent:\n{text}\n\n"
+            "Rules:\n"
+            "- Never fabricate. Set null if source doesn't say.\n"
+            "- services_disponibles: short French labels like 'eau','électricité','carburant',"
+            "'douches','wifi','capitainerie','grue','carénage','restaurant','pumpout','déchets'.\n"
+            "- resume_avis: French, max 200 chars, only if source supports it.\n"
+            "Return ONLY the JSON object — no markdown, no commentary."
+        )
+
+        last_error = None
+        did_429_retry = False
+        for cf_model in ordered:
+            try:
+                r = await client.post(
+                    f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run/{cf_model}",
+                    headers={"Authorization": f"Bearer {cf_token}"},
+                    json={
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 600,
+                        "temperature": 0,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+            except Exception as e:
+                if logger:
+                    logger(f"[cf] {cf_model} EXC {type(e).__name__}: {str(e)[:80]}")
+                last_error = e
+                continue
+
+            # 401/403 = auth issue (bad token or missing Workers-AI scope). Bail hard.
+            if r.status_code in (401, 403):
+                body = r.text[:200]
+                if "5035" in body:
+                    if logger:
+                        logger(f"[cf] {cf_model} unavailable on free plan (5035) — upgrade to Workers Paid to activate")
+                    return None
+                if logger:
+                    logger(f"[cf] AUTH ERROR HTTP {r.status_code} on {cf_model}: {body[:120]}")
+                return None
+            if r.status_code == 404:
+                if logger:
+                    logger(f"[cf] {cf_model} → 404 (slug not found), trying next fallback")
+                continue
+            if r.status_code == 429:
+                if did_429_retry:
+                    if logger:
+                        logger(f"[cf] {cf_model} → 429 after retry, giving up")
+                    return None
+                retry_after = int(r.headers.get("Retry-After") or 5)
+                if logger:
+                    logger(f"[cf] 429, sleeping {retry_after}s (one retry only)")
+                await asyncio.sleep(retry_after)
+                did_429_retry = True
+                r = await client.post(
+                    f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run/{cf_model}",
+                    headers={"Authorization": f"Bearer {cf_token}"},
+                    json={
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 600,
+                        "temperature": 0,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+                if r.status_code == 429:
+                    if logger:
+                        logger("[cf] 429 again after retry — falling through")
+                    return None
+            if r.status_code != 200:
+                if logger:
+                    logger(f"[cf] {cf_model} HTTP {r.status_code}: {r.text[:120]}")
+                continue
+            try:
+                body = r.json()
+            except Exception:
+                if logger:
+                    logger(f"[cf] {cf_model} non-json response")
+                continue
+            if not body.get("success"):
+                if logger:
+                    logger(f"[cf] {cf_model} success=false errors={body.get('errors')}")
+                continue
+            result = body.get("result") or {}
+            content: Any = None
+            if isinstance(result, dict):
+                if "response" in result:
+                    content = result["response"]
+                elif "choices" in result:
+                    content = result["choices"][0]["message"]["content"]
+            if isinstance(content, dict) and "choices" in content:
+                content = content["choices"][0]["message"]["content"]
+            if not content:
+                if logger:
+                    logger(f"[cf] {cf_model} empty content, dropping")
+                continue
+            try:
+                if isinstance(content, str):
+                    stripped = content.strip()
+                    if stripped.startswith("```"):
+                        stripped = stripped.strip("`")
+                        if stripped.lower().startswith("json"):
+                            stripped = stripped[4:].lstrip()
+                    payload = json.loads(stripped)
+                elif isinstance(content, dict):
+                    payload = content
+                else:
+                    continue
+            except Exception as e:
+                if logger:
+                    logger(f"[cf] {cf_model} JSON parse failed: {e}")
+                continue
+            if logger:
+                logger(f"[cf] OK via {cf_model}")
+            _CF_WORKING_MODEL = cf_model
+            return _normalise_enrichment(payload)
+
+        if last_error and logger:
+            logger(f"[cf] all model candidates failed, last error: {type(last_error).__name__}")
+        return None
 
 
 # ------------------------------------------------------------------
@@ -476,26 +677,39 @@ async def enrich_marina(
     marina: dict,
     tinyfish_key: Optional[str] = None,
     openrouter_key: Optional[str] = None,
+    cf_account: Optional[str] = None,
+    cf_token: Optional[str] = None,
+    cf_model: Optional[str] = None,
     min_credit_usd: float = 0.5,
     logger: Optional[Callable[[str], None]] = None,
+    skip_tinyfish: bool = False,
 ) -> dict:
     """
-    Run the enrichment chain. Returns a dict with the 7 fields + enriched + enrichment_source + enriched_at.
+    Run the enrichment chain per R-001 (cost order):
+        TinyFish → Cloudflare Workers AI (configurable model) → OpenRouter → OSM-tag fallback.
+    Returns a dict with the 7 fields + enriched + enrichment_source + enriched_at.
+    Never fabricates.
     """
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     # 1. TinyFish
-    if tinyfish_key:
+    if tinyfish_key and not skip_tinyfish:
         if logger:
             logger("=== attempt 1: TinyFish ===")
         tf_data = await enrich_via_tinyfish(marina, tinyfish_key, logger=logger)
         if tf_data and any(tf_data.get(k) is not None for k in ENRICH_FIELDS):
             return {**tf_data, "enriched": True, "enrichment_source": "tinyfish", "enriched_at": now}
     elif logger:
-        logger("TinyFish: no key configured — skipping")
-    # 2. OpenRouter
+        logger("TinyFish: skipped" if skip_tinyfish else "TinyFish: no key configured — skipping")
+    # 2. Cloudflare Workers AI (model-configurable via `cloudflare_model` setting)
+    if logger:
+        logger(f"=== attempt 2: Cloudflare Workers AI ({cf_model or DEFAULT_CF_MODEL}) ===")
+    cf_data = await enrich_via_kimi(marina, cf_account, cf_token, model=cf_model, logger=logger)
+    if cf_data and any(cf_data.get(k) is not None for k in ENRICH_FIELDS):
+        return {**cf_data, "enriched": True, "enrichment_source": "cloudflare", "enriched_at": now}
+    # 3. OpenRouter
     if openrouter_key:
         if logger:
-            logger("=== attempt 2: OpenRouter ===")
+            logger("=== attempt 3: OpenRouter ===")
         or_data = await enrich_via_openrouter(
             marina, openrouter_key, min_credit_usd=min_credit_usd, logger=logger
         )
@@ -503,9 +717,9 @@ async def enrich_marina(
             return {**or_data, "enriched": True, "enrichment_source": "openrouter", "enriched_at": now}
     elif logger:
         logger("OpenRouter: no key configured — skipping")
-    # 3. Fallback
+    # 4. Fallback
     if logger:
-        logger("=== attempt 3: OSM-tag fallback ===")
+        logger("=== attempt 4: OSM-tag fallback ===")
     fb = enrich_from_osm_tags(marina)
     has_any = any(v not in (None, [], "") for v in fb.values())
     return {**fb, "enriched": has_any, "enrichment_source": "fallback", "enriched_at": now}

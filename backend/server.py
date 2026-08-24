@@ -55,6 +55,11 @@ DEFAULT_SETTINGS = {
     "marina_batch_concurrency": 2,
     "openrouter_min_credits_usd": 0.5,
     "enrich_stale_days": 365,
+    # Cloudflare Workers AI: dormant while the provided token is rejected + Kimi is paywalled
+    # on Free tier. Default model is the free-plan-eligible gpt-oss-120b. Switching to
+    # `@cf/moonshotai/kimi-k2.6` after upgrading to Workers Paid activates Kimi with zero
+    # code change.
+    "cloudflare_model": "@cf/openai/gpt-oss-120b",
 }
 
 
@@ -94,6 +99,7 @@ class SettingsBody(BaseModel):
     marina_batch_concurrency: int | None = None
     openrouter_min_credits_usd: float | None = None
     enrich_stale_days: int | None = None
+    cloudflare_model: str | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -512,6 +518,20 @@ async def marinas_count():
 # ---------- Marina enrichment (Phase 3) ----------
 # Per-id lock so the SAME marina can't be enriched concurrently.
 ENRICH_LOCKS: set[str] = set()
+# Per-id state registry for on-demand tasks (marinas + projects). Kept in-memory,
+# TTL-cleaned when a new task starts.
+MARINA_ENRICH_TASKS: dict[str, dict] = {}
+PROJECT_ENRICH_TASKS: dict[str, dict] = {}
+
+
+def _prune_tasks(registry: dict, max_age_s: int = 3600):
+    """Drop tasks that finished more than max_age_s ago to bound memory."""
+    now = time.time()
+    for k in list(registry.keys()):
+        t = registry.get(k) or {}
+        finished = t.get("finished_at") or 0
+        if finished and (now - finished) > max_age_s:
+            registry.pop(k, None)
 
 
 class MarinaEnrichBatchBody(BaseModel):
@@ -542,30 +562,39 @@ class EnrichBatchState:
 ENRICH_BATCH_STATE = EnrichBatchState()
 
 
-def _keys() -> tuple[str | None, str | None]:
+def _keys() -> tuple[str | None, str | None, str | None, str | None]:
     return (
         (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
         (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
+        (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip() or None,
+        (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip() or None,
     )
 
 
-async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn) -> dict:
+async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
     """Run the enrichment chain and upsert the enriched fields on the marina doc."""
-    tf_key, or_key = _keys()
+    tf_key, or_key, cf_account, cf_token = _keys()
     result = await enrich_marina(
         marina,
         tinyfish_key=tf_key,
         openrouter_key=or_key,
+        cf_account=cf_account,
+        cf_token=cf_token,
         min_credit_usd=min_credit_usd,
         logger=log_fn,
+        skip_tinyfish=skip_tinyfish,
     )
     update = {**result, "stale": False}
     await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
     return result
 
 
-@router.post("/marinas/{marina_id}/enrich")
+@router.post("/marinas/{marina_id}/enrich", status_code=202)
 async def marina_enrich_one(marina_id: str):
+    """
+    Start marina enrichment as a background task and return 202 immediately.
+    Poll GET /api/marinas/{marina_id}/enrich/status for progress/result.
+    """
     if marina_id in ENRICH_LOCKS:
         raise HTTPException(409, "Enrichment already in progress for this marina")
     marina = await db.marinas.find_one({"_id": marina_id})
@@ -573,32 +602,64 @@ async def marina_enrich_one(marina_id: str):
         raise HTTPException(404, "marina not found")
     settings = await get_settings()
     min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+
+    _prune_tasks(MARINA_ENRICH_TASKS)
     ENRICH_LOCKS.add(marina_id)
-    logs: list[str] = []
+    MARINA_ENRICH_TASKS[marina_id] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
 
-    def log_fn(msg: str):
-        logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    async def _runner():
+        task = MARINA_ENRICH_TASKS[marina_id]
 
-    try:
-        result = await _run_marina_enrich_one(marina, min_credit, log_fn)
-        # Return the updated document merged with the enrichment result
-        fresh = await db.marinas.find_one({"_id": marina_id})
-        return {
-            "ok": True,
-            "marina": {
-                **{k: fresh.get(k) for k in (
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 200:
+                task["logs"] = task["logs"][-200:]
+
+        try:
+            await _run_marina_enrich_one(marina, min_credit, log_fn)
+            fresh = await db.marinas.find_one({"_id": marina_id})
+            task["result"] = {
+                k: fresh.get(k) for k in (
                     "_id", "name", "lat", "lon", "source", "priority",
                     "nearest_waypoint", "tags", "osm_id", "enriched",
                     "enrichment_source", "enriched_at", "stale",
                     *ENRICH_FIELDS,
-                )},
-            },
-            "logs": logs,
-        }
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "logs": logs}
-    finally:
-        ENRICH_LOCKS.discard(marina_id)
+                )
+            }
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+        finally:
+            task["finished_at"] = time.time()
+            ENRICH_LOCKS.discard(marina_id)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "marina_id": marina_id}
+
+
+@router.get("/marinas/{marina_id}/enrich/status")
+async def marina_enrich_status(marina_id: str):
+    """Poll the state of an on-demand marina enrichment. Returns 'idle' if no task."""
+    task = MARINA_ENRICH_TASKS.get(marina_id)
+    if not task:
+        return {"state": "idle", "marina_id": marina_id}
+    return {
+        "state": task["state"],
+        "marina_id": marina_id,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
 
 
 @router.post("/marinas/enrich-batch")
@@ -707,29 +768,29 @@ async def marina_enrich_batch_status():
     }
 
 
-# ---------- On-demand project enrich (Phase 3) ----------
-@router.post("/projects/{project_id}/enrich")
-async def project_enrich_one(project_id: str):
-    """
-    Re-run the extraction chain on a single project's URL and update the doc in place.
-    Uses the same TinyFish → OpenRouter fallback that pipeline._process_url uses,
-    but scoped to this project only. Returns the updated project + logs.
-    """
-    proj = await db.projects.find_one({"_id": project_id})
-    if not proj:
-        raise HTTPException(404, "project not found")
-    url = proj.get("url")
-    if not url:
-        raise HTTPException(400, "project has no URL")
-    settings = await get_settings()
-    logs: list[str] = []
+# ---------- On-demand project enrich (Phase 3, async as of Phase 3.1) ----------
+async def _run_project_enrich(project_id: str, task: dict):
+    """Actual enrichment work — runs in background."""
 
     def log_fn(msg: str):
-        logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(task["logs"]) > 200:
+            task["logs"] = task["logs"][-200:]
 
+    proj = await db.projects.find_one({"_id": project_id})
+    if not proj:
+        task["state"] = "error"
+        task["error"] = "project not found"
+        task["finished_at"] = time.time()
+        return
+    url = proj.get("url")
+    if not url:
+        task["state"] = "error"
+        task["error"] = "project has no URL"
+        task["finished_at"] = time.time()
+        return
     log_fn(f"Refreshing {url}")
 
-    # Import inside — pipeline dependencies are heavy
     import httpx as _httpx
     from bs4 import BeautifulSoup as _BS
     from readability import Document as _Doc
@@ -737,6 +798,7 @@ async def project_enrich_one(project_id: str):
     from pipeline import UA as _UA, pick_image as _pick_image
 
     try:
+        settings = await get_settings()
         async with _httpx.AsyncClient(timeout=25, follow_redirects=True, headers=_UA) as c:
             r = await c.get(url)
             html = r.text
@@ -756,13 +818,15 @@ async def project_enrich_one(project_id: str):
         gk = await _gk(page_title, text, settings)
         if not gk["accepted"]:
             log_fn(f"Gatekeeper REJECTED: {gk['reason'][:80]}")
-            return {"ok": False, "error": f"gatekeeper: {gk['reason']}", "logs": logs}
+            task["state"] = "error"
+            task["error"] = f"gatekeeper: {gk['reason']}"
+            task["finished_at"] = time.time()
+            return
         funder = proj.get("funder") or (proj.get("funders") or ["Unknown"])[0]
         extracted = await _extract(page_title, text, meta_desc, url, funder, settings)
         log_fn(f"Extraction engine={extracted.get('engine')}, title='{(extracted.get('title') or '')[:60]}'")
 
         update: dict = {}
-        # Only overwrite when the new value looks meaningful and different
         for field, key in [
             ("title", "title"),
             ("description", "description"),
@@ -774,10 +838,8 @@ async def project_enrich_one(project_id: str):
                 update[field] = str(new_v).strip()[:250 if field == "description" else 200]
         if extracted.get("category"):
             update["category_group"] = normalize_category(extracted["category"])
-        # New image only if we didn't have one OR the extracted one is different + valid
         if image and (not proj.get("image") or image != proj.get("image")):
             update["image"] = image
-        # S_ocean: overwrite if the new one is a valid float
         try:
             new_s = extracted.get("s_ocean")
             if new_s is not None:
@@ -790,10 +852,62 @@ async def project_enrich_one(project_id: str):
         await db.projects.update_one({"_id": project_id}, {"$set": update})
         log_fn(f"Updated fields: {list(update.keys())}")
         fresh = await db.projects.find_one({"_id": project_id})
-        return {"ok": True, "project": project_to_feature(fresh), "updates": list(update.keys()), "logs": logs}
+        task["result"] = {
+            "project": project_to_feature(fresh),
+            "updates": list(update.keys()),
+        }
+        task["state"] = "done"
     except Exception as e:
         log_fn(f"FAILED: {type(e).__name__}: {str(e)[:200]}")
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "logs": logs}
+        task["state"] = "error"
+        task["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        task["finished_at"] = time.time()
+
+
+@router.post("/projects/{project_id}/enrich", status_code=202)
+async def project_enrich_one(project_id: str):
+    """
+    Kick off project re-extraction as a background task.
+    Returns 202 immediately; poll GET /api/projects/{project_id}/enrich/status.
+    """
+    proj = await db.projects.find_one({"_id": project_id})
+    if not proj:
+        raise HTTPException(404, "project not found")
+    if not proj.get("url"):
+        raise HTTPException(400, "project has no URL")
+
+    existing = PROJECT_ENRICH_TASKS.get(project_id)
+    if existing and existing.get("state") == "running":
+        raise HTTPException(409, "Enrichment already in progress for this project")
+
+    _prune_tasks(PROJECT_ENRICH_TASKS)
+    PROJECT_ENRICH_TASKS[project_id] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+    asyncio.create_task(_run_project_enrich(project_id, PROJECT_ENRICH_TASKS[project_id]))
+    return {"status": "started", "project_id": project_id}
+
+
+@router.get("/projects/{project_id}/enrich/status")
+async def project_enrich_status(project_id: str):
+    task = PROJECT_ENRICH_TASKS.get(project_id)
+    if not task:
+        return {"state": "idle", "project_id": project_id}
+    return {
+        "state": task["state"],
+        "project_id": project_id,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
 
 
 class ReportBody(BaseModel):

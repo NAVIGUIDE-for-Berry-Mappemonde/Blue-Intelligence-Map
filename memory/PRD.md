@@ -173,3 +173,75 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - CRUD manuel des marinas + drawing on map.
 - Backup Overpass via extraits Geofabrik PBF (documenté comme alternative future — hors scope tant que openstreetmap.fr suffit).
 
+
+## Update 2026-08 — Phase 3.1 : Async enrichment + Kimi K2 tier (cost-order chain upgrade)
+### Bug fix (user-reported blocker)
+- Previous behaviour : `POST /api/marinas/{id}/enrich` et `POST /api/projects/{id}/enrich` étaient **synchrones** — le TinyFish poll budget de 210 s bloquait la requête HTTP jusqu'à ~4 min → 502/504 via l'ingress, incompatible avec les testeurs automatisés (cap 300 s).
+- Nouveau contrat : les 2 endpoints renvoient désormais **HTTP 202 `{"status":"started","marina_id":"..."}` en <15 ms**. La chaîne s'exécute en background task (`asyncio.create_task`). Verrou per-id conservé → 409 si un enrichissement est déjà en cours pour ce même id.
+- Nouveaux endpoints polling : **`GET /api/marinas/{id}/enrich/status`** et **`GET /api/projects/{id}/enrich/status`** → renvoient `{state: idle|running|done|error, started_at, finished_at, result, error, logs_tail}`. Le `result` contient le doc mis à jour (marina complète ou feature projet) quand `state=done`.
+- Registres in-memory `MARINA_ENRICH_TASKS` / `PROJECT_ENRICH_TASKS` (par id) avec purge auto des tâches finies > 1h.
+- Frontend `App.js` — nouveaux handlers `__biEnrichMarina` / `__biEnrichProject` : POST 202 puis **poll `/status` toutes les 2,5 s** (max ~180 s), update UI en place (spinner → success/error) sans jamais bloquer une requête HTTP. Sur 409 (déjà en cours), le poller s'attache directement au status endpoint existant.
+- Vérifié end-to-end : `time curl POST` = **14 ms**, first status poll montre déjà `state=running` + les 2 premières lignes de logs.
+
+### Chain upgrade (per user decision)
+- Ordre coût de la chaîne d'enrichissement devient : **TinyFish → Kimi K2 (Cloudflare Workers AI) → OpenRouter → OSM-tags fallback**.
+- Nouveau client Kimi dans `enrichment.py::enrich_via_kimi()` (~150 lignes) — tente `@cf/moonshotai/kimi-k2.6` puis `kimi-k2`, `kimi-instruct-72b`, `kimi-vl-a3b-thinking` (sticky-cache du 1er modèle qui répond). Gestion propre : messages format + `response_format: json_object`, parsage tolérant de `result.response` OU `result.choices[]`, stripping de fences markdown si présents, normalisation via `_normalise_enrichment`.
+- **Guards conformes à la spec** :
+  - Pas de creds (`CLOUDFLARE_ACCOUNT_ID` ou `CLOUDFLARE_API_TOKEN` absent/vide) → log `"[kimi] skipped (no credentials)"` et retourne None (fall-through immédiat).
+  - HTTP 401/403 → log `[kimi] AUTH ERROR HTTP xxx` et fall-through — pas de retry.
+  - Code 5035 (restriction free plan) → log `[kimi] unavailable on free plan` et fall-through.
+  - HTTP 429 → **un** backoff (Retry-After ou 5s) puis un retry, jamais deux. Sinon fall-through.
+  - HTTP 404 → tente le modèle candidat suivant.
+- Nouveaux env vars `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` dans `.env`.
+- `_run_marina_enrich_one()` accepte désormais un `skip_tinyfish` optionnel (utile pour tester le tier suivant).
+
+### POC Kimi — verdict honnête (2026-08-24)
+- Endpoint discovery : `GET /accounts/{id}/ai/models/search?search=kimi` → **HTTP 403** (auth).
+- Tous les modèles candidats (`kimi-k2.6`, `kimi-k2`, `kimi-instruct-72b`, `kimi-vl-a3b-thinking`) → **HTTP 401 `code:10000 "Authentication error"`**.
+- Vérif indépendante `/user/tokens/verify` → **HTTP 401 `code:1000 "Invalid API Token"`**. `/accounts/{id}` → 403 `code:9109 "Invalid account identifier"`. Les deux credentials fournis sont rejetés par Cloudflare lui-même.
+- Le préfixe `cfat_` de la valeur `CLOUDFLARE_API_TOKEN` correspond typiquement à un **Cloudflare Access For Teams / Zero Trust** token — pas à un Cloudflare API Token avec scope Workers AI. Une fois un token régénéré avec la permission `Account: Workers AI: Read`, le client fonctionnera sans changement de code.
+- **POC en conditions "TinyFish désactivé"** sur Rodney Bay Marina → chaîne fonctionne exactement comme prévu : `TinyFish: skipped` → `Kimi AUTH ERROR HTTP 401` → **OpenRouter réussit** (credit-guard PASS, gpt-4o-mini, 6000 chars readability, coût $0.000312, retourne canal_vhf='16/74', places_visiteurs=253, 11 services, resume_avis). L'auth-error Kimi ne bloque jamais la chaîne, exactement comme demandé.
+
+### Non-regression
+- Phase 1/2 features intactes (mode switch, route + escale labels, MPA toggle, EN/FR, clusters projets, categories, donations, import/export).
+- `POST /api/marinas/enrich-batch` continue de marcher (nouvelle chaîne TinyFish → Kimi → OpenRouter appelée par `_run_marina_enrich_one` — Kimi ajoute juste un tier de fallback avant OpenRouter).
+- Overpass confirm : `overpass.openstreetmap.fr` reste primary ; `overpass-api.de` et `kumi.systems` restent dans la liste mais déprioritisés (rappel : IP block persistent depuis ce container).
+
+### Backlog
+- Régénérer un Cloudflare API Token avec scope Workers AI et re-tester le tier Kimi.
+- Settings UI pour ajuster `openrouter_min_credits_usd` / `enrich_stale_days` / `marina_batch_concurrency`.
+
+
+
+## 2026-08-24 — P0 Blank/no-data fix on public preview
+
+### Symptom
+- App shell rendait bien (header, sidebar) mais **map vide** (0 projet, 0 marina, pas de route, tuiles Carto avortées) depuis le browser externe. Fonctionnait à l'intérieur du pod (localhost).
+
+### Root cause
+- `/app/frontend/.env` avait `REACT_APP_BACKEND_URL=http://0.0.0.0:8001` (restauré incorrectement à la relance du job).
+- Depuis un browser HTTPS externe :
+  1. Mixed Content warning (HTTPS → HTTP).
+  2. Chrome **Private Network Access** blocking : *"Permission was denied for this request to access the loopback address space"* → **toutes** les XHR échouent en `net::ERR_FAILED`.
+  3. Résultat : `/api/route`, `/api/projects`, `/api/marinas`, `/api/settings`, `/api/funders`, `/api/categories`, `/api/donations/total` = tous KO côté client, tuiles Carto avortées par ricochet.
+
+### Fix (1 ligne)
+- `REACT_APP_BACKEND_URL=https://marina-intel.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
+
+### Verification externe (public URL)
+- `curl https://marina-intel.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
+- `curl .../api/marinas` → HTTP 200, FeatureCollection **212 features**.
+- `curl .../api/route` → HTTP 200, FeatureCollection **71 features** (Berry-Mappemonde).
+- MongoDB `blueintel_db` : projects=4463, marinas=212 — **DB intacte**, pas de wipe, pas de re-import nécessaire.
+- Screenshot public URL Projects mode : sidebar "PROJECTS (4463)", légende 9 catégories (MPA 402, Conservation 765, Research 895, Fisheries 361, Policy & Advocacy 490, Pollution 392, Coastal & Habitat 389, Education 301, Other 473), 73 markers/clusters cyan visibles + route Berry.
+- Screenshot public URL Marinas mode : "212 MARINAS", markers rouges, filters Priority/Source, liste (Anse à Rodrigue, Any Way Marine, Aquamania, Aspretto, Ateliers SHOM) avec badges P1/ESCALE + source OPENSTREETMAP/SHOM.
+
+### P1 async enrichment — re-vérifié en externe
+- `POST /api/marinas/{id}/enrich` → HTTP **202** `{"status":"started","marina_id":"…"}`.
+- `GET  /api/marinas/{id}/enrich/status` → HTTP 200 `{state:"running", started_at, logs_tail:["[hh:mm:ss] === attempt 1: TinyFish ==="]}`.
+- `POST /api/projects/{id}/enrich` → HTTP **202** `{"status":"started","project_id":"…"}`.
+- `GET  /api/projects/{id}/enrich/status` → HTTP 200 `{state:"running", started_at, logs_tail:["Refreshing …"]}`.
+- `GET  /api/settings` → `cloudflare_model = @cf/openai/gpt-oss-120b` (configurable, tier Kimi dormant tant qu'un token Workers AI valide n'est pas fourni).
+
+### Lesson learnt (à documenter dans les runbooks fork)
+- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://<slug>.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
