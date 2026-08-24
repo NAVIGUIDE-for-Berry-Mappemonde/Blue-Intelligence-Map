@@ -17,6 +17,17 @@ const FALLBACK_COLORS = {
 const LFP_COLORS = { 1: "#60a5fa", 2: "#34d399", 3: "#fbbf24", 4: "#ef4444", 5: "#a855f7", 0: "#94a3b8" };
 const MPA_MIN_ZOOM = 5;
 
+// Neutral route styling that reads on both dark and light basemaps.
+// Two-layer stroke (dark casing + light main) gives contrast in every context.
+const ROUTE_MAIN_COLOR = "#e2e8f0";     // slate-200 top line
+const ROUTE_CASING_COLOR = "#0f172a";   // deep navy casing for contrast on light map
+const ROUTE_MAIN_WEIGHT = 2.5;
+const ROUTE_CASING_WEIGHT = 5;
+const ESCALE_FILL = "#f8fafc";
+const ESCALE_STROKE = "#0f172a";
+const INTERMEDIATE_FILL = "#94a3b8";
+const INTERMEDIATE_STROKE = "#475569";
+
 export default function MapView({ projects, funderFilter, searchQuery, t, maxMarkers, minZoom, basemap, categories, categoryFilter }) {
   const mapRef = useRef(null);
   const mapObj = useRef(null);
@@ -28,8 +39,11 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
   const mpaLayerRef = useRef(null);
   const mpaOnRef = useRef(false);
   const mpaLoadingRef = useRef(false);
+  const routeLayerRef = useRef(null);
+  const routeLoadedRef = useRef(false);
   const [mpaOn, setMpaOn] = useState(false);
   const [mpaZoomHint, setMpaZoomHint] = useState(false);
+  const [routeOn, setRouteOn] = useState(true);
   const [lfpFilter, setLfpFilter] = useState({ 1: true, 2: true, 3: true, 4: true, 5: true });
   const lfpFilterRef = useRef(lfpFilter);
   const mpaDataRef = useRef(null);
@@ -207,6 +221,138 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
     if (tileRef.current) tileRef.current.setUrl(TILE_URLS[basemap] || TILE_URLS.dark);
   }, [basemap]);
 
+  // ---------- Berry-Mappemonde route layer (static, official, always available) ----------
+  useEffect(() => {
+    const map = mapObj.current;
+    if (!map || routeLoadedRef.current) return;
+    routeLoadedRef.current = true;
+    (async () => {
+      let data;
+      try {
+        const res = await api.get("/route");
+        data = res.data;
+      } catch (e) {
+        routeLoadedRef.current = false; // allow retry on next mount
+        return;
+      }
+      const group = L.layerGroup();
+      const feats = (data && data.features) || [];
+      // Two-pass draw so lines sit UNDER waypoints: casings first, then main strokes, then waypoints
+      const escales = [];
+      const intermediates = [];
+      feats.forEach((f) => {
+        const g = f.geometry || {};
+        const p = f.properties || {};
+        if (g.type === "LineString") {
+          const latlngs = g.coordinates.map(([lng, lat]) => [lat, lng]);
+          const isOverland = p.type === "overland";
+          // dark casing for contrast on light basemap
+          L.polyline(latlngs, {
+            color: ROUTE_CASING_COLOR,
+            weight: ROUTE_CASING_WEIGHT,
+            opacity: 0.35,
+            lineCap: "round",
+            lineJoin: "round",
+            interactive: false,
+          }).addTo(group);
+          // main stroke on top
+          const main = L.polyline(latlngs, {
+            color: ROUTE_MAIN_COLOR,
+            weight: ROUTE_MAIN_WEIGHT,
+            opacity: 0.95,
+            dashArray: isOverland ? "6 6" : null,
+            lineCap: "round",
+            lineJoin: "round",
+          });
+          main.bindTooltip(
+            `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;">${
+              isOverland ? t("routeSegmentOverland") : t("routeSegmentMaritime")
+            }</span><br/><span style="font-size:10px;color:#cbd5e1;">${p.from || ""} → ${p.to || ""}</span>`,
+            { sticky: true, className: "bi-route-tt", direction: "top", opacity: 0.95 },
+          );
+          main.addTo(group);
+        } else if (g.type === "Point") {
+          const [lng, lat] = g.coordinates;
+          const isEscale = p.point_type === "escale";
+          if (isEscale) escales.push({ lat, lng, name: p.name });
+          else intermediates.push({ lat, lng, name: p.name });
+        }
+      });
+      // Intermediate waypoints — small muted dots, hover tooltip only
+      intermediates.forEach((w) => {
+        const m = L.circleMarker([w.lat, w.lng], {
+          radius: 2.5,
+          color: INTERMEDIATE_STROKE,
+          weight: 1,
+          fillColor: INTERMEDIATE_FILL,
+          fillOpacity: 0.9,
+        });
+        m.bindTooltip(
+          `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#cbd5e1;">${t(
+            "routeWaypointIntermediate",
+          )}</span><br/><span style="font-size:10px;">${w.name || ""}</span>`,
+          { direction: "top", className: "bi-route-tt", opacity: 0.95 },
+        );
+        m.bindPopup(
+          `<div style="min-width:180px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">${t(
+              "routeWaypointIntermediate",
+            )}</div>
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:13px;color:#fff;line-height:1.3;margin-top:4px;">${
+              w.name || ""
+            }</div>
+          </div>`,
+          { maxWidth: 240, autoPan: false },
+        );
+        m.addTo(group);
+      });
+      // Escale waypoints — larger, permanent labels below the dot
+      escales.forEach((w) => {
+        const m = L.circleMarker([w.lat, w.lng], {
+          radius: 6,
+          color: ESCALE_STROKE,
+          weight: 2,
+          fillColor: ESCALE_FILL,
+          fillOpacity: 1,
+        });
+        m.bindTooltip(w.name || "", {
+          direction: "bottom",
+          offset: [0, 6],
+          permanent: true,
+          className: "bi-route-escale-label",
+        });
+        m.bindPopup(
+          `<div style="min-width:200px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#00f0ff;text-transform:uppercase;letter-spacing:0.1em;">${t(
+              "routeWaypointEscale",
+            )}</div>
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;margin-top:4px;">${
+              w.name || ""
+            }</div>
+            <div style="font-size:9px;color:#64748b;margin-top:6px;line-height:1.4;">${t("routeAttribution")}</div>
+          </div>`,
+          { maxWidth: 260, autoPan: false },
+        );
+        m.addTo(group);
+      });
+      routeLayerRef.current = group;
+      if (routeOn) group.addTo(map);
+    })();
+    // eslint-disable-next-line
+  }, [t]);
+
+  // Toggle route visibility on/off
+  useEffect(() => {
+    const map = mapObj.current;
+    const layer = routeLayerRef.current;
+    if (!map || !layer) return;
+    if (routeOn) {
+      if (!map.hasLayer(layer)) layer.addTo(map);
+    } else if (map.hasLayer(layer)) {
+      map.removeLayer(layer);
+    }
+  }, [routeOn]);
+
   useEffect(() => {
     const cluster = clusterRef.current;
     const map = mapObj.current;
@@ -272,6 +418,10 @@ export default function MapView({ projects, funderFilter, searchQuery, t, maxMar
       <div ref={mapRef} data-testid="map-container" className="w-full h-full" />
       {/* ProtectedSeas layer toggle */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col items-end gap-2">
+        <button data-testid="route-toggle-btn" onClick={() => setRouteOn(!routeOn)}
+          className={`px-3 py-2 text-xs font-semibold border rounded-sm backdrop-blur-md ${routeOn ? "bg-slate-100/10 border-slate-300/50 text-slate-100" : "bg-surface/90 border-line text-slate-400 hover:text-white"}`}>
+          ⛵ {t("routeLayer")}
+        </button>
         <button data-testid="mpa-toggle-btn" onClick={() => setMpaOn(!mpaOn)}
           className={`px-3 py-2 text-xs font-semibold border rounded-sm backdrop-blur-md ${mpaOn ? "bg-sonar/20 border-sonar/60 text-sonar" : "bg-surface/90 border-line text-slate-300 hover:text-white"}`}>
           🛡 {t("mpaLayer")}

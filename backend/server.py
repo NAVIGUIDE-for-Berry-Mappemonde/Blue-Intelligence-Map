@@ -492,7 +492,7 @@ async def get_mpa(bbox: str):
 async def read_settings():
     s = await get_settings()
     s.pop("_id", None)
-    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY"):
+    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY"):
         s["gemini_api_key_set"] = True
         s["gemini_api_key"] = ""
     else:
@@ -686,6 +686,35 @@ async def donations_total():
 
 
 app.include_router(router)
+
+# --- OpenAPI + static assets exposed under /api (Kubernetes ingress only forwards /api/*) ---
+@app.get("/api/openapi.json")
+async def openapi_under_api():
+    return JSONResponse(app.openapi())
+
+
+ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
+
+
+@app.get("/api/route")
+async def get_route():
+    """Serve the official Berry-Mappemonde expedition route (static, read-only)."""
+    if not ROUTE_FILE.exists():
+        raise HTTPException(404, "route.geojson not found")
+    import json as _json
+    try:
+        data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"invalid route geojson: {e}")
+    return JSONResponse(
+        data,
+        headers={
+            # Static official route: safe to cache 1h publicly + revalidate on redeploy
+            "Cache-Control": "public, max-age=3600, must-revalidate",
+            "X-Route-Source": "Naviguide Berry-Mappemonde (official)",
+        },
+    )
+
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1500)

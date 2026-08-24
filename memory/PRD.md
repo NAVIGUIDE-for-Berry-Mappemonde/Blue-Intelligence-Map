@@ -77,3 +77,17 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - Bug 50MB géométries (Parc Mer de Corail): maxAllowableOffset adaptatif (bbox/500) + geometryPrecision 4 + gzip middleware + timeout 90s + cache offset-bucket → NC bbox 76 AMP en ~2s
 - Style polygones plus visible (fillOpacity 0.28), cases à cocher LFP 1-5 dans la légende on-map (filtrage live, labels barrés)
 - Vérifié iteration_7 100%: popup Chesterfield-Bellona LFP5 No-Take, filtre 328→303→328 polygones
+
+## Update 2026-08 — Phase 1 : Réanimation + Route Berry-Mappemonde
+- Réanimation : /app/backend/.env et /app/frontend/.env restaurés (MongoDB local, DB_NAME=blueintel_db, CORS *, clés TinyFish/OpenRouter/Stripe réelles, EMERGENT_LLM_KEY comme clé universelle Gemini). ai.py::get_llm_key et server.py::read_settings acceptent désormais EMERGENT_LLM_KEY en fallback → LlmChat().with_model("gemini", ...) fonctionne sans clé Gemini directe.
+- Dépendances Python manquantes réinstallées dans le venv : global-land-mask, readability-lxml, resend, beautifulsoup4 (le venv d'origine avait perdu ces paquets).
+- OpenAPI exposé sous /api : GET /api/openapi.json renvoie app.openapi() (26 paths). Nécessaire pour les tests automatisés — l'ingress ne route que /api/*.
+- Ré-import projets historiques : 4 465 features du GeoJSON officiel → 4 463 importés + 2 fusionnés en doublons, 0 skipped, 0 invalid, 861 financeurs uniques. NB : l'endpoint POST /api/import/geojson actuel ne restaure PAS le champ `category_group` depuis les propriétés du GeoJSON → tous les projets réimportés retombent en catégorie "Other" côté légende (bug pré-existant, non corrigé dans cette phase).
+- Route Berry-Mappemonde (statique, officielle, lecture seule) : /app/backend/data/route.geojson (121 KB, 71 features : 17 escales + 19 intermédiaires + 34 segments maritimes + 1 segment overland), servie par GET /api/route avec Cache-Control 1h + X-Route-Source header.
+- Rendu Leaflet dans MapView (aucun react-leaflet — L direct) : couche layerGroup dédiée (jamais fondue dans le markerCluster des projets), style neutre bicontraste (casing #0f172a opacité 0.35 + main #e2e8f0 opacité 0.95, dashArray "6 6" pour overland vs solide pour maritime) lisible sur fond sombre ET clair. Escales : circleMarker blanc r=6 + bordure sombre + tooltip permanent avec le nom. Intermédiaires : petits points slate-500 r=2.5, tooltip au survol seulement. Popup au clic sur chaque waypoint (type + nom + attribution). Toggle "⛵ Berry-Mappemonde Route" en haut à droite au-dessus du toggle AMP, visible par défaut, testé : off → 134→28 paths SVG et 0 label escale, on → 17 escales restaurées, popup Saint-Maur (Berry, Indre) OK.
+- i18n EN/FR complet : routeLayer / routeSegmentMaritime / routeSegmentOverland / routeWaypointEscale / routeWaypointIntermediate / routeAttribution.
+- POC clés API (aucune intégration dans le pipeline en Phase 1) :
+  - TinyFish : POST /automation/run-async → HTTP 200 + run_id valide, GET /runs/{id} → PENDING. Clé active. Aucun header de quota exposé par l'API.
+  - OpenRouter : GET /models → 422 modèles disponibles ; GET /key → limit=null (illimité), usage cumulé $0.00058 ; complétion réelle gpt-4o-mini → "OK" (15 tokens, coût $2.7e-6). Clé active.
+  - Emergent LLM (Gemini) : appel réel via LlmChat.with_model("gemini","gemini-2.5-flash") → {"pong": true}. Clé universelle opérationnelle.
+- Non touché : dual-mode UI Marinas/Projects, enrichissement marinas, éditeur de route (backlog Phase 2+).

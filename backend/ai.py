@@ -16,7 +16,15 @@ LAND_KW = [
 
 
 def get_llm_key(settings: dict) -> str:
-    return (settings.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or "").strip()
+    # Priority: user-provided Gemini key in Settings > GEMINI_API_KEY env > EMERGENT_LLM_KEY universal env.
+    # emergentintegrations LlmChat routes to Gemini when .with_model("gemini", ...) is used,
+    # so the Emergent universal key works transparently as a fallback.
+    return (
+        settings.get("gemini_api_key")
+        or os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("EMERGENT_LLM_KEY")
+        or ""
+    ).strip()
 
 
 def has_llm(settings: dict) -> bool:

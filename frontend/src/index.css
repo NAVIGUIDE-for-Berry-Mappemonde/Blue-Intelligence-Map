@@ -74,4 +74,31 @@ html, body, #root {
   box-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
 }
 
+/* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */
+.bi-route-tt {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(226, 232, 240, 0.35) !important;
+  border-radius: 3px;
+  padding: 4px 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+}
+.bi-route-tt::before { border-top-color: rgba(15, 23, 42, 0.92) !important; }
+/* Escale labels: small, always visible, neutral chip that reads on both basemaps */
+.leaflet-tooltip.bi-route-escale-label {
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  border: 1px solid rgba(226, 232, 240, 0.4);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.leaflet-tooltip.bi-route-escale-label::before { display: none; }
+
 button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }
