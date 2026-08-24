@@ -226,10 +226,10 @@ Blue Intelligence transforms the living web of maritime data into an executable 
   3. Résultat : `/api/route`, `/api/projects`, `/api/marinas`, `/api/settings`, `/api/funders`, `/api/categories`, `/api/donations/total` = tous KO côté client, tuiles Carto avortées par ricochet.
 
 ### Fix (1 ligne)
-- `REACT_APP_BACKEND_URL=https://marina-intel.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
+- `REACT_APP_BACKEND_URL=https://codebase-scan-45.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
 
 ### Verification externe (public URL)
-- `curl https://marina-intel.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
+- `curl https://codebase-scan-45.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
 - `curl .../api/marinas` → HTTP 200, FeatureCollection **212 features**.
 - `curl .../api/route` → HTTP 200, FeatureCollection **71 features** (Berry-Mappemonde).
 - MongoDB `blueintel_db` : projects=4463, marinas=212 — **DB intacte**, pas de wipe, pas de re-import nécessaire.
@@ -244,4 +244,4 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - `GET  /api/settings` → `cloudflare_model = @cf/openai/gpt-oss-120b` (configurable, tier Kimi dormant tant qu'un token Workers AI valide n'est pas fourni).
 
 ### Lesson learnt (à documenter dans les runbooks fork)
-- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://<slug>.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
+- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://codebase-scan-45.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
