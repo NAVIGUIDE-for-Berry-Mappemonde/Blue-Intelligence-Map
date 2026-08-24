@@ -30,12 +30,16 @@ const smallInput = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 t
 
 /** Card shell — extracted from BatchHub to keep component identity stable across renders. */
 function CardShell({ title, icon, borderCls, children }) {
+  // 2026-06 UX: header row only when a title is provided — the mode name is
+  // already visible in the top nav + left sidebar, no need to repeat it here.
   return (
     <div className={`border bg-surface flex flex-col ${borderCls}`}>
-      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
-        {icon}
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{title}</p>
-      </div>
+      {title && (
+        <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+          {icon}
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{title}</p>
+        </div>
+      )}
       <div className="p-4 space-y-3 flex-1">{children}</div>
     </div>
   );
@@ -214,11 +218,7 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   if (mode === "marinas") {
     return (
       <div data-testid="audit-batch-hub" data-mode-card="marinas">
-        <CardShell
-          title={t("modeMarinas")}
-          icon={<Anchor size={14} className="text-alert" />}
-          borderCls="border-alert/40"
-        >
+        <CardShell borderCls="border-alert/40">
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
               {t("auditMarinasBuild")}
@@ -329,11 +329,7 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   if (mode === "formalities") {
     return (
       <div data-testid="audit-batch-hub" data-mode-card="formalities">
-        <CardShell
-          title={t("modeFormalities")}
-          icon={<ScrollText size={14} className="text-amberx" />}
-          borderCls="border-amberx/40"
-        >
+        <CardShell borderCls="border-amberx/40">
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
               {t("auditFormalitiesBatch")}
@@ -380,11 +376,7 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   // Default (projects) — full swarm ops + swarm-exclusive settings + marine filtering.
   return (
     <div data-testid="audit-batch-hub" data-mode-card="projects">
-      <CardShell
-        title={t("auditProjectsCardTitle")}
-        icon={<Compass size={14} className="text-sonar" />}
-        borderCls="border-sonar/40"
-      >
+      <CardShell borderCls="border-sonar/40">
         {/* Status pills */}
         <div className="flex items-center gap-2 flex-wrap">
           <span

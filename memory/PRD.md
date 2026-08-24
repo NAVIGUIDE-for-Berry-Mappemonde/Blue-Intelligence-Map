@@ -710,3 +710,16 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 ### État à la clôture de session
 - Build mouillages EN COURS (fin estimée ~1h, données persistées au fil de l'eau). Build marinas corridor 50 NM À LANCER ensuite (bouton Audit, corridor coché) — DB marinas vide suite relaunch job. Projects vide (réimport GeoJSON user si besoin).
 - Suite pytest régression : /app/tests/test_phase8_zee_anchorages.py (ne JAMAIS créer de fichiers sous /app/backend pendant un build — hot reload).
+
+## Update 2026-06 (session UX) — Crash antiméridien + harmonisation UI + SIA conditionnel
+### 1. Bug critique crash carte (RangeError _simplifyDPStep)
+- Cause racine : popups Leaflet `keepInView:true` + maxBounds ±180 = boucle de pan infinie (overflow de pile dans LineUtil.simplify), amplifiée par le segment route Mata-Utu→Nouméa avec longitudes NON WRAPPÉES jusqu'à -193° (25 coords hors [-180,180]) — également cause de la ligne verticale parasite au bord gauche.
+- Fix : (a) `keepInView` retiré des 5 bindPopup de MapView.js (escales, marinas, mouillages, formalités, projets — autoPan conservé) ; (b) route.geojson : segment scindé en 2 parties à ±180 avec interpolation de latitude au croisement (script /tmp/fix_route_antimeridian.py, backup route.geojson.bak_antimeridian, 72 features, 0 coord hors bornes, prop antimeridian_part).
+- Effet bonus : ZEE recalculée → 117 traversées (la ZEE FIDJI est maintenant détectée entre Wallis #76 et NC #80, entrée NC correcte côté +170°). Les futurs scans corridor couvriront correctement la jambe Fidji (les anciens points corridor à lon<-180 ne renvoyaient rien).
+### 2. Doublons d'info supprimés
+- Compteurs retirés des titres sidebar (FormalitiesPanel '17 ESCALES', MarinasPanel 'N MARINAS', SwarmPanel 'N projets') — ITEMS MAPPED du dashboard reste la source. Compteur ⚓ du toggle mouillages conservé (info de couche, pas un doublon).
+- BatchHub CardShell : en-tête de carte (nom du mode) supprimé — header rendu seulement si title fourni.
+### 3. SIA affichage conditionnel (AuditView.js)
+- LIVE SWARM CONSOLE rendu seulement si status.running ou agents actifs ; EXTRACTION TELEMETRY seulement si telemetry.length>0 ; FAILED EXTRACTIONS seulement si failed.length>0. KPIs + bouton d'action toujours visibles.
+### Tests : iteration_10 — 100% backend (14/14) & frontend, 3 clics marker NC + pans antiméridien = 0 pageerror, plus de ligne verticale. Suite : /app/tests/test_iteration10_route_zee.py.
+### Notes builds : scans marinas & mouillages réels en cours pendant la session (~96/159 et ~94/159, persistance incrémentale). Logs 502/backoff Overpass = fallback normal.

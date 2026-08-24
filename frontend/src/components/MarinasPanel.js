@@ -137,9 +137,7 @@ export default function MarinasPanel({
         <div className="flex items-center gap-2 mb-2">
           <Anchor size={18} className="text-alert" />
           <h2 className="font-heading font-bold text-white text-base">{t("modeMarinas")}</h2>
-          <span className="ml-auto font-mono text-[10px] text-alert/80 uppercase tracking-widest">
-            {features.length} {t("marinasCount")}
-          </span>
+          {/* Count removed 2026-06 (UX): duplicated the ITEMS MAPPED dashboard KPI */}
         </div>
 
         {/* Search */}

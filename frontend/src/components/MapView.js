@@ -335,7 +335,9 @@ export default function MapView({
               w.name || ""
             }</div>
           </div>`,
-          { maxWidth: 260, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
+          // keepInView removed 2026-06: combined with maxBounds it caused an
+          // infinite pan loop (stack overflow in LineUtil.simplify) near ±180°.
+          { maxWidth: 260, autoPan: true, autoPanPadding: [40, 40] },
         );
         m.addTo(group);
       });
@@ -462,7 +464,7 @@ export default function MapView({
             </div>
           </div>`;
         },
-        { maxWidth: 320, maxHeight: 400, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
+        { maxWidth: 320, maxHeight: 400, autoPan: true, autoPanPadding: [40, 40] },
       );
       marinaMarkersById.current.set(p.id, m);
       return m;
@@ -522,7 +524,7 @@ export default function MapView({
             <div style="margin-top:7px;font-size:9px;color:#64748b;">${p.osm_id ? "OSM " + p.osm_id + " · " : ""}${t("marinasFetchedAt")}: ${(p.fetched_at || "").slice(0, 10)}</div>
           </div>`;
         },
-        { maxWidth: 300, maxHeight: 360, autoPan: true, keepInView: true, autoPanPadding: [40, 40] },
+        { maxWidth: 300, maxHeight: 360, autoPan: true, autoPanPadding: [40, 40] },
       );
       return m;
     });
@@ -859,15 +861,15 @@ export default function MapView({
         // Popup overflow bug-fix 2026-08-24 — long fiches (Martinique with 8
         // ARRIVAL fields + 4 DEPARTURE + 3 SPECIAL + contacts + sources
         // easily exceeds 800 px) were rendered beyond the top of the map
-        // container. `autoPan` pans the map so the popup fits, `keepInView`
-        // clamps it inside the container, `maxHeight` caps at ~viewport and
-        // Leaflet adds a native scrollbar inside the popup body.
+        // container. `autoPan` pans the map so the popup fits, `maxHeight`
+        // caps at ~viewport and Leaflet adds a native scrollbar inside the
+        // popup body. `keepInView` removed 2026-06: with maxBounds it caused
+        // an infinite pan loop (stack overflow in simplify) near ±180°.
         {
           maxWidth: 360,
           minWidth: 280,
           maxHeight: 400,
           autoPan: true,
-          keepInView: true,
           autoPanPadding: [40, 40],
           className: "bi-formalities-popup",
         },
@@ -1082,7 +1084,7 @@ export default function MapView({
             </div>
           </div>
         `;
-        }, { maxWidth: 280, maxHeight: 400, autoPan: true, keepInView: true, autoPanPadding: [40, 40] });
+        }, { maxWidth: 280, maxHeight: 400, autoPan: true, autoPanPadding: [40, 40] });
         return marker;
       });
       cluster.addLayers(markers);

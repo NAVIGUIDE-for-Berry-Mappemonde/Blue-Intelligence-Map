@@ -3,7 +3,7 @@ import ProjectList from "./ProjectList";
 
 export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport }) {
   const legendCats = (categories || []).filter((c) => c.count > 0);
-  const totalVisible = (projects.features || []).length;
+  const totalVisible = (projects.features || []).length; // eslint-disable-line no-unused-vars
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0" data-testid="swarm-panel">
@@ -13,9 +13,7 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
           <div className="flex items-center gap-2">
             <Compass size={18} className="text-sonar" />
             <h2 className="font-heading font-bold text-white text-base">{t("modeProjects")}</h2>
-            <span className="ml-auto font-mono text-[10px] text-sonar/80 uppercase tracking-widest">
-              {totalVisible} {t("projects")}
-            </span>
+            {/* Count removed 2026-06 (UX): duplicated the ITEMS MAPPED dashboard KPI */}
           </div>
         </section>
 

@@ -87,10 +87,13 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
         onFormalitiesRefresh={onFormalitiesRefresh}
       />
 
-      {/* Live agent console — auxiliary info kept full-width below the hub */}
-      <div className="border border-line bg-surface overflow-hidden">
-        <AgentConsole t={t} agents={status?.agents || []} />
-      </div>
+      {/* Live agent console — 2026-06 UX: only rendered while the swarm is
+          actually deployed (conditional rendering, less visual noise). */}
+      {(status?.running || (status?.agents || []).length > 0) && (
+        <div className="border border-line bg-surface overflow-hidden">
+          <AgentConsole t={t} agents={status?.agents || []} />
+        </div>
+      )}
 
       {/* KPIs — Phase 6: "Items mapped" replaces the Projects-only label. */}
       <div className="grid grid-cols-3 gap-px bg-line border border-line">
@@ -108,7 +111,8 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
         </div>
       </div>
 
-      {/* Telemetry table */}
+      {/* Telemetry table — 2026-06 UX: hidden while no extraction has run */}
+      {telemetry.length > 0 && (
       <div className="border border-line bg-surface">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{t("telemetry")}</p>
@@ -135,15 +139,14 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
                   <td className="px-4 py-2 font-mono text-[11px] text-slate-300">{r.results}</td>
                 </tr>
               ))}
-              {telemetry.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-500">—</td></tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
+      )}
 
-      {/* Failed extractions */}
+      {/* Failed extractions — 2026-06 UX: hidden when there is nothing failed */}
+      {failed.length > 0 && (
       <div className="border border-line bg-surface">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">
@@ -156,9 +159,6 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
             </button>
           )}
         </div>
-        {failed.length === 0 && (
-          <p className="px-4 py-5 text-xs text-slate-500">{t("noFailed")}</p>
-        )}
         <div className="divide-y divide-line/50 max-h-[300px] overflow-y-auto">
           {failed.map((f) => (
             <div key={f.id} className="px-4 py-2.5 flex items-center gap-3 hover:bg-raised/50">
@@ -177,6 +177,7 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -175,7 +175,7 @@ export default function FormalitiesPanel({
   // Selected row highlighter — the selectedTerritory/selectedEscale props are
   // used inline in the rows map below (see isSelected computation).
 
-  const escaleCount = rows.length;
+  const escaleCount = rows.length; // eslint-disable-line no-unused-vars
 
   const renderStatusBadge = (status) => {
     const cls = STATUS_COLOR[status] || STATUS_COLOR.non_generee;
@@ -219,9 +219,7 @@ export default function FormalitiesPanel({
         <div className="flex items-center gap-2 mb-2">
           <ScrollText size={18} className="text-amberx" />
           <h2 className="font-heading font-bold text-white text-base">{t("modeFormalities")}</h2>
-          <span className="ml-auto font-mono text-[10px] text-amberx/80 uppercase tracking-widest">
-            {escaleCount} {t("formalitiesCount")}
-          </span>
+          {/* Count removed 2026-06 (UX): duplicated the ITEMS MAPPED dashboard KPI */}
         </div>
 
         {/* Permanent disclaimer */}
