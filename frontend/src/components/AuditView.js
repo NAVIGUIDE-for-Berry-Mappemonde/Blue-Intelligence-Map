@@ -12,7 +12,7 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
-export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) {
+export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh }) {
   const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
@@ -60,20 +60,20 @@ export default function AuditView({ t, status, refresh, onFormalitiesRefresh }) 
   };
 
   return (
-    <div className="h-full overflow-y-auto p-5 space-y-5" data-testid="audit-view">
+    <div className="h-full overflow-y-auto p-5 space-y-5 bi-audit-themed" data-testid="audit-view">
       <div className="flex items-center justify-between">
-        <h2 className="font-heading font-black text-xl text-white">{t("audit")}</h2>
+        <h2 className="font-heading font-black text-xl text-accent">{t("audit")}</h2>
         <button data-testid="clear-audit-btn" onClick={clearAudit}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
           <Trash2 size={12} /> {t("clearAll")}
         </button>
       </div>
 
-      {/* Phase 6 — Tri-mode Swarm Intelligence Hub. Projects card now hosts:
-          Deploy/Stop, Test/Full, Clear DB + swarm-exclusive extraction settings.
-          Marinas + Formalities cards keep their batch triggers. */}
+      {/* Phase 7 — Contextual Swarm Intelligence Hub: only the active mode's card
+          is rendered. BG + border of the audit view adopt the active-mode accent. */}
       <BatchHub
         t={t}
+        mode={mode}
         status={status}
         refresh={refresh}
         settings={settings}

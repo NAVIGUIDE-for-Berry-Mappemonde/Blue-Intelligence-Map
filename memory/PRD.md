@@ -547,3 +547,67 @@ Refactor UI/UX complet en accord avec le brief Phase 6, sans régression sur les
 - Cron auto-refresh des formalities `stale > 180j` — backlog.
 - Endpoint `DELETE /formalities/{code}/sources/{i}` — backlog.
 
+
+## Update 2026-08-24 — Phase 7 : UI/UX consolidation partie 3
+
+### Livrables
+- **Branding — favicon officiel** : SVG « Blue Intelligence » (3 vagues cyan dégradé + glow léger sur fond navy `#020617`, coins arrondis 12px) créé dans `/app/frontend/public/favicon.svg`. Déclinaisons générées via `cairosvg` :
+  - `favicon-16.png` · `favicon-32.png` · `apple-touch-icon.png` (180×180) · `logo192.png` (192×192)
+  - `favicon.ico` multi-taille (16+32) via Pillow
+  - `public/index.html` mis à jour avec 5 balises `<link rel="icon|shortcut icon|apple-touch-icon">` (SVG primary, PNG alt, .ico shortcut).
+  - Vérification : `curl HEAD /favicon.svg → 200`, `favicon.ico → 200`.
+- **Thématisation Audit** : nouvelle classe `bi-audit-themed` (`index.css`) — background linéaire subtil `rgba(var(--accent-rgb), 0.045) → 0` sur les 260 premiers px + `border-top: 1px solid rgba(var(--accent-rgb), 0.18)` — pilote par `[data-mode]`. Titre « Swarm Intelligence Audit » passé en `text-accent`. Screenshot en mode Formalities montre BG + titre ambre ; screenshot en mode Projects montre BG + titre cyan.
+- **Audit — affichage contextuel** : `BatchHub.js` complètement refactoré. Le composant reçoit `mode` en prop et fait un `if (mode === "marinas") { return <marinas card only /> }` / idem `formalities` / branche projets par défaut. **UNE SEULE carte est rendue**, celle correspondant au mode actif :
+  - `data-mode-card="projects|marinas|formalities"` sur le `<div data-testid="audit-batch-hub">`.
+  - Border couleur accent du mode (`border-sonar/40`, `border-alert/40`, `border-amberx/40`).
+  - Playwright vérifie `card_count: 1` dans les 3 modes.
+- **Migration Marine Filtering** : bloc `max_coast_km` + `min_marine_score` retiré de `SettingsPanel.js` (section « Marine Filtering » supprimée) et ajouté dans la carte Projects de `BatchHub.js` juste après les autres réglages d'extraction, sous la section `data-testid="audit-marine-filtering"`. La sauvegarde (bouton `save-swarm-settings-btn`) parse `max_coast_km` et `min_marine_score` en float avant PUT `/api/settings`.
+- **Rename « 13 fiches »** : toutes les occurrences retirées (EN + FR) :
+  - `auditFormalitiesBatch`: `"Generate the 13 formalities fiches"` → `"Generate formalities fiches"` (`"Générer les 13 fiches formalités"` → `"Générer les fiches formalités"`)
+  - `formalitiesBatchStart`: idem
+  - `formalitiesBatchConfirm`: reformulé sans nombre figé
+  - Fallback `total ?? 13` dans BatchHub → `total ? "/" + total : ""` — n'affiche `progress/N` que si N connu.
+- **Carte — Formalités** :
+  - Nouveau cluster amber `L.markerClusterGroup` (`formalitiesClusterRef`) partagé par la vue Formalités. Les 4 escales des Antilles clusterisent bien en vue monde (`maxClusterRadius: 45`).
+  - `.bi-cluster-formalities` CSS ajouté (amber avec glow, mêmes proportions que `.bi-cluster-marina`).
+  - Markers passés de `L.circleMarker` à `L.marker` avec `L.divIcon` (`bi-status-marker` + inner `bi-status-dot`) — obligation de `markercluster` qui ne supporte pas `circleMarker`. Rendu identique aux dots status par CSS (14px, border 2px, box-shadow, hover scale).
+  - **Halos blancs PoE supprimés** de la carte (l'info PoE reste dans le popup header + les badges de sidebar).
+  - Couleurs statut conservées (slate-500 non_generee / #fbbf24 ia / #fbbf24 dashed ia_sans_source / #39ff14 verifiee).
+- **Carte — no auto-labels** : audité — aucun `bindTooltip` / `permanent: true` en JS. Route segments et markers restent silencieux au hover ; le nom n'apparaît que sur click via `bindPopup`. Les classes CSS résiduelles `.bi-route-tt` / `.bi-route-escale-label` ne sont plus attachées à aucun tooltip.
+- **z-index** : pane « route » z=380 < markerPane z=600 (utilisé par leaflet.markercluster pour les icônes cluster) ; formalitiesCluster + marinaCluster + projectsCluster tous rendus dans markerPane, DONC AU-DESSUS de la route.
+- **flyToEscale** : mise à jour pour utiliser `cluster.zoomToShowLayer(marker, cb)` — quand un marker est dans un cluster au dézoom, il déspiderfie/zoome avant d'ouvrir le popup.
+
+### Fichiers modifiés (Phase 7)
+- `/app/frontend/public/index.html` (5 favicon links)
+- `/app/frontend/public/favicon.svg` (NEW · SVG 3-waves)
+- `/app/frontend/public/favicon-16.png` · `favicon-32.png` · `favicon.ico` · `apple-touch-icon.png` · `logo192.png` (NEW · générés via cairosvg + Pillow)
+- `/app/frontend/src/index.css` (bi-audit-themed, bi-cluster-formalities, bi-status-marker, bi-status-dot)
+- `/app/frontend/src/i18n.js` (rename 3 clés EN + FR, retrait du nombre 13)
+- `/app/frontend/src/App.js` (`mode` passé à AuditView)
+- `/app/frontend/src/components/AuditView.js` (`mode` prop, `bi-audit-themed` wrapper, titre `text-accent`)
+- `/app/frontend/src/components/BatchHub.js` (contextual — 3 branches par mode, `CardShell` extrait hors composant pour stabilité, Marine Filtering block ajouté à la Projects card)
+- `/app/frontend/src/components/SettingsPanel.js` (bloc Marine Filtering supprimé)
+- `/app/frontend/src/components/MapView.js` (formalitiesClusterRef + cluster amber, markers divIcon, PoE ring supprimée, flyToEscale via zoomToShowLayer)
+
+### Critères d'acceptation — 8/8 ✅
+1. ✅ Favicon 3 vagues visible dans l'onglet navigateur (curl `HEAD /favicon.svg → 200`, `favicon.ico → 200`, 5 balises link dans index.html).
+2. ✅ Vue Audit : BG + border top teintés au mode (`bi-audit-themed` classe active via `[data-mode]`), UN SEUL encadré affiché (`card_count: 1` vérifié dans les 3 modes).
+3. ✅ Zéro libellé "13" dans l'Audit (grep sur i18n.js et BatchHub.js : 0 hits pour "Generate the 13" / "Générer les 13").
+4. ✅ Marine Filtering absent de Settings (`marine_in_settings: false`), présent dans Projects card d'Audit (screenshot `/tmp/phase7_marine_ok.png` montre EXTRACTION SETTINGS complet + les fields Marine Filtering intégrés + Save button).
+5. ✅ Formalities markers : cluster amber au dézoom (`bi-cluster-formalities`), style dot (`bi-status-dot` 14px cerclé), halos blancs supprimés (`poe_rings: 0`), couleurs statut conservées.
+6. ✅ Aucun label auto sur la carte (aucun `bindTooltip`/`permanent:true` dans le JS) ; route sous les markers (pane 380 < markerPane 600).
+7. ✅ Régression zéro : `curl /api/formalities/la_reunion → status=ia`, `/api/manual?lang=fr → 200`, 4463 projets + 212 marinas + 13 fiches DB stables. Le popup formalités Phase 6 (buildPopup) intact avec toutes ses sections.
+8. ✅ Screenshots : `/tmp/phase7_form_world.png` (Formalities mode carte sans halos), `/tmp/phase7_audit_projects.png` + `/tmp/phase7_audit_marinas.png` + `/tmp/phase7_audit_formalities.png` (Audit contextuel dans les 3 modes), `/tmp/phase7_marine_ok.png` (Marine Filtering visible dans Projects card).
+
+### Screenshots produits
+- `/tmp/phase7_form_world.png` — carte Formalities vue monde, route sans halos
+- `/tmp/phase7_audit_projects.png` — Audit Projects card cyan (mode-card="projects")
+- `/tmp/phase7_audit_marinas.png` — Audit Marinas card rouge (mode-card="marinas")
+- `/tmp/phase7_audit_formalities.png` — Audit Formalities card amber themed BG (mode-card="formalities", ITEMS MAPPED = 4463)
+- `/tmp/phase7_marine_ok.png` — Marine Filtering + Extraction Settings dans Projects card
+- `/tmp/phase7_final_projects_audit.png` — full page Projects Audit
+
+### Non-goals & backlog inchangés
+- Rendering intermittent Playwright (settings/projects/territories) — non reproductible en vrai navigateur, fix orthogonal (probable timing K8s proxy).
+- Persistance batch state, cron auto-refresh formalities stale >180j, endpoint DELETE source contestée — backlog.
+

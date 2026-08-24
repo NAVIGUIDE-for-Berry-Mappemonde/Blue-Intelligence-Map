@@ -434,7 +434,7 @@ export default function App() {
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
-            <AuditView t={t} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities} />
+            <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities} />
           )}
         </main>
           {showSettings && (

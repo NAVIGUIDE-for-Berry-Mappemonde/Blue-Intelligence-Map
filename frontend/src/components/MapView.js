@@ -53,6 +53,7 @@ export default function MapView({
   const mapObj = useRef(null);
   const clusterRef = useRef(null);
   const marinaClusterRef = useRef(null);
+  const formalitiesClusterRef = useRef(null);
   const marinaMarkersById = useRef(new Map());
   const marinaSigRef = useRef("");
   const tileRef = useRef(null);
@@ -62,7 +63,8 @@ export default function MapView({
   const routeLayerRef = useRef(null);
   const routeLoadedRef = useRef(false);
   // Phase 4A — Formalities layer
-  const formalitiesLayerRef = useRef(null);
+  // Phase 7 — formalitiesLayerRef removed: markers now live inside the shared
+  // formalitiesClusterRef (leaflet.markercluster) for unified rendering.
   const formalitiesMarkersByEscale = useRef(new Map());
   const formalitiesSigRef = useRef("");
   const [routeOn] = useState(true);
@@ -133,11 +135,26 @@ export default function MapView({
       }),
     });
     marinaClusterRef.current = marinaCluster;
+    // Phase 7 — Formalities cluster (amber). Used to group the escales when zoomed out
+    // (e.g. the 4 Antilles escales collapse into a single cluster in world view).
+    const formalitiesCluster = L.markerClusterGroup({
+      maxClusterRadius: 45,
+      chunkedLoading: true,
+      chunkInterval: 100,
+      removeOutsideVisibleBounds: true,
+      animate: false,
+      iconCreateFunction: (c) => L.divIcon({
+        html: `<div class="bi-cluster-formalities" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
+        className: "",
+        iconSize: [32, 32],
+      }),
+    });
+    formalitiesClusterRef.current = formalitiesCluster;
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
-    // if the user is starting in another mode. In "formalities" mode neither cluster is
-    // attached — only the route + the escale-status layer show.
+    // if the user is starting in another mode.
     if (mode === "marinas") map.addLayer(marinaCluster);
-    else if (mode !== "formalities") map.addLayer(cluster);
+    else if (mode === "formalities") map.addLayer(formalitiesCluster);
+    else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
     map.on("zoomend", () => {
@@ -403,21 +420,21 @@ export default function MapView({
     marinaCluster.addLayers(markers);
   }, [marinas, t]);
 
-  // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A: 3 modes) ----------
+  // ---------- Mode swap: attach the right cluster, hide the others (Phase 4A → Phase 7) ----------
   useEffect(() => {
     const map = mapObj.current;
     const proj = clusterRef.current;
     const mar = marinaClusterRef.current;
-    const form = formalitiesLayerRef.current;
-    if (!map || !proj || !mar) return;
+    const formCluster = formalitiesClusterRef.current;
+    if (!map || !proj || !mar || !formCluster) return;
     // Detach everything first, then attach only the layer for the current mode.
     if (map.hasLayer(proj)) map.removeLayer(proj);
     if (map.hasLayer(mar)) map.removeLayer(mar);
-    if (form && map.hasLayer(form)) map.removeLayer(form);
+    if (map.hasLayer(formCluster)) map.removeLayer(formCluster);
     if (mode === "marinas") {
       map.addLayer(mar);
     } else if (mode === "formalities") {
-      if (form) map.addLayer(form);
+      map.addLayer(formCluster);
     } else {
       map.addLayer(proj);
     }
@@ -485,14 +502,15 @@ export default function MapView({
       const forDoc = terr ? forByCode[terr.code] : null;
       return `${name}|${terr?.code || ""}|${forDoc?.status || "none"}|${forDoc?.generated_at || ""}|${forDoc?.verified_at || ""}|${forDoc?.stale ? "1" : "0"}`;
     }).join(";");
-    if (statusSig === formalitiesSigRef.current && formalitiesLayerRef.current) return;
+    if (statusSig === formalitiesSigRef.current && formalitiesClusterRef.current?.getLayers()?.length) return;
     formalitiesSigRef.current = statusSig;
 
-    // (Re)build the layer
-    if (formalitiesLayerRef.current && map.hasLayer(formalitiesLayerRef.current)) {
-      map.removeLayer(formalitiesLayerRef.current);
-    }
-    const layer = L.layerGroup();
+    // Phase 7 — rebuild by clearing the shared formalities cluster (no more
+    // per-effect layerGroup). This unifies rendering with projects/marinas
+    // and gives us leaflet.markercluster grouping at world zoom.
+    const cluster = formalitiesClusterRef.current;
+    if (!cluster) return;
+    cluster.clearLayers();
     formalitiesMarkersByEscale.current.clear();
 
     // ---- Field ordering — mirrors the pre-Phase-6 sidebar tabs ----
@@ -692,19 +710,8 @@ export default function MapView({
       const fill = STATUS_FILL[status] || STATUS_FILL.non_generee;
       const stroke = STATUS_STROKE[status] || STATUS_STROKE.non_generee;
 
-      // Ring badge (port of entry) — drawn UNDER the marker
-      if (isPoe) {
-        const ring = L.circleMarker([lat, lon], {
-          radius: 11,
-          fill: false,
-          color: "#f8fafc",
-          weight: 2,
-          opacity: 0.95,
-          className: "bi-poe-ring",
-          interactive: false,
-        });
-        layer.addLayer(ring);
-      }
+      // Phase 7 — PoE white ring on the map is removed. The PoE badge remains
+      // visible in the popup header + the sidebar row.
 
       let leg = null;
       if (name === "La Rochelle") {
@@ -712,14 +719,19 @@ export default function MapView({
         leg = laRochelleSeen.count === 1 ? "departure" : "return";
       }
 
-      // Phase 6 — unified marker style with projects/marinas (radius 7, weight 2, fillOpacity 0.6)
-      const marker = L.circleMarker([lat, lon], {
-        radius: 7,
-        color: stroke,
-        weight: 2,
-        fillColor: fill,
-        fillOpacity: 0.6,
-        className: dashed ? "bi-escale-marker--dashed" : "",
+      // Phase 6 — unified marker style with projects/marinas.
+      // Phase 7 — use L.marker with divIcon so leaflet.markercluster clusters
+      // them at world zoom (circleMarker is not supported by markercluster).
+      const dashClass = dashed ? " bi-escale-dashed" : "";
+      const iconHtml = `<span class="bi-status-dot${dashClass}" style="background:${fill};border-color:${stroke};"></span>`;
+      const marker = L.marker([lat, lon], {
+        icon: L.divIcon({
+          html: iconHtml,
+          className: "bi-status-marker",
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+          popupAnchor: [0, -8],
+        }),
       });
 
       marker.bindPopup(
@@ -734,27 +746,28 @@ export default function MapView({
         }
       });
 
-      layer.addLayer(marker);
+      cluster.addLayer(marker);
       formalitiesMarkersByEscale.current.set(name + (leg ? `::${leg}` : ""), marker);
     });
 
-    formalitiesLayerRef.current = layer;
-    if (mode === "formalities") map.addLayer(layer);
+    // Phase 7 — cluster is shared and attached by the mode-swap effect, no
+    // per-render layerGroup to add.
   }, [route, territories, formalities, t, mode, onSelectEscale]);
 
   // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
   // Phase 6 — also open the popup of the target escale so the fiche is visible
   // straight away (the fiche now lives inside the popup, not the sidebar).
+  // Phase 7 — the marker may be inside a cluster at world zoom; use
+  // markercluster's zoomToShowLayer to spiderfy/zoom first.
   useEffect(() => {
     if (!flyToEscale) return;
     const map = mapObj.current;
+    const cluster = formalitiesClusterRef.current;
     if (!map) return;
     map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
-    // Wait for the flyTo to end then open the marker's popup
     const openTimer = setTimeout(() => {
       const markers = formalitiesMarkersByEscale.current;
       if (!markers || markers.size === 0) return;
-      // Look up: exact "name::leg" if leg is known, else just by name (first match wins)
       let target = null;
       if (flyToEscale.name && flyToEscale.leg) {
         target = markers.get(`${flyToEscale.name}::${flyToEscale.leg}`) || null;
@@ -764,7 +777,14 @@ export default function MapView({
           || markers.get(`${flyToEscale.name}::departure`)
           || markers.get(`${flyToEscale.name}::return`);
       }
-      if (target && typeof target.openPopup === "function") target.openPopup();
+      if (!target) return;
+      if (cluster && typeof cluster.zoomToShowLayer === "function") {
+        cluster.zoomToShowLayer(target, () => {
+          if (typeof target.openPopup === "function") target.openPopup();
+        });
+      } else if (typeof target.openPopup === "function") {
+        target.openPopup();
+      }
     }, 1150);
     return () => clearTimeout(openTimer);
   }, [flyToEscale]);

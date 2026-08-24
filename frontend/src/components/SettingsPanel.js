@@ -132,17 +132,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           </button>
         </section>
 
-        {/* Marine filtering — transverse */}
-        <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("marineFiltering")}</p>
-          <Field label={t("maxCoastKm")}>
-            <input data-testid="max-coast-km-input" type="number" value={form.max_coast_km} onChange={(e) => set("max_coast_km", e.target.value)} className={inputCls} />
-          </Field>
-          <Field label={`${t("minMarineScore")} (${form.min_marine_score})`}>
-            <input data-testid="min-marine-score-input" type="range" min="0" max="1" step="0.05" value={form.min_marine_score}
-              onChange={(e) => set("min_marine_score", e.target.value)} className="w-full accent-cyan-400" />
-          </Field>
-        </section>
+        {/* Phase 7 — Marine filtering block migrated to Audit → Projects card. */}
 
         {/* Map — transverse */}
         <section className="space-y-2.5">

@@ -150,6 +150,37 @@ html, body, #root {
   justify-content: center;
   box-shadow: 0 0 18px rgba(255, 74, 74, 0.35);
 }
+/* Phase 7 — Formalities cluster (amber) + unified status dot for individual escales */
+.bi-cluster-formalities {
+  background: rgba(251, 191, 36, 0.15);
+  border: 2px solid #fbbf24;
+  border-radius: 9999px;
+  color: #fbbf24;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
+}
+.bi-status-marker {
+  background: transparent;
+  border: none;
+}
+.bi-status-marker .bi-status-dot {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid #0f172a;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  transition: transform 0.15s ease;
+}
+.bi-status-marker:hover .bi-status-dot { transform: scale(1.15); }
+.bi-status-marker .bi-status-dot.bi-escale-dashed {
+  border-style: dashed;
+  border-width: 2px;
+}
 
 /* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */
 .bi-route-tt {
@@ -194,5 +225,17 @@ html, body, #root {
   color: #fbbf24;
   font-family: "JetBrains Mono", monospace;
 }
+
+/* Phase 7 — Audit view themed wrapper.
+   Subtle accent-tinted background + accent-tinted top border, driven by the
+   active [data-mode] on <html>. Kept intentionally subtle so KPI/telemetry
+   cards inside remain readable. */
+.bi-audit-themed {
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.045) 0%, rgba(var(--accent-rgb), 0) 260px),
+    rgb(var(--surface-rgb));
+  border-top: 1px solid rgba(var(--accent-rgb), 0.18);
+}
+
 
 button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }
