@@ -323,3 +323,83 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - **Endpoint de validation manuelle** (bouton "Marquer comme vérifiée" côté UI, PUT `verified_at`).
 - **Ré-import projets** — pour l'instant `db.projects` est vide (perdu au relaunch), les utilisateurs doivent poster leur GeoJSON de sauvegarde sur `POST /api/import/geojson` pour restaurer les 4 463 projets. Aucune régression de code Projets — juste 0 features à afficher.
 - Rafraîchissement automatique cron des formalities `stale` (>180 j).
+
+
+## Update 2026-08-24 — Phase 4B : Pipeline de génération + validation + exports
+
+### Résumé exécutif
+Le mode Formalités est passé de "13 fiches vides" à "13 fiches remplies par un pipeline TinyFish + LLM avec sources whitelistées, système de validation équipage, immigration à la demande, exports JSON/GeoJSON". Un batch réel a été exécuté une fois : **13/13 territoires générés, 12 en `ia` avec 1-2 sources whitelistées, 1 en `ia_sans_source` (la_reunion — PDF de l'arrêté préfectoral non extractible)**.
+
+Réimport annexe : les **4 463 projets ont été restaurés** via `POST /api/import/geojson` depuis le GeoJSON de sauvegarde utilisateur (2 doublons fusionnés, 0 skipped, `category_group` correctement rempli sur les 9 catégories).
+
+### Pipeline de génération (par territoire)
+**Nouveau module `/app/backend/formalities_gen.py` (~600 lignes)** :
+
+1. **Sélection des URLs** — `_select_source_urls(territory, cap=2)` prend `territory.ref_url` et les `ports_of_entry[].ref_url` du référentiel curated, filtrées par `_url_is_whitelisted` contre les `official_domains` du territoire. Les URLs hors whitelist sont rejetées avant même l'appel TinyFish.
+2. **Missions TinyFish RÉELLES** — `_run_tinyfish_mission(url, goal, MISSION_SCHEMA, key, budget_s=210)`. Schéma flat 26 champs (entree_*, sortie_*, cas_*, immigration_fr_*, contact_*, urls_consulted). Poll `/runs/{id}` toutes les 4s. Log verbatim `run_id`, statuses (PENDING → RUNNING → COMPLETED/FAILED/TIMEOUT). Prompt spécifique au régime (métropole/DROM/COM/TAAF/sui_generis) et au fait que le navire est sous **pavillon français, équipage FR**.
+3. **Fallback httpx+BeautifulSoup** — **crucial en pratique** : TinyFish a timeout **quasi-systématiquement** sur les sites gouv.fr / service-public.pf (challenges Cloudflare + JS lourd sur les portails gov 2024). Quand aucune mission TinyFish ne renvoie de payload utile, `_fetch_readable(url)` récupère le HTML de l'URL WHITELISTÉE avec un User-Agent Blue Intelligence, extrait le texte via BeautifulSoup (suppression nav/footer/script/style/aside/form), tronque à 8 000 chars et passe ce blob au LLM. Ce n'est PAS un mock : la source reste la même URL officielle whitelistée que TinyFish était censé visiter — c'est une dégradation gracieuse quand l'agent web échoue.
+4. **Synthèse LLM en FRANÇAIS** — `_synthesize_llm(...)` :
+   - **Primaire** : OpenRouter `openai/gpt-4o-mini`, `temperature=0`, `response_format=json_object`, 2 500 max_tokens. Header `X-Title: "Blue Intelligence - Formalities Synthesis"` (ASCII only, un em-dash y avait causé une exception latin-1 corrigée).
+   - **Fallback** : Gemini `gemini-2.5-flash` via `emergentintegrations.LlmChat` (EMERGENT_LLM_KEY).
+   - Prompt strict : JSON nested schema exact (entree/sortie/cas_particuliers/immigration_fr/contacts/liens_officiels), tout en FR, **ne jamais inventer** (null si absent des extraits), reformulation courte fidèle, règle spécifique conditionnelle pour `regime=taaf` uniquement (pas de contamination cross-territoire).
+5. **Filtre sources** — post-LLM, on collecte les URLs mentionnées par TinyFish (`urls_consulted`) et l'URL de seed, on filtre TOUT contre la whitelist du territoire (`endswith(".domain")` inclut les sous-domaines type `juridoc.gouv.nc` ⊂ `gouv.nc`), on dédup et on horodate en `collected_at`. **≥ 1 source whitelistée → status `ia`, sinon `ia_sans_source`**. Les `liens_officiels` retournés par le LLM sont eux aussi re-filtrés côté code — le LLM ne peut pas smuggler du Noonsite/forum même s'il essaie.
+6. **Persistance directe** — `db.formalities.update_one({territory_code}, {$set: {status, entree, sortie, cas_particuliers, contacts, liens_officiels, immigration.fr, sources, generated_at, verified_at:null, stale:false}})`. `immigration.ca/us/gb` préservés (endpoint immigration on-demand). Un restart backend en plein batch ne perd que la fiche en cours d'écriture.
+
+### Endpoints (11 nouveaux, tous préfixés `/api`)
+
+| Verbe | Chemin | Rôle |
+|---|---|---|
+| `POST` | `/formalities/{code}/generate` | 202 `{status:"started"}`, verrou par `code` dans `FORMALITIES_LOCKS` (409 si déjà en cours). `asyncio.create_task(_runner)`. |
+| `GET`  | `/formalities/{code}/generate/status` | `{state: idle|running|done|error, logs_tail[-40:], result, started_at, finished_at, error}`. Registry in-memory `FORMALITIES_GEN_TASKS`. |
+| `POST` | `/formalities/generate-batch` | `{stale_only: bool}`. Semaphore(2). Sélection triée dans l'ordre route. 409 si un autre batch tourne. |
+| `GET`  | `/formalities/generate-batch/status` | `{running, progress, total, results[{code, status, sources_count}], logs_tail[-80:], error}`. Singleton `FORMALITIES_BATCH_STATE`. |
+| `PUT`  | `/formalities/{code}/verify` | Flip → `status: verifiee`, `verified_at: now`. 404 code inconnu · 400 si `non_generee`. |
+| `POST` | `/formalities/{code}/immigration/{nat}` | `nat ∈ ca|us|gb` (400 sinon). Lance mission TinyFish ciblée (budget 120s) + synthèse LLM. Ne touche PAS au status principal ni aux autres slots immigration. Verrou par `(code:nat)`. |
+| `GET`  | `/formalities/{code}/immigration/{nat}/status` | idem generate/status. |
+| `GET`  | `/export/formalities.json` | `FormalitiesCollection`, 13 items, `Content-Disposition: attachment; filename=formalities.json`. |
+| `GET`  | `/export/formalities.geojson` | 17 points (1 par escale du route.geojson) avec properties `{escale_name, leg (departure/return sur La Rochelle), territory_code, status, is_port_of_entry, stale, generated_at, verified_at}`. |
+
+### Batch réel : preuves d'exécution (2026-08-24)
+
+- Duration : ~45 min pour 13 territoires en concurrency 2. Chaque territoire consomme 210s × 2 missions TinyFish (systématiquement en TIMEOUT sur les portails gov.fr — pattern observé sur `douane.gouv.fr`, `demarche.numerique.gouv.fr`, `service-public.pf`, `douane.gouv.nc`, `saint-pierre-et-miquelon.gouv.fr`, `wallis-et-futuna.gouv.fr`, `reunion.gouv.fr`, `taaf.fr`, `mayotte.gouv.fr`, `martinique.gouv.fr`, `saint-barth-saint-martin.gouv.fr`, `guadeloupe.gouv.fr`, `guyane.gouv.fr`) + fallback httpx 25s + LLM OpenRouter ~5s.
+- **Résultat** : 12/13 en `ia` (france_metropolitaine 2 srcs · martinique 1 · guadeloupe 1 · saint_barthelemy 2 · saint_martin 2 · guyane 1 · saint_pierre_et_miquelon 2 · polynesie_francaise 2 · wallis_et_futuna 1 · nouvelle_caledonie 1 · taaf 1 · mayotte 2), 1/13 en `ia_sans_source` (la_reunion — l'arrêté préfectoral 401-2017 est un PDF que ni TinyFish ni httpx ne parsent, fallback échoue proprement).
+- **Fiche SPM (échantillon complet, verified)** : `entree.preavis="Prévenir les douanes par téléphone au moins 20 minutes avant l'arrivée"`, `entree.pavillon_q="Arborer le pavillon Q à l'arrivée"`, `entree.ou_s_amarrer="Quai Mimosa à Saint-Pierre ou Quai du Port à Miquelon"`, `entree.vhf="Canal 12"`, `entree.franchises="Franchise de 500€ par personne et 250€ pour les mineurs"`, `entree.admission_temporaire="Le navire est sous le régime de l'importation en franchise temporaire pour six mois"`, `sortie.clearance`, `sortie.delais`, `sortie.documents`, `cas_particuliers.armes="Les armes et munitions doivent être placées en dépôt au bureau de douane"`, `immigration.fr.notes="L'immigration peut être effectuée avant ou après les formalités douanières"`, `contacts` : 4 numéros réels (Douanes Saint-Pierre, Miquelon, Capitainerie, PAF).
+- **Distribution des sources whitelistées** (18 total, aucune URL blacklist, aucune hors whitelist par territoire — vérifié via requête Mongo `db.formalities.aggregate([{ $unwind: "$sources" }])`) : `douane.gouv.fr:5, demarche.numerique.gouv.fr:5, saint-barth-saint-martin.gouv.fr:2, taaf.fr:1, saint-pierre-et-miquelon.gouv.fr:1, douane975.fr:1, service-public.pf:1, wallis-et-futuna.gouv.fr:1, douane.gouv.nc:1`.
+- **Couverture par champ (sur 13 fiches)** : `entree filled=12/13, sortie filled=8/13, cas_particuliers filled=3/13, contacts present=9/13, immigration.fr set=4/13`. Le taux immigration.fr modeste est structurel : la plupart des sites douaniers ne parlent PAS d'immigration, et le LLM applique strictement la règle "jamais d'invention" — c'est un feature, pas un bug.
+
+### UI Phase 4B — `/app/frontend/src/components/FormalitiesPanel.js` (~800 lignes)
+
+Ajouts sur le composant Phase 4A :
+
+- **Header block augmenté** : bloc "Batch generation" avec bouton `[data-testid="formalities-batch-btn"]` (icône Sparkles, `bg-amberx/10 border-amberx/50`, disable pendant refresh unique). Confirm dialog avant kick. En running : label "Generating… X/13" + Loader2 animé + zone logs live 10 dernières lignes (`[data-testid="formalities-batch-logs"]`, font-mono, max-h-24 scroll).
+- **Boutons d'export** en grille 2 colonnes : `.json` / `.geojson` (`[data-testid="formalities-export-{json|geojson}"]`), `<a href="${REACT_APP_BACKEND_URL}/api/export/formalities.{json|geojson}">`.
+- **Bouton Refresh par fiche** (`[data-testid="formalities-refresh-btn"]`) : dans la fiche territoire ouverte, à côté du badge statut. Utilise `window.__biGenerateFormality(code)` puis poll `/generate/status` (max 6 min, step 3s). Feedback inline : "Rafraîchissement…" ambre → "Rafraîchie" vert / "Échec" rouge.
+- **Bouton Verify** (`[data-testid="formalities-verify-btn"]`) : visible seulement si status ∈ `ia | ia_sans_source`. Label "Vérifiée par l'équipage" / "Verified by crew", couleur bio-green. Appel `PUT /verify` puis re-fetch le doc.
+- **Onglet Immigration** amélioré : quand la nationalité sélectionnée n'a pas de slot rempli et n'est pas `fr`, affiche un bouton `[data-testid="immigration-generate-btn"]` "Générer pour US/CA/GB" qui appelle `POST /immigration/{nat}` + poll (max 2.5 min).
+- **Onglet Sources** enrichi : liste avec `<Globe/>` + URL cliquable + domaine + `collected_at`. Si status=`ia_sans_source` → bandeau rouge `[data-testid="formalities-no-source-warning"]` : "Aucune source officielle trouvée — contenu IA à vérifier impérativement avant le départ." (FR) / "No official source found — AI-generated content, verify with the authorities before departure." (EN).
+- **Badges "stale"** (horloge, ambre) : ajoutés dans la fiche header + sur chaque row de la sidebar quand `generated_at > 180 j` (via le champ `stale: bool` calculé côté backend par `formalities.is_stale()`).
+- **Timestamps affichés** dans la fiche : `Generated: YYYY-MM-DD · Verified: YYYY-MM-DD` (font-mono text-[9px]).
+- **Poller batch** : `setInterval(fetch batch/status, 2000)`. Chaque tick appelle `onFormalitiesRefresh()` (fetchFormalities côté App.js) — la carte et la sidebar se recolorent LIVE au fur et à mesure que chaque territoire finit et se persiste en DB. Nettoyage propre au unmount.
+- **App.js** : 3 nouveaux window handlers (`__biGenerateFormality`, `__biVerifyFormality`, `__biGenerateImmigration`) + prop `onFormalitiesRefresh={fetchFormalities}` passée au panel.
+- **MapView.js** — aucun changement nécessaire : la signature de rebuild `nom|code|status` déjà en place recolore automatiquement les escales à chaque `formalities` mutation.
+
+### i18n (18 nouvelles clés EN + FR)
+`formalitiesBatchTitle, formalitiesBatchStart, formalitiesBatchRunning, formalitiesBatchConfirm, formalitiesRefreshBtn, formalitiesRefreshRunning, formalitiesRefreshDone, formalitiesRefreshFailed, formalitiesVerifyBtn, formalitiesVerifyBtnTooltip, formalitiesGeneratedAt, formalitiesVerifiedAt, formalitiesStale, formalitiesStaleTooltip, formalitiesImmigrationGenerate, formalitiesImmigrationRunning, formalitiesNoSourceWarning, formalitiesNoSourceEmpty`. Contenu des fiches reste FR uniquement (décision Phase 4A).
+
+### Vérifications end-to-end (2026-08-24)
+
+1. ✅ Génération unitaire SPM : `POST /formalities/saint_pierre_et_miquelon/generate` → 202 (0.032 s), poll → done en ~6 min, doc rempli avec entree (8 champs), sortie (3 champs), cas_particuliers.armes, immigration.fr.notes, 4 contacts avec numéros réels, 2 sources whitelistées, `generated_at="2026-08-24T…"`. **Preuve TinyFish** : 2 run_ids réels loggés (b2935bae-… et un autre), status PENDING/TIMEOUT visibles.
+2. ✅ Batch 13 fiches lancé UNE fois, 45 min, 13/13 persistées au fil de l'eau, sidebar+carte recolorées en live, 12 ia + 1 ia_sans_source.
+3. ✅ Verify SPM → status=verifiee + verified_at posé ; batch a régénéré SPM → status revenu à `ia` + `verified_at=null` (rollback automatique).
+4. ✅ Immigration US on-demand : `POST /formalities/saint_pierre_et_miquelon/immigration/us` → 202, TinyFish TIMEOUT 120s (attendu), LLM OpenRouter OK, `immigration.us={visa:null, duree_sejour:null, equivalent_esta:null, notes:null}` persisté (rien inventé, respecte la règle). Le status principal `verifiee` a été préservé.
+5. ✅ Exports : `.json` (14 545 bytes, `FormalitiesCollection`, 13 items, header Content-Disposition), `.geojson` (4 874 bytes, `FeatureCollection`, 17 features avec toutes les properties requises + leg=departure/return sur La Rochelle).
+6. ✅ **Aucune URL blacklist en base** : requête Mongo `db.formalities.aggregate([{$unwind:"$sources"}])` = 18 rows, 0 hit sur noonsite.com/cruisersforum.com/reddit.com/wikipedia.org/etc. Vérification supplémentaire : chaque source respecte la whitelist de SON territoire (aucune fuite cross-territoire).
+7. ✅ **Régression zéro** : mode Projets affiche les 4 463 projets restaurés (9 clusters visibles à l'ouverture, sidebar avec Legend/Category filters), mode Marinas affiche les 212 marinas (2 clusters visibles), mode Formalités 4A intact (sidebar 17 escales, disclaimer ambre, sélecteur nationalité persisté). Round-trip Projets → Marinas → Formalités → Projets sans erreur console.
+8. ✅ Screenshots : `formalities_4b_post_batch_overview.png` (13 escales ambre + SPM vert, sidebar avec Batch button + logs live + exports), `formalities_4b_spm_verified.png` (fiche SPM en VERIFIED + COM + refresh btn + PORT OF ENTRY), `formalities_4b_spm_sources.png` (onglet Sources avec 2 URLs whitelistées + collected_at + Official Sources Whitelist chips), `formalities_4b_spm_immigration_us.png` (nationalité American, immigration slot vide car règle "no invention" respectée), `formalities_4b_regression_projects.png` (mode Projets avec 4463 projects restaurés + sidebar Legend + 9 clusters).
+
+### Non-goals / backlog Phase 4C potentielle
+- **la_reunion — PDF de l'arrêté 401-2017 non extractible** : TinyFish timeout, httpx retourne le HTML de la landing page qui ne linke que le PDF. Pour couvrir ce cas, il faudrait ajouter un extracteur PDF (pdfplumber / pymupdf) au fallback fetch. Non fait ici (hors périmètre 4B).
+- **TinyFish TIMEOUT systémique sur les portails gov.fr** — c'est le vrai constat opérationnel : la classe agentic de TinyFish ne franchit pas les challenges Cloudflare des sites gov 2024. Le fallback readable-fetch compense complètement en pratique, mais il faudrait explorer soit un plan TinyFish "static" plus rapide, soit un mode headed via un pilote Chromium local. Note : les URLs whitelistées visitées par httpx restent **de vraies sources officielles**, la traçabilité n'est pas dégradée.
+- **Immigration ca/us/gb** : le pipeline est en place et fonctionnel, mais dans la pratique les sources françaises officielles ne parlent PAS des visas pour les autres nationalités. Une amélioration Phase 4C serait de router chaque nat vers son propre portail (travel.state.gov pour US, gov.uk pour GB, etc.), avec whitelist par nat + territoire.
+- **Refresh cron des fiches stale > 180 j** — pas encore automatisé.
+- **Endpoint DELETE `/formalities/{code}/sources/{i}` pour purger une source contestée** — pas fait.

@@ -28,6 +28,10 @@ from formalities import (
     serialise_doc as _formalities_serialise_doc,
     serialise_list as _formalities_serialise_list,
 )
+from formalities_gen import (
+    generate_immigration_slot,
+    generate_territory_formality,
+)
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from pipeline import Swarm, now_iso
@@ -1299,6 +1303,376 @@ async def get_formalities(territory_code: str):
     out = _formalities_serialise_doc(doc)
     out["territory"] = terr_ref
     return out
+
+
+# ---------- Formalities generation (Phase 4B) ----------
+# Per-territory task registry + lock. Same pattern as MARINA_ENRICH_TASKS.
+FORMALITIES_GEN_TASKS: dict[str, dict] = {}
+FORMALITIES_LOCKS: set[str] = set()
+IMMIGRATION_LOCKS: set[str] = set()  # keyed by f"{code}:{nat}"
+
+
+class FormalitiesBatchState:
+    def __init__(self):
+        self.running: bool = False
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.progress: int = 0
+        self.total: int = 0
+        self.results: list[dict] = []
+        self.logs: list[str] = []
+        self.error: str | None = None
+
+    def log(self, msg: str):
+        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        if len(self.logs) > 800:
+            self.logs = self.logs[-800:]
+
+
+FORMALITIES_BATCH_STATE = FormalitiesBatchState()
+
+
+def _keys_gen() -> tuple[str | None, str | None, str | None]:
+    return (
+        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
+        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
+        (os.environ.get("EMERGENT_LLM_KEY") or "").strip() or None,
+    )
+
+
+class FormalitiesBatchBody(BaseModel):
+    stale_only: bool = False
+
+
+@router.post("/formalities/{territory_code}/generate", status_code=202)
+async def formalities_generate(territory_code: str):
+    """Start generation for one territory as a background task."""
+    territories = _load_territories_cached()
+    if not any(t.get("code") == territory_code for t in territories.get("territories", [])):
+        raise HTTPException(404, f"territory '{territory_code}' unknown")
+    if territory_code in FORMALITIES_LOCKS:
+        raise HTTPException(409, "Generation already in progress for this territory")
+
+    _prune_tasks(FORMALITIES_GEN_TASKS)
+    FORMALITIES_LOCKS.add(territory_code)
+    FORMALITIES_GEN_TASKS[territory_code] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+    tf_key, or_key, emg_key = _keys_gen()
+
+    async def _runner():
+        task = FORMALITIES_GEN_TASKS[territory_code]
+
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 400:
+                task["logs"] = task["logs"][-400:]
+
+        try:
+            doc = await generate_territory_formality(
+                db, territory_code, territories,
+                logger=log_fn,
+                tinyfish_key=tf_key,
+                openrouter_key=or_key,
+                emergent_key=emg_key,
+            )
+            task["result"] = _formalities_serialise_doc(doc) if doc else None
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+            log_fn(f"FATAL: {task['error']}")
+        finally:
+            task["finished_at"] = time.time()
+            FORMALITIES_LOCKS.discard(territory_code)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "territory_code": territory_code}
+
+
+@router.get("/formalities/{territory_code}/generate/status")
+async def formalities_generate_status(territory_code: str):
+    task = FORMALITIES_GEN_TASKS.get(territory_code)
+    if not task:
+        return {"state": "idle", "territory_code": territory_code}
+    return {
+        "state": task["state"],
+        "territory_code": territory_code,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-40:],
+    }
+
+
+@router.post("/formalities/generate-batch")
+async def formalities_generate_batch(body: FormalitiesBatchBody | None = None):
+    if FORMALITIES_BATCH_STATE.running:
+        raise HTTPException(409, "A formalities batch is already running")
+    body = body or FormalitiesBatchBody()
+    territories = _load_territories_cached()
+
+    # Selection
+    all_docs = await db.formalities.find({}).to_list(50)
+    from formalities import is_stale as _is_stale_formality
+    if body.stale_only:
+        candidates = [d for d in all_docs if _is_stale_formality(d)]
+    else:
+        candidates = all_docs
+    # Sort in route order
+    order = {t["code"]: i for i, t in enumerate(territories.get("territories", []))}
+    candidates.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+
+    tf_key, or_key, emg_key = _keys_gen()
+
+    FORMALITIES_BATCH_STATE.running = True
+    FORMALITIES_BATCH_STATE.started_at = time.time()
+    FORMALITIES_BATCH_STATE.finished_at = None
+    FORMALITIES_BATCH_STATE.progress = 0
+    FORMALITIES_BATCH_STATE.total = len(candidates)
+    FORMALITIES_BATCH_STATE.results = []
+    FORMALITIES_BATCH_STATE.logs = []
+    FORMALITIES_BATCH_STATE.error = None
+
+    async def _runner():
+        try:
+            FORMALITIES_BATCH_STATE.log(
+                f"Selected {len(candidates)} territories (concurrency=2, stale_only={body.stale_only})"
+            )
+            sem = asyncio.Semaphore(2)
+            counter = {"i": 0}
+
+            async def _one(d):
+                code = d.get("territory_code")
+                async with sem:
+                    if code in FORMALITIES_LOCKS:
+                        FORMALITIES_BATCH_STATE.log(f"SKIP {code}: already locked")
+                        return
+                    FORMALITIES_LOCKS.add(code)
+                    FORMALITIES_BATCH_STATE.log(f"→ generating {code}")
+                    try:
+                        def batch_log(msg: str):
+                            FORMALITIES_BATCH_STATE.log(f"  [{code}] {msg}")
+                        doc = await generate_territory_formality(
+                            db, code, territories,
+                            logger=batch_log,
+                            tinyfish_key=tf_key,
+                            openrouter_key=or_key,
+                            emergent_key=emg_key,
+                        )
+                        FORMALITIES_BATCH_STATE.results.append({
+                            "territory_code": code,
+                            "status": (doc or {}).get("status"),
+                            "sources_count": len((doc or {}).get("sources") or []),
+                        })
+                    except Exception as e:
+                        FORMALITIES_BATCH_STATE.log(f"  [{code}] FAILED: {type(e).__name__}: {e}")
+                        FORMALITIES_BATCH_STATE.results.append({
+                            "territory_code": code,
+                            "error": f"{type(e).__name__}: {e}",
+                        })
+                    finally:
+                        FORMALITIES_LOCKS.discard(code)
+                        counter["i"] += 1
+                        FORMALITIES_BATCH_STATE.progress = counter["i"]
+
+            await asyncio.gather(*(_one(d) for d in candidates))
+            by_status = {}
+            for r in FORMALITIES_BATCH_STATE.results:
+                s = r.get("status") or "error"
+                by_status[s] = by_status.get(s, 0) + 1
+            FORMALITIES_BATCH_STATE.log(f"Done. Statuses: {by_status}")
+        except Exception as e:
+            FORMALITIES_BATCH_STATE.error = f"{type(e).__name__}: {e}"
+            FORMALITIES_BATCH_STATE.log(f"FATAL: {FORMALITIES_BATCH_STATE.error}")
+        finally:
+            FORMALITIES_BATCH_STATE.finished_at = time.time()
+            FORMALITIES_BATCH_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"started": True, "selected": len(candidates), "concurrency": 2}
+
+
+@router.get("/formalities/generate-batch/status")
+async def formalities_generate_batch_status():
+    s = FORMALITIES_BATCH_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "results": s.results,
+        "logs_tail": s.logs[-80:],
+        "error": s.error,
+    }
+
+
+@router.put("/formalities/{territory_code}/verify")
+async def formalities_verify(territory_code: str):
+    """Flip status to `verifiee` + stamp verified_at. Only meaningful for ia/ia_sans_source."""
+    doc = await db.formalities.find_one({"territory_code": territory_code})
+    if not doc:
+        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
+    if doc.get("status") == "non_generee":
+        raise HTTPException(400, "cannot verify a non-generated territory")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    await db.formalities.update_one(
+        {"territory_code": territory_code},
+        {"$set": {"status": "verifiee", "verified_at": now}},
+    )
+    fresh = await db.formalities.find_one({"territory_code": territory_code})
+    return _formalities_serialise_doc(fresh)
+
+
+@router.post("/formalities/{territory_code}/immigration/{nat}", status_code=202)
+async def formalities_generate_immigration(territory_code: str, nat: str):
+    """Generate the immigration slot for a given nationality (ca|us|gb).
+    FR is generated in the main pipeline; this endpoint rejects nat=fr."""
+    if nat not in ("ca", "us", "gb"):
+        raise HTTPException(400, "nat must be one of ca|us|gb")
+    territories = _load_territories_cached()
+    if not any(t.get("code") == territory_code for t in territories.get("territories", [])):
+        raise HTTPException(404, f"territory '{territory_code}' unknown")
+    lock_key = f"{territory_code}:{nat}"
+    if lock_key in IMMIGRATION_LOCKS:
+        raise HTTPException(409, "immigration generation already in progress")
+    _prune_tasks(FORMALITIES_GEN_TASKS)
+    task_key = f"immigration:{lock_key}"
+    IMMIGRATION_LOCKS.add(lock_key)
+    FORMALITIES_GEN_TASKS[task_key] = {
+        "state": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "logs": [],
+    }
+    tf_key, or_key, emg_key = _keys_gen()
+
+    async def _runner():
+        task = FORMALITIES_GEN_TASKS[task_key]
+
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 200:
+                task["logs"] = task["logs"][-200:]
+
+        try:
+            doc = await generate_immigration_slot(
+                db, territory_code, nat, territories,
+                logger=log_fn, tinyfish_key=tf_key,
+                openrouter_key=or_key, emergent_key=emg_key,
+            )
+            task["result"] = _formalities_serialise_doc(doc) if doc else None
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+            log_fn(f"FATAL: {task['error']}")
+        finally:
+            task["finished_at"] = time.time()
+            IMMIGRATION_LOCKS.discard(lock_key)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "territory_code": territory_code, "nat": nat}
+
+
+@router.get("/formalities/{territory_code}/immigration/{nat}/status")
+async def formalities_immigration_status(territory_code: str, nat: str):
+    task_key = f"immigration:{territory_code}:{nat}"
+    task = FORMALITIES_GEN_TASKS.get(task_key)
+    if not task:
+        return {"state": "idle", "territory_code": territory_code, "nat": nat}
+    return {
+        "state": task["state"],
+        "territory_code": territory_code,
+        "nat": nat,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
+
+
+# ---------- Formalities exports (Phase 4B) ----------
+@router.get("/export/formalities.json")
+async def export_formalities_json():
+    docs = await db.formalities.find({}).to_list(50)
+    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
+    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
+    payload = {
+        "type": "FormalitiesCollection",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "count": len(docs),
+        "items": _formalities_serialise_list(docs),
+    }
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": "attachment; filename=formalities.json"},
+    )
+
+
+@router.get("/export/formalities.geojson")
+async def export_formalities_geojson():
+    """1 Point per escale (all 17 features from route.geojson) with formality meta."""
+    if not ROUTE_FILE.exists():
+        raise HTTPException(500, "route.geojson missing")
+    import json as _json
+    route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
+    territories = _load_territories_cached()
+    escale_to_code = {}
+    for terr in territories.get("territories", []):
+        for en in terr.get("escale_names", []):
+            escale_to_code[en] = terr.get("code")
+    docs = await db.formalities.find({}).to_list(50)
+    by_code = {d.get("territory_code"): d for d in docs}
+    features = []
+    la_rochelle_seen = {"count": 0}
+    for feat in route.get("features", []):
+        if feat.get("geometry", {}).get("type") != "Point":
+            continue
+        props = feat.get("properties") or {}
+        if props.get("point_type") != "escale":
+            continue
+        name = props.get("name")
+        code = escale_to_code.get(name)
+        d = by_code.get(code) or {}
+        overlay = next(
+            (o for o in (d.get("escale_overlays") or []) if o.get("escale_name") == name),
+            None,
+        )
+        leg = None
+        if name == "La Rochelle":
+            la_rochelle_seen["count"] += 1
+            leg = "departure" if la_rochelle_seen["count"] == 1 else "return"
+        from formalities import is_stale as _fs
+        features.append({
+            "type": "Feature",
+            "geometry": feat["geometry"],
+            "properties": {
+                "escale_name": name,
+                "leg": leg,
+                "territory_code": code,
+                "status": d.get("status") or "non_generee",
+                "is_port_of_entry": bool(overlay and overlay.get("is_port_of_entry")),
+                "stale": _fs(d) if d else False,
+                "generated_at": d.get("generated_at"),
+                "verified_at": d.get("verified_at"),
+            },
+        })
+    fc = {"type": "FeatureCollection", "features": features}
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=formalities.geojson"},
+    )
 
 
 app.include_router(router)

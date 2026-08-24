@@ -1,5 +1,5 @@
-import { Anchor, ChevronRight, Globe, MapPin, ScrollText, ShieldCheck, ShieldQuestion } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Anchor, CheckCircle2, ChevronRight, Clock, Download, Globe, Loader2, MapPin, PlayCircle, RefreshCw, ScrollText, ShieldCheck, ShieldQuestion, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
 // --- Status → colour tokens (kept in sync with MapView escale colours) ---
@@ -94,11 +94,20 @@ export default function FormalitiesPanel({
   selectedTerritory,
   selectedEscale,
   onSelectEscale,
+  onFormalitiesRefresh,   // fn() — parent will refetch /api/formalities
 }) {
   const [nationality, setNationalityRaw] = useState(readInitialNationality());
   const [activeTab, setActiveTab] = useState("entree");
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // Phase 4B — batch + per-territory generation state
+  const [batchStatus, setBatchStatus] = useState(null);
+  const [batchStarting, setBatchStarting] = useState(false);
+  const batchPollRef = useRef(null);
+  const [refreshingCode, setRefreshingCode] = useState(null);   // territory_code being refreshed one-off
+  const [refreshFeedback, setRefreshFeedback] = useState(null); // {code, msg, color}
+  const [verifying, setVerifying] = useState(false);
+  const [immigrationBusy, setImmigrationBusy] = useState(null); // nat currently generating
 
   const setNationality = (v) => {
     setNationalityRaw(v);
@@ -164,6 +173,133 @@ export default function FormalitiesPanel({
       .finally(() => { if (alive) setDetailLoading(false); });
     return () => { alive = false; };
   }, [selectedTerritory]);
+
+  // Also reload the detail whenever the underlying formalities collection changes
+  // (poll refresh after batch progress).
+  useEffect(() => {
+    if (!selectedTerritory) return;
+    api.get(`/formalities/${selectedTerritory}`)
+      .then((r) => setDetail(r.data))
+      .catch(() => {});
+  }, [formalities, selectedTerritory]);
+
+  // ---------- Phase 4B — Batch runner + poller ----------
+  const batchRunning = !!batchStatus?.running;
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/formalities/generate-batch/status");
+        if (!alive) return;
+        setBatchStatus(data);
+        if (!data.running) {
+          // On completion, propagate a formalities refetch so the sidebar + map recolour.
+          if (batchPollRef.current) {
+            clearInterval(batchPollRef.current);
+            batchPollRef.current = null;
+          }
+          if (onFormalitiesRefresh) onFormalitiesRefresh();
+        } else if (onFormalitiesRefresh) {
+          // Live refresh — each finished territory persists immediately.
+          onFormalitiesRefresh();
+        }
+      } catch (_) { /* transient */ }
+    };
+    check();
+    batchPollRef.current = setInterval(check, 2000);
+    return () => {
+      alive = false;
+      if (batchPollRef.current) clearInterval(batchPollRef.current);
+    };
+  }, [batchStarting]);
+
+  const startBatch = async () => {
+    if (batchStarting || batchStatus?.running) return;
+    if (!window.confirm(t("formalitiesBatchConfirm"))) return;
+    setBatchStarting(true);
+    try {
+      await api.post("/formalities/generate-batch");
+    } catch (e) {
+      console.warn("Batch start failed", e);
+    } finally {
+      setTimeout(() => setBatchStarting(false), 800);
+    }
+  };
+
+  // ---------- Refresh a single territory ----------
+  const refreshOne = async (code) => {
+    if (refreshingCode) return;
+    if (!code || !window.__biGenerateFormality) return;
+    setRefreshingCode(code);
+    setRefreshFeedback({ code, msg: t("formalitiesRefreshRunning"), color: "#fbbf24" });
+    const kick = await window.__biGenerateFormality(code);
+    if (!kick.ok && kick.code !== 409) {
+      setRefreshFeedback({ code, msg: t("formalitiesRefreshFailed"), color: "#ff4a4a" });
+      setRefreshingCode(null);
+      return;
+    }
+    // Poll status ourselves
+    for (let i = 0; i < 120; i++) {
+      await new Promise((res) => setTimeout(res, 3000));
+      try {
+        const st = await api.get(`/formalities/${code}/generate/status`);
+        if (st.data?.state === "done") {
+          setRefreshFeedback({ code, msg: t("formalitiesRefreshDone"), color: "#39ff14" });
+          if (onFormalitiesRefresh) onFormalitiesRefresh();
+          break;
+        }
+        if (st.data?.state === "error") {
+          setRefreshFeedback({ code, msg: t("formalitiesRefreshFailed"), color: "#ff4a4a" });
+          break;
+        }
+      } catch (_) { /* transient */ }
+    }
+    setRefreshingCode(null);
+  };
+
+  // ---------- Verify (crew mark as verified) ----------
+  const verifyCurrent = async () => {
+    if (!selectedTerritory || verifying) return;
+    setVerifying(true);
+    try {
+      const r = await window.__biVerifyFormality?.(selectedTerritory);
+      if (r?.ok) {
+        // Refresh the local detail
+        const fresh = await api.get(`/formalities/${selectedTerritory}`);
+        setDetail(fresh.data);
+      }
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // ---------- Immigration on-demand ----------
+  const generateImmigration = async (nat) => {
+    if (!selectedTerritory || immigrationBusy) return;
+    setImmigrationBusy(nat);
+    try {
+      const r = await window.__biGenerateImmigration?.(selectedTerritory, nat);
+      if (!r?.ok) {
+        setImmigrationBusy(null);
+        return;
+      }
+      // Poll the immigration status
+      for (let i = 0; i < 60; i++) {
+        await new Promise((res) => setTimeout(res, 2500));
+        try {
+          const st = await api.get(`/formalities/${selectedTerritory}/immigration/${nat}/status`);
+          if (st.data?.state === "done") {
+            const fresh = await api.get(`/formalities/${selectedTerritory}`);
+            setDetail(fresh.data);
+            break;
+          }
+          if (st.data?.state === "error") break;
+        } catch (_) { /* transient */ }
+      }
+    } finally {
+      setImmigrationBusy(null);
+    }
+  };
 
   const escaleCount = rows.length;
 
@@ -239,9 +375,12 @@ export default function FormalitiesPanel({
       ? (detail.escale_overlays || []).find((o) => o.escale_name === selectedEscale)
       : null;
     const regimeLabel = t(REGIME_LABEL_KEY[terr.regime] || "formalitiesRegimeMetropole");
+    const isBusy = refreshingCode === terr.code;
+    const showFeedback = refreshFeedback && refreshFeedback.code === terr.code;
+    const canVerify = detail.status === "ia" || detail.status === "ia_sans_source";
     return (
       <div className="p-3 space-y-3" data-testid="formalities-card">
-        {/* Title + status + regime */}
+        {/* Title + status + regime + actions */}
         <div>
           <div className="flex items-start gap-2">
             <span className="text-xl leading-none">{terr.flag_emoji || "🏳️"}</span>
@@ -254,8 +393,62 @@ export default function FormalitiesPanel({
                 <span className="px-1.5 py-0.5 border border-line rounded-sm font-mono text-[9px] uppercase tracking-widest text-slate-400">
                   {regimeLabel}
                 </span>
+                {detail.stale && (
+                  <span
+                    data-testid="formalities-stale-badge"
+                    title={t("formalitiesStaleTooltip")}
+                    className="px-1.5 py-0.5 border border-amberx/50 bg-amberx/10 text-amberx rounded-sm font-mono text-[9px] uppercase tracking-widest flex items-center gap-1"
+                  >
+                    <Clock size={9} /> {t("formalitiesStale")}
+                  </span>
+                )}
               </div>
+              {detail.generated_at && (
+                <div className="mt-1 font-mono text-[9px] text-slate-500">
+                  {t("formalitiesGeneratedAt")}: {detail.generated_at.slice(0, 10)}
+                  {detail.verified_at && (
+                    <span className="ml-2 text-bio">
+                      · {t("formalitiesVerifiedAt")}: {detail.verified_at.slice(0, 10)}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
+          </div>
+          {/* Action buttons */}
+          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            <button
+              data-testid="formalities-refresh-btn"
+              onClick={() => refreshOne(terr.code)}
+              disabled={isBusy || batchRunning}
+              className="flex items-center gap-1 px-2 py-1 border border-amberx/40 bg-amberx/10 hover:bg-amberx/15 disabled:opacity-60 disabled:cursor-not-allowed text-amberx font-mono text-[10px] uppercase tracking-wider rounded-sm"
+              title={t("formalitiesRefreshBtn")}
+            >
+              {isBusy
+                ? <><Loader2 size={10} className="animate-spin" /> {t("formalitiesRefreshRunning")}</>
+                : <><RefreshCw size={10} /> {t("formalitiesRefreshBtn")}</>}
+            </button>
+            {canVerify && (
+              <button
+                data-testid="formalities-verify-btn"
+                onClick={verifyCurrent}
+                disabled={verifying}
+                className="flex items-center gap-1 px-2 py-1 border border-bio/40 bg-bio/10 hover:bg-bio/15 disabled:opacity-60 disabled:cursor-not-allowed text-bio font-mono text-[10px] uppercase tracking-wider rounded-sm"
+                title={t("formalitiesVerifyBtnTooltip")}
+              >
+                {verifying
+                  ? <><Loader2 size={10} className="animate-spin" /> …</>
+                  : <><CheckCircle2 size={10} /> {t("formalitiesVerifyBtn")}</>}
+              </button>
+            )}
+            {showFeedback && (
+              <span
+                className="font-mono text-[10px]"
+                style={{ color: refreshFeedback.color }}
+              >
+                {refreshFeedback.msg}
+              </span>
+            )}
           </div>
         </div>
 
@@ -311,8 +504,25 @@ export default function FormalitiesPanel({
           {activeTab === "cas_particuliers" && renderFieldGroup(detail.cas_particuliers, CAS_PARTICULIERS_FIELDS)}
           {activeTab === "immigration" && (() => {
             const slot = detail.immigration ? detail.immigration[nationality] : null;
-            if (!slot) return renderPlaceholder();
-            return renderFieldGroup(slot, IMMIGRATION_FIELDS);
+            const isBusy = immigrationBusy === nationality;
+            const canGenerate = nationality !== "fr" && !slot;   // fr comes from main pipeline
+            return (
+              <div className="space-y-2">
+                {slot ? renderFieldGroup(slot, IMMIGRATION_FIELDS) : renderPlaceholder()}
+                {canGenerate && (
+                  <button
+                    data-testid="immigration-generate-btn"
+                    onClick={() => generateImmigration(nationality)}
+                    disabled={isBusy}
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 border border-amberx/40 bg-amberx/10 hover:bg-amberx/15 disabled:opacity-60 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
+                  >
+                    {isBusy
+                      ? <><Loader2 size={12} className="animate-spin" /> {t("formalitiesImmigrationRunning")}</>
+                      : <><Sparkles size={12} /> {t("formalitiesImmigrationGenerate")} {nationality.toUpperCase()}</>}
+                  </button>
+                )}
+              </div>
+            );
           })()}
           {activeTab === "contacts" && (
             (detail.contacts || []).length === 0 && (detail.liens_officiels || []).length === 0
@@ -339,24 +549,44 @@ export default function FormalitiesPanel({
                 </div>
               )
           )}
-          {activeTab === "sources" && (
-            (detail.sources || []).length === 0
-              ? renderPlaceholder()
-              : (
-                <ul className="space-y-1 text-xs">
-                  {detail.sources.map((s, i) => (
-                    <li key={i}>
-                      <a href={s.url} target="_blank" rel="noreferrer" className="text-sonar hover:underline break-all">
-                        {s.domain || s.url}
-                      </a>
-                      {s.collected_at && (
-                        <span className="text-slate-500 font-mono ml-2 text-[10px]">· {s.collected_at.slice(0, 10)}</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )
-          )}
+          {activeTab === "sources" && (() => {
+            const srcs = detail.sources || [];
+            const isNoSource = detail.status === "ia_sans_source";
+            return (
+              <div className="space-y-2">
+                {isNoSource && (
+                  <div
+                    data-testid="formalities-no-source-warning"
+                    className="p-2 bg-alert/10 border border-alert/40 text-alert rounded-sm text-[11px] leading-relaxed"
+                  >
+                    ⚠️ {t("formalitiesNoSourceWarning")}
+                  </div>
+                )}
+                {srcs.length === 0 ? (
+                  <div className="italic text-slate-500 text-xs leading-relaxed p-3 bg-raised/40 border border-line rounded-sm">
+                    {t("formalitiesNoSourceEmpty")}
+                  </div>
+                ) : (
+                  <ul className="space-y-1.5 text-xs">
+                    {srcs.map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <Globe size={11} className="text-slate-500 mt-0.5 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <a href={s.url} target="_blank" rel="noreferrer" className="text-sonar hover:underline break-all text-[11px]">
+                            {s.url}
+                          </a>
+                          <div className="font-mono text-[9px] text-slate-500 mt-0.5">
+                            {s.domain}
+                            {s.collected_at && <span className="ml-2">· {s.collected_at.slice(0, 10)}</span>}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Territory footer — official domains hint (always shown at bottom) */}
@@ -431,6 +661,61 @@ export default function FormalitiesPanel({
             ))}
           </select>
         </div>
+
+        {/* Phase 4B — Batch generation */}
+        <div className="mt-3 pt-3 border-t border-line">
+          <div className="flex items-center gap-2 mb-2">
+            <PlayCircle size={13} className="text-amberx" />
+            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+              {t("formalitiesBatchTitle")}
+            </span>
+          </div>
+          <button
+            data-testid="formalities-batch-btn"
+            onClick={startBatch}
+            disabled={batchRunning || batchStarting || !!refreshingCode}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-amberx/50 bg-amberx/10 hover:bg-amberx/15 disabled:opacity-70 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
+          >
+            {batchRunning ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                {t("formalitiesBatchRunning")} {batchStatus?.progress ?? 0}/{batchStatus?.total ?? 13}
+              </>
+            ) : (
+              <>
+                <Sparkles size={13} />
+                {t("formalitiesBatchStart")}
+              </>
+            )}
+          </button>
+          {batchStatus?.logs_tail && batchStatus.logs_tail.length > 0 && (batchRunning || batchStatus.finished_at) && (
+            <div
+              data-testid="formalities-batch-logs"
+              className="mt-2 text-[9px] font-mono text-slate-500 max-h-24 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
+            >
+              {batchStatus.logs_tail.slice(-10).map((l, i) => (
+                <div key={i} className="truncate">{l}</div>
+              ))}
+            </div>
+          )}
+          {/* Exports */}
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <a
+              data-testid="formalities-export-json"
+              href={`${process.env.REACT_APP_BACKEND_URL}/api/export/formalities.json`}
+              className="flex items-center justify-center gap-1 px-2 py-1 border border-line hover:border-amberx/40 hover:text-amberx text-slate-400 text-[10px] rounded-sm font-mono"
+            >
+              <Download size={10} /> .json
+            </a>
+            <a
+              data-testid="formalities-export-geojson"
+              href={`${process.env.REACT_APP_BACKEND_URL}/api/export/formalities.geojson`}
+              className="flex items-center justify-center gap-1 px-2 py-1 border border-line hover:border-amberx/40 hover:text-amberx text-slate-400 text-[10px] rounded-sm font-mono"
+            >
+              <Download size={10} /> .geojson
+            </a>
+          </div>
+        </div>
       </div>
 
       {/* Escales list */}
@@ -476,6 +761,14 @@ export default function FormalitiesPanel({
                   <div className="flex items-center gap-1.5 mt-1.5">
                     {renderStatusBadge(status)}
                     {renderPoeBadge(isPoe)}
+                    {row.formality?.stale && (
+                      <span
+                        className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest border-amberx/40 bg-amberx/10 text-amberx flex items-center gap-1"
+                        title={t("formalitiesStaleTooltip")}
+                      >
+                        <Clock size={9} /> {t("formalitiesStale")}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <ChevronRight size={14} className="text-slate-600 shrink-0 mt-1" />

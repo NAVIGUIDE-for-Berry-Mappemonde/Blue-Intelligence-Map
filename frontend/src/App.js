@@ -242,12 +242,47 @@ export default function App() {
         }
       }
     };
+
+    // ---- Phase 4B: formalities generation / verify / immigration handlers ----
+    // These do NOT block the UI — they kick off the async task and let
+    // FormalitiesPanel poll the status. App.js just refreshes the collection
+    // on completion so map + list + card update live.
+    window.__biGenerateFormality = async (code) => {
+      try {
+        const r = await api.post(`/formalities/${code}/generate`);
+        if (r.status === 202 || r.status === 200) return { ok: true };
+        return { ok: false, code: r.status };
+      } catch (e) {
+        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
+      }
+    };
+    window.__biVerifyFormality = async (code) => {
+      try {
+        await api.put(`/formalities/${code}/verify`);
+        await fetchFormalities();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
+      }
+    };
+    window.__biGenerateImmigration = async (code, nat) => {
+      try {
+        const r = await api.post(`/formalities/${code}/immigration/${nat}`);
+        return { ok: r.status === 202 || r.status === 200 };
+      } catch (e) {
+        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
+      }
+    };
+
     return () => {
       delete window.__biDonate;
       delete window.__biEnrichMarina;
       delete window.__biEnrichProject;
+      delete window.__biGenerateFormality;
+      delete window.__biVerifyFormality;
+      delete window.__biGenerateImmigration;
     };
-  }, [fetchMarinas, fetchProjects, lang]);
+  }, [fetchMarinas, fetchProjects, fetchFormalities, lang]);
 
   useEffect(() => {
     if (donateTarget && !donateTarget.title) {
@@ -328,6 +363,7 @@ export default function App() {
             selectedTerritory={selectedTerritory}
             selectedEscale={selectedEscale}
             onSelectEscale={handleSelectEscale}
+            onFormalitiesRefresh={fetchFormalities}
           />
         )}
         <main className="flex-1 relative min-w-0">
