@@ -401,6 +401,16 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
                 )}
               </button>
             </div>
+            {marinaBatchStatus?.running && marinaBatchStatus?.logs_tail && marinaBatchStatus.logs_tail.length > 0 && (
+              <div
+                data-testid="audit-marinas-batch-logs"
+                className="mt-2 text-[9px] font-mono text-slate-500 max-h-32 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
+              >
+                {marinaBatchStatus.logs_tail.slice(-8).map((l, i) => (
+                  <div key={i} className="truncate">{l}</div>
+                ))}
+              </div>
+            )}
             {marinaBatchStatus?.results && marinaBatchStatus.results.length > 0 && (
               <div className="mt-2 text-[9px] font-mono max-h-24 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1">
                 {marinaBatchStatus.results.slice(-6).map((r, i) => (

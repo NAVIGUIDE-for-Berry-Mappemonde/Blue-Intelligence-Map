@@ -745,3 +745,8 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - `_run_marina_enrich_one()` (server.py) écrit désormais une ligne de télémétrie `dataset:"marinas"` par marina enrichie : url cible (site web OSM ou `marina:{nom}`), engine (TinyFish / Cloudflare AI / OpenRouter / OSM Fallback), status SUCCESS/FAILED, durée, nb de champs remplis, détail. Couvre l'enrichissement unitaire ET par lot (même fonction).
 - Les KPIs `/api/stats?mode=marinas` (total extractions, success rate) reflètent maintenant les lots d'enrichissement.
 - Vérifié e2e : enrichissement réel de "Anse à Rodrigue" → ligne visible dans `/api/telemetry?mode=marinas` + KPI total_extractions=1.
+
+## Update 2026-06 — Logs en direct du lot d'enrichissement marinas
+- Cause du "démarre puis s'arrête" : (1) les modifications backend de la session ont déclenché des hot reloads qui tuent le lot en cours (état en mémoire) ; (2) aucun feedback visuel pendant les ~3,5 premières minutes (TinyFish jusqu'à 210 s/marina, concurrence 2).
+- Fix : panneau `logs_tail` en direct ajouté sous le bouton "Enrich all" dans BatchHub.js (data-testid="audit-marinas-batch-logs"), identique à la carte Formalités. Affiché uniquement pendant l'exécution.
+- Vérifié par screenshot : bouton 1/10, logs en direct, résultats (✓ Anse à Rodrigue · tinyfish), télémétrie marinas dans la table.
