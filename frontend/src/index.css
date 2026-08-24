@@ -163,23 +163,29 @@ html, body, #root {
   justify-content: center;
   box-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
 }
-.bi-status-marker {
-  background: transparent;
-  border: none;
+/* Phase 7bis — Formalities status marker.
+   Explicitly override the default `.leaflet-div-icon` styles (white bg +
+   light grey border) that would otherwise leak through and create a visible
+   halo/ring on our dark map. */
+.bi-status-marker,
+.bi-status-marker.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 .bi-status-marker .bi-status-dot {
   display: block;
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  border: 2px solid #0f172a;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  /* Dark navy edge blends with the basemap — zero white halo. */
+  border: 1.5px solid #0b1220;
   transition: transform 0.15s ease;
 }
 .bi-status-marker:hover .bi-status-dot { transform: scale(1.15); }
 .bi-status-marker .bi-status-dot.bi-escale-dashed {
   border-style: dashed;
-  border-width: 2px;
+  border-width: 1.5px;
 }
 
 /* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */

@@ -1171,7 +1171,14 @@ Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les d
 @router.get("/manual")
 async def manual(lang: str = "en"):
     text = MANUALS.get(lang, MANUALS["en"])
-    return PlainTextResponse(text, headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"})
+    # Phase 7bis — serve Markdown with a semantic content-type so browsers /
+    # editors / IDEs render it correctly. The frontend Manual EN/FR buttons
+    # still work (they window.open() the URL — no Accept header check).
+    return PlainTextResponse(
+        text,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"},
+    )
 
 
 # ---------- Donations (Stripe sandbox) ----------

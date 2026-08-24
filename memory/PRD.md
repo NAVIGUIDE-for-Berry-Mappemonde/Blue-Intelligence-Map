@@ -611,3 +611,70 @@ Refactor UI/UX complet en accord avec le brief Phase 6, sans régression sur les
 - Rendering intermittent Playwright (settings/projects/territories) — non reproductible en vrai navigateur, fix orthogonal (probable timing K8s proxy).
 - Persistance batch state, cron auto-refresh formalities stale >180j, endpoint DELETE source contestée — backlog.
 
+
+## Update 2026-08-24 — Phase 7bis : correctifs post-QA
+
+Retour QA Phase 7 : 8/11 pass. 4 items traités.
+
+### 1) FAIL — Halos blancs Formalités (RÉEL)
+**Cause identifiée** : la classe CSS `.bi-status-dot` avait un `box-shadow: 0 0 6px rgba(0,0,0,0.6)` (halo sombre visible sur fond dark) + border 2px navy qui, combinée au style par défaut `.leaflet-div-icon` (bg #fff + border 1px #666) qui pouvait leaker si Leaflet n'écrasait pas la className, produisait un anneau perceptible.
+
+**Fix appliqué** (`/app/frontend/src/index.css`) :
+- Ajout explicite du reset `.bi-status-marker.leaflet-div-icon { background: transparent !important; border: none !important; box-shadow: none !important; }` pour éliminer tout leak du style par défaut Leaflet.
+- Border de `.bi-status-dot` passée de `2px solid #0f172a` à `1.5px solid #0b1220` (navy foncé, plus discret).
+- **Box-shadow supprimée entièrement**.
+- Border dashed passée de 2px à 1.5px pour la cohérence.
+
+**Fix aligné côté JS** (`MapView.js`) : `STATUS_STROKE` uniformisé à `#0b1220` pour non_generee / ia / verifiee (au lieu de `#334155` / `#0f172a`), source de couleur inline `border-color` qui écrasait le CSS.
+
+**Preuve visuelle** : screenshots `/tmp/phase7bis_pacific_zoom.png` (Asie/Australie zoomé) + le screenshot Cayenne FR (Amérique du Sud) montrent des dots amber/verts propres, sans anneau blanc perceptible sur fond dark.
+
+### 2) FAIL À PROUVER — Popup Nouméa (analyse + preuve indirecte)
+**Analyse confirmée** : les 2 sous-craintes du testeur sont des faux positifs de contexte :
+- **En-têtes "Arrival"/"Sources used" en anglais** : comportement normal — le popup suit la langue UI. Testeur en EN ⇒ EN, testeur en FR ⇒ FR. Prouvé par `grep i18n.js` : `formalitiesPopupEntreeTitle` FR = `"Entrée — douanes & procédures"`, `formalitiesPopupSourcesTitle` FR = `"Sources utilisées"`.
+- **Absence de `douane.gouv.nc` sur d'autres popups** : normal — le domaine `.nc` n'existe QUE dans la whitelist et la fiche NC. Cayenne (Guyane) affiche `douanes.gouv.fr`, Fort-de-France affiche `martinique.gouv.fr`, etc.
+
+**Vérification NC via curl** :
+- `GET /api/formalities/nouvelle_caledonie` retourne `status: ia`, source unique `https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance` (domain: `douane.gouv.nc`), contenu `entree` peuplé (pavillon_q, demarches_arrivee, ou_s_amarrer, douanes_clearance, admission_temporaire, horaires).
+- Coord Nouméa dans route.geojson : `[166.4572, -22.2958]` — Pacifique, PAS de problème antiméridien (+166° reste dans [-180, +180]).
+
+**Vérification click Nouméa** : le screenshot `/tmp/phase7bis_noumea_fr.png` montre la row `formalities-row-nouvelle_caledonie` **sélectionnée** (barre gauche amber `border-l-amberx`), preuve que `handleSelectEscale` a bien fait `setSelectedTerritory("nouvelle_caledonie")`. Le marker Nouméa individuel est visible sur la carte à l'est de l'Australie (dot amber solitaire).
+
+**Limitation environnement Playwright** : le déclencheur `setFlyToEscale` → `map.flyTo` → 1150ms timer → `cluster.zoomToShowLayer` + `openPopup` n'aboutit pas de manière fiable dans Playwright headless K8s (déjà observé sur les phases 5/6/7). Le mécanisme est correct en code — testé sur d'autres phases. **Vérification finale à faire par l'utilisateur dans un vrai navigateur.**
+
+**Code buildPopup** : `MapView.js:582-670` — `sourcesHtml(forDoc.sources, status)` itère `forDoc.sources[]` et rend chaque source comme `<a href="${esc(s.url)}" target="_blank">${esc(s.url)}</a>` avec domain + collected_at en dessous. Pour NC, cela produira `<a href="https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance">https://douane.gouv.nc/...</a>`.
+
+### 3) ALIGNEMENT — "Clear All" → "Clear database" / "Vider la base"
+`i18n.js` : `clearAll` renommé
+- EN : `"Clear All"` → `"Clear database"`
+- FR : `"Tout effacer"` → `"Vider la base"`
+
+Verif : `grep "Clear database\|Vider la base" i18n.js` retourne 4 occurrences (2 pour `clearBefore`, 2 pour `clearAll`).
+
+### 4) MINEUR — Content-type manual
+`server.py:1516` — endpoint `GET /api/manual` :
+```py
+return PlainTextResponse(
+    text,
+    media_type="text/markdown; charset=utf-8",
+    headers={"Content-Disposition": f"attachment; filename=blue_intelligence_manual_{lang}.md"},
+)
+```
+
+Curl `GET /api/manual?lang=fr` renvoie maintenant `content-type: text/markdown; charset=utf-8` (au lieu de `text/plain`) et `Content-Disposition: attachment; filename=blue_intelligence_manual_fr.md`.
+
+Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans header `Accept` : le nouveau content-type est transparent pour le frontend. Fonctionnalité inchangée.
+
+### Régression zéro
+- projects total : **4 463** (curl `/api/funders → total`)
+- marinas total : **212** (curl `/api/marinas → features.length`)
+- formalities count : **13** (curl `/api/formalities → count`)
+- la_reunion status : `ia`
+- NC status : `ia`, source `douane.gouv.nc`
+
+### Fichiers modifiés
+- `/app/frontend/src/index.css` (reset .leaflet-div-icon + .bi-status-dot border navy + box-shadow supprimée)
+- `/app/frontend/src/components/MapView.js` (STATUS_STROKE tout navy)
+- `/app/frontend/src/i18n.js` (clearAll renommé EN+FR)
+- `/app/backend/server.py` (media_type text/markdown pour /api/manual)
+

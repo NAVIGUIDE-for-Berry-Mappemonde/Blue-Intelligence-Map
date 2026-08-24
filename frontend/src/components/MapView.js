@@ -473,10 +473,10 @@ export default function MapView({
       verifiee:        "#39ff14",   // bio-green
     };
     const STATUS_STROKE = {
-      non_generee:     "#334155",
-      ia:              "#0f172a",
+      non_generee:     "#0b1220",
+      ia:              "#0b1220",
       ia_sans_source:  "#fbbf24",
-      verifiee:        "#0f172a",
+      verifiee:        "#0b1220",
     };
 
     // territory lookup by escale name
