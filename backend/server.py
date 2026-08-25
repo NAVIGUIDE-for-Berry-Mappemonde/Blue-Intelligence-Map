@@ -1124,6 +1124,9 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
         q["$or"] = [{"enriched_at": {"$lt": cutoff}}, {"enriched": {"$ne": True}}]
     elif not body.include_enriched:
         q["$or"] = [{"enriched": {"$ne": True}}, {"enriched": False}]
+        # Économie de crédits : après 2 tentatives échouées, la marina sort des lots
+        # automatiques (toujours relançable à l'unité via son bouton Enrich).
+        q["enrich_attempts"] = {"$not": {"$gte": 2}}
 
     candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(int(body.limit) or 10)
 

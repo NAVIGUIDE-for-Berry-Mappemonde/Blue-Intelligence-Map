@@ -759,3 +759,11 @@ Correctifs :
 3. `_run_marina_enrich_one` : `enrich_attempts` incrémenté ; `tinyfish_failed=True` si TinyFish tenté sans succès → sauté aux lots suivants.
 4. Stop propre : POST /api/marinas/enrich-batch/cancel + flag `cancel` dans EnrichBatchState (les marinas restantes ne démarrent pas) + bouton "Stop" (data-testid="audit-marinas-batch-stop-btn") visible pendant l'exécution.
 Vérifié e2e : Gemini OK (gemini-2.5-flash → 404, remplacé par gemini-3-flash-preview) ; marina sans site → TinyFish sauté ; marina avec site → TinyFish 119.2s (< cap 120s) source=tinyfish ; cancel 409 si aucun lot.
+
+## Update 2026-06 — Pipeline d'enrichissement v3 : Gemini Google Search grounding
+- Cause de la panne totale : DuckDuckGo bloquait l'IP du pod (HTTP 202 anti-bot) → plus aucune URL source → Gemini répondait null → tout finissait en OSM Fallback FAILED. En plus, les points SHOM "Atelier SHOM @ lat,lon" sont insearchables par nom.
+- (a) `enrich_via_gemini` réécrit : appel REST direct `generativelanguage.googleapis.com` modèle `gemini-flash-latest` avec `tools:[{google_search:{}}]` — Gemini cherche sur Google et extrait les 7 champs en un appel. Plus de DDG ni Readability dans cette voie.
+- (b) `marina_search_label()` : noms génériques/SHOM ("@" dans le nom, "Atelier SHOM", "Autorités portuaires") → recherche via l'escale la plus proche (nearest_waypoint.name) + coordonnées.
+- (c) Sélection des lots : `enrich_attempts >= 2` sans succès → exclue des lots auto (relançable à l'unité).
+- Comportement batch confirmé à l'utilisateur : un lot traite exactement N marinas (5/10/25) puis s'arrête — garde-fou budgétaire. Option "Tout enchaîner" proposée en backlog.
+- Vérifié e2e : lot de 5 points SHOM → 5/5 SUCCESS source=gemini (5-7 champs, 5-21 s/marina), 0 crédit TinyFish. Ex: Atelier SHOM Papeete → Marina de Papeete VHF 9, +689 40 47 48 54.

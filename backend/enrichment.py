@@ -283,8 +283,27 @@ async def enrich_via_tinyfish(
 
 
 # ------------------------------------------------------------------
-# Gemini path — quasi-gratuit (Readability + Gemini JSON), tenté en premier
+# Gemini path — Google Search grounding (2026-06 : remplace DuckDuckGo,
+# bloqué en anti-bot HTTP 202). Un seul appel : Gemini cherche et extrait.
 # ------------------------------------------------------------------
+GEMINI_GROUNDING_MODEL = "gemini-flash-latest"
+
+
+def marina_search_label(marina: dict) -> str:
+    """Libellé de recherche intelligent — les points SHOM 'Atelier SHOM @ lat,lon'
+    sont insearchables : on utilise l'escale la plus proche à la place."""
+    name = (marina.get("name") or "").strip()
+    wp = (((marina.get("nearest_waypoint") or {}).get("name")) or "").strip()
+    low = name.lower()
+    generic = (not name or "@" in name or low.startswith("atelier shom")
+               or low in ("autorités portuaires", "autorites portuaires", "marina", "port"))
+    if generic and wp:
+        return f"la marina ou le port de plaisance le plus proche de {wp}"
+    if wp and wp.lower() not in low:
+        return f"la marina '{name}' près de {wp}"
+    return f"la marina '{name}'"
+
+
 async def enrich_via_gemini(
     marina: dict,
     gemini_key: Optional[str],
@@ -294,54 +313,51 @@ async def enrich_via_gemini(
         if logger:
             logger("[gemini] no key configured — skipping")
         return None
-    from ai import _gemini_json
-
     tags = marina.get("tags") or {}
-    url = tags.get("website") or tags.get("contact:website") or tags.get("url")
-    page_title = ""
-    text = ""
-    async with httpx.AsyncClient() as client:
-        if not url:
-            hits = await duckduckgo_html_search(f"marina {marina['name']} port", client)
-            url = hits[0]["url"] if hits else None
-            if url and logger:
-                logger(f"[gemini] DDG picked {url}")
-        if url:
-            try:
-                page_title, text = await fetch_readable(url, client)
-                if logger:
-                    logger(f"[gemini] readability got {len(text)} chars from {url}")
-            except Exception as e:
-                if logger:
-                    logger(f"[gemini] readability failed: {type(e).__name__}: {str(e)[:80]}")
-    tags_str = json.dumps(
-        {k: v for k, v in tags.items() if isinstance(v, str)},
-        ensure_ascii=False,
-    )
+    site = tags.get("website") or tags.get("contact:website") or tags.get("url")
+    label = marina_search_label(marina)
     prompt = (
-        "You are extracting factual marina information. Return STRICT JSON matching this schema:\n"
-        "{\"canal_vhf\": string|null, \"places_visiteurs\": integer|null, "
-        "\"tirant_eau_max_metres\": number|null, \"score_protection_meteo\": integer|null (1-5), "
-        "\"services_disponibles\": string[]|null, \"telephone_capitainerie\": string|null, "
-        "\"resume_avis\": string|null}\n\n"
-        f"Marina: {marina['name']}\n"
-        f"Coordinates: {marina['lat']}, {marina['lon']}\n"
-        f"OSM tags: {tags_str}\n\n"
-        f"Website source ({url or 'n/a'}) title: {page_title}\n"
-        "Website source content:\n"
-        f"{text}\n\n"
-        "RULES:\n"
-        "- Set a field to null if not present in the source text or tags. NEVER fabricate.\n"
-        "- services_disponibles must be short French labels: eau, électricité, carburant, "
+        f"Recherche sur le web des informations factuelles sur {label}, "
+        f"située aux coordonnées GPS {marina['lat']:.4f}, {marina['lon']:.4f}."
+        + (f" Site officiel probable : {site}." if site else "")
+        + "\n\nRetourne UNIQUEMENT un objet JSON strict :\n"
+        '{"canal_vhf": string|null, "places_visiteurs": integer|null, '
+        '"tirant_eau_max_metres": number|null, "score_protection_meteo": integer|null (1-5), '
+        '"services_disponibles": string[]|null, "telephone_capitainerie": string|null, '
+        '"resume_avis": string|null}\n\n'
+        "RÈGLES :\n"
+        "- null pour tout champ non trouvé dans les résultats de recherche. N'INVENTE JAMAIS.\n"
+        "- Vérifie que les informations concernent bien CE port (cohérence avec les coordonnées).\n"
+        "- services_disponibles : libellés courts français : eau, électricité, carburant, "
         "douches, wifi, capitainerie, grue, carénage, restaurant, pumpout, déchets.\n"
-        "- resume_avis in French, max 200 characters, only if the source text supports it.\n"
-        "- score_protection_meteo: only if the source text discusses shelter/weather — else null.\n"
-        "Return only the JSON object. No markdown. No commentary."
+        "- resume_avis : français, max 200 caractères.\n"
+        "Réponds seulement avec l'objet JSON, sans commentaire."
     )
     try:
-        data = await _gemini_json(prompt, "gemini-3-flash-preview", gemini_key)
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GROUNDING_MODEL}:generateContent",
+                params={"key": gemini_key},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "tools": [{"google_search": {}}],
+                },
+            )
+        if r.status_code != 200:
+            if logger:
+                logger(f"[gemini] grounding HTTP {r.status_code}: {r.text[:120]}")
+            return None
+        parts = r.json()["candidates"][0]["content"].get("parts") or []
+        text = "".join(p.get("text", "") for p in parts)
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            if logger:
+                logger("[gemini] no JSON in grounded output")
+            return None
+        data = json.loads(m.group(0))
         if logger:
-            logger("[gemini] OK")
+            filled = [k for k in ENRICH_FIELDS if data.get(k) not in (None, "", [], 0)]
+            logger(f"[gemini] OK (Google Search grounding) — filled={filled}")
         return _normalise_enrichment(data)
     except Exception as e:
         if logger:
@@ -759,9 +775,9 @@ async def enrich_marina(
     Never fabricates.
     """
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    # 1. Gemini — quasi-gratuit (Readability + LLM)
+    # 1. Gemini — quasi-gratuit (Google Search grounding)
     if logger:
-        logger("=== attempt 1: Gemini (Readability) ===")
+        logger("=== attempt 1: Gemini (Google Search grounding) ===")
     g_data = await enrich_via_gemini(marina, gemini_key, logger=logger)
     if g_data and any(g_data.get(k) is not None for k in ENRICH_FIELDS):
         return {**g_data, "enriched": True, "enrichment_source": "gemini", "enriched_at": now, "_tinyfish_attempted": False}
