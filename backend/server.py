@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
-from ai import extract_project, gatekeeper_check
+from ai import extract_project, gatekeeper_check, get_llm_key
 from categories import CATEGORY_GROUPS, normalize_category
 from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
 from formalities import (
@@ -945,6 +945,7 @@ class EnrichBatchState:
         self.results: list[dict] = []
         self.logs: list[str] = []
         self.error: str | None = None
+        self.cancel: bool = False
 
     def log(self, msg: str):
         self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
@@ -965,6 +966,7 @@ def _keys() -> tuple[str | None, str | None, str | None, str | None]:
 
 
 _MARINA_ENGINE_LABELS = {
+    "gemini": "Gemini",
     "tinyfish": "TinyFish",
     "cloudflare": "Cloudflare AI",
     "openrouter": "OpenRouter",
@@ -986,6 +988,10 @@ async def _marina_telemetry(marina: dict, status: str, duration_ms: float, engin
 async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
     """Run the enrichment chain and upsert the enriched fields on the marina doc."""
     tf_key, or_key, cf_account, cf_token = _keys()
+    settings = await get_settings()
+    gemini_key = get_llm_key(settings)
+    # Économie de crédits : après un échec TinyFish, on ne re-paye plus pour cette marina.
+    skip_tf = skip_tinyfish or bool(marina.get("tinyfish_failed"))
     t0 = time.time()
     try:
         result = await enrich_marina(
@@ -994,15 +1000,20 @@ async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, sk
             openrouter_key=or_key,
             cf_account=cf_account,
             cf_token=cf_token,
+            gemini_key=gemini_key,
             min_credit_usd=min_credit_usd,
             logger=log_fn,
-            skip_tinyfish=skip_tinyfish,
+            skip_tinyfish=skip_tf,
         )
     except Exception as e:
         await _marina_telemetry(marina, "FAILED", (time.time() - t0) * 1000, "Enrichment", 0,
                                 f"{marina.get('name')} — {type(e).__name__}: {e}")
         raise
-    update = {**result, "stale": False}
+    tf_attempted = result.pop("_tinyfish_attempted", False)
+    update = {**result, "stale": False,
+              "enrich_attempts": int(marina.get("enrich_attempts") or 0) + 1}
+    if tf_attempted and result.get("enrichment_source") != "tinyfish":
+        update["tinyfish_failed"] = True
     await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
     src = result.get("enrichment_source") or ""
     filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
@@ -1124,6 +1135,7 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
     ENRICH_BATCH_STATE.results = []
     ENRICH_BATCH_STATE.logs = []
     ENRICH_BATCH_STATE.error = None
+    ENRICH_BATCH_STATE.cancel = False
 
     async def _runner():
         try:
@@ -1136,6 +1148,9 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
 
             async def _one(m):
                 async with sem:
+                    if ENRICH_BATCH_STATE.cancel:
+                        ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: batch annulé")
+                        return
                     if m["_id"] in ENRICH_LOCKS:
                         ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: already locked")
                         return
@@ -1181,11 +1196,22 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
     return {"started": True, "selected": len(candidates), "concurrency": concurrency}
 
 
+@router.post("/marinas/enrich-batch/cancel")
+async def marina_enrich_batch_cancel():
+    """Stop the running enrichment batch — remaining marinas are not launched."""
+    if not ENRICH_BATCH_STATE.running:
+        raise HTTPException(409, "No enrichment batch is running")
+    ENRICH_BATCH_STATE.cancel = True
+    ENRICH_BATCH_STATE.log("⛔ Stop demandé — les marinas restantes ne seront pas lancées")
+    return {"cancelling": True}
+
+
 @router.get("/marinas/enrich-batch/status")
 async def marina_enrich_batch_status():
     s = ENRICH_BATCH_STATE
     return {
         "running": s.running,
+        "cancelling": s.cancel,
         "started_at": s.started_at,
         "finished_at": s.finished_at,
         "progress": s.progress,

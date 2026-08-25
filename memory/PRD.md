@@ -750,3 +750,12 @@ Les boutons Manual EN/FR du frontend utilisent `window.open(url, "_blank")` sans
 - Cause du "démarre puis s'arrête" : (1) les modifications backend de la session ont déclenché des hot reloads qui tuent le lot en cours (état en mémoire) ; (2) aucun feedback visuel pendant les ~3,5 premières minutes (TinyFish jusqu'à 210 s/marina, concurrence 2).
 - Fix : panneau `logs_tail` en direct ajouté sous le bouton "Enrich all" dans BatchHub.js (data-testid="audit-marinas-batch-logs"), identique à la carte Formalités. Affiché uniquement pendant l'exécution.
 - Vérifié par screenshot : bouton 1/10, logs en direct, résultats (✓ Anse à Rodrigue · tinyfish), télémétrie marinas dans la table.
+
+## Update 2026-06 — Réduction drastique de la consommation TinyFish (option e)
+Causes identifiées : TinyFish appelé en 1er pour chaque marina (CF/OpenRouter non configurés), DDG → agrégateurs chers, goal "drill-in", pas de max_duration serveur (runs facturés après le timeout local de 210s), échecs re-sélectionnés à chaque lot, pas d'annulation.
+Correctifs :
+1. Chaîne inversée (enrichment.py) : Gemini (Readability + gemini-3-flash-preview via GEMINI_API_KEY/emergentintegrations) → Cloudflare → OpenRouter → TinyFish en DERNIER recours uniquement si tag OSM website (jamais sur résultat DDG) → OSM fallback. `_tinyfish_attempted` retourné pour marquage.
+2. `tf_run_async` accepte `max_duration_s` ; enrichissement passe 120s → les runs s'arrêtent (et cessent de facturer) côté serveur. Budget de poll local 150s.
+3. `_run_marina_enrich_one` : `enrich_attempts` incrémenté ; `tinyfish_failed=True` si TinyFish tenté sans succès → sauté aux lots suivants.
+4. Stop propre : POST /api/marinas/enrich-batch/cancel + flag `cancel` dans EnrichBatchState (les marinas restantes ne démarrent pas) + bouton "Stop" (data-testid="audit-marinas-batch-stop-btn") visible pendant l'exécution.
+Vérifié e2e : Gemini OK (gemini-2.5-flash → 404, remplacé par gemini-3-flash-preview) ; marina sans site → TinyFish sauté ; marina avec site → TinyFish 119.2s (< cap 120s) source=tinyfish ; cancel 409 si aucun lot.

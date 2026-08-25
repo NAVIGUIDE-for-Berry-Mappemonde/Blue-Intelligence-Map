@@ -64,8 +64,10 @@ def _headers(key: str) -> dict:
     return {"X-API-Key": key, "Content-Type": "application/json"}
 
 
-async def tf_run_async(url: str, goal: str, schema: dict, key: str) -> dict:
+async def tf_run_async(url: str, goal: str, schema: dict, key: str, max_duration_s: int | None = None) -> dict:
     payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+    if max_duration_s:
+        payload["agent_config"] = {"max_duration_seconds": int(max_duration_s)}
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{BASE}/automation/run-async", headers=_headers(key), json=payload)
         r.raise_for_status()

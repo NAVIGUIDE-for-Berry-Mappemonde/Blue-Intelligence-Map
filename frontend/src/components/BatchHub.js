@@ -280,6 +280,10 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     catch (e) { console.warn("marina batch start failed", e); }
     finally { setTimeout(() => setMarinaBatchStarting(false), 800); }
   };
+  const stopMarinaBatch = async () => {
+    try { await api.post("/marinas/enrich-batch/cancel"); }
+    catch (e) { console.warn("marina batch cancel failed", e); }
+  };
   const startFormalitiesBatch = async () => {
     if (formalitiesBatchStarting || formalitiesBatchStatus?.running) return;
     if (!window.confirm(t("formalitiesBatchConfirm"))) return;
@@ -400,6 +404,16 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
                   <><Sparkles size={12} /> {t("enrichBatchStart")}</>
                 )}
               </button>
+              {marinaBatchStatus?.running && (
+                <button
+                  data-testid="audit-marinas-batch-stop-btn"
+                  onClick={stopMarinaBatch}
+                  disabled={marinaBatchStatus?.cancelling}
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-alert bg-alert/25 hover:bg-alert/40 disabled:opacity-60 text-alert font-bold text-xs rounded-sm"
+                >
+                  <Square size={11} /> {marinaBatchStatus?.cancelling ? "…" : "Stop"}
+                </button>
+              )}
             </div>
             {marinaBatchStatus?.running && marinaBatchStatus?.logs_tail && marinaBatchStatus.logs_tail.length > 0 && (
               <div
