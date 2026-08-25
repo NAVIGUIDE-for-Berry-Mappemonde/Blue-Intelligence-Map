@@ -767,3 +767,7 @@ Vérifié e2e : Gemini OK (gemini-2.5-flash → 404, remplacé par gemini-3-flas
 - (c) Sélection des lots : `enrich_attempts >= 2` sans succès → exclue des lots auto (relançable à l'unité).
 - Comportement batch confirmé à l'utilisateur : un lot traite exactement N marinas (5/10/25) puis s'arrête — garde-fou budgétaire. Option "Tout enchaîner" proposée en backlog.
 - Vérifié e2e : lot de 5 points SHOM → 5/5 SUCCESS source=gemini (5-7 champs, 5-21 s/marina), 0 crédit TinyFish. Ex: Atelier SHOM Papeete → Marina de Papeete VHF 9, +689 40 47 48 54.
+
+## Update 2026-06 — Mode "Tout enchaîner"
+- Dropdown du lot d'enrichissement : option "Tout"/"All" (value 0) → le backend sélectionne TOUTES les marinas restantes (limit 0 = sans limite). Confirmation window.confirm avant lancement (clés i18n enrichBatchAllOption / enrichBatchAllConfirm).
+- Vérifié e2e : limit 0 → 799 candidates sélectionnées, Stop → 797 SKIP "batch annulé", les 2 en cours terminées (source gemini), running=False.

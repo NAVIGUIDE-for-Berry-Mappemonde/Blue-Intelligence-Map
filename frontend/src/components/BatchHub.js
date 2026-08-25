@@ -275,8 +275,10 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   };
   const startMarinaBatch = async () => {
     if (marinaBatchStarting || marinaBatchStatus?.running || buildStatus?.running) return;
+    const lim = parseInt(marinaBatchCount, 10);
+    if (lim === 0 && !window.confirm(t("enrichBatchAllConfirm"))) return;
     setMarinaBatchStarting(true);
-    try { await api.post("/marinas/enrich-batch", { limit: parseInt(marinaBatchCount, 10) }); }
+    try { await api.post("/marinas/enrich-batch", { limit: lim }); }
     catch (e) { console.warn("marina batch start failed", e); }
     finally { setTimeout(() => setMarinaBatchStarting(false), 800); }
   };
@@ -391,6 +393,7 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
                 <option value="5">5</option>
                 <option value="10">10</option>
                 <option value="25">25</option>
+                <option value="0">{t("enrichBatchAllOption")}</option>
               </select>
               <button
                 data-testid="audit-marinas-batch-btn"

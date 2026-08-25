@@ -928,7 +928,7 @@ def _prune_tasks(registry: dict, max_age_s: int = 3600):
 
 
 class MarinaEnrichBatchBody(BaseModel):
-    limit: int = 10
+    limit: int = 10   # 0 = toutes les marinas restantes (mode "Tout enchaîner")
     priority: int | None = None
     include_enriched: bool = False   # if True, re-enrich already-enriched ones
     stale_only: bool = False   # if True, filter to stale-only (needs enriched_at)
@@ -1128,7 +1128,8 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
         # automatiques (toujours relançable à l'unité via son bouton Enrich).
         q["enrich_attempts"] = {"$not": {"$gte": 2}}
 
-    candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(int(body.limit) or 10)
+    limit = int(body.limit or 0)
+    candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(limit if limit > 0 else None)
 
     ENRICH_BATCH_STATE.running = True
     ENRICH_BATCH_STATE.started_at = time.time()
