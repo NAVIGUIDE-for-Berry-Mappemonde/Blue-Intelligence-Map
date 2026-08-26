@@ -469,6 +469,28 @@ async def poe_validate_osm_cancel():
 
 
 # ---------------------------------------------------------------------------
+# Qualification juridique UNCLOS des ZEE sans PoE (logique métier, instantané)
+# ---------------------------------------------------------------------------
+@router.post("/poe/qualify-unclos")
+async def poe_qualify_unclos():
+    zones = await _db.eez_zones.find({}, {"mrgid": 1, "name": 1, "geoname": 1, "pol_type": 1,
+                                          "anchor": 1, "poe_count": 1, "unclos": 1}).to_list(1000)
+    counts: dict = {}
+    qualified = cleared = 0
+    for z in zones:
+        q = poe.qualify_unclos(z)
+        if q:
+            q["qualified_at"] = poe.now_iso()
+            await _db.eez_zones.update_one({"_id": z["_id"]}, {"$set": {"unclos": q}})
+            counts[q["code"]] = counts.get(q["code"], 0) + 1
+            qualified += 1
+        elif z.get("unclos"):
+            await _db.eez_zones.update_one({"_id": z["_id"]}, {"$unset": {"unclos": ""}})
+            cleared += 1
+    return {"zones_scanned": len(zones), "qualified": qualified, "cleared": cleared, "by_code": counts}
+
+
+# ---------------------------------------------------------------------------
 # Ports & exports
 # ---------------------------------------------------------------------------
 @router.get("/poe/ports")

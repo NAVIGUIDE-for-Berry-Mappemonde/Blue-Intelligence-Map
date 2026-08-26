@@ -15,6 +15,7 @@ _db = None
 
 TRAIN_STATE = TaskState()
 ANOM_STATE = TaskState()
+NER_STATE = TaskState()
 
 
 def init(db):
@@ -113,3 +114,51 @@ async def anomalies_report():
 @router.post("/ner/export-dataset")
 async def ner_export():
     return await ml_core.export_ner_dataset(_db)
+
+
+# --- Entraînement + extraction NER spaCy locale --------------------------------
+@router.post("/train/ner", status_code=202)
+async def train_ner(body: dict | None = Body(default=None)):
+    if NER_STATE.running:
+        raise HTTPException(409, "NER training already running")
+    n_iter = max(1, min(30, int((body or {}).get("iterations", 12))))
+    NER_STATE.reset()
+    NER_STATE.running = True
+    NER_STATE.started_at = time.time()
+
+    async def _runner():
+        try:
+            NER_STATE.summary = await ml_core.train_ner(_db, log=NER_STATE.log, n_iter=n_iter)
+        except Exception as e:
+            NER_STATE.error = f"{type(e).__name__}: {e}"
+            NER_STATE.log(f"FATAL: {NER_STATE.error}")
+        finally:
+            NER_STATE.finished_at = time.time()
+            NER_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "iterations": n_iter}
+
+
+@router.get("/train/ner/status")
+async def train_ner_status():
+    st = NER_STATE.status()
+    # Le statut survit aux reloads : métriques du modèle persistées sur disque
+    if st.get("summary") is None and ml_core.NER_METRICS_FILE.exists():
+        import json
+        try:
+            st["model_on_disk"] = json.loads(ml_core.NER_METRICS_FILE.read_text())
+        except Exception:
+            pass
+    return st
+
+
+@router.post("/ner/extract")
+async def ner_extract(body: dict = Body(...)):
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "body must contain 'text'")
+    if not ml_core.has_ner_model():
+        raise HTTPException(404, "no trained NER model — POST /api/ml/train/ner first")
+    entities = await asyncio.to_thread(ml_core.extract_entities, text)
+    return {"entities": entities, "count": len(entities)}

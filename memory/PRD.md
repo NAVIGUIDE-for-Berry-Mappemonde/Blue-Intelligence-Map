@@ -34,12 +34,21 @@ Application OSINT de cartographie à deux pipelines : (1) scraper de Ports d'Ent
 ## What's been implemented (historique)
 - [avant fork] App complète : Swarm projets, PoE ZEE, marinas, formalities UI, batch hub, crowdsourcing "Projet manquant ?", exports GeoJSON.
 - [2026-08-26] Refactor Core complet (étapes 1-3 du ticket), restauration BDD, bascule tuiles Esri, tests 25/25 (pytest) + validation testing agent (non-destructivité prouvée par diff Mongo champ-à-champ).
+- [2026-08-26 soir] Itération conformité spec + 4 features (testing agent 16/16 + 5/5 flows frontend) :
+  - NER spaCy local entraîné (F1=0.968, 5041 train) — POST /api/ml/train/ner, POST /api/ml/ner/extract, fallback sans-LLM dans extract_ports_llm. Modèle: backend/models/ner_spacy/.
+  - Qualification UNCLOS des 120 ZEE sans PoE (sovereign_entry 69, uninhabited 14, overlapping_claim 25, joint_regime 12) — POST /api/poe/qualify-unclos, bloc bleu "§ Legal status (UNCLOS)" dans le popup de zone. Effacé automatiquement ($unset) quand une zone gagne des ports.
+  - Badges carte : popup PoE affiche confiance OSM (vert ≥0.5 / ambre / gris ∅) + badge rouge anomalie spatiale (data-testid: poe-osm-badge, poe-anomaly-badge, zone-unclos-block).
+  - Validation OSM Overpass complète lancée sur les 1171 PoE (résumable via only_unchecked ; tuée par tout hot-reload backend — relancer POST /api/poe/validate-osm {"only_unchecked":true}).
+  - Conformité : plafonds par pays supprimés (plus de ports[:25], coerce 150), tronquage 10k supprimé (60k/source + RAG), matrice requêtes multilingues 16 langues (localized_query), regex SERP élargie (brochures/tourisme/bagages/VTS/duty-free), Cross-Encoder ms-marco pour re-ranking géocodage (fallback bi-encoder), PDF 60 pages.
+
+## Conformité spec (Document sans titre (6).md)
+- ✅ 21/25 items pleinement conformes (voir liste ci-dessus + itération précédente).
+- ⚠️ Partiels : traduction NLP requêtes (matrice statique 16 langues au lieu d'opus-mt local) ; classifieur SERP dédié titre/extrait (le gatekeeper ML couvre les pages, pas les SERP) ; crowdsourcing PoE avec lien de loi (le module existant couvre les projets).
 
 ## Backlog priorisé
-- P1 : Entraînement NER spaCy réel depuis models/ner_dataset.jsonl (dataset prêt) ; validation OSM complète des 1171 PoE (≈25 min à 1.2s/port, endpoint prêt) ; croisement projets ↔ douanes.
-- P2 : Qualification juridique UNCLOS des ZEE sans PoE ; Cross-Encoder dédié (ms-marco) pour re-ranking géocodage ; UI badges osm_confidence/spatial_anomaly sur les popups PoE ; harmonisation des shapes de statut de jobs (logs vs logs_tail).
-- P2 : Ré-import des ~695 PoE non géocodés perdus (absents de l'export GeoJSON) — nécessite une sauvegarde complète de la collection si elle existe.
+- P1 : Classifieur SERP dédié (titre+extrait → probabilité liste officielle) ; crowdsourcing PoE (proposition skipper + lien texte de loi + vérification auto).
+- P2 : opus-mt local pour traduction dynamique des requêtes ; persistance Mongo des états de jobs (survie aux reloads) + auto-resume validate-osm au démarrage ; croisement projets ↔ douanes ; ré-import des ~695 PoE non géocodés (nécessite sauvegarde complète) ; simplification géométrie ZEE à bas zoom (perfs carte).
 
 ## Notes testing
-- Regression rapide : `cd /app/backend && python3 -m pytest tests/ -p no:randomly`.
-- INTERDIT : /api/deploy clear_db=true, generate-batch sans limite, régénérer des zones ≠ 8397.
+- Regression rapide : `cd /app/backend && python3 -m pytest tests/ -p no:randomly` (test_ner_unclos_osm.py = 16 tests non-destructifs).
+- INTERDIT : /api/deploy clear_db=true, generate-batch sans limite. Toute écriture .py sous /app/backend tue les jobs de fond (uvicorn --reload).

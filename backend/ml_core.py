@@ -20,8 +20,11 @@ MODELS_DIR.mkdir(exist_ok=True)
 GATEKEEPER_FILE = MODELS_DIR / "gatekeeper_tfidf_logreg.joblib"
 ANOMALY_REPORT_FILE = MODELS_DIR / "poe_anomaly_report.json"
 NER_DATASET_FILE = MODELS_DIR / "ner_dataset.jsonl"
+NER_MODEL_DIR = MODELS_DIR / "ner_spacy"
+NER_METRICS_FILE = MODELS_DIR / "ner_metrics.json"
 
 _gatekeeper_cache = None
+_ner_cache = None
 
 # Corpus terrestre synthétique — complète les négatifs réels (db.failed) trop rares.
 _LAND_NEGATIVES = [
@@ -67,7 +70,7 @@ async def dataset_stats(db) -> dict:
 
 
 def models_status() -> dict:
-    out = {"gatekeeper": None, "anomaly_report": None, "ner_dataset": None}
+    out = {"gatekeeper": None, "anomaly_report": None, "ner_dataset": None, "ner_model": None}
     if GATEKEEPER_FILE.exists():
         try:
             import joblib
@@ -82,6 +85,11 @@ def models_status() -> dict:
             pass
     if NER_DATASET_FILE.exists():
         out["ner_dataset"] = {"lines": sum(1 for _ in NER_DATASET_FILE.open())}
+    if NER_METRICS_FILE.exists():
+        try:
+            out["ner_model"] = json.loads(NER_METRICS_FILE.read_text())
+        except Exception:
+            pass
     return out
 
 
@@ -284,3 +292,111 @@ async def export_ner_dataset(db) -> dict:
             f.write(json.dumps({"text": text[:500], "entities": ents}, ensure_ascii=False) + "\n")
             lines += 1
     return {"file": str(NER_DATASET_FILE), "lines": lines}
+
+
+# ---------------------------------------------------------------------------
+# NER spaCy sur mesure (PORT_NAME / PROJECT_NAME / LOCATION) — sans LLM
+# ---------------------------------------------------------------------------
+def _train_ner_sync(n_iter: int = 12, log=print) -> dict:
+    import random
+    import spacy
+    from spacy.training import Example
+    from spacy.util import minibatch, compounding
+
+    raw = [json.loads(l) for l in NER_DATASET_FILE.open(encoding="utf-8")]
+    nlp = spacy.blank("xx")
+    ner = nlp.add_pipe("ner")
+    labels = {lbl for d in raw for _, _, lbl in d["entities"]}
+    for lbl in sorted(labels):
+        ner.add_label(lbl)
+    examples, dropped = [], 0
+    for d in raw:
+        doc = nlp.make_doc(d["text"])
+        try:
+            ex = Example.from_dict(doc, {"entities": [tuple(e) for e in d["entities"]]})
+        except Exception:
+            dropped += 1
+            continue
+        if not ex.reference.ents:
+            dropped += 1
+            continue
+        examples.append(ex)
+    random.Random(42).shuffle(examples)
+    split = max(1, int(len(examples) * 0.1))
+    dev, train = examples[:split], examples[split:]
+    log(f"NER: {len(train)} exemples train / {len(dev)} dev ({dropped} désalignés ignorés) — labels: {sorted(labels)}")
+    optimizer = nlp.initialize(get_examples=lambda: train[:200])
+    losses = {}
+    for it in range(n_iter):
+        random.shuffle(train)
+        losses = {}
+        for batch in minibatch(train, size=compounding(16.0, 128.0, 1.2)):
+            nlp.update(batch, drop=0.2, losses=losses, sgd=optimizer)
+        log(f"NER: itération {it + 1}/{n_iter} — loss {losses.get('ner', 0):.1f}")
+    scores = nlp.evaluate(dev)
+    NER_MODEL_DIR.mkdir(exist_ok=True)
+    nlp.to_disk(NER_MODEL_DIR)
+    metrics = {
+        "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "n_train": len(train), "n_dev": len(dev), "dropped": dropped,
+        "labels": sorted(labels),
+        "ents_f": round(float(scores.get("ents_f") or 0), 4),
+        "ents_p": round(float(scores.get("ents_p") or 0), 4),
+        "ents_r": round(float(scores.get("ents_r") or 0), 4),
+        "final_loss": round(float(losses.get("ner", 0)), 2),
+    }
+    NER_METRICS_FILE.write_text(json.dumps(metrics, indent=2))
+    return metrics
+
+
+async def train_ner(db, log=None, n_iter: int = 12) -> dict:
+    """Bootstrapping NER : régénère le dataset depuis la BDD (weak supervision)
+    puis entraîne un modèle spaCy local. Aucune écriture sur les collections."""
+    global _ner_cache
+    log = log or (lambda m: None)
+    ds = await export_ner_dataset(db)
+    log(f"dataset NER regénéré depuis la BDD: {ds['lines']} entités")
+    if ds["lines"] < 200:
+        raise ValueError(f"dataset NER trop petit ({ds['lines']} lignes)")
+    metrics = await asyncio.to_thread(_train_ner_sync, n_iter, log)
+    _ner_cache = None
+    log(f"NER entraîné: F1={metrics['ents_f']} P={metrics['ents_p']} R={metrics['ents_r']}")
+    return metrics
+
+
+def has_ner_model() -> bool:
+    return NER_MODEL_DIR.exists()
+
+
+def _load_ner():
+    global _ner_cache
+    if _ner_cache is not None:
+        return _ner_cache
+    if not NER_MODEL_DIR.exists():
+        return None
+    try:
+        import spacy
+        _ner_cache = spacy.load(NER_MODEL_DIR)
+    except Exception:
+        return None
+    return _ner_cache
+
+
+def extract_entities(text: str) -> list[dict]:
+    """Extraction d'entités locale (PORT_NAME / PROJECT_NAME / LOCATION), sans LLM."""
+    nlp = _load_ner()
+    if nlp is None or not text:
+        return []
+    out = []
+    for start in range(0, min(len(text), 40000), 4000):
+        doc = nlp(text[start:start + 4000])
+        for ent in doc.ents:
+            out.append({"text": ent.text.strip(), "label": ent.label_,
+                        "start": start + ent.start_char, "end": start + ent.end_char})
+    seen, uniq = set(), []
+    for e in out:
+        k = (e["text"].lower(), e["label"])
+        if e["text"] and k not in seen:
+            seen.add(k)
+            uniq.append(e)
+    return uniq

@@ -23,6 +23,7 @@ SERP_EXCLUDE_RE = re.compile(
     r"(tripadvisor|booking\.com|expedia|airbnb|pinterest|facebook\.com|instagram\.com"
     r"|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
     r"|hotels?\.com|kayak\.|skyscanner|cruisemapper|vesselfinder"
+    r"|brochure|touris[mt]|baggage|luggage|duty.?free|/vts[-_/.]|vts.?manual"
     r"|\.docx?($|\?)|\.xlsx?($|\?)|\.pptx?($|\?)|\.zip($|\?)|\.exe($|\?))",
     re.I,
 )
@@ -52,7 +53,7 @@ def serp_filter(results: list[dict], url_key: str = "url", extra_re=None) -> lis
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
-def parse_pdf_text(content: bytes, max_pages: int = 20) -> str:
+def parse_pdf_text(content: bytes, max_pages: int = 60) -> str:
     import fitz
     with fitz.open(stream=content, filetype="pdf") as pdf:
         return "\n".join(page.get_text() for page in pdf[:max_pages])

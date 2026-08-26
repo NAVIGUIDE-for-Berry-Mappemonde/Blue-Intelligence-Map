@@ -275,7 +275,7 @@ def coerce_ports(data) -> list[dict]:
                 "city": (str(p["city"]).strip()[:80] if p.get("city") else None),
                 "note": (str(p["note"]).strip()[:200] if p.get("note") else None),
             })
-    return out[:40]
+    return out[:150]  # plafond de sécurité élevé — pas de cap par pays (grands États maritimes)
 
 
 async def extract_ports(context: str, zone: dict, settings: dict | None = None, log=None) -> list[dict]:

@@ -68,6 +68,85 @@ SEARX_INSTANCES = [
     "https://priv.au",
 ]
 
+# ---------------------------------------------------------------------------
+# Matrice de recherche multilingue par ZEE (génération de requêtes localisées)
+# ---------------------------------------------------------------------------
+LANG_BY_ISO2 = {
+    # fr
+    "FR": "fr", "MC": "fr", "BE": "fr", "SN": "fr", "CI": "fr", "CM": "fr", "GA": "fr",
+    "MG": "fr", "DJ": "fr", "KM": "fr", "BJ": "fr", "TG": "fr", "GN": "fr", "CG": "fr", "CD": "fr", "HT": "fr",
+    # es
+    "ES": "es", "MX": "es", "AR": "es", "CL": "es", "PE": "es", "CO": "es", "EC": "es",
+    "VE": "es", "UY": "es", "PA": "es", "CR": "es", "GT": "es", "HN": "es", "NI": "es",
+    "SV": "es", "DO": "es", "CU": "es", "GQ": "es",
+    # pt
+    "PT": "pt", "BR": "pt", "AO": "pt", "MZ": "pt", "CV": "pt", "GW": "pt", "ST": "pt", "TL": "pt",
+    # ar
+    "MA": "ar", "DZ": "ar", "TN": "ar", "LY": "ar", "EG": "ar", "SA": "ar", "AE": "ar",
+    "QA": "ar", "KW": "ar", "BH": "ar", "OM": "ar", "YE": "ar", "JO": "ar", "LB": "ar", "SY": "ar", "IQ": "ar", "SD": "ar",
+    # autres
+    "ID": "id", "IT": "it", "GR": "el", "TR": "tr", "RU": "ru", "CN": "zh", "JP": "ja",
+    "DE": "de", "NL": "nl", "TH": "th", "VN": "vi", "KR": "ko",
+}
+QUERY_TEMPLATES = {
+    "fr": "ports d'entrée officiels douane dédouanement navires de plaisance étrangers {name}",
+    "es": "puertos de entrada oficiales aduana despacho yates extranjeros {name}",
+    "pt": "portos de entrada oficiais alfândega desembaraço embarcações de recreio estrangeiras {name}",
+    "ar": "موانئ الدخول الرسمية الجمارك اليخوت الأجنبية {name}",
+    "id": "pelabuhan masuk resmi bea cukai kapal pesiar asing {name}",
+    "it": "porti di ingresso ufficiali dogana imbarcazioni da diporto straniere {name}",
+    "el": "επίσημα λιμάνια εισόδου τελωνείο ξένα σκάφη αναψυχής {name}",
+    "tr": "resmi giriş limanları gümrük yabancı yatlar {name}",
+    "ru": "официальные порты въезда таможня иностранные яхты {name}",
+    "zh": "官方入境港口 海关 外国游艇 {name}",
+    "ja": "公式入国港 税関 外国ヨット {name}",
+    "de": "offizielle Einklarierungshäfen Zoll ausländische Sportboote {name}",
+    "nl": "officiële havens van binnenkomst douane buitenlandse pleziervaartuigen {name}",
+    "th": "ท่าเรือเข้าเมืองอย่างเป็นทางการ ศุลกากร เรือยอชท์ต่างชาติ {name}",
+    "vi": "cảng nhập cảnh chính thức hải quan du thuyền nước ngoài {name}",
+    "ko": "공식 입국 항구 세관 외국 요트 {name}",
+}
+
+
+def localized_query(zone: dict) -> str | None:
+    """Requête traduite dans la langue cible de la ZEE (matrice multilingue)."""
+    lang = LANG_BY_ISO2.get((zone.get("sov_iso2") or zone.get("iso2") or "").upper())
+    tpl = QUERY_TEMPLATES.get(lang or "")
+    return tpl.format(name=zone.get("name") or zone.get("geoname") or "") if tpl else None
+
+
+# ---------------------------------------------------------------------------
+# Qualification juridique UNCLOS des ZEE sans PoE (logique métier)
+# ---------------------------------------------------------------------------
+UNINHABITED_RE = re.compile(
+    r"bouvet|heard|mcdonald|clipperton|crozet|kerguelen|amsterdam|saint.?paul"
+    r"|south georgia|sandwich|peter i|baker|howland|jarvis|johnston|kingman"
+    r"|palmyra|wake|navassa|ashmore|cartier|coral sea|macquarie|prince edward isl"
+    r"|tromelin|europa|glorioso|glorieuses|juan de nova|bassas da india|chagos"
+    r"|clipperton|midway|paracel|spratly|scarborough|matthew|hunter",
+    re.I,
+)
+
+
+def qualify_unclos(zone: dict) -> dict | None:
+    """Catégorise une ZEE dépourvue de PoE physique selon le droit maritime.
+    Retourne None si la zone possède des PoE (aucune qualification requise)."""
+    if (zone.get("poe_count") or 0) > 0:
+        return None
+    name = f"{zone.get('name') or ''} {zone.get('geoname') or ''}"
+    pol = (zone.get("pol_type") or "").lower()
+    anchor = zone.get("anchor") or [0, 0]
+    lat = anchor[1] if len(anchor) > 1 else 0
+    if lat < -60:
+        return {"code": "antarctic", "basis": "Traité sur l'Antarctique art. VI"}
+    if "overlapping" in pol:
+        return {"code": "overlapping_claim", "basis": "UNCLOS art. 74/83"}
+    if "joint" in pol:
+        return {"code": "joint_regime", "basis": "UNCLOS art. 74(3)/83(3)"}
+    if UNINHABITED_RE.search(name):
+        return {"code": "uninhabited", "basis": "UNCLOS art. 2 & 25"}
+    return {"code": "sovereign_entry", "basis": "UNCLOS art. 17-19"}
+
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -345,7 +424,7 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
     text = res["text"]
     if text:
         log(f"fetch {domain_of(url)}: {len(text)} chars via {res['level']} (md5 {(res['md5'] or '')[:8]}…)")
-    return (text[:10000] if text else None), res["md5"]
+    return (text[:60000] if text else None), res["md5"]
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +437,18 @@ async def extract_ports_llm(context: str, zone: dict, gemini_key: str | None,
         return await extract_ports(context, zone, settings=settings, log=log)
     except Exception as e:
         log(f"LLM: échec de tous les backends ({type(e).__name__}: {str(e)[:100]})")
-        return []
+        # Fallback NER local (spaCy entraîné sur la BDD) — extraction sans LLM
+        try:
+            from ml_core import extract_entities
+            ents = extract_entities(context[:20000])
+            ports = [{"name": e["text"][:120], "city": None,
+                      "note": "extraction NER locale (fallback sans LLM)"}
+                     for e in ents if e["label"] == "PORT_NAME"]
+            if ports:
+                log(f"NER local: {len(ports)} port(s) extraits en fallback (sans LLM)")
+            return ports[:50]
+        except Exception:
+            return []
 
 
 _normalize_name = normalize_name  # rétrocompat
@@ -406,9 +496,14 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
             return await db.eez_zones.find_one({"mrgid": int(mrgid)})
         log("contenu source modifié ou source injoignable — pipeline complet relancé")
 
-    # --- Recherche (niveau 1) ---
+    # --- Recherche (niveau 1) : anglais puis requête localisée (matrice multilingue) ---
     query = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
     candidates = await search_searxng(query, log)
+    if not candidates:
+        loc_q = localized_query(zone)
+        if loc_q:
+            log(f"requête localisée ({LANG_BY_ISO2.get((zone.get('sov_iso2') or zone.get('iso2') or '').upper())}): {loc_q[:80]}")
+            candidates = await search_searxng(loc_q, log)
     synthesis = None
     if not candidates:
         candidates, synthesis = await search_grounded(zone, whitelist, log)
@@ -483,7 +578,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
                     log(f"depth-2: {fu[:80]} → {len(sub['text'])} chars")
                     text = (text + "\n" + sub["text"]).strip()
         if text and len(text) > 200:
-            texts.append(f"[SOURCE: {c['url']}]\n{text[:10000]}")
+            texts.append(f"[SOURCE: {c['url']}]\n{text[:60000]}")  # pas de tronquage court : le RAG condense
             excerpts[c["url"]] = text[:2500]
             used_sources.append({"url": c["url"], "domain": c["domain"],
                                  "md5": hashes.get(c["url"]), "collected_at": now_iso()})
@@ -497,7 +592,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
                                         tinyfish_key=tf_key, log=log)
             if res["text"] and len(res["text"]) > 200:
                 hashes[target["url"]] = res["md5"]
-                texts.append(f"[SOURCE: {target['url']}]\n{res['text'][:10000]}")
+                texts.append(f"[SOURCE: {target['url']}]\n{res['text'][:60000]}")
                 excerpts[target["url"]] = res["text"][:2500]
                 used_sources.append({"url": target["url"], "domain": target["domain"],
                                      "md5": res["md5"], "collected_at": now_iso()})
@@ -549,7 +644,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
 
     docs = []
     seen_names = set()
-    for p in ports[:25]:
+    for p in ports:  # pas de plafond par pays (grands États maritimes)
         norm = normalize_name(p["name"])
         if not norm or norm in seen_names:
             continue
@@ -621,7 +716,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
             "source_hashes": hashes,
             "source_excerpts": excerpts,
             "last_error": None,
-        }})
+        }, "$unset": {"unclos": ""}})
         log(f"terminé: {inserted} nouveau(x) PoE, {merged} fusionné(s) — total zone {poe_count}, statut {status}")
     elif zone.get("poe_count", 0) > 0:
         # Ré-extraction vide sur une zone déjà peuplée : on PRÉSERVE les ports
@@ -664,6 +759,7 @@ def zone_to_item(doc: dict) -> dict:
         "generated_at": doc.get("generated_at"),
         "stale": is_stale(doc),
         "last_error": doc.get("last_error"),
+        "unclos": doc.get("unclos"),
         "sources": [{"url": s.get("url"), "domain": s.get("domain"), "collected_at": s.get("collected_at")}
                     for s in (doc.get("sources") or [])],
         "whitelist": (doc.get("whitelist") or [])[:8],

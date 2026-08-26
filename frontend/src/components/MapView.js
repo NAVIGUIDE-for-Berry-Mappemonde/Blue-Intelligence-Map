@@ -233,6 +233,13 @@ export default function MapView({
             ↻ ${escH(btnLabel)}
           </button>`;
       const polType = z.pol_type || props?.pol_type;
+      // Qualification juridique UNCLOS des ZEE sans PoE
+      const unclosHtml = z.unclos && z.unclos.code
+        ? `<div data-testid="zone-unclos-block" style="margin-top:6px;padding:5px 7px;background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.35);border-radius:2px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#60a5fa;text-transform:uppercase;letter-spacing:0.08em;">§ ${escH(t("poeUnclosTitle"))}${z.unclos.basis ? " · " + escH(z.unclos.basis) : ""}</div>
+            <div style="font-size:10px;color:#bfdbfe;line-height:1.45;margin-top:2px;">${escH(t("poeUnclos_" + z.unclos.code) || z.unclos.code)}</div>
+          </div>`
+        : "";
       return `
         <div style="min-width:260px;max-width:330px;font-family:Manrope,sans-serif;">
           <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">${flag} ${escH(z.name || props?.name || props?.geoname || "")}</div>
@@ -243,6 +250,7 @@ export default function MapView({
             ${z.stale ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.5);background:rgba(251,191,36,0.1);padding:2px 6px;border-radius:2px;">⏰ ${escH(t("poeStale"))}</span>` : ""}
           </div>
           ${gen ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${escH(t("poeGeneratedAt"))}: ${escH(gen)}</div>` : ""}
+          ${unclosHtml}
           <div style="margin-top:8px;">
             ${btnHtml}
           </div>
@@ -685,7 +693,7 @@ export default function MapView({
     const cluster = poeClusterRef.current;
     if (!cluster) return;
     const feats = poePorts?.features || [];
-    const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}`).join(",");
+    const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}|${f.properties.osm_confidence ?? ""}|${f.properties.spatial_anomaly ? 1 : 0}`).join(",");
     if (sig === poeSigRef.current && cluster.getLayers().length) return;
     poeSigRef.current = sig;
     cluster.clearLayers();
@@ -711,11 +719,26 @@ export default function MapView({
           : `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.45);padding:2px 6px;border-radius:2px;">⚠ ${escH(t("poeOutsideEez"))}${p.distance_km != null ? " ~" + escH(p.distance_km) + " km" : ""}</span>`;
         const srcs = (p.source_urls || []).slice(0, 3).map((u) => `
           <div style="margin-top:3px;font-size:10px;"><a href="${escH(u)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(u)}</a></div>`).join("");
+        // Badges Bottom-Up : confiance OSM (Overpass) + anomalie spatiale (ML)
+        let osmBadge = "";
+        if (p.osm_confidence != null) {
+          const c = Number(p.osm_confidence);
+          const col = c >= 0.5 ? "#39ff14" : c > 0 ? "#fbbf24" : "#94a3b8";
+          const label = c > 0
+            ? `${escH(t("poeOsmConfidence"))} ${c.toFixed(2)}`
+            : escH(t("poeOsmNoMatch"));
+          const tags = (p.osm_tags || []).join(", ");
+          osmBadge = `<span data-testid="poe-osm-badge" title="${escH(tags)}" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:2px 6px;border-radius:2px;">${c > 0 ? "⬢ " : "∅ "}${label}</span>`;
+        }
+        const anomBadge = p.spatial_anomaly
+          ? `<span data-testid="poe-anomaly-badge" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid rgba(255,74,74,0.5);background:rgba(255,74,74,0.08);padding:2px 6px;border-radius:2px;">⚠ ${escH(t("poeAnomaly"))}</span>`
+          : "";
         return `<div style="min-width:230px;max-width:300px;font-family:Manrope,sans-serif;">
           <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">⚓ ${escH(p.name)}</div>
           <div style="font-size:11px;color:#94a3b8;margin:3px 0 5px;">${escH(p.city || "")}${p.city ? " · " : ""}${flagEmoji(p.country_iso2)} ${escH(p.zone_name || "")}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:5px;">${valid}
             <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${escH(p.geocode_source || t("poeNotGeocoded"))}</span>
+            ${osmBadge}${anomBadge}
           </div>
           ${p.note ? `<div style="font-size:11px;color:#e2e8f0;line-height:1.4;margin-bottom:5px;">${escH(p.note)}</div>` : ""}
           ${srcs ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px;">${escH(t("poeSourcesTitle"))}</div>${srcs}` : ""}

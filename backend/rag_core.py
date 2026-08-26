@@ -13,6 +13,8 @@ import re
 
 _st_model = None
 _st_failed = False
+_ce_model = None
+_ce_failed = False
 
 
 def _get_st():
@@ -25,6 +27,19 @@ def _get_st():
     except Exception:
         _st_failed = True
     return _st_model
+
+
+def _get_ce():
+    """Cross-Encoder ms-marco pour le re-ranking (spec) — chargé paresseusement."""
+    global _ce_model, _ce_failed
+    if _ce_model is not None or _ce_failed:
+        return _ce_model
+    try:
+        from sentence_transformers import CrossEncoder
+        _ce_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    except Exception:
+        _ce_failed = True
+    return _ce_model
 
 
 def embedding_backend() -> str:
@@ -86,11 +101,19 @@ def select_context(query: str, text: str, max_chars: int = 8000, size: int = 500
 
 
 def rerank_candidates(query: str, candidates: list[str]) -> list[tuple[int, float]]:
-    """Retourne [(index, score)] triés par pertinence décroissante (Cross-Encoder-like)."""
+    """Retourne [(index, score)] triés par pertinence décroissante.
+    Cross-Encoder ms-marco si disponible, sinon bi-encoder/TF-IDF cosinus."""
     if not candidates:
         return []
     if len(candidates) == 1:
         return [(0, 1.0)]
+    ce = _get_ce()
+    if ce is not None:
+        try:
+            scores = ce.predict([(query, c) for c in candidates])
+            return sorted(((i, float(s)) for i, s in enumerate(scores)), key=lambda x: x[1], reverse=True)
+        except Exception:
+            pass
     try:
         scores = _cosine_scores(query, candidates)
     except Exception:
