@@ -821,3 +821,12 @@ Vérifié e2e : Gemini OK (gemini-2.5-flash → 404, remplacé par gemini-3-flas
 - Robustesse quota: retries 429/5xx sur Gemini grounding (3x backoff) et extraction (1 retry) ; géocodage: variante sans parenthèses ('Levuka (Levuka Wharf)' → 'Levuka').
 - **Génération mondiale LANCÉE** (2026-08-26 10:41 UTC): batch limit=0 only_missing → 279 ZEE, concurrency 2, ~15 s/zone → fin estimée ~70-90 min. Vérifié à 13/279: Angola 6 ia, Antigua 6 ia, Argentine 2 ia, Ascension 1 ia, Aruba ia_sans_source, Azerbaïdjan erreur. Carte se colore en live. ⚠ NE PAS éditer de .py backend pendant le batch (hot reload tuerait la tâche en mémoire).
 - Backlog: exposer un toggle on/off de l'auto-refresh; persister les états de tâches (in-memory, perdus au reload — acceptable en preview).
+
+## Update 2026-08-26 (ter) — Bilan mondial post-batch + conformité
+- Batch mondial terminé : 285/285 ZEE, 1864 PoE, 62% géocodés, 58% validés spatialement. Statuts : 163 ia / 74 ia_sans_source / 48 erreur / 0 non générée.
+- Reprise unitaire (script /tmp/retry_errors.py via API, aucun code produit modifié) : 13 zones majeures récupérées (Brésil 17, Malaisie 25, Madagascar 14, Venezuela 11, Équateur 8, Galápagos 5, Italie, Guatemala, Guyane fr., Andaman, Guinée éq., Phoenix, Sahara occ.).
+- 48 erreurs restantes catégorisées PLAISANCE : ~38 structurelles (îles inhabitées/interdites/bancs/rochers disputés/pays fermés — l'absence EST l'info), 1 régime déclaratif (UK sPCR, diagnostic vérifié : LLM refuse d'inventer), 5 vrais échecs (Costa Rica, Rép. dom., Guyana, Nigeria, Chagos) — repris automatiquement par l'auto-refresh à J+7.
+- Bootstrapping vérifié : 35 domaines officiels auto-découverts dans 29 pays (exceptions.json auto).
+- Conformité plan initial : toutes exigences ✅ sauf (⚠️) SearXNG effectif remplacé par Gemini grounding (instances publiques bloquées, choix validé user) et GeoNames inactif (username vide). "133 ZEE" du plan → 285 réelles (sur-couverture).
+- Propositions NON codées (attente feu vert) : statut "sans_poe" pour zones structurelles, statut "régime déclaratif" (UK/Schengen), enrichissement exceptions.json (aduana.go.cr, dga.gob.do, mira.gov.gy, customs.gov.ng), noonsite en source de recoupement 3e niveau, GEONAMES_USERNAME, relever le cap 25 PoE/zone, SearXNG self-hosted.
+- CADRAGE : Blue Intelligence = plaisance exclusivement (commerce/pêche industrielle hors périmètre — prompts déjà conformes).

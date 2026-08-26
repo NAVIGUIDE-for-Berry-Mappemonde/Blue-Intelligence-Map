@@ -154,6 +154,92 @@
     ],
     "AW": [
       "douane.aw"
+    ],
+    "BZ": [
+      "portauthority.bz"
+    ],
+    "BJ": [
+      "douanes.gouv.bj"
+    ],
+    "VG": [
+      "gov.vg"
+    ],
+    "KY": [
+      "gov.ky"
+    ],
+    "CW": [
+      "gobiernu.cw"
+    ],
+    "CD": [
+      "gouv.cd"
+    ],
+    "DJ": [
+      "gouv.dj"
+    ],
+    "GA": [
+      "douanes.ga"
+    ],
+    "GM": [
+      "gid.gov.gm",
+      "gov.gm"
+    ],
+    "GG": [
+      "gov.gg"
+    ],
+    "IM": [
+      "gov.im"
+    ],
+    "CI": [
+      "douanes.ci"
+    ],
+    "JE": [
+      "gov.je"
+    ],
+    "MT": [
+      "gov.mt"
+    ],
+    "FM": [
+      "gov.fm"
+    ],
+    "MC": [
+      "gouv.mc"
+    ],
+    "NU": [
+      "gov.nu"
+    ],
+    "PW": [
+      "palaugov.pw"
+    ],
+    "PN": [
+      "government.pn"
+    ],
+    "CG": [
+      "gouv.cg"
+    ],
+    "RU": [
+      "gov.ru",
+      "mintrans.gov.ru"
+    ],
+    "ST": [
+      "gov.st"
+    ],
+    "SI": [
+      "gov.si"
+    ],
+    "GS": [
+      "gov.gs"
+    ],
+    "TG": [
+      "gouv.tg"
+    ],
+    "TC": [
+      "gov.tc"
+    ],
+    "VU": [
+      "vanuatucustoms.gov.vu",
+      "gov.vu",
+      "ports.gov.vu",
+      "customsinlandrevenue.gov.vu"
     ]
   }
 }
