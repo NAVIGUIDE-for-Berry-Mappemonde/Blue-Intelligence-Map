@@ -65,6 +65,143 @@ GEN_LOCKS: set[int] = set()
 
 
 # ---------------------------------------------------------------------------
+# Rafraîchissement automatique (sans action manuelle)
+# - Zones générées re-vérifiées après REFRESH_AFTER_DAYS : les sources sont
+#   re-téléchargées et comparées par hash MD5 — la ré-extraction LLM+géocodage
+#   n'a lieu QUE si le contenu source a changé (géré dans poe.generate_zone_poe).
+# - Zones en erreur re-tentées (force) après ERROR_RETRY_DAYS.
+# ---------------------------------------------------------------------------
+REFRESH_AFTER_DAYS = 30
+ERROR_RETRY_DAYS = 7
+CYCLE_EVERY_H = 12
+MAX_PER_CYCLE = 60
+
+AUTO_STATE = {
+    "enabled": True,
+    "cycle_running": False,
+    "last_cycle_at": None,
+    "next_check_at": None,
+    "last_summary": None,   # {"checked", "unchanged_md5", "updated", "errors_retried", "failed"}
+    "logs": [],
+}
+_auto_task = None
+
+
+def _auto_log(msg: str):
+    AUTO_STATE["logs"].append(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+    if len(AUTO_STATE["logs"]) > 300:
+        AUTO_STATE["logs"] = AUTO_STATE["logs"][-300:]
+
+
+def _ts_of(iso: str | None) -> float | None:
+    if not iso:
+        return None
+    try:
+        return time.mktime(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
+
+
+async def _auto_refresh_cycle():
+    gem, emg = _keys()
+    now = time.time()
+    zones = await _db.eez_zones.find({}, {"geometry": 0}).to_list(500)
+    stale, errored = [], []
+    for z in zones:
+        ref = _ts_of(z.get("checked_at")) or _ts_of(z.get("generated_at"))
+        if ref is None:
+            continue
+        st = z.get("status")
+        if st in ("ia", "ia_sans_source") and now - ref > REFRESH_AFTER_DAYS * 86400:
+            stale.append(z)
+        elif st == "erreur" and now - ref > ERROR_RETRY_DAYS * 86400:
+            errored.append(z)
+    stale.sort(key=lambda z: z.get("generated_at") or "")
+    errored.sort(key=lambda z: z.get("generated_at") or "")
+    todo = [(z, False) for z in stale] + [(z, True) for z in errored]
+    todo = todo[:MAX_PER_CYCLE]
+    if not todo:
+        _auto_log("cycle: aucune zone à re-vérifier")
+        AUTO_STATE["last_summary"] = {"checked": 0, "unchanged_md5": 0, "updated": 0, "errors_retried": 0, "failed": 0}
+        return
+
+    _auto_log(f"cycle: {len(stale)} zone(s) périmées (> {REFRESH_AFTER_DAYS} j) + "
+              f"{len(errored)} erreur(s) (> {ERROR_RETRY_DAYS} j) — {len(todo)} traitées (cap {MAX_PER_CYCLE})")
+    summary = {"checked": 0, "unchanged_md5": 0, "updated": 0, "errors_retried": 0, "failed": 0}
+    for z, force in todo:
+        mrgid = z["mrgid"]
+        if mrgid in GEN_LOCKS or BATCH_STATE.running or REF_STATE.running:
+            _auto_log(f"[{z.get('name')}] SKIP (verrou ou batch manuel en cours)")
+            continue
+        GEN_LOCKS.add(mrgid)
+        prev_gen = z.get("generated_at")
+        try:
+            doc = await asyncio.wait_for(
+                poe.generate_zone_poe(_db, mrgid, gem, emg,
+                                      logger=lambda m, n=z.get("name"): _auto_log(f"[{n}] {m}"),
+                                      force=force),
+                timeout=360,
+            )
+            summary["checked"] += 1
+            if force:
+                summary["errors_retried"] += 1
+            if doc and doc.get("generated_at") == prev_gen and doc.get("status") == z.get("status"):
+                summary["unchanged_md5"] += 1
+            else:
+                summary["updated"] += 1
+        except Exception as e:
+            summary["failed"] += 1
+            _auto_log(f"[{z.get('name')}] FAILED: {type(e).__name__}: {e}")
+        finally:
+            GEN_LOCKS.discard(mrgid)
+        await asyncio.sleep(2)
+    AUTO_STATE["last_summary"] = summary
+    _auto_log(f"cycle terminé: {summary}")
+
+
+async def _auto_refresh_loop():
+    await asyncio.sleep(90)  # laisser l'app démarrer
+    while True:
+        due = (AUTO_STATE["last_cycle_at"] or 0) + CYCLE_EVERY_H * 3600 <= time.time()
+        busy = REF_STATE.running or BATCH_STATE.running
+        if AUTO_STATE["enabled"] and due and not busy:
+            AUTO_STATE["cycle_running"] = True
+            try:
+                await _auto_refresh_cycle()
+            except Exception as e:
+                _auto_log(f"cycle FATAL: {type(e).__name__}: {e}")
+            finally:
+                AUTO_STATE["cycle_running"] = False
+                AUTO_STATE["last_cycle_at"] = time.time()
+        AUTO_STATE["next_check_at"] = time.time() + 1800
+        await asyncio.sleep(1800)
+
+
+def start_auto_refresh():
+    global _auto_task
+    if _auto_task is None or _auto_task.done():
+        _auto_task = asyncio.create_task(_auto_refresh_loop())
+
+
+@router.get("/poe/auto-refresh/status")
+async def poe_auto_refresh_status():
+    return {
+        "enabled": AUTO_STATE["enabled"],
+        "cycle_running": AUTO_STATE["cycle_running"],
+        "last_cycle_at": AUTO_STATE["last_cycle_at"],
+        "next_check_at": AUTO_STATE["next_check_at"],
+        "last_summary": AUTO_STATE["last_summary"],
+        "config": {
+            "refresh_after_days": REFRESH_AFTER_DAYS,
+            "error_retry_days": ERROR_RETRY_DAYS,
+            "cycle_every_hours": CYCLE_EVERY_H,
+            "max_per_cycle": MAX_PER_CYCLE,
+        },
+        "logs_tail": AUTO_STATE["logs"][-30:],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Référentiel ZEE
 # ---------------------------------------------------------------------------
 @router.post("/poe/referential/build", status_code=202)

@@ -321,16 +321,29 @@ async def search_gemini_grounding(zone: dict, whitelist: list[str], gemini_key: 
         f"List each official port of entry you find with its town, and cite the official URLs used."
     )
     body = {"contents": [{"parts": [{"text": prompt}]}], "tools": [{"google_search": {}}]}
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
-                json=body,
-            )
-            r.raise_for_status()
-            d = r.json()
-    except Exception as e:
-        log(f"Gemini grounding: échec ({type(e).__name__}: {e})")
+    d = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
+                    json=body,
+                )
+                if r.status_code in (429, 500, 503) and attempt < 2:
+                    log(f"Gemini grounding: HTTP {r.status_code} — retry dans {10 * (attempt + 1)}s")
+                    await asyncio.sleep(10 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                d = r.json()
+                break
+        except Exception as e:
+            if attempt < 2:
+                log(f"Gemini grounding: {type(e).__name__} — retry")
+                await asyncio.sleep(8)
+                continue
+            log(f"Gemini grounding: échec ({type(e).__name__}: {e})")
+            return [], None
+    if d is None:
         return [], None
     cand = (d.get("candidates") or [{}])[0]
     synthesis = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
@@ -376,7 +389,6 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
     except Exception as e:
         log(f"fetch {domain_of(url)}: échec ({type(e).__name__})")
         return None, None
-    md5 = hashlib.md5(content).hexdigest()
     ctype = (r.headers.get("content-type") or "").lower()
 
     def _parse():
@@ -391,8 +403,11 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
         text = await asyncio.to_thread(_parse)
     except Exception as e:
         log(f"parse {domain_of(url)}: échec ({type(e).__name__})")
-        return None, md5
+        return None, hashlib.md5(content).hexdigest()
     text = (text or "").strip()
+    # Empreinte MD5 du TEXTE extrait (stable) — le HTML brut contient des
+    # tokens dynamiques qui changeraient à chaque requête.
+    md5 = hashlib.md5(text.encode("utf-8")).hexdigest() if text else hashlib.md5(content).hexdigest()
     log(f"fetch {domain_of(url)}: {len(text)} chars (md5 {md5[:8]}…)")
     return (text[:10000] if text else None), md5
 
@@ -444,27 +459,34 @@ async def extract_ports_llm(context: str, zone: dict, gemini_key: str | None, em
         sovereign=zone.get("sovereign") or "",
         context=context[:20000],
     )
-    # Primaire : Gemini REST, mode JSON strict
+    # Primaire : Gemini REST, mode JSON strict (1 retry sur 429/5xx)
     if gemini_key:
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
-                    json={
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
-                    },
-                )
-                r.raise_for_status()
-                txt = "".join(
-                    p.get("text", "")
-                    for p in ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts", [])
-                )
-            ports = _parse_ports_json(txt)
-            log(f"LLM Gemini flash: {len(ports)} port(s) extraits")
-            return ports
-        except Exception as e:
-            log(f"LLM Gemini: échec ({type(e).__name__}) — fallback clé universelle")
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    r = await client.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
+                        json={
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+                        },
+                    )
+                    if r.status_code in (429, 500, 503) and attempt == 0:
+                        log(f"LLM Gemini: HTTP {r.status_code} — retry dans 12s")
+                        await asyncio.sleep(12)
+                        continue
+                    r.raise_for_status()
+                    txt = "".join(
+                        p.get("text", "")
+                        for p in ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts", [])
+                    )
+                ports = _parse_ports_json(txt)
+                log(f"LLM Gemini flash: {len(ports)} port(s) extraits")
+                return ports
+            except Exception as e:
+                if attempt == 0:
+                    continue
+                log(f"LLM Gemini: échec ({type(e).__name__}) — fallback clé universelle")
     # Fallback : Emergent LLM key via emergentintegrations
     if emergent_key:
         try:
@@ -490,7 +512,11 @@ async def geocode_port(port: dict, zone: dict, log) -> tuple[float, float, str] 
     global _last_nominatim
     name = port["name"]
     territory = zone.get("name") or ""
-    variants = [name]
+    variants = []
+    deparen = re.sub(r"\s*\([^)]*\)", "", name).strip()
+    if deparen and deparen.lower() != name.lower():
+        variants.append(deparen)
+    variants.append(name)
     stripped = re.sub(r"^(port|puerto|porto|harbour|harbor)\s+(of|de|du|di|da|d')\s*", "", name, flags=re.I).strip()
     if stripped and stripped.lower() != name.lower():
         variants.append(stripped)
@@ -560,6 +586,22 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
     exceptions = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
     log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
+
+    # --- Monitoring MD5 prioritaire : re-fetch des sources CONNUES avant toute
+    # recherche. Si le contenu n'a pas changé, aucune ré-extraction (ni appel
+    # moteur de recherche, ni LLM, ni géocodage). ---
+    known_hashes = zone.get("source_hashes") or {}
+    if not force and known_hashes and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0:
+        fresh = {}
+        for url in list(known_hashes.keys())[:3]:
+            _, md5 = await fetch_and_parse(url, log)
+            if md5:
+                fresh[url] = md5
+        if fresh and fresh == known_hashes:
+            log("MD5 inchangés (sources connues) — ré-extraction sautée")
+            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
+            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+        log("contenu source modifié ou source injoignable — pipeline complet relancé")
 
     # --- Recherche ---
     query = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"

@@ -125,6 +125,7 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   const [poeBatchStarting, setPoeBatchStarting] = useState(false);
   const [poeBatchCount, setPoeBatchCount] = useState(10);
   const [poeOnlyMissing, setPoeOnlyMissing] = useState(true);
+  const [autoStatus, setAutoStatus] = useState(null);
   const pollRefs = useRef({});
 
   // Only poll for the active mode's data — saves bandwidth.
@@ -201,6 +202,19 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     pollRefs.current.poeBatch = setInterval(check, 3000);
     return () => { alive = false; clearInterval(pollRefs.current.poeBatch); };
   }, [mode, onPoeRefresh]);
+  useEffect(() => {
+    if (mode !== "formalities") return;
+    let alive = true;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/poe/auto-refresh/status");
+        if (alive) setAutoStatus(data);
+      } catch (_) { /* transient */ }
+    };
+    check();
+    pollRefs.current.poeAuto = setInterval(check, 20000);
+    return () => { alive = false; clearInterval(pollRefs.current.poeAuto); };
+  }, [mode]);
 
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
@@ -512,6 +526,25 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* --- Auto-refresh (MD5 monitoring) --- */}
+          <div className="pt-3 border-t border-line" data-testid="poe-auto-refresh-section">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${autoStatus?.cycle_running ? "bg-amberx animate-pulse" : "bg-bio"}`} />
+              <span className="font-mono text-[9px] uppercase tracking-widest text-slate-400">
+                ♻ {t("poeAutoRefreshTitle")} · {autoStatus?.cycle_running ? t("poeAutoCycleRunning") : t("poeAutoActive")}
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-relaxed">{t("poeAutoRefreshDesc")}</p>
+            {autoStatus?.last_summary && (
+              <p className="mt-1 font-mono text-[9px] text-slate-500" data-testid="poe-auto-refresh-summary">
+                {t("poeAutoLastCycle")}: {autoStatus.last_summary.checked} {t("poeAutoChecked")} ·{" "}
+                {autoStatus.last_summary.unchanged_md5} {t("poeAutoUnchangedMd5")} ·{" "}
+                {autoStatus.last_summary.updated} {t("poeAutoUpdated")}
+                {autoStatus.last_summary.errors_retried > 0 ? ` · ${autoStatus.last_summary.errors_retried} ${t("poeAutoErrRetried")}` : ""}
+              </p>
             )}
           </div>
         </CardShell>

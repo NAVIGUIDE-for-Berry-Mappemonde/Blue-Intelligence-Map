@@ -1774,3 +1774,6 @@ async def _startup_poe():
                 print(f"[startup] dropped legacy {legacy} collection")
     except Exception as e:
         print(f"[startup] legacy collection drop failed (non-fatal): {e}")
+    # Rafraîchissement automatique : zones périmées re-vérifiées (monitoring MD5)
+    # et erreurs re-tentées, sans action manuelle.
+    poe_routes.start_auto_refresh()
