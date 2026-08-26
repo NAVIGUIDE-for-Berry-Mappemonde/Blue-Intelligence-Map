@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import poe
+import osm_validate
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -407,6 +408,63 @@ async def poe_generate_batch_cancel():
         raise HTTPException(409, "No PoE batch running")
     BATCH_STATE.cancel = True
     BATCH_STATE.log("Annulation demandée — les ZEE restantes ne démarreront pas")
+    return {"cancelling": True}
+
+
+# ---------------------------------------------------------------------------
+# Validation Bottom-Up des PoE existants via Overpass OSM (tâche de fond)
+# — enrichit osm_confidence / osm_tags SANS toucher nom, coordonnées ni texte.
+# ---------------------------------------------------------------------------
+OSM_STATE = TaskState()
+
+
+class OsmValidateBody(BaseModel):
+    only_unchecked: bool = True
+    limit: int = 0          # 0 = tous
+    radius_m: int = 3000
+
+
+@router.post("/poe/validate-osm", status_code=202)
+async def poe_validate_osm(body: OsmValidateBody | None = None):
+    if OSM_STATE.running:
+        raise HTTPException(409, "OSM validation already running")
+    body = body or OsmValidateBody()
+    OSM_STATE.reset()
+    OSM_STATE.running = True
+    OSM_STATE.started_at = time.time()
+
+    async def _runner():
+        try:
+            OSM_STATE.summary = await osm_validate.validate_ports(
+                _db, OSM_STATE, only_unchecked=body.only_unchecked,
+                limit=body.limit, radius_m=body.radius_m)
+        except Exception as e:
+            OSM_STATE.error = f"{type(e).__name__}: {e}"
+            OSM_STATE.log(f"FATAL: {OSM_STATE.error}")
+        finally:
+            OSM_STATE.finished_at = time.time()
+            OSM_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "only_unchecked": body.only_unchecked,
+            "limit": body.limit, "radius_m": body.radius_m}
+
+
+@router.get("/poe/validate-osm/status")
+async def poe_validate_osm_status():
+    st = OSM_STATE.status()
+    if _db is not None:
+        st["osm_checked_total"] = await _db.poe_ports.count_documents({"osm_checked_at": {"$exists": True}})
+        st["high_confidence_total"] = await _db.poe_ports.count_documents({"osm_confidence": {"$gte": 0.5}})
+    return st
+
+
+@router.post("/poe/validate-osm/cancel")
+async def poe_validate_osm_cancel():
+    if not OSM_STATE.running:
+        raise HTTPException(409, "No OSM validation running")
+    OSM_STATE.cancel = True
+    OSM_STATE.log("Annulation demandée — arrêt propre après le PoE en cours")
     return {"cancelling": True}
 
 

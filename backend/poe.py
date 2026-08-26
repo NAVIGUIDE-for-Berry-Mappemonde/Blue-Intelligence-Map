@@ -1,16 +1,22 @@
 """
 poe.py — Pipeline souverain [ZEE / Pays] -> [Ports d'Entrée plaisance].
 
-Architecture (plan de développement 2026-06) :
+Architecture (refactor Core mutualisé 2026-08) :
   1. Délimitation ZEE      : VLIZ Marine Regions WFS (World EEZ v12, ~285 zones), simplifié shapely.
-  2. Recherche ciblée      : SearXNG (1ère intention) -> Gemini Google Search grounding (fallback).
-  3. Whitelist automatique : ISO 3166-1 alpha-2 x motifs d'extensions d'État (gov/gouv/gob/...)
-                             validés contre la Public Suffix List (tldextract) + exceptions.json
-                             enrichi par auto-découverte (bootstrapping).
-  4. Collecte & parsing    : httpx + trafilatura (HTML) + PyMuPDF (PDF). Pas d'agent navigateur lourd.
-  5. Extraction structurée : LLM léger (Gemini flash) en mode JSON strict -> liste de noms de PoE.
-  6. Géocodage             : Nominatim (OSM) -> GeoNames. Validation spatiale point-in-EEZ (shapely).
-  7. Monitoring            : hash MD5 des contenus sources — ré-extraction uniquement si modifiés.
+  2. Recherche ciblée      : SearXNG -> recherche groundée (llm_core: Gemini grounding ou
+                             OpenRouter :online) + Level-2 Retry Query (organisation douanière).
+  3. Whitelist automatique : ISO 3166-1 alpha-2 x motifs d'État validés PSL (tldextract)
+                             + exceptions.json auto-enrichi + filtrage SERP regex (extract_core).
+  4. Collecte & parsing    : cascade hybride extract_core — N1 httpx+trafilatura/PyMuPDF ->
+                             N2 Readability/BS4 -> N3 TinyFish (1 seul appel max/zone, dernier recours).
+                             Depth=2 sélectif sur liens internes réglementaires.
+  5. Extraction structurée : llm_core (cascade Gemini -> Emergent -> OpenRouter, JSON strict)
+                             + RAG local (rag_core) sur les contextes longs.
+  6. Géocodage             : geo_core (Nominatim -> GeoNames, re-ranking sémantique).
+                             Validation spatiale point-in-EEZ (shapely).
+  7. Monitoring            : hash MD5 + similarité sémantique (skip si changement mineur).
+  8. Stockage              : upsert non-destructif via dedup_core (les enrichissements
+                             Bottom-Up osm_confidence / anomalies sont préservés).
 """
 import asyncio
 import hashlib
@@ -18,7 +24,6 @@ import json
 import os
 import re
 import time
-import unicodedata
 import uuid
 from pathlib import Path
 
@@ -27,6 +32,12 @@ import pycountry
 import tldextract
 from shapely.geometry import shape, Point, mapping
 from shapely.prepared import prep
+
+from dedup_core import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name
+from extract_core import extract_cascade, internal_followups, serp_filter
+from geo_core import geocode_port
+from llm_core import extract_ports, grounded_search
+from rag_core import content_changed, select_context
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
@@ -56,9 +67,6 @@ SEARX_INSTANCES = [
     "https://search.inetol.net",
     "https://priv.au",
 ]
-
-_geocode_lock = asyncio.Lock()
-_last_nominatim = 0.0
 
 
 def now_iso() -> str:
@@ -291,7 +299,7 @@ async def build_referential(db, state, force: bool = False):
 
 
 # ---------------------------------------------------------------------------
-# 2. Recherche : SearXNG -> Gemini grounding
+# 2. Recherche : SearXNG -> recherche groundée (llm_core) + Level-2 Retry
 # ---------------------------------------------------------------------------
 async def search_searxng(query: str, log) -> list[dict]:
     for inst in SEARX_INSTANCES:
@@ -306,271 +314,54 @@ async def search_searxng(query: str, log) -> list[dict]:
                     return [{"url": x.get("url"), "domain": domain_of(x.get("url") or "")} for x in results if x.get("url")]
         except Exception:
             continue
-    log("SearXNG: aucune instance exploitable — bascule sur Gemini grounding")
+    log("SearXNG: aucune instance exploitable — bascule sur recherche groundée")
     return []
 
 
-async def search_gemini_grounding(zone: dict, whitelist: list[str], gemini_key: str, log):
-    """Gemini + google_search tool. Retourne (candidats [{url, domain}], texte de synthèse)."""
+async def search_grounded(zone: dict, whitelist: list[str], log, query_override: str | None = None):
+    """Recherche groundée via llm_core (Gemini google_search si clé, sinon OpenRouter :online)."""
     name = zone.get("name") or zone.get("geoname")
     hints = ", ".join(whitelist[:6]) if whitelist else "official government domains"
-    prompt = (
+    prompt = query_override or (
         f"Find the OFFICIAL government sources (customs, immigration, maritime/port authority) that list "
         f"the designated ports of entry (clearance ports) for FOREIGN PLEASURE CRAFT / YACHTS in {name} "
         f"({zone.get('sovereign')}). Prefer official domains such as: {hints}. "
         f"List each official port of entry you find with its town, and cite the official URLs used."
     )
-    body = {"contents": [{"parts": [{"text": prompt}]}], "tools": [{"google_search": {}}]}
-    d = None
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
-                    json=body,
-                )
-                if r.status_code in (429, 500, 503) and attempt < 2:
-                    log(f"Gemini grounding: HTTP {r.status_code} — retry dans {10 * (attempt + 1)}s")
-                    await asyncio.sleep(10 * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                d = r.json()
-                break
-        except Exception as e:
-            if attempt < 2:
-                log(f"Gemini grounding: {type(e).__name__} — retry")
-                await asyncio.sleep(8)
-                continue
-            log(f"Gemini grounding: échec ({type(e).__name__}: {e})")
-            return [], None
-    if d is None:
-        return [], None
-    cand = (d.get("candidates") or [{}])[0]
-    synthesis = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
-    chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
-    raw = []
-    for c in chunks:
-        w = c.get("web") or {}
-        if w.get("uri"):
-            raw.append({"redirect": w["uri"], "title": (w.get("title") or "").strip().lower()})
-    log(f"Gemini grounding: {len(raw)} sources candidates, synthèse {len(synthesis)} chars")
-
-    # Résolution des redirections vertexaisearch -> URL réelle
-    async def _resolve(item):
-        try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers={"User-Agent": UA}) as client:
-                async with client.stream("GET", item["redirect"]) as r:
-                    return {"url": str(r.url), "domain": domain_of(str(r.url))}
-        except Exception:
-            t = item["title"]
-            if re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", t or ""):
-                return {"url": f"https://{t}/", "domain": t}
-            return None
-
-    resolved = await asyncio.gather(*(_resolve(x) for x in raw[:10]))
-    seen, out = set(), []
-    for x in resolved:
-        if x and x["domain"] and x["domain"] not in seen:
-            seen.add(x["domain"])
-            out.append(x)
-    return out, synthesis
+    return await grounded_search(prompt, log=log, domain_fn=domain_of)
 
 
 # ---------------------------------------------------------------------------
-# 3. Collecte & parsing (httpx + trafilatura / PyMuPDF)
+# 3. Collecte & parsing — cascade hybride N1/N2/N3 (extract_core)
 # ---------------------------------------------------------------------------
 async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
-    """Retourne (texte, md5 du contenu brut)."""
+    """Retourne (texte, md5). Cascade N1 (trafilatura/PyMuPDF) -> N2 (Readability).
+    N3 TinyFish volontairement désactivé ici (monitoring/refresh: pas de crédit)."""
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers={"User-Agent": UA}) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            content = r.content
+        res = await extract_cascade(url, min_chars=200, allow_tinyfish=False, log=log)
     except Exception as e:
         log(f"fetch {domain_of(url)}: échec ({type(e).__name__})")
         return None, None
-    ctype = (r.headers.get("content-type") or "").lower()
+    text = res["text"]
+    if text:
+        log(f"fetch {domain_of(url)}: {len(text)} chars via {res['level']} (md5 {(res['md5'] or '')[:8]}…)")
+    return (text[:10000] if text else None), res["md5"]
 
-    def _parse():
-        if content[:5] == b"%PDF-" or "pdf" in ctype or url.lower().endswith(".pdf"):
-            import fitz
-            with fitz.open(stream=content, filetype="pdf") as pdf:
-                return "\n".join(page.get_text() for page in pdf[:20])
-        import trafilatura
-        return trafilatura.extract(content.decode("utf-8", errors="replace")) or ""
 
+# ---------------------------------------------------------------------------
+# 4. Extraction JSON stricte — délégué à llm_core (cascade + fallback)
+# ---------------------------------------------------------------------------
+async def extract_ports_llm(context: str, zone: dict, gemini_key: str | None,
+                            emergent_key: str | None, log) -> list[dict]:
+    settings = {"gemini_api_key": gemini_key or ""}
     try:
-        text = await asyncio.to_thread(_parse)
+        return await extract_ports(context, zone, settings=settings, log=log)
     except Exception as e:
-        log(f"parse {domain_of(url)}: échec ({type(e).__name__})")
-        return None, hashlib.md5(content).hexdigest()
-    text = (text or "").strip()
-    # Empreinte MD5 du TEXTE extrait (stable) — le HTML brut contient des
-    # tokens dynamiques qui changeraient à chaque requête.
-    md5 = hashlib.md5(text.encode("utf-8")).hexdigest() if text else hashlib.md5(content).hexdigest()
-    log(f"fetch {domain_of(url)}: {len(text)} chars (md5 {md5[:8]}…)")
-    return (text[:10000] if text else None), md5
+        log(f"LLM: échec de tous les backends ({type(e).__name__}: {str(e)[:100]})")
+        return []
 
 
-# ---------------------------------------------------------------------------
-# 4. Extraction JSON stricte (LLM léger)
-# ---------------------------------------------------------------------------
-EXTRACT_PROMPT = """Tu extrais les PORTS D'ENTRÉE OFFICIELS (ports de clearance douanière) pour les navires de PLAISANCE étrangers dans : {name} ({sovereign}).
-
-Réponds UNIQUEMENT avec un JSON strict de la forme:
-{{"ports": [{{"name": "...", "city": "... ou null", "note": "précision courte ou null"}}]}}
-
-Règles absolues:
-- Uniquement les ports d'entrée / de clearance OFFICIELS pour la plaisance mentionnés dans les extraits.
-- Ne JAMAIS inventer. Si les extraits ne désignent aucun port d'entrée: {{"ports": []}}.
-- "name" = nom du port/marina/quai tel qu'écrit. "note" en français, max 120 caractères.
-
-EXTRAITS DES SOURCES OFFICIELLES:
-{context}"""
-
-
-def _parse_ports_json(txt: str) -> list[dict]:
-    txt = re.sub(r"^```(json)?|```$", "", (txt or "").strip(), flags=re.M).strip()
-    try:
-        d = json.loads(txt)
-    except Exception:
-        m = re.search(r"\{.*\}", txt, re.S)
-        if not m:
-            return []
-        try:
-            d = json.loads(m.group(0))
-        except Exception:
-            return []
-    ports = d.get("ports") if isinstance(d, dict) else None
-    out = []
-    for p in ports or []:
-        if isinstance(p, dict) and (p.get("name") or "").strip():
-            out.append({
-                "name": str(p["name"]).strip()[:120],
-                "city": (str(p["city"]).strip()[:80] if p.get("city") else None),
-                "note": (str(p["note"]).strip()[:200] if p.get("note") else None),
-            })
-    return out[:40]
-
-
-async def extract_ports_llm(context: str, zone: dict, gemini_key: str | None, emergent_key: str | None, log) -> list[dict]:
-    prompt = EXTRACT_PROMPT.format(
-        name=zone.get("name") or zone.get("geoname"),
-        sovereign=zone.get("sovereign") or "",
-        context=context[:20000],
-    )
-    # Primaire : Gemini REST, mode JSON strict (1 retry sur 429/5xx)
-    if gemini_key:
-        for attempt in range(2):
-            try:
-                async with httpx.AsyncClient(timeout=60) as client:
-                    r = await client.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={gemini_key}",
-                        json={
-                            "contents": [{"parts": [{"text": prompt}]}],
-                            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
-                        },
-                    )
-                    if r.status_code in (429, 500, 503) and attempt == 0:
-                        log(f"LLM Gemini: HTTP {r.status_code} — retry dans 12s")
-                        await asyncio.sleep(12)
-                        continue
-                    r.raise_for_status()
-                    txt = "".join(
-                        p.get("text", "")
-                        for p in ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts", [])
-                    )
-                ports = _parse_ports_json(txt)
-                log(f"LLM Gemini flash: {len(ports)} port(s) extraits")
-                return ports
-            except Exception as e:
-                if attempt == 0:
-                    continue
-                log(f"LLM Gemini: échec ({type(e).__name__}) — fallback clé universelle")
-    # Fallback : Emergent LLM key via emergentintegrations
-    if emergent_key:
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"poe-{zone.get('mrgid')}-{int(time.time())}",
-                system_message="Tu réponds uniquement en JSON strict.",
-            ).with_model("gemini", "gemini-2.5-flash")
-            resp = await chat.send_message(UserMessage(text=prompt))
-            ports = _parse_ports_json(str(resp))
-            log(f"LLM Emergent (gemini-2.5-flash): {len(ports)} port(s) extraits")
-            return ports
-        except Exception as e:
-            log(f"LLM Emergent: échec ({type(e).__name__}: {e})")
-    return []
-
-
-# ---------------------------------------------------------------------------
-# 5. Géocodage (Nominatim -> GeoNames) + validation spatiale
-# ---------------------------------------------------------------------------
-async def geocode_port(port: dict, zone: dict, log) -> tuple[float, float, str] | None:
-    global _last_nominatim
-    name = port["name"]
-    territory = zone.get("name") or ""
-    variants = []
-    deparen = re.sub(r"\s*\([^)]*\)", "", name).strip()
-    if deparen and deparen.lower() != name.lower():
-        variants.append(deparen)
-    variants.append(name)
-    stripped = re.sub(r"^(port|puerto|porto|harbour|harbor)\s+(of|de|du|di|da|d')\s*", "", name, flags=re.I).strip()
-    if stripped and stripped.lower() != name.lower():
-        variants.append(stripped)
-    stripped2 = re.sub(r"\s+(port|harbour|harbor|marina|wharf|jetty|terminal)$", "", name, flags=re.I).strip()
-    if stripped2 and stripped2.lower() not in {v.lower() for v in variants}:
-        variants.append(stripped2)
-    queries = []
-    if port.get("city"):
-        queries.append(f"{name}, {port['city']}, {territory}")
-    for v in variants:
-        queries.append(f"{v}, {territory}")
-    if port.get("city"):
-        queries.append(f"{port['city']}, {territory}")
-    queries.append(f"{name} port, {zone.get('sovereign') or territory}")
-
-    cc = (zone.get("iso2") or "").lower()
-    for q in queries:
-        async with _geocode_lock:
-            wait = 1.1 - (time.time() - _last_nominatim)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            _last_nominatim = time.time()
-        try:
-            params = {"q": q, "format": "json", "limit": 1}
-            if cc:
-                params["countrycodes"] = cc
-            async with httpx.AsyncClient(timeout=15, headers={"User-Agent": UA}) as client:
-                r = await client.get("https://nominatim.openstreetmap.org/search", params=params)
-                rows = r.json() if r.status_code == 200 else []
-            if rows:
-                return float(rows[0]["lat"]), float(rows[0]["lon"]), "nominatim"
-        except Exception:
-            continue
-    # Fallback GeoNames
-    gn_user = (os.environ.get("GEONAMES_USERNAME") or "").strip()
-    if gn_user:
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.get(
-                    "http://api.geonames.org/searchJSON",
-                    params={"q": f"{name} {territory}", "maxRows": 1, "username": gn_user},
-                )
-                rows = (r.json().get("geonames") or []) if r.status_code == 200 else []
-            if rows:
-                return float(rows[0]["lat"]), float(rows[0]["lng"]), "geonames"
-        except Exception:
-            pass
-    log(f"géocodage: aucun résultat pour « {name} »")
-    return None
-
-
-def _normalize_name(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s.lower()).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "", s)[:40]
+_normalize_name = normalize_name  # rétrocompat
 
 
 # ---------------------------------------------------------------------------
@@ -587,33 +378,67 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
     log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
 
-    # --- Monitoring MD5 prioritaire : re-fetch des sources CONNUES avant toute
-    # recherche. Si le contenu n'a pas changé, aucune ré-extraction (ni appel
-    # moteur de recherche, ni LLM, ni géocodage). ---
+    # --- Monitoring MD5 + sémantique prioritaire : re-fetch des sources CONNUES
+    # avant toute recherche. Si le contenu n'a pas changé (hash identique OU
+    # similarité cosinus >= 0.95), aucune ré-extraction. ---
     known_hashes = zone.get("source_hashes") or {}
     if not force and known_hashes and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0:
-        fresh = {}
+        fresh, fresh_texts = {}, {}
         for url in list(known_hashes.keys())[:3]:
-            _, md5 = await fetch_and_parse(url, log)
+            text, md5 = await fetch_and_parse(url, log)
             if md5:
                 fresh[url] = md5
+            if text:
+                fresh_texts[url] = text
         if fresh and fresh == known_hashes:
             log("MD5 inchangés (sources connues) — ré-extraction sautée")
             await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
             return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+        old_excerpts = zone.get("source_excerpts") or {}
+        if fresh and old_excerpts and all(
+            u in old_excerpts and u in fresh_texts and not content_changed(old_excerpts[u], fresh_texts[u], 0.95)
+            for u in fresh
+        ):
+            log("monitoring sémantique: similarité cosinus >= 0.95 — changement HTML mineur, ré-extraction sautée")
+            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+                "checked_at": now_iso(), "source_hashes": {**known_hashes, **fresh},
+            }})
+            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
         log("contenu source modifié ou source injoignable — pipeline complet relancé")
 
-    # --- Recherche ---
+    # --- Recherche (niveau 1) ---
     query = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
     candidates = await search_searxng(query, log)
     synthesis = None
     if not candidates:
-        if not gemini_key:
-            raise RuntimeError("Aucun moteur de recherche disponible (SearXNG bloqué, pas de clé Gemini)")
-        candidates, synthesis = await search_gemini_grounding(zone, whitelist, gemini_key, log)
+        candidates, synthesis = await search_grounded(zone, whitelist, log)
+    candidates = serp_filter(candidates)
 
     # --- Gatekeeper + bootstrapping des exceptions ---
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
+
+    # --- Level-2 Retry Query : recherche ciblée sur l'organisation douanière ---
+    if not official:
+        log("Level-2 retry: recherche ciblée sur l'organisation douanière nationale")
+        q2 = (f"{zone.get('sovereign') or name} customs administration official website "
+              f"designated ports of entry clearance pleasure craft {name}")
+        extra = await search_searxng(q2, log)
+        syn2 = None
+        if not extra:
+            extra, syn2 = await search_grounded(zone, whitelist, log, query_override=(
+                f"Find the OFFICIAL national customs administration / border agency website of "
+                f"{zone.get('sovereign') or name} and the page listing designated ports of entry "
+                f"(clearance ports) for foreign pleasure craft in {name}. Cite the official URLs."
+            ))
+        if syn2 and not synthesis:
+            synthesis = syn2
+        known_domains = {c["domain"] for c in candidates}
+        extra = serp_filter([c for c in (extra or []) if c.get("domain") and c["domain"] not in known_domains])
+        if extra:
+            log(f"Level-2 retry: {len(extra)} source(s) supplémentaires trouvées")
+            candidates += extra
+        official = [c for c in candidates if url_allowed(c["url"], whitelist)]
+
     rejected = [c for c in candidates if c not in official]
     cc_low = (zone.get("iso2") or "").lower()
     if not official and rejected and cc_low:
@@ -634,15 +459,50 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
 
-    # --- Collecte + hash MD5 ---
-    texts, hashes, used_sources = [], {}, []
+    # --- Collecte + hash MD5 (cascade N1/N2, depth=2 sélectif) ---
+    tf_key = (os.environ.get("TINYFISH_API_KEY") or "").strip() or None
+    texts, hashes, used_sources, excerpts = [], {}, [], {}
     for c in official[:3]:
-        text, md5 = await fetch_and_parse(c["url"], log)
-        if md5:
-            hashes[c["url"]] = md5
+        try:
+            res = await extract_cascade(c["url"], min_chars=200, allow_tinyfish=False, log=log)
+        except Exception as e:
+            log(f"fetch {c['domain']}: échec ({type(e).__name__})")
+            continue
+        if res["md5"]:
+            hashes[c["url"]] = res["md5"]
+        text = res["text"]
+        log(f"fetch {c['domain']}: {len(text)} chars via {res['level']}")
+        # Depth=2 sélectif : liens internes réglementaires (/annuaire, /contacts, /clearance…)
+        if len(text) < 400 and res.get("html"):
+            for fu in internal_followups(res["html"], c["url"], limit=2):
+                try:
+                    sub = await extract_cascade(fu, min_chars=200, allow_tinyfish=False, log=log)
+                except Exception:
+                    continue
+                if sub["text"]:
+                    log(f"depth-2: {fu[:80]} → {len(sub['text'])} chars")
+                    text = (text + "\n" + sub["text"]).strip()
         if text and len(text) > 200:
-            texts.append(f"[SOURCE: {c['url']}]\n{text}")
-            used_sources.append({"url": c["url"], "domain": c["domain"], "md5": md5, "collected_at": now_iso()})
+            texts.append(f"[SOURCE: {c['url']}]\n{text[:10000]}")
+            excerpts[c["url"]] = text[:2500]
+            used_sources.append({"url": c["url"], "domain": c["domain"],
+                                 "md5": hashes.get(c["url"]), "collected_at": now_iso()})
+
+    # --- N3 TinyFish : UN SEUL appel max par zone, uniquement si N1+N2 ont tout raté ---
+    if not texts and tf_key and official:
+        target = official[0]
+        log(f"N1/N2 épuisés sur toutes les sources → N3 TinyFish sur {target['domain']} (dernier recours, cap 120s)")
+        try:
+            res = await extract_cascade(target["url"], min_chars=200, allow_tinyfish=True,
+                                        tinyfish_key=tf_key, log=log)
+            if res["text"] and len(res["text"]) > 200:
+                hashes[target["url"]] = res["md5"]
+                texts.append(f"[SOURCE: {target['url']}]\n{res['text'][:10000]}")
+                excerpts[target["url"]] = res["text"][:2500]
+                used_sources.append({"url": target["url"], "domain": target["domain"],
+                                     "md5": res["md5"], "collected_at": now_iso()})
+        except Exception as e:
+            log(f"N3 TinyFish: échec ({type(e).__name__})")
 
     # --- Monitoring MD5 : skip si contenu inchangé ---
     old_hashes = zone.get("source_hashes") or {}
@@ -654,7 +514,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
 
     context_parts = list(texts)
     if synthesis:
-        # La synthèse provient du grounding Google sur les sources officielles ;
+        # La synthèse provient de la recherche groundée sur les sources officielles ;
         # elle est toujours jointe au contexte (les pages gov listent rarement
         # les ports en HTML brut). Le statut reste piloté par le gatekeeper.
         context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
@@ -669,10 +529,17 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
         log("ERREUR: aucun contenu exploitable")
         return await db.eez_zones.find_one({"mrgid": int(mrgid)})
 
-    # --- Extraction LLM ---
-    ports = await extract_ports_llm("\n\n".join(context_parts), zone, gemini_key, emergent_key, log)
+    # --- RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM ---
+    context = "\n\n".join(context_parts)
+    if len(context) > 15000:
+        context = select_context(f"official ports of entry customs clearance foreign yachts {name}",
+                                 context, max_chars=15000)
+        log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
 
-    # --- Géocodage + validation spatiale ---
+    # --- Extraction LLM (cascade llm_core) ---
+    ports = await extract_ports_llm(context, zone, gemini_key, emergent_key, log)
+
+    # --- Géocodage (geo_core) + validation spatiale ---
     geom = None
     try:
         geom = await asyncio.to_thread(shape, zone["geometry"])
@@ -683,7 +550,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
     docs = []
     seen_names = set()
     for p in ports[:25]:
-        norm = _normalize_name(p["name"])
+        norm = normalize_name(p["name"])
         if not norm or norm in seen_names:
             continue
         seen_names.add(norm)
@@ -724,18 +591,38 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
 
     status = "ia" if strictly_official else "ia_sans_source"
     if docs:
-        # Remplacement atomique uniquement quand la nouvelle extraction est non vide.
-        await db.poe_ports.delete_many({"mrgid": int(mrgid)})
-        await db.poe_ports.insert_many(docs)
+        # Déduplication interne (dedup_core: Haversine <500m + fuzzy >60%)
+        docs = deduplicate_list(docs, title_key="name")
+        # Upsert NON-DESTRUCTIF : les PoE existants sont enrichis, jamais purgés
+        # (préserve les champs Bottom-Up: osm_confidence, spatial_anomaly…).
+        existing_ports = await db.poe_ports.find({"mrgid": int(mrgid)}).to_list(500)
+        inserted = merged = 0
+        for d in docs:
+            match = next((e for e in existing_ports if e.get("dedup_key") == d["dedup_key"]), None)
+            if match is None:
+                match = find_duplicate_in_list(d, existing_ports, title_key="name")
+            if match:
+                updates = merge_docs(match, d)
+                updates["note"] = d.get("note") or match.get("note")
+                updates["source_urls"] = sorted(set((match.get("source_urls") or []) + (d.get("source_urls") or [])))
+                updates["extracted_at"] = d["extracted_at"]
+                await db.poe_ports.update_one({"_id": match["_id"]}, {"$set": updates})
+                merged += 1
+            else:
+                await db.poe_ports.insert_one(d)
+                existing_ports.append(d)
+                inserted += 1
+        poe_count = await db.poe_ports.count_documents({"mrgid": int(mrgid)})
         await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
             "status": status,
-            "poe_count": len(docs),
+            "poe_count": poe_count,
             "generated_at": now_iso(),
             "sources": used_sources,
             "source_hashes": hashes,
+            "source_excerpts": excerpts,
             "last_error": None,
         }})
-        log(f"terminé: {len(docs)} PoE, statut {status}")
+        log(f"terminé: {inserted} nouveau(x) PoE, {merged} fusionné(s) — total zone {poe_count}, statut {status}")
     elif zone.get("poe_count", 0) > 0:
         # Ré-extraction vide sur une zone déjà peuplée : on PRÉSERVE les ports
         # existants (le pipeline de recherche est non déterministe).
@@ -799,6 +686,9 @@ def ports_to_geojson(docs: list[dict]) -> dict:
                 "geocode_source": d.get("geocode_source"),
                 "source_urls": d.get("source_urls") or [],
                 "extracted_at": d.get("extracted_at"),
+                "osm_confidence": d.get("osm_confidence"),
+                "osm_tags": d.get("osm_tags"),
+                "spatial_anomaly": d.get("spatial_anomaly"),
             },
         })
     return {

@@ -163,7 +163,7 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
 
       {/* Attributions */}
       <div className="px-4 py-2 border-t border-line">
-        <p className="font-mono text-[9px] text-slate-500 leading-relaxed">
+        <p className="font-mono text-[10px] text-slate-300 leading-relaxed">
           {t("poeEezAttribution")} · {t("poeGeocodeAttribution")}
         </p>
       </div>

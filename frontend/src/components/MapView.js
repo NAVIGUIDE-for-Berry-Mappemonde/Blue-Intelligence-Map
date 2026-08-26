@@ -4,8 +4,8 @@ import "leaflet.markercluster";
 import api from "../api";
 
 const TILE_URLS = {
-  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-  light: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  dark: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+  light: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
 };
 
 const FALLBACK_COLORS = {
@@ -119,9 +119,8 @@ export default function MapView({
       maxBoundsViscosity: 1.0,
     });
     tileRef.current = L.tileLayer(TILE_URLS.dark, {
-      attribution: '&copy; OpenStreetMap &copy; CARTO',
-      subdomains: "abcd",
-      maxZoom: 19,
+      attribution: '&copy; Esri &copy; OpenStreetMap contributors',
+      maxZoom: 16,
       noWrap: true,
       bounds: WORLD,
     }).addTo(map);
@@ -248,7 +247,7 @@ export default function MapView({
             ${btnHtml}
           </div>
           ${body}
-          <div style="margin-top:8px;font-size:9px;color:#64748b;">${escH(t("poeEezAttribution"))}</div>
+          <div style="margin-top:8px;font-size:10px;color:#cbd5e1;">${escH(t("poeEezAttribution"))}</div>
         </div>`;
     };
     const eezLayer = L.geoJSON(null, {

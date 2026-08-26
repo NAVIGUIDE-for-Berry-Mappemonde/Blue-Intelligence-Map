@@ -22,6 +22,7 @@ from ai import extract_project, gatekeeper_check, get_llm_key
 from categories import CATEGORY_GROUPS, normalize_category
 from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
 import poe_routes
+import ml_routes
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from anchorages import build_anchorages as run_build_anchorages, anchorages_to_geojson
@@ -1686,6 +1687,8 @@ async def zee_clear_crossings(delete_eez_file: bool = False):
 
 poe_routes.init(db)
 app.include_router(poe_routes.router)
+ml_routes.init(db)
+app.include_router(ml_routes.router)
 app.include_router(router)
 
 # --- OpenAPI + static assets exposed under /api (Kubernetes ingress only forwards /api/*) ---
