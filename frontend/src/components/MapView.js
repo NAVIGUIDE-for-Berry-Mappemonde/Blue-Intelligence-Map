@@ -17,6 +17,27 @@ const FALLBACK_COLORS = {
 // Phase 5 — MPA layer removed. LFP_COLORS/MPA_MIN_ZOOM constants deleted;
 // see /api/mpa endpoint removal + mpa_cache collection drop.
 
+// Refactor 2026-06 — Formalities mode = world EEZ choropleth + PoE markers.
+const ZONE_COLORS = {
+  non_generee: "#64748b", ia: "#fbbf24", ia_sans_source: "#fbbf24", erreur: "#ff4a4a",
+};
+const zoneStyle = (status) => {
+  const s = status || "non_generee";
+  return {
+    color: ZONE_COLORS[s] || ZONE_COLORS.non_generee,
+    weight: 1,
+    opacity: s === "non_generee" ? 0.35 : 0.75,
+    fillColor: ZONE_COLORS[s] || ZONE_COLORS.non_generee,
+    fillOpacity: s === "ia" ? 0.16 : s === "ia_sans_source" ? 0.1 : s === "erreur" ? 0.1 : 0.04,
+    dashArray: s === "ia_sans_source" ? "4 4" : null,
+  };
+};
+const flagEmoji = (iso2) => {
+  if (!iso2 || iso2.length !== 2) return "🌐";
+  const cc = iso2.toUpperCase();
+  return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
+};
+
 // Neutral route styling that reads on both dark and light basemaps.
 // Two-layer stroke (dark casing + light main) gives contrast in every context.
 const ROUTE_MAIN_COLOR = "#e2e8f0";     // slate-200 top line
@@ -34,14 +55,12 @@ export default function MapView({
   marinas,
   anchorages,
   showAnchorages = true,
-  formalities,
-  territories,
+  poeZones,
+  poePorts,
   route,
-  selectedTerritory,
-  selectedEscale,
-  onSelectEscale,
+  onSelectZone,
   flyToMarina,
-  flyToEscale,
+  flyToZone,
   funderFilter,
   searchQuery,
   t,
@@ -66,28 +85,21 @@ export default function MapView({
   const pendingRef = useRef(null);
   const routeLayerRef = useRef(null);
   const routeLoadedRef = useRef(false);
-  // Phase 4A — Formalities layer
-  // Phase 7 — formalitiesLayerRef removed: markers now live inside the shared
-  // formalitiesClusterRef (leaflet.markercluster) for unified rendering.
-  const formalitiesMarkersByEscale = useRef(new Map());
-  const formalitiesSigRef = useRef("");
+  // Refactor 2026-06 — Formalities mode = EEZ polygons + PoE port markers
+  const eezLayerRef = useRef(null);
+  const eezLoadedRef = useRef(false);
+  const eezLayersByMrgid = useRef(new Map());
+  const zoneItemsRef = useRef(new Map());
+  const poeClusterRef = useRef(null);
+  const poeSigRef = useRef("");
   const [routeOn] = useState(true);
 
-  // Phase 7bis — Popup content must reflect the CURRENT language, not the one
-  // captured when markers were bound. We keep `t` and formality data in refs
-  // refreshed every render, then let bindPopup(fn) read them at open time.
+  // Popup content must reflect the CURRENT language + zone statuses — bindPopup(fn)
+  // reads these refs at open time instead of capturing stale closures.
   const tRef = useRef(t);
   tRef.current = t;
-  const formalitiesRef = useRef(formalities);
-  formalitiesRef.current = formalities;
-  const territoriesRef = useRef(territories);
-  territoriesRef.current = territories;
-  // Popup-open bug fix (2026-08-24): keep the selection callback in a ref so
-  // the formalities markers rebuild effect does NOT depend on it. Even when
-  // App.js already wraps handleSelectEscale in useCallback([]), we want the
-  // effect deps to advertise "data only" and never re-fire on selection.
-  const onSelectEscaleRef = useRef(onSelectEscale);
-  onSelectEscaleRef.current = onSelectEscale;
+  const onSelectZoneRef = useRef(onSelectZone);
+  onSelectZoneRef.current = onSelectZone;
 
   const colorMap = {};
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
@@ -169,33 +181,100 @@ export default function MapView({
       }),
     });
     anchorClusterRef.current = anchorCluster;
-    // Phase 7 — Formalities layer (amber).
-    //
-    // SPM disappearance bug-fix (2026-08-24): we USED to wrap this layer in
-    // `L.markerClusterGroup` but its post-init "in-bounds" cache is stubbornly
-    // wrong for markers that fall outside the initial map viewport
-    // (Saint-Pierre-et-Miquelon at lng=-56, Papeete at lng=-149, Nouméa at
-    // lng=+166, Wallis at lng=-176 all ended up with __parent still pointing
-    // at the ROOT cluster at zoom 1 with hasIcon=false — they never got a
-    // DOM element even with removeOutsideVisibleBounds=false AND
-    // disableClusteringAtZoom=4). With only 17 escale markers in this layer,
-    // clustering is aesthetic-only, so we drop it entirely: a plain
-    // `L.featureGroup` guarantees every marker gets a DOM element the moment
-    // the layer is attached to the map. Popup open now Just Works for every
-    // escale regardless of its longitude.
-    //
-    // NB: the ref is still called `formalitiesClusterRef` to keep the rest of
-    // the codebase (flyToEscale effect, mode-swap effect) untouched. The
-    // duck-typed methods we call on it (`clearLayers`, `addLayer`,
-    // `getLayers`, `hasLayer`) are shared between `L.markerClusterGroup` and
-    // `L.featureGroup`; the ones we don't call anymore (`zoomToShowLayer`,
-    // `refreshClusters`) are guarded elsewhere with `typeof … === "function"`.
-    const formalitiesCluster = L.featureGroup();
-    formalitiesClusterRef.current = formalitiesCluster;
+    // Refactor 2026-06 — Formalities mode: EEZ choropleth (VLIZ) + PoE cluster.
+    // A single layerGroup wraps both so the mode-swap effect keeps working
+    // through the historical `formalitiesClusterRef` handle.
+    const poeCluster = L.markerClusterGroup({
+      maxClusterRadius: 45,
+      chunkedLoading: true,
+      animate: false,
+      iconCreateFunction: (c) => L.divIcon({
+        html: `<div class="bi-cluster-formalities" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
+        className: "",
+        iconSize: [32, 32],
+      }),
+    });
+    poeClusterRef.current = poeCluster;
+    const escH = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    const zonePopupHtml = (mrgid, props) => {
+      const t = tRef.current;
+      const z = zoneItemsRef.current.get(mrgid) || props || {};
+      const status = z.status || "non_generee";
+      const col = ZONE_COLORS[status] || ZONE_COLORS.non_generee;
+      const statusLabel = {
+        non_generee: t("poeStatusNonGeneree"), ia: t("poeStatusIa"),
+        ia_sans_source: t("poeStatusIaSansSource"), erreur: t("poeStatusErreur"),
+      }[status];
+      const flag = flagEmoji(z.iso2 || z.sov_iso2 || props?.iso2);
+      const gen = z.generated_at ? String(z.generated_at).slice(0, 10) : null;
+      const sources = (z.sources || []).map((s) => `
+        <div style="margin-top:4px;font-size:11px;line-height:1.4;">
+          <a href="${escH(s.url)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(s.url)}</a>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${escH(s.domain || "")}${s.collected_at ? " · " + escH(String(s.collected_at).slice(0, 10)) : ""}</div>
+        </div>`).join("");
+      const noSourceWarn = status === "ia_sans_source"
+        ? `<div style="margin-top:6px;padding:4px 6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.35);color:#fecaca;font-size:10px;line-height:1.4;border-radius:2px;">⚠️ ${escH(t("poeNoSourceWarning"))}</div>`
+        : "";
+      const errHtml = z.last_error
+        ? `<div style="margin-top:6px;font-size:10px;color:#fca5a5;">${escH(t("poeLastError"))}: ${escH(z.last_error)}</div>` : "";
+      const body = status === "non_generee"
+        ? `<div style="margin-top:8px;padding:8px;background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.30);color:#94a3b8;font-size:11px;line-height:1.5;border-radius:2px;">${escH(t("poeZoneNotGenerated"))}</div>`
+        : `${noSourceWarn}${errHtml}${sources ? `<div style="margin-top:8px;"><div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${escH(t("poeSourcesTitle"))}</div>${sources}</div>` : ""}`;
+      const btnLabel = status === "non_generee" ? t("poeGenerateBtn") : t("poeRegenerateBtn");
+      const genRunning = (window.__biPoeGenState || {})[mrgid] === "running";
+      const btnHtml = genRunning
+        ? `<button data-testid="poe-generate-btn" disabled
+            style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;opacity:0.7;cursor:wait;">
+            ↻ ${escH(t("poeGenerating"))}
+          </button>`
+        : `<button data-testid="poe-generate-btn" onclick="window.__biGeneratePoeZone && window.__biGeneratePoeZone(${Number(mrgid)})"
+            style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
+            ↻ ${escH(btnLabel)}
+          </button>`;
+      const polType = z.pol_type || props?.pol_type;
+      return `
+        <div style="min-width:260px;max-width:330px;font-family:Manrope,sans-serif;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">${flag} ${escH(z.name || props?.name || props?.geoname || "")}</div>
+          <div style="font-size:11px;color:#94a3b8;margin:3px 0 6px;">${escH(z.sovereign || props?.sovereign || "")}${polType && polType !== "200NM" ? " · " + escH(polType) : ""}</div>
+          <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:2px 6px;border-radius:2px;">${escH(statusLabel)}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#f8fafc;border:1px solid #f8fafc55;padding:2px 6px;border-radius:2px;">⚓ ${z.poe_count || 0} ${escH(t("poePortsCount"))}</span>
+            ${z.stale ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.5);background:rgba(251,191,36,0.1);padding:2px 6px;border-radius:2px;">⏰ ${escH(t("poeStale"))}</span>` : ""}
+          </div>
+          ${gen ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${escH(t("poeGeneratedAt"))}: ${escH(gen)}</div>` : ""}
+          <div style="margin-top:8px;">
+            ${btnHtml}
+          </div>
+          ${body}
+          <div style="margin-top:8px;font-size:9px;color:#64748b;">${escH(t("poeEezAttribution"))}</div>
+        </div>`;
+    };
+    const eezLayer = L.geoJSON(null, {
+      style: (feat) => zoneStyle(zoneItemsRef.current.get(feat?.properties?.mrgid)?.status),
+      onEachFeature: (feat, lyr) => {
+        const mrgid = feat.properties?.mrgid;
+        eezLayersByMrgid.current.set(mrgid, lyr);
+        lyr.bindPopup(() => zonePopupHtml(mrgid, feat.properties), {
+          maxWidth: 350, minWidth: 260, maxHeight: 380, autoPan: true, autoPanPadding: [40, 40],
+          className: "bi-formalities-popup",
+        });
+        lyr.on("click", () => {
+          const cb = onSelectZoneRef.current;
+          if (typeof cb === "function") cb(mrgid, null);
+        });
+        lyr.on("mouseover", () => { try { lyr.setStyle({ weight: 2, opacity: 0.95 }); } catch (_) {} });
+        lyr.on("mouseout", () => { try { lyr.setStyle(zoneStyle(zoneItemsRef.current.get(mrgid)?.status)); } catch (_) {} });
+      },
+    });
+    eezLayerRef.current = eezLayer;
+    const formalitiesGroup = L.layerGroup([eezLayer, poeCluster]);
+    formalitiesClusterRef.current = formalitiesGroup;
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
     // if the user is starting in another mode.
     if (mode === "marinas") map.addLayer(marinaCluster);
-    else if (mode === "formalities") map.addLayer(formalitiesCluster);
+    else if (mode === "formalities") map.addLayer(formalitiesGroup);
     else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
@@ -238,7 +317,7 @@ export default function MapView({
     // Debug hook — expose the map + all 3 clusters on window for headless
     // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, anchorages: anchorCluster, formalities: formalitiesCluster };
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster };
     }
   }, [minZoom]);
 
@@ -565,455 +644,129 @@ export default function MapView({
     setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToMarina]);
 
-  // ---------- Phase 4A → Phase 6 — Formalities layer.
-  // Escales coloured by status + white ring on ports of entry, unified with
-  // Projects/Marinas circleMarker style (radius 7, weight 2, fillOpacity 0.6).
-  // The popup now embeds the FULL fiche (entrée, sortie, cas particuliers,
-  // immigration FR, contacts, liens officiels, sources) with refresh + verify
-  // buttons — Phase 6 migration from the sidebar.
+  // ---------- Refactor 2026-06 — Formalities mode: EEZ choropleth + PoE markers ----------
+  // Lazy-load the EEZ polygons once (heavy file) when formalities mode is first opened.
   useEffect(() => {
+    if (mode !== "formalities" || eezLoadedRef.current) return;
+    const layer = eezLayerRef.current;
+    if (!layer) return;
+    eezLoadedRef.current = true;
+    (async () => {
+      try {
+        const res = await api.get("/poe/zones/geojson");
+        layer.addData(res.data);
+      } catch (e) {
+        // 404 until the referential is built — retry on the next zones refresh
+        eezLoadedRef.current = false;
+      }
+    })();
+  }, [mode, poeZones]);
+
+  // Restyle polygons + refresh any open popup whenever zone statuses change.
+  useEffect(() => {
+    const byMrgid = new Map();
+    for (const z of poeZones || []) byMrgid.set(z.mrgid, z);
+    zoneItemsRef.current = byMrgid;
+    const layer = eezLayerRef.current;
+    if (layer) {
+      layer.eachLayer((lyr) => {
+        const mrgid = lyr.feature?.properties?.mrgid;
+        try { lyr.setStyle(zoneStyle(byMrgid.get(mrgid)?.status)); } catch (_) { /* noop */ }
+      });
+    }
     const map = mapObj.current;
-    if (!map) return;
-    if (!route?.features?.length || !territories?.territories?.length) {
-      // No data yet — bail out but do not tear down anything.
-      return;
+    const popup = map?._popup;
+    if (popup && typeof popup.update === "function") {
+      try { popup.update(); } catch (_) { /* noop */ }
     }
+  }, [poeZones]);
 
-    // Colour tokens for escale status
-    const STATUS_FILL = {
-      non_generee:     "#64748b",   // slate-500
-      ia:              "#fbbf24",   // amberx solid
-      ia_sans_source:  "#fbbf24",   // amberx dashed (see stroke below)
-      verifiee:        "#39ff14",   // bio-green
-    };
-    const STATUS_STROKE = {
-      non_generee:     "#0b1220",
-      ia:              "#0b1220",
-      ia_sans_source:  "#fbbf24",
-      verifiee:        "#0b1220",
-    };
-
-    // territory lookup by escale name
-    const escaleToTerritory = {};
-    for (const terr of territories.territories) {
-      for (const en of terr.escale_names || []) {
-        escaleToTerritory[en] = terr;
-      }
-    }
-    // formalities by territory code
-    const forByCode = {};
-    for (const f of formalities || []) forByCode[f.territory_code] = f;
-
-    // Collect all escale features
-    const escaleFeats = route.features.filter(
-      (f) => f.geometry?.type === "Point" && f.properties?.point_type === "escale",
-    );
-    // Signature for skip-rebuild — Phase 6 also includes stale/verified_at so the
-    // popup body refreshes when the fiche is regenerated or verified.
-    const statusSig = escaleFeats.map((f) => {
-      const name = f.properties.name;
-      const terr = escaleToTerritory[name];
-      const forDoc = terr ? forByCode[terr.code] : null;
-      return `${name}|${terr?.code || ""}|${forDoc?.status || "none"}|${forDoc?.generated_at || ""}|${forDoc?.verified_at || ""}|${forDoc?.stale ? "1" : "0"}`;
-    }).join(";");
-    if (statusSig === formalitiesSigRef.current && formalitiesClusterRef.current?.getLayers()?.length) return;
-    formalitiesSigRef.current = statusSig;
-
-    // Phase 7 — rebuild by clearing the shared formalities cluster (no more
-    // per-effect layerGroup). This unifies rendering with projects/marinas
-    // and gives us leaflet.markercluster grouping at world zoom.
-    const cluster = formalitiesClusterRef.current;
+  // PoE port markers (amber dots, clustered).
+  useEffect(() => {
+    const cluster = poeClusterRef.current;
     if (!cluster) return;
+    const feats = poePorts?.features || [];
+    const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}`).join(",");
+    if (sig === poeSigRef.current && cluster.getLayers().length) return;
+    poeSigRef.current = sig;
     cluster.clearLayers();
-    formalitiesMarkersByEscale.current.clear();
-
-    // ---- Field ordering — mirrors the pre-Phase-6 sidebar tabs ----
-    const ENTREE_FIELDS = [
-      ["preavis",              "formalitiesFieldsPreavis"],
-      ["pavillon_q",           "formalitiesFieldsPavillonQ"],
-      ["demarches_arrivee",    "formalitiesFieldsDemarchesArrivee"],
-      ["ou_s_amarrer",         "formalitiesFieldsOuSAmarrer"],
-      ["vhf",                  "formalitiesFieldsVhf"],
-      ["douanes_clearance",    "formalitiesFieldsDouanesClearance"],
-      ["admission_temporaire", "formalitiesFieldsAdmissionTemporaire"],
-      ["franchises",           "formalitiesFieldsFranchises"],
-      ["biosecurite",          "formalitiesFieldsBiosecurite"],
-      ["frais",                "formalitiesFieldsFrais"],
-      ["horaires",             "formalitiesFieldsHoraires"],
-    ];
-    const SORTIE_FIELDS = [
-      ["clearance",   "formalitiesFieldsClearance"],
-      ["delais",      "formalitiesFieldsDelais"],
-      ["documents",   "formalitiesFieldsDocuments"],
-      ["ou_obtenir",  "formalitiesFieldsOuObtenir"],
-    ];
-    const CAS_FIELDS = [
-      ["animaux", "formalitiesFieldsAnimaux"],
-      ["drones",  "formalitiesFieldsDrones"],
-      ["armes",   "formalitiesFieldsArmes"],
-    ];
-    const IMMI_FIELDS = [
-      ["visa",             "formalitiesFieldsVisa"],
-      ["duree_sejour",     "formalitiesFieldsDureeSejour"],
-      ["equivalent_esta",  "formalitiesFieldsEsta"],
-      ["notes",            "formalitiesFieldsNotes"],
-    ];
-
-    // ---- Small HTML builders (inline styles keep popup self-contained) ----
-    // i18n lazy-binding fix (2026-08-24): each helper reads `tRef.current` at
-    // CALL time (not effect-run time), so section titles AND field labels all
-    // reflect the CURRENT UI language when the popup is opened or refreshed.
-    const esc = (s) => {
-      if (s === null || s === undefined) return "";
-      return String(s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-    };
-    const groupHtml = (title, source, fields) => {
-      if (!source) return "";
-      const t = tRef.current;
-      const rows = fields
-        .filter(([k]) => source[k] !== null && source[k] !== undefined && source[k] !== "")
-        .map(([k, labelKey]) => `
-          <div style="margin-top:6px;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:1px;">${esc(t(labelKey))}</div>
-            <div style="font-size:11px;color:#e2e8f0;line-height:1.5;">${esc(source[k])}</div>
-          </div>`)
-        .join("");
-      if (!rows) return "";
-      return `
-        <div style="margin-top:10px;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(title)}</div>
-          ${rows}
-        </div>`;
-    };
-    const contactsHtml = (contacts, links) => {
-      const t = tRef.current;
-      const cItems = (contacts || []).map((c) => `
-        <div style="font-size:11px;color:#e2e8f0;margin-top:4px;">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;margin-right:6px;">${esc(c.type || "")}</span>
-          ${esc(c.label || "")}: <span style="color:#fff;">${esc(c.value || "")}</span>
-        </div>`).join("");
-      const lItems = (links || []).map((l) => `
-        <div style="margin-top:4px;"><a href="${esc(l.url)}" target="_blank" rel="noreferrer" style="font-size:11px;color:#00f0ff;text-decoration:none;">${esc(l.label || l.url)} →</a></div>`).join("");
-      if (!cItems && !lItems) return "";
-      return `
-        <div style="margin-top:10px;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupContactsTitle"))}</div>
-          ${cItems}
-          ${lItems ? `<div style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">${esc(t("formalitiesPopupLinksTitle"))}</div>${lItems}` : ""}
-        </div>`;
-    };
-    const sourcesHtml = (sources, status) => {
-      const t = tRef.current;
-      const isNoSource = status === "ia_sans_source";
-      const warn = isNoSource
-        ? `<div style="margin-top:6px;padding:4px 6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.35);color:#fecaca;font-size:10px;line-height:1.4;border-radius:2px;">⚠️ ${esc(t("formalitiesNoSourceWarning"))}</div>`
-        : "";
-      if (!sources || sources.length === 0) {
-        return `
-          <div style="margin-top:10px;">
-            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupSourcesTitle"))}</div>
-            ${warn}
-            <div style="margin-top:4px;font-size:11px;color:#94a3b8;font-style:italic;">${esc(t("formalitiesNoSourceEmpty"))}</div>
-          </div>`;
-      }
-      const items = sources.map((s) => `
-        <div style="margin-top:4px;font-size:11px;line-height:1.4;">
-          <a href="${esc(s.url)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${esc(s.url)}</a>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;margin-top:1px;">
-            ${esc(s.domain || "")}${s.collected_at ? " · " + esc(String(s.collected_at).slice(0, 10)) : ""}
-          </div>
-        </div>`).join("");
-      return `
-        <div style="margin-top:10px;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${esc(t("formalitiesPopupSourcesTitle"))}</div>
-          ${warn}
-          ${items}
-        </div>`;
-    };
-
-    // ---- Popup HTML builder for a full territory fiche.
-    //      Phase 7bis — reads `t` from tRef.current so popups always reflect
-    //      the current UI language even if built earlier.                  ----
-    const buildPopup = (feat, meta) => {
-      const t = tRef.current;                                    // lazy read
-      const {
-        name, leg, terr, forDoc, isPoe, status, fill, overlay,
-      } = meta;
-      const statusLabel = {
-        non_generee: t("formalitiesStatusNonGeneree"),
-        ia: t("formalitiesStatusIa"),
-        ia_sans_source: t("formalitiesStatusIaSansSource"),
-        verifiee: t("formalitiesStatusVerifiee"),
-      }[status];
-      const poeLabel = isPoe ? t("formalitiesPortOfEntry") : t("formalitiesNotPortOfEntry");
-      const legLabel = leg
-        ? ` · ${leg === "departure" ? t("formalitiesLegDeparture") : t("formalitiesLegReturn")}`
-        : "";
-      const noteHtml = overlay?.note
-        ? `<div style="font-size:11px;color:#94a3b8;margin-top:5px;line-height:1.4;">${esc(overlay.note)}</div>`
-        : "";
-      const flag = terr?.flag_emoji || "🏳️";
-      const genDate = forDoc?.generated_at ? String(forDoc.generated_at).slice(0, 10) : null;
-      const verDate = forDoc?.verified_at ? String(forDoc.verified_at).slice(0, 10) : null;
-      const staleBadge = forDoc?.stale
-        ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.5);background:rgba(251,191,36,0.1);padding:2px 6px;border-radius:2px;">⏰ ${esc(t("formalitiesStale"))}</span>`
-        : "";
-
-      // Refresh + verify buttons (only when a territory code exists)
-      const code = terr?.code || "";
-      const canVerify = status === "ia" || status === "ia_sans_source";
-      const refreshBtn = code
-        ? `<button
-            data-testid="formalities-refresh-btn"
-            onclick="window.__biFormalityPopupRefresh && window.__biFormalityPopupRefresh('${esc(code)}')"
-            style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
-            ↻ ${esc(t("formalitiesRefreshBtn"))}
-          </button>`
-        : "";
-      const verifyBtn = code && canVerify
-        ? `<button
-            data-testid="formalities-verify-btn"
-            onclick="window.__biFormalityPopupVerify && window.__biFormalityPopupVerify('${esc(code)}')"
-            style="font-size:10px;font-weight:600;color:#39ff14;background:rgba(57,255,20,0.10);border:1px solid rgba(57,255,20,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
-            ✓ ${esc(t("formalitiesVerifyBtn"))}
-          </button>`
-        : "";
-
-      // Body — either "not generated" hint OR all sections
-      let body = "";
-      if (!forDoc || status === "non_generee") {
-        body = `<div style="margin-top:10px;padding:8px;background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.30);color:#94a3b8;font-size:11px;line-height:1.5;border-radius:2px;">${esc(t("formalitiesPopupNotGenerated"))}</div>`;
-      } else {
-        const entree = groupHtml(t("formalitiesPopupEntreeTitle"), forDoc.entree, ENTREE_FIELDS);
-        const sortie = groupHtml(t("formalitiesPopupSortieTitle"), forDoc.sortie, SORTIE_FIELDS);
-        const cas = groupHtml(t("formalitiesPopupCasTitle"), forDoc.cas_particuliers, CAS_FIELDS);
-        const immiSlot = (forDoc.immigration || {}).fr;
-        const immi = immiSlot ? groupHtml(t("formalitiesPopupImmigrationTitle"), immiSlot, IMMI_FIELDS) : "";
-        const contacts = contactsHtml(forDoc.contacts, forDoc.liens_officiels);
-        const sources = sourcesHtml(forDoc.sources, status);
-        body = entree + sortie + cas + immi + contacts + sources;
-        if (!body) {
-          body = `<div style="margin-top:10px;font-size:11px;color:#94a3b8;font-style:italic;">${esc(t("formalitiesPopupNoSectionData"))}</div>`;
-        }
-      }
-
-      return `
-        <div style="min-width:280px;max-width:340px;font-family:Manrope,sans-serif;">
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">
-            ${flag} ${esc(name)}${legLabel}
-          </div>
-          <div style="font-size:11px;color:#94a3b8;margin:4px 0 6px;">${esc(terr?.name_fr || "")}</div>
-          <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${fill};border:1px solid ${fill}55;padding:2px 6px;border-radius:2px;">${esc(statusLabel)}</span>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${isPoe ? "#f8fafc" : "#64748b"};border:1px solid ${isPoe ? "#f8fafc99" : "#33415555"};padding:2px 6px;border-radius:2px;">${isPoe ? "⚓ " : ""}${esc(poeLabel)}</span>
-            ${staleBadge}
-          </div>
-          ${genDate ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${esc(t("formalitiesGeneratedAt"))}: ${esc(genDate)}${verDate ? ` · <span style=\"color:#39ff14;\">${esc(t("formalitiesVerifiedAt"))}: ${esc(verDate)}</span>` : ""}</div>` : ""}
-          ${(refreshBtn || verifyBtn)
-            ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${refreshBtn}${verifyBtn}</div>`
-            : ""}
-          ${noteHtml}
-          ${body}
-        </div>`;
-    };
-
-    // La Rochelle appears twice in the route; tag them départ/retour by order.
-    const laRochelleSeen = { count: 0 };
-    escaleFeats.forEach((feat) => {
-      const [lon, lat] = feat.geometry.coordinates;
-      const name = feat.properties.name;
-      const terr = escaleToTerritory[name];
-      const forDoc = terr ? forByCode[terr.code] : null;
-      const status = forDoc?.status || "non_generee";
-      const overlay = forDoc?.escale_overlays?.find((o) => o.escale_name === name);
-      const isPoe = !!overlay?.is_port_of_entry;
-      const dashed = status === "ia_sans_source";
-      const fill = STATUS_FILL[status] || STATUS_FILL.non_generee;
-      const stroke = STATUS_STROKE[status] || STATUS_STROKE.non_generee;
-
-      let leg = null;
-      if (name === "La Rochelle") {
-        laRochelleSeen.count += 1;
-        leg = laRochelleSeen.count === 1 ? "departure" : "return";
-      }
-
-      // Phase 7bis — SINGLE self-contained div: iconSize matches exactly the
-      // colored dot, no wrapper padding, no leaflet-div-icon default bg leak.
-      // The .bi-status-icon class carries a defensive reset in index.css.
-      const iconHtml = `<div style="width:14px;height:14px;border-radius:50%;background-color:${fill};border:1.5px ${dashed ? "dashed" : "solid"} ${stroke};box-sizing:border-box;"></div>`;
-      const marker = L.marker([lat, lon], {
+    const escH = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    const markers = feats.map((f) => {
+      const [lon, lat] = f.geometry.coordinates;
+      const p = f.properties;
+      const m = L.marker([lat, lon], {
         icon: L.divIcon({
-          html: iconHtml,
+          html: `<div style="width:14px;height:14px;border-radius:50%;background-color:#fbbf24;border:1.5px solid #0b1220;box-sizing:border-box;"></div>`,
           className: "bi-status-icon",
           iconSize: [14, 14],
           iconAnchor: [7, 7],
           popupAnchor: [0, -7],
         }),
       });
-
-      // Phase 7bis — bindPopup(FN) so the HTML is rebuilt at each open with
-      // the CURRENT `t` (via tRef inside buildPopup). Fixes the FR↔EN closure
-      // capture bug where popups kept the language captured at bind time.
-      marker.bindPopup(
-        () => buildPopup(feat, { name, leg, terr, forDoc, isPoe, status, fill, overlay }),
-        // Popup overflow bug-fix 2026-08-24 — long fiches (Martinique with 8
-        // ARRIVAL fields + 4 DEPARTURE + 3 SPECIAL + contacts + sources
-        // easily exceeds 800 px) were rendered beyond the top of the map
-        // container. `autoPan` pans the map so the popup fits, `maxHeight`
-        // caps at ~viewport and Leaflet adds a native scrollbar inside the
-        // popup body. `keepInView` removed 2026-06: with maxBounds it caused
-        // an infinite pan loop (stack overflow in simplify) near ±180°.
-        {
-          maxWidth: 360,
-          minWidth: 280,
-          maxHeight: 400,
-          autoPan: true,
-          autoPanPadding: [40, 40],
-          className: "bi-formalities-popup",
-        },
-      );
-
-      // Click on marker → tell App to fly there + tag the row in the sidebar.
-      // Bug-fix 2026-08-24: read the handler from a ref so the rebuild effect
-      // does NOT need to list onSelectEscale as a dep. Guarantees "data-only"
-      // rebuild triggers.
-      marker.on("click", () => {
-        const cb = onSelectEscaleRef.current;
-        if (typeof cb === "function" && terr?.code) {
-          cb(name, terr.code, [lon, lat]);
-        }
-      });
-
-      cluster.addLayer(marker);
-      formalitiesMarkersByEscale.current.set(name + (leg ? `::${leg}` : ""), marker);
+      m.bindPopup(() => {
+        const t = tRef.current;
+        const valid = p.validated
+          ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#39ff14;border:1px solid rgba(57,255,20,0.45);padding:2px 6px;border-radius:2px;">✓ ${escH(t("poeValidated"))}</span>`
+          : `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.45);padding:2px 6px;border-radius:2px;">⚠ ${escH(t("poeOutsideEez"))}${p.distance_km != null ? " ~" + escH(p.distance_km) + " km" : ""}</span>`;
+        const srcs = (p.source_urls || []).slice(0, 3).map((u) => `
+          <div style="margin-top:3px;font-size:10px;"><a href="${escH(u)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(u)}</a></div>`).join("");
+        return `<div style="min-width:230px;max-width:300px;font-family:Manrope,sans-serif;">
+          <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">⚓ ${escH(p.name)}</div>
+          <div style="font-size:11px;color:#94a3b8;margin:3px 0 5px;">${escH(p.city || "")}${p.city ? " · " : ""}${flagEmoji(p.country_iso2)} ${escH(p.zone_name || "")}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:5px;">${valid}
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${escH(p.geocode_source || t("poeNotGeocoded"))}</span>
+          </div>
+          ${p.note ? `<div style="font-size:11px;color:#e2e8f0;line-height:1.4;margin-bottom:5px;">${escH(p.note)}</div>` : ""}
+          ${srcs ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px;">${escH(t("poeSourcesTitle"))}</div>${srcs}` : ""}
+          <div style="margin-top:7px;font-size:9px;color:#64748b;">${escH(t("poeGeocodeAttribution"))}${p.extracted_at ? " · " + escH(String(p.extracted_at).slice(0, 10)) : ""}</div>
+        </div>`;
+      }, { maxWidth: 310, maxHeight: 340, autoPan: true, autoPanPadding: [40, 40] });
+      return m;
     });
+    cluster.addLayers(markers);
+  }, [poePorts]);
 
-    // Phase 7 — cluster is shared and attached by the mode-swap effect, no
-    // per-render layerGroup to add.
-    //
-    // Popup-open bug fix (2026-08-24): deps are DATA-ONLY. `t`, `mode` and
-    // `onSelectEscale` are intentionally excluded — `t` is read lazily via
-    // `tRef.current` inside bindPopup(FN), `mode` doesn't affect marker
-    // geometry (mode swap attaches/detaches the whole cluster in a separate
-    // effect), and `onSelectEscale` is read via `onSelectEscaleRef.current`
-    // inside the click handler. This guarantees a sidebar selection change
-    // never triggers a marker rebuild.
-  }, [route, territories, formalities]);
-
-  // ---------- FlyTo signal from FormalitiesPanel (escale row click) ----------
-  // Phase 7bis — deterministic chain: moveend → zoomToShowLayer → openPopup,
-  // with a fallback fire('click') if openPopup didn't stick. No blind setTimeout.
-  //
-  // Popup-open bug fix (2026-08-24): `leaflet.markercluster.zoomToShowLayer`
-  // silently does nothing when it enters the `panTo` branch and the map is
-  // already at the destination (flyTo just landed there). In that case the
-  // internal moveend never fires and the callback is never called. We now
-  // detect a still-closed popup and, as a last resort, open the bound popup
-  // directly on the map via `popup.setLatLng().openOn(map)` — this works
-  // regardless of whether the marker's DOM icon has been attached yet.
+  // ---------- FlyTo signal from FormalitiesPanel (EEZ row click) ----------
   useEffect(() => {
-    if (!flyToEscale) return;
+    if (!flyToZone) return;
     const map = mapObj.current;
-    const cluster = formalitiesClusterRef.current;
     if (!map) return;
-
-    let cancelled = false;
-
-    const findTarget = () => {
-      const markers = formalitiesMarkersByEscale.current;
-      if (!markers || markers.size === 0) return null;
-      if (flyToEscale.name && flyToEscale.leg) {
-        const t = markers.get(`${flyToEscale.name}::${flyToEscale.leg}`);
-        if (t) return t;
+    const [w, s, e, n] = flyToZone.bbox;
+    const anchor = flyToZone.anchor; // [lon, lat] — representative point (antimeridian-safe)
+    const anchorLatLng = anchor ? L.latLng(anchor[1], anchor[0]) : null;
+    const open = () => {
+      const lyr = eezLayersByMrgid.current.get(flyToZone.mrgid);
+      if (!lyr) return;
+      let at = anchorLatLng;
+      if (at) {
+        // maxBounds (viscosity 1) can clamp the fly for antimeridian zones
+        // (Fiji at 175°E): re-anchor the popup inside the effective viewport
+        // so it never opens off-screen.
+        const b = map.getBounds();
+        const mLng = (b.getEast() - b.getWest()) * 0.12;
+        const mLat = (b.getNorth() - b.getSouth()) * 0.12;
+        at = L.latLng(
+          Math.min(Math.max(at.lat, b.getSouth() + mLat), b.getNorth() - mLat),
+          Math.min(Math.max(at.lng, b.getWest() + mLng), b.getEast() - mLng),
+        );
       }
-      if (flyToEscale.name) {
-        return markers.get(flyToEscale.name)
-          || markers.get(`${flyToEscale.name}::departure`)
-          || markers.get(`${flyToEscale.name}::return`)
-          || null;
-      }
-      return null;
+      try { lyr.openPopup(at || undefined); } catch (_) { /* not attached yet */ }
     };
-
-    // Ultimate fallback: attach the marker's bound popup directly to the map
-    // at its latlng. Works even when the marker's DOM icon hasn't been
-    // attached yet by the cluster (the failing scenario for far-away escales).
-    const forceOpenPopupOnMap = (target) => {
-      if (!target || cancelled) return false;
-      try {
-        const popup = typeof target.getPopup === "function" ? target.getPopup() : null;
-        if (popup && typeof popup.setLatLng === "function" && typeof popup.openOn === "function") {
-          popup.setLatLng(target.getLatLng()).openOn(map);
-          return true;
-        }
-      } catch (_) { /* noop */ }
-      return false;
-    };
-
-    const openWithFallback = (target) => {
-      if (!target || cancelled) return;
-      // Attempt 1: standard openPopup (works when the marker has an _icon
-      // attached in the DOM — the common case for close/visible escales).
-      // openPopup() implicitly closes any currently-open popup first.
-      try { target.openPopup(); } catch (_) { /* map or marker not ready */ }
-      // Attempt 2: after a short delay, if the popup currently open is NOT
-      // for our target (either because openPopup silently no-op'd on a marker
-      // whose _icon hadn't been attached yet, OR because a different marker's
-      // popup is still on the map), force-attach the target's own bound popup
-      // directly to the map via `popup.setLatLng().openOn(map)`.
-      //
-      // Note: we check `map._popup._source === target` and NOT just "is there
-      // any popup on the DOM". Otherwise clicking a sidebar row while another
-      // popup is still open would let the previous popup persist (regression
-      // detected 2026-08-24 during i18n test — clicking Papeete after opening
-      // Martinique kept the Martinique popup on screen).
-      //
-      // We deliberately DO NOT `target.fire("click")` here — that would
-      // re-trigger the sidebar's onSelectEscale handler, which re-sets
-      // `flyToEscale`, which re-runs this whole effect, creating an infinite
-      // loop for far-away escales whose _icon never gets attached.
-      setTimeout(() => {
-        if (cancelled) return;
-        const currentPopup = map._popup;
-        const isForTarget = !!(currentPopup && currentPopup._source === target);
-        if (!isForTarget) forceOpenPopupOnMap(target);
-      }, 250);
-    };
-
-    const doOpenTarget = () => {
-      const target = findTarget();
-      if (!target) return;
-      if (cluster && typeof cluster.zoomToShowLayer === "function" && cluster.hasLayer(target)) {
-        // `zoomToShowLayer` can silently no-op (see comment above). Guard with
-        // a timeout that opens the popup directly if the callback never fires.
-        let cbFired = false;
-        cluster.zoomToShowLayer(target, () => {
-          cbFired = true;
-          openWithFallback(target);
-        });
-        setTimeout(() => {
-          if (cancelled || cbFired) return;
-          openWithFallback(target);
-        }, 600);
+    map.once("moveend", open);
+    try {
+      if (e - w > 350 && anchorLatLng) {
+        // Zone spanning the antimeridian (Fiji, Russia…): fitBounds would show
+        // the whole world — fly to the representative point instead.
+        map.flyTo(anchorLatLng, 5, { duration: 0.8 });
       } else {
-        openWithFallback(target);
+        map.flyToBounds(L.latLngBounds([s, w], [n, e]), { duration: 0.8, maxZoom: 7, padding: [30, 30] });
       }
-    };
-
-    // Chain: fire flyTo → wait for moveend → open popup.
-    // Fallback: if moveend never fires (already at destination), open after 900 ms.
-    map.once("moveend", doOpenTarget);
-    map.flyTo([flyToEscale.lat, flyToEscale.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
-    const safety = setTimeout(doOpenTarget, 1500);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(safety);
-      map.off("moveend", doOpenTarget);
-    };
-  }, [flyToEscale]);
+    } catch (_) { /* noop */ }
+    const safety = setTimeout(open, 1400);
+    return () => { clearTimeout(safety); map.off("moveend", open); };
+  }, [flyToZone]);
 
   // ---------- Lang change → refresh any currently open popup ----------
   // i18n lazy-binding fix (2026-08-24): when the user toggles FR ↔ EN, if a

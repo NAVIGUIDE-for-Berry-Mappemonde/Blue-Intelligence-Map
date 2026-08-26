@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Anchor, Check, Compass, Loader2, Play, PlayCircle, Radar, ScrollText, Sparkles, Square,
+  Anchor, Check, Loader2, Play, PlayCircle, Radar, Sparkles, Square,
 } from "lucide-react";
 import api from "../api";
 
@@ -45,7 +45,7 @@ function CardShell({ title, icon, borderCls, children }) {
   );
 }
 
-export default function BatchHub({ t, mode, status, refresh, settings, onSettingsSaved, onFormalitiesRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
+export default function BatchHub({ t, mode, status, refresh, settings, onSettingsSaved, onPoeRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
   // ---- Projects — swarm controls ----
   const [swarmMode, setSwarmMode] = useState("test");
   const [clearDb, setClearDb] = useState(false);
@@ -118,85 +118,13 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   const [anchStarting, setAnchStarting] = useState(false);
   const [corridorOn, setCorridorOn] = useState(true);
 
-  // ---- Phase 8 — ZEE crossings (moved from the sidebar to the SIA card, 2026-06) ----
-  const [zee, setZee] = useState(null);
-  const [zeeLoading, setZeeLoading] = useState(true);
-  const [zeeComputing, setZeeComputing] = useState(false);
-  const [zeeError, setZeeError] = useState(null);
-  const [zeeTriggering, setZeeTriggering] = useState(false);
-  const [zeeTriggerResult, setZeeTriggerResult] = useState(null);
-  const [territoriesData, setTerritoriesData] = useState(null);
-
-  const territoryByCode = useMemo(() => {
-    const acc = {};
-    for (const terr of territoriesData?.territories || []) acc[terr.code] = terr;
-    return acc;
-  }, [territoriesData]);
-
-  const fetchZee = async () => {
-    try {
-      const { data } = await api.get("/zee/crossings");
-      setZee(data);
-      setZeeError(null);
-    } catch (e) {
-      // 404 = not computed yet (expected); surface any other failure
-      if (e?.response?.status !== 404) setZeeError(e?.message || "request failed");
-    } finally {
-      setZeeLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (mode !== "formalities") return;
-    fetchZee();
-    api.get("/territories").then((r) => setTerritoriesData(r.data)).catch(() => {});
-  }, [mode]);
-
-  const detectZee = async () => {
-    if (zeeComputing) return;
-    setZeeError(null);
-    setZeeComputing(true);
-    try {
-      await api.post("/zee/compute", {});
-    } catch (e) {
-      if (e?.response?.status !== 409) {
-        setZeeError(e?.message || "failed");
-        setZeeComputing(false);
-        return;
-      }
-    }
-    // Poll status until done (max ~5 min — first run downloads/parses EEZ polygons)
-    for (let i = 0; i < 150; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const { data } = await api.get("/zee/compute/status");
-        if (!data.running) {
-          if (data.error) setZeeError(data.error);
-          await fetchZee();
-          break;
-        }
-      } catch (_) { /* transient */ }
-    }
-    setZeeComputing(false);
-  };
-
-  const triggerZeeFormalities = async () => {
-    if (zeeTriggering) return;
-    setZeeTriggering(true);
-    setZeeTriggerResult(null);
-    try {
-      const { data } = await api.post("/zee/trigger-formalities");
-      setZeeTriggerResult(data);
-      if (onFormalitiesRefresh) onFormalitiesRefresh();
-    } catch (e) {
-      setZeeTriggerResult({ error: e?.message || "failed" });
-    } finally {
-      setZeeTriggering(false);
-    }
-  };
-  // ---- Formalities — generate batch ----
-  const [formalitiesBatchStatus, setFormalitiesBatchStatus] = useState(null);
-  const [formalitiesBatchStarting, setFormalitiesBatchStarting] = useState(false);
+  // ---- Refactor 2026-06 — PoE (formalities mode): EEZ referential + generation batch ----
+  const [refStatus, setRefStatus] = useState(null);
+  const [refStarting, setRefStarting] = useState(false);
+  const [poeBatchStatus, setPoeBatchStatus] = useState(null);
+  const [poeBatchStarting, setPoeBatchStarting] = useState(false);
+  const [poeBatchCount, setPoeBatchCount] = useState(10);
+  const [poeOnlyMissing, setPoeOnlyMissing] = useState(true);
   const pollRefs = useRef({});
 
   // Only poll for the active mode's data — saves bandwidth.
@@ -245,19 +173,34 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     let wasRunning = false;
     const check = async () => {
       try {
-        const { data } = await api.get("/formalities/generate-batch/status");
+        const { data } = await api.get("/poe/referential/status");
         if (!alive) return;
-        setFormalitiesBatchStatus(data);
-        if (data.running || (wasRunning && !data.running)) {
-          if (onFormalitiesRefresh) onFormalitiesRefresh();
-        }
+        setRefStatus(data);
+        if (wasRunning && !data.running && onPoeRefresh) onPoeRefresh();
         wasRunning = data.running;
       } catch (_) { /* transient */ }
     };
     check();
-    pollRefs.current.formalitiesBatch = setInterval(check, 3000);
-    return () => { alive = false; clearInterval(pollRefs.current.formalitiesBatch); };
-  }, [mode, onFormalitiesRefresh]);
+    pollRefs.current.poeRef = setInterval(check, 3000);
+    return () => { alive = false; clearInterval(pollRefs.current.poeRef); };
+  }, [mode, onPoeRefresh]);
+  useEffect(() => {
+    if (mode !== "formalities") return;
+    let alive = true;
+    let wasRunning = false;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/poe/generate-batch/status");
+        if (!alive) return;
+        setPoeBatchStatus(data);
+        if ((data.running || wasRunning) && onPoeRefresh) onPoeRefresh();
+        wasRunning = data.running;
+      } catch (_) { /* transient */ }
+    };
+    check();
+    pollRefs.current.poeBatch = setInterval(check, 3000);
+    return () => { alive = false; clearInterval(pollRefs.current.poeBatch); };
+  }, [mode, onPoeRefresh]);
 
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
@@ -286,13 +229,29 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     try { await api.post("/marinas/enrich-batch/cancel"); }
     catch (e) { console.warn("marina batch cancel failed", e); }
   };
-  const startFormalitiesBatch = async () => {
-    if (formalitiesBatchStarting || formalitiesBatchStatus?.running) return;
-    if (!window.confirm(t("formalitiesBatchConfirm"))) return;
-    setFormalitiesBatchStarting(true);
-    try { await api.post("/formalities/generate-batch"); }
-    catch (e) { console.warn("formalities batch start failed", e); }
-    finally { setTimeout(() => setFormalitiesBatchStarting(false), 800); }
+  const startPoeReferential = async () => {
+    if (refStarting || refStatus?.running) return;
+    setRefStarting(true);
+    try { await api.post("/poe/referential/build"); }
+    catch (e) { console.warn("poe referential start failed", e); }
+    finally { setTimeout(() => setRefStarting(false), 800); }
+  };
+  const startPoeBatch = async () => {
+    if (poeBatchStarting || poeBatchStatus?.running) return;
+    if (!window.confirm(t("auditPoeBatchConfirm"))) return;
+    setPoeBatchStarting(true);
+    try {
+      await api.post("/poe/generate-batch", {
+        limit: parseInt(poeBatchCount, 10) || 0,
+        only_missing: poeOnlyMissing,
+      });
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    } finally { setTimeout(() => setPoeBatchStarting(false), 800); }
+  };
+  const stopPoeBatch = async () => {
+    try { await api.post("/poe/generate-batch/cancel"); }
+    catch (e) { console.warn("poe batch cancel failed", e); }
   };
 
   // ---- Card wrapper (single card, full width — CardShell moved out for stability) ----
@@ -450,121 +409,109 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     return (
       <div data-testid="audit-batch-hub" data-mode-card="formalities">
         <CardShell borderCls="border-amberx/40">
+          {/* --- EEZ referential (VLIZ Marine Regions) --- */}
           <div>
             <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
-              {t("auditFormalitiesBatch")}
+              {t("poeEezAttribution")}
             </label>
             <button
-              data-testid="audit-formalities-batch-btn"
-              onClick={startFormalitiesBatch}
-              disabled={formalitiesBatchStarting || formalitiesBatchStatus?.running}
+              data-testid="poe-referential-btn"
+              onClick={startPoeReferential}
+              disabled={refStarting || refStatus?.running}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-amberx/50 bg-amberx/10 hover:bg-amberx/20 disabled:opacity-70 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
             >
-              {formalitiesBatchStatus?.running ? (
-                <><Loader2 size={13} className="animate-spin" /> {formalitiesBatchStatus.progress ?? 0}{formalitiesBatchStatus.total ? "/" + formalitiesBatchStatus.total : ""}</>
+              {refStatus?.running ? (
+                <><Loader2 size={13} className="animate-spin" /> {t("auditPoeReferentialRunning")} {refStatus.progress}/{refStatus.total || "?"}</>
               ) : (
-                <><Sparkles size={13} /> {t("formalitiesBatchStart")}</>
+                <><Radar size={13} /> {t("auditPoeReferential")}</>
               )}
             </button>
+            {refStatus?.running && refStatus?.logs_tail?.length > 0 && (
+              <div className="mt-1.5 text-[9px] font-mono text-slate-500 max-h-16 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1" data-testid="poe-referential-logs">
+                {refStatus.logs_tail.slice(-4).map((l, i) => <div key={i} className="truncate">{l}</div>)}
+              </div>
+            )}
+            {refStatus?.summary && !refStatus.running && (
+              <p className="mt-1.5 text-[9px] font-mono text-slate-500" data-testid="poe-referential-summary">
+                ✓ {refStatus.summary.zones} ZEE · map {refStatus.summary.map_file_kb} Ko
+              </p>
+            )}
+            {refStatus?.error && !refStatus.running && (
+              <p className="mt-1.5 text-[9px] font-mono text-alert">✗ {String(refStatus.error).slice(0, 100)}</p>
+            )}
           </div>
-          {formalitiesBatchStatus?.logs_tail && formalitiesBatchStatus.logs_tail.length > 0 && (
-            <div
-              data-testid="audit-formalities-batch-logs"
-              className="text-[9px] font-mono text-slate-500 max-h-32 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
-            >
-              {formalitiesBatchStatus.logs_tail.slice(-8).map((l, i) => (
-                <div key={i} className="truncate">{l}</div>
-              ))}
-            </div>
-          )}
-          {formalitiesBatchStatus?.results && formalitiesBatchStatus.results.length > 0 && (
-            <div className="text-[9px] font-mono text-slate-400 max-h-24 overflow-y-auto leading-relaxed">
-              {formalitiesBatchStatus.results.slice(-8).map((r, i) => (
-                <div key={i} className="truncate">
-                  <span className={r.status === "ia" ? "text-bio" : r.status === "verifiee" ? "text-bio" : r.status === "ia_sans_source" ? "text-amberx" : "text-slate-500"}>
-                    ●
-                  </span> {r.territory_code} · {r.status || r.error?.slice(0, 40) || "?"}
-                </div>
-              ))}
-            </div>
-          )}
 
-          {/* Phase 8 — ZEE crossings (moved here from the sidebar, 2026-06) */}
-          <div className="pt-3 border-t border-line" data-testid="zee-section">
-            <div className="flex items-center gap-2 mb-2">
-              <Radar size={13} className="text-amberx" />
-              <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{t("zeeTitle")}</span>
-              {zee?.summary && (
-                <span className="ml-auto font-mono text-[9px] text-slate-500" data-testid="zee-summary">
-                  {zee.summary.total_crossings} {t("zeeCrossings")} · {zee.summary.unique_territories} {t("zeeTerritories")}
-                </span>
+          {/* --- PoE generation batch --- */}
+          <div className="pt-3 border-t border-line">
+            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
+              {t("auditPoeBatch")}
+            </label>
+            <label className="flex items-center gap-2 mb-2 text-xs text-slate-400 cursor-pointer select-none">
+              <input
+                data-testid="poe-only-missing-toggle"
+                type="checkbox"
+                checked={poeOnlyMissing}
+                onChange={(e) => setPoeOnlyMissing(e.target.checked)}
+                className="accent-amber-400"
+              />
+              {t("auditPoeOnlyMissing")}
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={poeBatchCount}
+                onChange={(e) => setPoeBatchCount(e.target.value)}
+                disabled={poeBatchStatus?.running}
+                data-testid="poe-batch-count"
+                className="w-16 px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-100 focus:outline-none focus:border-amberx/60 disabled:opacity-60"
+              >
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="0">{t("enrichBatchAllOption")}</option>
+              </select>
+              <button
+                data-testid="audit-formalities-batch-btn"
+                onClick={startPoeBatch}
+                disabled={poeBatchStarting || poeBatchStatus?.running || refStatus?.running}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 border border-amberx/50 bg-amberx/10 hover:bg-amberx/20 disabled:opacity-70 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
+              >
+                {poeBatchStatus?.running ? (
+                  <><Loader2 size={13} className="animate-spin" /> {poeBatchStatus.progress ?? 0}/{poeBatchStatus.total || "?"}</>
+                ) : (
+                  <><Sparkles size={13} /> {t("auditPoeBatch")}</>
+                )}
+              </button>
+              {poeBatchStatus?.running && (
+                <button
+                  data-testid="poe-batch-stop-btn"
+                  onClick={stopPoeBatch}
+                  disabled={poeBatchStatus?.cancelling}
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-alert bg-alert/25 hover:bg-alert/40 disabled:opacity-60 text-alert font-bold text-xs rounded-sm"
+                >
+                  <Square size={11} /> {poeBatchStatus?.cancelling ? "…" : "Stop"}
+                </button>
               )}
             </div>
-            <button
-              data-testid="zee-detect-btn"
-              onClick={detectZee}
-              disabled={zeeComputing}
-              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-amberx/40 bg-amberx/10 hover:bg-amberx/20 disabled:opacity-60 disabled:cursor-not-allowed text-amberx font-semibold text-xs rounded-sm"
-            >
-              {zeeComputing
-                ? <><Loader2 size={12} className="animate-spin" /> {t("zeeDetecting")}</>
-                : <><Radar size={12} /> {t("zeeDetect")}</>}
-            </button>
-            {zeeError && (
-              <p className="mt-1.5 text-[10px] text-alert font-mono" data-testid="zee-error">{t("zeeError")}: {String(zeeError).slice(0, 120)}</p>
+            {poeBatchStatus?.logs_tail && poeBatchStatus.logs_tail.length > 0 && poeBatchStatus.running && (
+              <div
+                data-testid="audit-formalities-batch-logs"
+                className="mt-2 text-[9px] font-mono text-slate-500 max-h-32 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
+              >
+                {poeBatchStatus.logs_tail.slice(-8).map((l, i) => (
+                  <div key={i} className="truncate">{l}</div>
+                ))}
+              </div>
             )}
-            {zeeLoading && !zee && (
-              <p className="mt-1.5 text-[10px] text-slate-500 font-mono animate-pulse">…</p>
-            )}
-            {!zee && !zeeLoading && !zeeComputing && !zeeError && (
-              <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed">{t("zeeEmpty")}</p>
-            )}
-            {zee?.crossings?.length > 0 && (
-              <>
-                <div
-                  className="mt-2 max-h-72 overflow-y-auto border border-line rounded-sm bg-abyss/50 divide-y divide-line/60"
-                  data-testid="zee-crossings-list"
-                >
-                  {zee.crossings.map((c) => {
-                    const terr = c.territory_code ? territoryByCode[c.territory_code] : null;
-                    const isFr = !!c.territory_code;
-                    return (
-                      <div key={`${c.order}-${c.geoname}`} className="px-2 py-1.5 flex items-start gap-1.5">
-                        <span className="font-mono text-[9px] text-slate-600 mt-0.5 w-5 shrink-0">#{c.order}</span>
-                        <span className="text-sm leading-none mt-0.5 shrink-0">{terr?.flag_emoji || "🌐"}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className={`text-[11px] truncate ${isFr ? "text-slate-100" : "text-slate-400"}`}>
-                            {terr?.name_fr || c.geoname}
-                          </div>
-                          <div className="font-mono text-[9px] text-slate-500 truncate">
-                            {isFr ? (c.pol_type && c.pol_type !== "200NM" ? c.pol_type : "ZEE FR") : `${t("zeeForeign")} · ${c.sovereign || ""}`}
-                            {" · "}{t("zeeEntry")} {Number(c.entry_lat).toFixed(2)},{Number(c.entry_lon).toFixed(2)}
-                            {c.intersection_length_nm ? ` · ~${Math.round(c.intersection_length_nm)} NM` : ""}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <button
-                  data-testid="zee-trigger-btn"
-                  onClick={triggerZeeFormalities}
-                  disabled={zeeTriggering}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/20 disabled:opacity-60 disabled:cursor-not-allowed text-bio font-semibold text-[11px] rounded-sm"
-                >
-                  {zeeTriggering
-                    ? <><Loader2 size={12} className="animate-spin" /> {t("zeeTriggering")}</>
-                    : <><Sparkles size={12} /> {t("zeeTrigger")}</>}
-                </button>
-                {zeeTriggerResult && !zeeTriggerResult.error && (
-                  <p className="mt-1.5 text-[9px] font-mono text-slate-400 leading-relaxed" data-testid="zee-trigger-result">
-                    ✓ {zeeTriggerResult.triggered?.length || 0} {t("zeeTriggered")} · {zeeTriggerResult.skipped_uptodate?.length || 0} {t("zeeUpToDate")}
-                  </p>
-                )}
-                {zeeTriggerResult?.error && (
-                  <p className="mt-1.5 text-[9px] font-mono text-alert">{String(zeeTriggerResult.error).slice(0, 100)}</p>
-                )}
-              </>
+            {poeBatchStatus?.results && poeBatchStatus.results.length > 0 && (
+              <div className="mt-2 text-[9px] font-mono text-slate-400 max-h-24 overflow-y-auto leading-relaxed">
+                {poeBatchStatus.results.slice(-8).map((r, i) => (
+                  <div key={i} className="truncate">
+                    <span className={r.status === "ia" ? "text-bio" : r.status === "ia_sans_source" ? "text-amberx" : "text-slate-500"}>
+                      ●
+                    </span> {r.name} · {r.status ? `${r.status} · ${r.poe_count} PoE` : (r.error?.slice(0, 40) || "?")}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </CardShell>

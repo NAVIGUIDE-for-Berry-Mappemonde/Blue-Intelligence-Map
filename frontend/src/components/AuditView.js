@@ -12,7 +12,7 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
-export default function AuditView({ t, mode, status, refresh, onFormalitiesRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
+export default function AuditView({ t, mode, status, refresh, onPoeRefresh, showAnchorages, setShowAnchorages, anchoragesCount }) {
   const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0, items_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
@@ -82,7 +82,7 @@ export default function AuditView({ t, mode, status, refresh, onFormalitiesRefre
         refresh={refresh}
         settings={settings}
         onSettingsSaved={loadSettings}
-        onFormalitiesRefresh={onFormalitiesRefresh}
+        onPoeRefresh={onPoeRefresh}
         showAnchorages={showAnchorages}
         setShowAnchorages={setShowAnchorages}
         anchoragesCount={anchoragesCount}

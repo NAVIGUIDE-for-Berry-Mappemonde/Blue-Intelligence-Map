@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 ROUTE_FILE = ROOT_DIR / "data" / "route.geojson"
-TERRITORIES_FILE = ROOT_DIR / "data" / "territories.json"
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,15 +21,7 @@ from pydantic import BaseModel
 from ai import extract_project, gatekeeper_check, get_llm_key
 from categories import CATEGORY_GROUPS, normalize_category
 from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
-from formalities import (
-    load_territories,
-    seed_formalities,
-    serialise_doc as _formalities_serialise_doc,
-    serialise_list as _formalities_serialise_list,
-)
-from formalities_gen import (
-    generate_territory_formality,
-)
+import poe_routes
 from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from anchorages import build_anchorages as run_build_anchorages, anchorages_to_geojson
@@ -231,21 +222,9 @@ async def stats(mode: str = "projects"):
         items = await db.marinas.count_documents({})
         tele_filter = {"dataset": "marinas"}
     elif m == "formalities":
-        # 1 fiche per escale, 17 escales in the route (SPM, La Rochelle×2, …).
-        # We report the number of escales currently rendered on the map to
-        # match the sidebar count the user sees ("17 escales").
-        items = 0
-        try:
-            import json as _json
-            if ROUTE_FILE.exists():
-                route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
-                items = sum(
-                    1 for f in (route.get("features") or [])
-                    if (f.get("geometry") or {}).get("type") == "Point"
-                    and (f.get("properties") or {}).get("point_type") == "escale"
-                )
-        except Exception:
-            items = await db.formalities.count_documents({})
+        # Refactor 2026-06 — mode Formalités = carte mondiale [ZEE -> PoE].
+        # ITEMS MAPPED = nombre de ports d'entrée extraits.
+        items = await db.poe_ports.count_documents({})
         tele_filter = {"dataset": "formalities"}
     else:  # projects (default)
         items = await db.projects.count_documents({})
@@ -549,130 +528,6 @@ async def import_marinas_geojson(fc: dict = Body(...)):
     total = await db.marinas.count_documents({})
     swarm.log(f"Marinas GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid", "success")
     return {"imported": imported, "merged": updated, "skipped_existing": 0, "invalid": invalid, "total_marinas": total}
-
-
-# ---------------------------------------------------------------------------
-# Import — Formalities GeoJSON (2026-08-24 bug-fix companion).
-# Accepts the `FeatureCollection` produced by `/api/export/formalities.geojson`.
-# That export ships 1 Point per escale (17 features), and each feature only
-# carries META (status, is_port_of_entry, generated_at, verified_at, stale)
-# — NOT the full fiche content (entree/sortie/…). Import therefore RESTORES
-# per-territory status and rebuilds `escale_overlays[]` from the meta, but
-# leaves fiche content fields untouched (they stay whatever was in the seed
-# or a previous generate/verify run).
-# Features are grouped by `territory_code` before upsert, so the 17 escale
-# features collapse to 13 territory documents (matches the seed cardinality).
-# ---------------------------------------------------------------------------
-@router.post("/import/formalities.geojson")
-async def import_formalities_geojson(fc: dict = Body(...)):
-    feats = fc.get("features") or []
-    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
-        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
-
-    # Group features by territory_code
-    # Bug-fix 2026-08-24 — the export was extended to ship the full fiche
-    # content (entree/sortie/…/contacts/sources). To keep the round-trip
-    # export → import → restore identical, we now propagate those fields when
-    # they're present in the imported file. Backwards-compat: files produced
-    # by the older meta-only export still work — the content fields simply
-    # stay untouched (never overwritten with null).
-    CONTENT_FIELDS = ("entree", "sortie", "cas_particuliers", "immigration",
-                      "contacts", "liens_officiels", "sources")
-    by_code: dict[str, dict] = {}
-    invalid = 0
-    for f in feats:
-        try:
-            p = f.get("properties") or {}
-            code = str(p.get("territory_code") or "").strip()
-            escale_name = str(p.get("escale_name") or "").strip()
-            if not code or not escale_name:
-                invalid += 1
-                continue
-            entry = by_code.setdefault(code, {
-                "territory_code": code,
-                "escale_overlays": [],
-                "status": p.get("status") or "non_generee",
-                "generated_at": p.get("generated_at"),
-                "verified_at": p.get("verified_at"),
-                "content": {},  # only set fields with a real value survive
-            })
-            # First non-empty status wins (all escales of a territory share the
-            # same status in the export).
-            if p.get("status") and entry["status"] in (None, "non_generee"):
-                entry["status"] = p.get("status")
-            if p.get("generated_at") and not entry.get("generated_at"):
-                entry["generated_at"] = p.get("generated_at")
-            if p.get("verified_at") and not entry.get("verified_at"):
-                entry["verified_at"] = p.get("verified_at")
-            # Capture fiche content (identical across all escales of a
-            # territory — take the first non-null value seen).
-            for cf in CONTENT_FIELDS:
-                if cf in p and p[cf] not in (None, [], {}) and cf not in entry["content"]:
-                    entry["content"][cf] = p[cf]
-            # Escale overlay: preserve is_port_of_entry flag per escale. If the
-            # new export shipped `escale_overlay`, use it; otherwise fall back
-            # to the legacy top-level `is_port_of_entry` field.
-            legacy_overlay = p.get("escale_overlay") or {
-                "escale_name": escale_name,
-                "is_port_of_entry": bool(p.get("is_port_of_entry")),
-                "note": None,
-            }
-            # Ensure escale_name is set (older files might omit it inside overlay)
-            if not legacy_overlay.get("escale_name"):
-                legacy_overlay["escale_name"] = escale_name
-            entry["escale_overlays"].append(legacy_overlay)
-        except Exception:
-            invalid += 1
-            continue
-
-    imported = updated = 0
-    for code, entry in by_code.items():
-        existing = await db.formalities.find_one({"territory_code": code})
-        # Update META fields + any content fields explicitly present in the
-        # import. Content fields NOT present in the import are never touched.
-        update_set = {
-            "status": entry["status"],
-            "escale_overlays": entry["escale_overlays"],
-        }
-        if entry.get("generated_at"):
-            update_set["generated_at"] = entry["generated_at"]
-        if entry.get("verified_at"):
-            update_set["verified_at"] = entry["verified_at"]
-        # Merge fiche content (bug-fix 2026-08-24 round-trip).
-        for cf, val in (entry.get("content") or {}).items():
-            update_set[cf] = val
-        if existing:
-            await db.formalities.update_one(
-                {"territory_code": code}, {"$set": update_set},
-            )
-            updated += 1
-        else:
-            # Territory not seeded yet — create a minimal doc so the meta
-            # survives. Fiche content stays null unless the import carried it.
-            new_doc = {
-                "_id": str(uuid.uuid4()),
-                "territory_code": code,
-                "entree": None, "sortie": None, "cas_particuliers": None,
-                "immigration": None, "contacts": [], "liens_officiels": [],
-                "sources": [],
-                **update_set,
-            }
-            await db.formalities.insert_one(new_doc)
-            imported += 1
-    total = await db.formalities.count_documents({})
-    swarm.log(
-        f"Formalities GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid, "
-        f"{len(by_code)} territories",
-        "success",
-    )
-    return {
-        "imported": imported,
-        "merged": updated,
-        "skipped_existing": 0,
-        "invalid": invalid,
-        "total_formalities": total,
-        "territories_touched": len(by_code),
-    }
 
 
 @router.get("/categories")
@@ -1498,17 +1353,17 @@ The header pill lets you switch between three modes. Each mode paints the app wi
 - All batch actions (build, enrich) are triggered from the Audit hub (see below), not from the sidebar.
 
 ### 3) Formalities (amber)
-- **Map**: escales along the Berry-Mappemonde route. A white ring around a marker means the escale is an official Port of Entry. The dot color reflects the formality file status.
-- **Left sidebar**: list of all escales with badges (departure / return on La Rochelle), an amber disclaimer ("Indicative information — verify with the authorities before departure"), and per-file refresh / verify buttons.
-- **Territory sheet** (right side, opens on click): 5 tabs — Entry · Exit · Special cases · Contacts · Sources. An Immigration tab covers French crew only. Each field is short, sourced and can be re-generated on demand.
-- **Status of a file** (4 possible values):
+- **Map**: world choropleth of the ~285 Exclusive Economic Zones (EEZ, Marine Regions/VLIZ v12) coloured by generation status, plus amber markers for every extracted official Port of Entry (pleasure craft). Click an EEZ to open its sheet.
+- **Left sidebar**: searchable list of all EEZs (flag, sovereign, status, PoE count), a status filter and the permanent amber disclaimer ("Indicative information — verify with the authorities before departure").
+- **EEZ sheet (map popup)**: status pill, PoE count, generation date, official sources used (clickable), and a Generate / Regenerate button that runs the full pipeline for that zone.
+- **Status of a zone** (4 possible values):
   - `not generated` — grey, no AI content yet.
-  - `AI` — amber, at least one source in the official whitelist has been captured.
-  - `AI without source` — amber with dashed ring, LLM output but no official source could be captured (typical for PDF-only documents).
-  - `verified` — green, marked as reviewed by the crew via the Verify button.
-- **Stale flag**: any file older than 180 days shows a clock badge inviting a refresh.
-- **Sources**: only official government / customs / immigration domains are ever displayed. The internal whitelist is not exposed.
-- *Export GeoJSON* button — exports the 17 escales with their formality status.
+  - `AI · official sources` — amber, the sources passed the auto-generated government-domain whitelist.
+  - `AI · no official source` — amber dashed, content extracted but no whitelisted official domain could be captured.
+  - `error` — red, no port of entry could be extracted (typical for disputed rocks or landlocked claims).
+- **Port of Entry popup**: name, town, note, geocoding source, and a spatial-validation badge (inside the EEZ / outside with distance).
+- **Stale flag**: any zone older than 180 days shows a clock badge inviting a refresh. Re-extraction only happens when the source content changed (MD5 monitoring).
+- *Export GeoJSON* button — exports all extracted Ports of Entry.
 
 ## Global donations pot
 The header shows a single donation CTA. Click it, pick an amount (5–100 €) and pay through Stripe. All donations feed one single global pot shown next to the button (running total in euros + donor count). No per-project donation button anywhere in the map or the sidebars.
@@ -1517,7 +1372,7 @@ The header shows a single donation CTA. Click it, pick an amount (5–100 €) a
 Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
 - **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
 - **Marinas — Build & Enrich batch**: rebuild the marinas dataset from open sources, then enrich N marinas at a time (VHF, phone, website) with live progress and per-item status.
-- **Formalities — Generate batch**: (re)generate the 13 territory files in one click, with a live log tail and a per-territory progress list. Sources are captured and filtered against the official whitelist automatically.
+- **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
 - **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
 ## Settings (right panel, gear icon)
@@ -1533,7 +1388,7 @@ Operator console reserved for the crew / admin. It groups **all batch triggers**
 2. **Extraction**: Readability cleans the page → LLM Gatekeeper rejects terrestrial/freshwater projects → LLM extracts title, description (<250 chars), location, category, partners and S_ocean score.
 3. **Geocoding**: extracted GPS → Nominatim → LLM smart geocoding → Point-in-Ocean test → coastal snapping when inland.
 4. **Deduplication**: URL match, spatial proximity (<500 m) + title similarity (>90%) → funders merged.
-5. **Formalities synthesis**: TinyFish visits the whitelisted official URLs of a territory, falls back to a readable-fetch when needed, then an OpenRouter + Gemini (fallback) LLM produces a strictly-sourced French summary. The pipeline never invents content.
+5. **Ports of Entry pipeline (Formalities mode)**: search engines (SearXNG, Google-grounded Gemini) find the official customs/immigration sources of each EEZ; a whitelist of government domains (auto-generated from ISO codes + Public Suffix List + exceptions file) filters them; the pages/PDFs are parsed (trafilatura / PyMuPDF); a light LLM extracts the official PoE list as strict JSON; each port is geocoded (Nominatim/GeoNames) and spatially validated inside its EEZ polygon (shapely). MD5 hashes of the sources prevent useless re-extraction. The pipeline never invents content.
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
@@ -1562,17 +1417,17 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 - Toutes les actions batch (build, enrichissement) sont déclenchées depuis le hub Audit (voir plus bas), plus depuis le bandeau.
 
 ### 3) Formalités (ambre)
-- **Carte** : escales de la route Berry-Mappemonde. Un anneau blanc autour d'un marqueur signale que l'escale est un port d'entrée officiel. La couleur du point reflète le statut de la fiche formalités.
-- **Bandeau gauche** : liste de toutes les escales avec pastilles (aller / retour sur La Rochelle), un disclaimer ambre (« Informations indicatives — à vérifier auprès des autorités avant le départ »), et par fiche des boutons rafraîchir / vérifier.
-- **Fiche territoire** (côté droit, s'ouvre au clic) : 5 onglets — Entrée · Sortie · Cas particuliers · Contacts · Sources. Un onglet Immigration couvre uniquement l'équipage français. Chaque champ est court, sourcé et peut être régénéré à la demande.
-- **Statut d'une fiche** (4 valeurs possibles) :
+- **Carte** : choroplèthe mondiale des ~285 Zones Économiques Exclusives (ZEE, Marine Regions/VLIZ v12) colorées par statut de génération, plus des marqueurs ambre pour chaque Port d'Entrée officiel extrait (plaisance). Cliquez une ZEE pour ouvrir sa fiche.
+- **Bandeau gauche** : liste de toutes les ZEE avec recherche (drapeau, souverain, statut, nombre de PoE), un filtre par statut et le disclaimer ambre permanent (« Informations indicatives — à vérifier auprès des autorités avant le départ »).
+- **Fiche ZEE (popup carte)** : pastille de statut, nombre de PoE, date de génération, sources officielles utilisées (cliquables), et un bouton Générer / Régénérer qui exécute le pipeline complet pour cette zone.
+- **Statut d'une zone** (4 valeurs possibles) :
   - `non générée` — gris, aucun contenu IA pour l'instant.
-  - `IA` — ambre, au moins une source de la whitelist officielle a été captée.
-  - `IA sans source` — ambre avec anneau pointillé, sortie LLM mais aucune source officielle n'a pu être captée (typique des documents en PDF seul).
-  - `vérifiée` — vert, marquée comme relue par l'équipage via le bouton Vérifier.
-- **Flag stale** : toute fiche datant de plus de 180 jours affiche un badge horloge invitant au rafraîchissement.
-- **Sources** : seuls les domaines officiels (gouvernement, douanes, immigration) sont affichés. La whitelist interne n'est pas exposée.
-- Bouton *Export GeoJSON* — exporte les 17 escales avec leur statut formalités.
+  - `IA · sources officielles` — ambre, les sources passent la whitelist auto-générée de domaines gouvernementaux.
+  - `IA · sans source officielle` — ambre pointillé, contenu extrait mais aucun domaine officiel whitelisté n'a pu être capté.
+  - `erreur` — rouge, aucun port d'entrée n'a pu être extrait (typique des rochers disputés ou zones sans port).
+- **Popup Port d'Entrée** : nom, ville, note, source de géocodage, et un badge de validation spatiale (dans la ZEE / hors ZEE avec distance).
+- **Flag stale** : toute zone datant de plus de 180 jours affiche un badge horloge invitant au rafraîchissement. La ré-extraction n'a lieu que si le contenu source a changé (monitoring MD5).
+- Bouton *Export GeoJSON* — exporte tous les Ports d'Entrée extraits.
 
 ## Cagnotte de dons globale
 L'en-tête affiche un unique CTA de don. Cliquez, choisissez un montant (5–100 €) et payez via Stripe. Tous les dons alimentent une seule cagnotte globale affichée à côté du bouton (total courant en euros + nombre de donateurs). Aucun bouton donner par projet, ni dans la carte ni dans les bandeaux.
@@ -1581,7 +1436,7 @@ L'en-tête affiche un unique CTA de don. Cliquez, choisissez un montant (5–100
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
 - **Marinas — Build & Enrich batch** : reconstruit le jeu marinas depuis les sources ouvertes, puis enrichit N marinas à la fois (VHF, téléphone, site web) avec progression en direct et statut par item.
-- **Formalités — Generate batch** : (re)génère les 13 fiches territoire en un clic, avec logs live et liste de progression par territoire. Les sources sont captées et filtrées automatiquement contre la whitelist officielle.
+- **Formalités — Référentiel ZEE & batch PoE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions), puis génère les Ports d'Entrée zone par zone en lots (5/10/25/toutes), avec logs live, résultats par zone et bouton Stop.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 
 ## Paramètres (bandeau droit, icône engrenage)
@@ -1597,7 +1452,7 @@ Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les d
 2. **Extraction** : Readability nettoie la page → un LLM Gatekeeper rejette les projets terrestres/eau douce → un LLM extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
 3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent par LLM → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
 4. **Déduplication** : URL identique, proximité spatiale (<500 m) + similarité de titre (>90 %) → financeurs fusionnés.
-5. **Synthèse formalités** : TinyFish visite les URLs officielles whitelistées d'un territoire, replie sur un readable-fetch si nécessaire, puis un LLM OpenRouter + Gemini (fallback) produit un résumé en français strictement sourcé. Le pipeline n'invente jamais de contenu.
+5. **Pipeline Ports d'Entrée (mode Formalités)** : des moteurs de recherche (SearXNG, Gemini avec grounding Google) trouvent les sources officielles douanes/immigration de chaque ZEE ; une whitelist de domaines gouvernementaux (auto-générée depuis les codes ISO + Public Suffix List + fichier d'exceptions) les filtre ; les pages/PDF sont parsés (trafilatura / PyMuPDF) ; un LLM léger extrait la liste des PoE officiels en JSON strict ; chaque port est géocodé (Nominatim/GeoNames) puis validé spatialement dans son polygone ZEE (shapely). Les hash MD5 des sources évitent toute ré-extraction inutile. Le pipeline n'invente jamais de contenu.
 """,
 }
 
@@ -1687,392 +1542,6 @@ async def donations_total():
     total = rows[0]["total"] if rows else 0.0
     count = rows[0]["count"] if rows else 0
     return {"total_eur": round(total, 2), "count": count}
-
-
-# ---------- Territories & Formalities (Phase 4A) ----------
-# Territories reference: static curated JSON, read-only. Cached in memory.
-_TERRITORIES_CACHE: dict | None = None
-
-
-def _load_territories_cached() -> dict:
-    global _TERRITORIES_CACHE
-    if _TERRITORIES_CACHE is None:
-        if not TERRITORIES_FILE.exists():
-            raise HTTPException(500, "territories.json missing")
-        _TERRITORIES_CACHE = load_territories(TERRITORIES_FILE)
-    return _TERRITORIES_CACHE
-
-
-@router.get("/territories")
-async def get_territories():
-    """
-    Curated territory reference: 13 territories covering the 16 unique escales
-    of route.geojson. Each entry ships regime, ports_of_entry (with ref_url),
-    escale_names mapping and official_domains whitelist for the Phase 4B
-    generator. Blacklist is exposed at the top level.
-    """
-    data = _load_territories_cached()
-    return JSONResponse(
-        data,
-        headers={
-            "Cache-Control": "public, max-age=3600, must-revalidate",
-            "X-Territories-Source": "Blue Intelligence curated (official gov sources)",
-        },
-    )
-
-
-@router.get("/formalities")
-async def list_formalities():
-    """All 13 formalities docs, one per territory_code. Freshly seeded rows
-    are `status: non_generee` with all inner fields null."""
-    docs = await db.formalities.find({}).to_list(50)
-    # Sort in the order of the territories.json file so the sidebar can walk
-    # them in a deterministic route-based order.
-    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
-    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
-    return {"count": len(docs), "items": _formalities_serialise_list(docs)}
-
-
-@router.get("/formalities/{territory_code}")
-async def get_formalities(territory_code: str):
-    doc = await db.formalities.find_one({"territory_code": territory_code})
-    if not doc:
-        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
-    # Also embed the matching territory reference so the frontend has both in
-    # one call (avoids a race between /territories and /formalities/{code}).
-    terr_ref = next(
-        (t for t in _load_territories_cached().get("territories", []) if t.get("code") == territory_code),
-        None,
-    )
-    out = _formalities_serialise_doc(doc)
-    out["territory"] = terr_ref
-    return out
-
-
-# ---------- Formalities generation (Phase 4B) ----------
-# Per-territory task registry + lock. Same pattern as MARINA_ENRICH_TASKS.
-FORMALITIES_GEN_TASKS: dict[str, dict] = {}
-FORMALITIES_LOCKS: set[str] = set()
-
-
-class FormalitiesBatchState:
-    def __init__(self):
-        self.running: bool = False
-        self.started_at: float | None = None
-        self.finished_at: float | None = None
-        self.progress: int = 0
-        self.total: int = 0
-        self.results: list[dict] = []
-        self.logs: list[str] = []
-        self.error: str | None = None
-
-    def log(self, msg: str):
-        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-        if len(self.logs) > 800:
-            self.logs = self.logs[-800:]
-
-
-FORMALITIES_BATCH_STATE = FormalitiesBatchState()
-
-
-def _keys_gen() -> tuple[str | None, str | None, str | None]:
-    return (
-        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
-        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
-        (os.environ.get("EMERGENT_LLM_KEY") or "").strip() or None,
-    )
-
-
-class FormalitiesBatchBody(BaseModel):
-    stale_only: bool = False
-
-
-@router.post("/formalities/{territory_code}/generate", status_code=202)
-async def formalities_generate(territory_code: str):
-    """Start generation for one territory as a background task."""
-    territories = _load_territories_cached()
-    if not any(t.get("code") == territory_code for t in territories.get("territories", [])):
-        raise HTTPException(404, f"territory '{territory_code}' unknown")
-    if territory_code in FORMALITIES_LOCKS:
-        raise HTTPException(409, "Generation already in progress for this territory")
-
-    _prune_tasks(FORMALITIES_GEN_TASKS)
-    FORMALITIES_LOCKS.add(territory_code)
-    FORMALITIES_GEN_TASKS[territory_code] = {
-        "state": "running",
-        "started_at": time.time(),
-        "finished_at": None,
-        "result": None,
-        "error": None,
-        "logs": [],
-    }
-    tf_key, or_key, emg_key = _keys_gen()
-
-    async def _runner():
-        task = FORMALITIES_GEN_TASKS[territory_code]
-
-        def log_fn(msg: str):
-            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-            if len(task["logs"]) > 400:
-                task["logs"] = task["logs"][-400:]
-
-        try:
-            doc = await generate_territory_formality(
-                db, territory_code, territories,
-                logger=log_fn,
-                tinyfish_key=tf_key,
-                openrouter_key=or_key,
-                emergent_key=emg_key,
-            )
-            task["result"] = _formalities_serialise_doc(doc) if doc else None
-            task["state"] = "done"
-        except Exception as e:
-            task["error"] = f"{type(e).__name__}: {e}"
-            task["state"] = "error"
-            log_fn(f"FATAL: {task['error']}")
-        finally:
-            task["finished_at"] = time.time()
-            FORMALITIES_LOCKS.discard(territory_code)
-
-    asyncio.create_task(_runner())
-    return {"status": "started", "territory_code": territory_code}
-
-
-@router.get("/formalities/{territory_code}/generate/status")
-async def formalities_generate_status(territory_code: str):
-    task = FORMALITIES_GEN_TASKS.get(territory_code)
-    if not task:
-        return {"state": "idle", "territory_code": territory_code}
-    return {
-        "state": task["state"],
-        "territory_code": territory_code,
-        "started_at": task["started_at"],
-        "finished_at": task["finished_at"],
-        "result": task["result"],
-        "error": task["error"],
-        "logs_tail": task["logs"][-40:],
-    }
-
-
-@router.post("/formalities/generate-batch")
-async def formalities_generate_batch(body: FormalitiesBatchBody | None = None):
-    if FORMALITIES_BATCH_STATE.running:
-        raise HTTPException(409, "A formalities batch is already running")
-    body = body or FormalitiesBatchBody()
-    territories = _load_territories_cached()
-
-    # Selection
-    all_docs = await db.formalities.find({}).to_list(50)
-    from formalities import is_stale as _is_stale_formality
-    if body.stale_only:
-        candidates = [d for d in all_docs if _is_stale_formality(d)]
-    else:
-        candidates = all_docs
-    # Sort in route order
-    order = {t["code"]: i for i, t in enumerate(territories.get("territories", []))}
-    candidates.sort(key=lambda d: order.get(d.get("territory_code"), 999))
-
-    tf_key, or_key, emg_key = _keys_gen()
-
-    FORMALITIES_BATCH_STATE.running = True
-    FORMALITIES_BATCH_STATE.started_at = time.time()
-    FORMALITIES_BATCH_STATE.finished_at = None
-    FORMALITIES_BATCH_STATE.progress = 0
-    FORMALITIES_BATCH_STATE.total = len(candidates)
-    FORMALITIES_BATCH_STATE.results = []
-    FORMALITIES_BATCH_STATE.logs = []
-    FORMALITIES_BATCH_STATE.error = None
-
-    async def _runner():
-        try:
-            FORMALITIES_BATCH_STATE.log(
-                f"Selected {len(candidates)} territories (concurrency=2, stale_only={body.stale_only})"
-            )
-            sem = asyncio.Semaphore(2)
-            counter = {"i": 0}
-
-            async def _one(d):
-                code = d.get("territory_code")
-                async with sem:
-                    if code in FORMALITIES_LOCKS:
-                        FORMALITIES_BATCH_STATE.log(f"SKIP {code}: already locked")
-                        return
-                    FORMALITIES_LOCKS.add(code)
-                    FORMALITIES_BATCH_STATE.log(f"→ generating {code}")
-                    try:
-                        def batch_log(msg: str):
-                            FORMALITIES_BATCH_STATE.log(f"  [{code}] {msg}")
-                        doc = await generate_territory_formality(
-                            db, code, territories,
-                            logger=batch_log,
-                            tinyfish_key=tf_key,
-                            openrouter_key=or_key,
-                            emergent_key=emg_key,
-                        )
-                        FORMALITIES_BATCH_STATE.results.append({
-                            "territory_code": code,
-                            "status": (doc or {}).get("status"),
-                            "sources_count": len((doc or {}).get("sources") or []),
-                        })
-                    except Exception as e:
-                        FORMALITIES_BATCH_STATE.log(f"  [{code}] FAILED: {type(e).__name__}: {e}")
-                        FORMALITIES_BATCH_STATE.results.append({
-                            "territory_code": code,
-                            "error": f"{type(e).__name__}: {e}",
-                        })
-                    finally:
-                        FORMALITIES_LOCKS.discard(code)
-                        counter["i"] += 1
-                        FORMALITIES_BATCH_STATE.progress = counter["i"]
-
-            await asyncio.gather(*(_one(d) for d in candidates))
-            by_status = {}
-            for r in FORMALITIES_BATCH_STATE.results:
-                s = r.get("status") or "error"
-                by_status[s] = by_status.get(s, 0) + 1
-            FORMALITIES_BATCH_STATE.log(f"Done. Statuses: {by_status}")
-        except Exception as e:
-            FORMALITIES_BATCH_STATE.error = f"{type(e).__name__}: {e}"
-            FORMALITIES_BATCH_STATE.log(f"FATAL: {FORMALITIES_BATCH_STATE.error}")
-        finally:
-            FORMALITIES_BATCH_STATE.finished_at = time.time()
-            FORMALITIES_BATCH_STATE.running = False
-
-    asyncio.create_task(_runner())
-    return {"started": True, "selected": len(candidates), "concurrency": 2}
-
-
-@router.get("/formalities/generate-batch/status")
-async def formalities_generate_batch_status():
-    s = FORMALITIES_BATCH_STATE
-    return {
-        "running": s.running,
-        "started_at": s.started_at,
-        "finished_at": s.finished_at,
-        "progress": s.progress,
-        "total": s.total,
-        "results": s.results,
-        "logs_tail": s.logs[-80:],
-        "error": s.error,
-    }
-
-
-@router.put("/formalities/{territory_code}/verify")
-async def formalities_verify(territory_code: str):
-    """Flip status to `verifiee` + stamp verified_at. Only meaningful for ia/ia_sans_source."""
-    doc = await db.formalities.find_one({"territory_code": territory_code})
-    if not doc:
-        raise HTTPException(404, f"no formalities doc for territory '{territory_code}'")
-    if doc.get("status") == "non_generee":
-        raise HTTPException(400, "cannot verify a non-generated territory")
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    await db.formalities.update_one(
-        {"territory_code": territory_code},
-        {"$set": {"status": "verifiee", "verified_at": now}},
-    )
-    fresh = await db.formalities.find_one({"territory_code": territory_code})
-    return _formalities_serialise_doc(fresh)
-
-
-@router.post("/formalities/{territory_code}/immigration/{nat}", status_code=410, include_in_schema=False)
-async def formalities_immigration_deprecated(territory_code: str, nat: str):
-    """Deprecated in Phase 5 — the immigration-on-demand feature for ca/us/gb was
-    removed. Kept as HTTP 410 for backwards compatibility with older clients."""
-    raise HTTPException(410, "Immigration ca/us/gb generation is no longer supported (Phase 5).")
-
-
-# ---------- Formalities exports (Phase 4B) ----------
-@router.get("/export/formalities.json")
-async def export_formalities_json():
-    docs = await db.formalities.find({}).to_list(50)
-    order = {t["code"]: i for i, t in enumerate(_load_territories_cached().get("territories", []))}
-    docs.sort(key=lambda d: order.get(d.get("territory_code"), 999))
-    payload = {
-        "type": "FormalitiesCollection",
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "count": len(docs),
-        "items": _formalities_serialise_list(docs),
-    }
-    return JSONResponse(
-        payload,
-        headers={"Content-Disposition": "attachment; filename=formalities.json"},
-    )
-
-
-@router.get("/export/formalities.geojson")
-async def export_formalities_geojson():
-    """1 Point per escale (all 17 features from route.geojson) with formality meta
-    AND full fiche content (entree / sortie / cas_particuliers / immigration /
-    contacts / liens_officiels / sources).
-
-    Bug-fix 2026-08-24 — previously the export only shipped the 8 META fields
-    (status, is_port_of_entry, generated_at, verified_at, stale, escale_name,
-    leg, territory_code). All AI-generated content was silently dropped,
-    breaking the round-trip export → import → identical restore.
-    """
-    if not ROUTE_FILE.exists():
-        raise HTTPException(500, "route.geojson missing")
-    import json as _json
-    route = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
-    territories = _load_territories_cached()
-    escale_to_code = {}
-    for terr in territories.get("territories", []):
-        for en in terr.get("escale_names", []):
-            escale_to_code[en] = terr.get("code")
-    docs = await db.formalities.find({}).to_list(50)
-    by_code = {d.get("territory_code"): d for d in docs}
-    features = []
-    la_rochelle_seen = {"count": 0}
-    for feat in route.get("features", []):
-        if feat.get("geometry", {}).get("type") != "Point":
-            continue
-        props = feat.get("properties") or {}
-        if props.get("point_type") != "escale":
-            continue
-        name = props.get("name")
-        code = escale_to_code.get(name)
-        d = by_code.get(code) or {}
-        overlay = next(
-            (o for o in (d.get("escale_overlays") or []) if o.get("escale_name") == name),
-            None,
-        )
-        leg = None
-        if name == "La Rochelle":
-            la_rochelle_seen["count"] += 1
-            leg = "departure" if la_rochelle_seen["count"] == 1 else "return"
-        from formalities import is_stale as _fs
-        features.append({
-            "type": "Feature",
-            "geometry": feat["geometry"],
-            "properties": {
-                # ---- META (unchanged) ----
-                "escale_name": name,
-                "leg": leg,
-                "territory_code": code,
-                "status": d.get("status") or "non_generee",
-                "is_port_of_entry": bool(overlay and overlay.get("is_port_of_entry")),
-                "stale": _fs(d) if d else False,
-                "generated_at": d.get("generated_at"),
-                "verified_at": d.get("verified_at"),
-                # ---- FULL FICHE CONTENT (bug-fix) ----
-                "entree":            d.get("entree"),
-                "sortie":            d.get("sortie"),
-                "cas_particuliers":  d.get("cas_particuliers"),
-                "immigration":       d.get("immigration"),
-                "contacts":          d.get("contacts") or [],
-                "liens_officiels":   d.get("liens_officiels") or [],
-                "sources":           d.get("sources") or [],
-                # `escale_overlays` is exported at the FEATURE level (per escale)
-                # rather than duplicated on every escale of a multi-escale
-                # territory — the import endpoint re-groups them by territory.
-                "escale_overlay": overlay,
-            },
-        })
-    fc = {"type": "FeatureCollection", "features": features}
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=formalities.geojson"},
-    )
 
 
 # ---------- ZEE Detection (Phase 8) ----------
@@ -2201,105 +1670,6 @@ async def zee_compute_status():
     }
 
 
-@router.post("/zee/trigger-formalities")
-async def zee_trigger_formalities(stale_only: bool = False):
-    """
-    Déclenche la génération des formalités pour tous les territoires FRANÇAIS
-    détectés dans les traversées ZEE calculées (seed déterministe — remplace le
-    seeding manuel). non_generee → génère ; stale_only=True → régénère aussi
-    les fiches ia stales ; les fiches verrouillées ou à jour sont sautées.
-    """
-    cached = await db.zee_crossings.find_one({"_id": "latest"})
-    if not cached:
-        raise HTTPException(404, "No ZEE crossings available. Call POST /api/zee/compute first.")
-
-    crossings = cached.get("crossings") or []
-    french = filter_french_territories(crossings)
-    detected_codes: list[str] = []
-    for c in french:
-        code = c.get("territory_code")
-        if code and code not in detected_codes:
-            detected_codes.append(code)
-
-    territories_data = _load_territories_cached()
-    tf_key, or_key, emg_key = _keys_gen()
-    from formalities import is_stale as _is_stale_formality
-
-    triggered: list[str] = []
-    skipped_uptodate: list[str] = []
-    skipped_locked: list[str] = []
-    not_in_db: list[str] = []
-
-    for code in detected_codes:
-        if not any(t.get("code") == code for t in territories_data.get("territories", [])):
-            not_in_db.append(code)
-            continue
-        doc = await db.formalities.find_one({"territory_code": code})
-        if not doc:
-            not_in_db.append(code)
-            continue
-
-        current_status = doc.get("status", "non_generee")
-        should_generate = (
-            current_status == "non_generee"
-            or (stale_only and _is_stale_formality(doc) and current_status != "verifiee")
-        )
-        if not should_generate:
-            skipped_uptodate.append(code)
-            continue
-        if code in FORMALITIES_LOCKS:
-            skipped_locked.append(code)
-            continue
-
-        _prune_tasks(FORMALITIES_GEN_TASKS)
-        FORMALITIES_LOCKS.add(code)
-        FORMALITIES_GEN_TASKS[code] = {
-            "state": "running",
-            "started_at": time.time(),
-            "finished_at": None,
-            "result": None,
-            "error": None,
-            "logs": [],
-        }
-
-        async def _runner(territory_code: str = code):
-            task = FORMALITIES_GEN_TASKS[territory_code]
-
-            def log_fn(msg: str):
-                task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-                if len(task["logs"]) > 400:
-                    task["logs"] = task["logs"][-400:]
-
-            try:
-                result_doc = await generate_territory_formality(
-                    db, territory_code, territories_data,
-                    logger=log_fn,
-                    tinyfish_key=tf_key,
-                    openrouter_key=or_key,
-                    emergent_key=emg_key,
-                )
-                task["result"] = _formalities_serialise_doc(result_doc) if result_doc else None
-                task["state"] = "done"
-            except Exception as exc:
-                task["error"] = f"{type(exc).__name__}: {exc}"
-                task["state"] = "error"
-            finally:
-                task["finished_at"] = time.time()
-                FORMALITIES_LOCKS.discard(territory_code)
-
-        asyncio.create_task(_runner())
-        triggered.append(code)
-
-    return {
-        "detected_territory_codes": detected_codes,
-        "triggered": triggered,
-        "skipped_uptodate": skipped_uptodate,
-        "skipped_locked": skipped_locked,
-        "not_in_db": not_in_db,
-        "stale_only": stale_only,
-    }
-
-
 @router.delete("/zee/crossings")
 async def zee_clear_crossings(delete_eez_file: bool = False):
     """Supprime le cache crossings (et optionnellement le fichier EEZ local)."""
@@ -2314,6 +1684,8 @@ async def zee_clear_crossings(delete_eez_file: bool = False):
     return {"cache_deleted": res.deleted_count > 0, "eez_file_deleted": eez_deleted}
 
 
+poe_routes.init(db)
+app.include_router(poe_routes.router)
 app.include_router(router)
 
 # --- OpenAPI + static assets exposed under /api (Kubernetes ingress only forwards /api/*) ---
@@ -2382,31 +1754,23 @@ async def shutdown():
 
 
 @app.on_event("startup")
-async def _startup_seed_formalities():
+async def _startup_poe():
     """
-    Seed the `formalities` collection at boot with 13 blank docs (one per
-    territory in territories.json) if not already present. Idempotent.
-    Also ensures a unique index on `territory_code`.
+    Refactor 2026-06 — mode Formalités = pipeline [ZEE mondiale -> Ports d'Entrée].
+    Crée les index des collections eez_zones / poe_ports et purge les
+    collections héritées (formalities, mpa_cache).
     """
     try:
-        await db.formalities.create_index("territory_code", unique=True)
-    except Exception:
-        pass
-    # Phase 5 cleanup: drop the now-defunct mpa_cache collection if it still exists.
-    try:
-        if "mpa_cache" in await db.list_collection_names():
-            await db.drop_collection("mpa_cache")
-            print("[startup] dropped legacy mpa_cache collection")
+        await db.eez_zones.create_index("mrgid", unique=True)
+        await db.poe_ports.create_index("dedup_key", unique=True)
+        await db.poe_ports.create_index("mrgid")
     except Exception as e:
-        print(f"[startup] mpa_cache drop failed (non-fatal): {e}")
-    if not TERRITORIES_FILE.exists():
-        return
+        print(f"[startup] poe index creation failed (non-fatal): {e}")
     try:
-        data = load_territories(TERRITORIES_FILE)
-        summary = await seed_formalities(db, data)
-        print(
-            f"[formalities-seed] inserted={summary['inserted']} "
-            f"existing={summary['existing']} total={summary['total']}"
-        )
+        existing = await db.list_collection_names()
+        for legacy in ("formalities", "mpa_cache"):
+            if legacy in existing:
+                await db.drop_collection(legacy)
+                print(f"[startup] dropped legacy {legacy} collection")
     except Exception as e:
-        print(f"[formalities-seed] FAILED: {type(e).__name__}: {e}")
+        print(f"[startup] legacy collection drop failed (non-fatal): {e}")

@@ -26,25 +26,19 @@ const inputCls = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 tex
 const EXPORT_URLS = {
   projects:    "/api/export/geojson",
   marinas:     "/api/export/marinas.geojson",
-  formalities: "/api/export/formalities.geojson",
+  formalities: "/api/export/poe.geojson",
 };
 
-// 2026-08-24 bug-fix — import endpoint per mode. Previously the sidebar
-// "Import GeoJSON" button ALWAYS hit /import/geojson (projects), so
-// importing a marinas or formalities export from another instance silently
-// tried to insert them as projects → 0 imported, no error, user thinks the
-// button is broken. Now the button routes to the right endpoint based on
-// the current mode.
+// 2026-08-24 bug-fix — import endpoint per mode. Formalities (PoE) data is
+// fully regenerable from the pipeline, so it has no import endpoint.
 const IMPORT_URLS = {
   projects:    "/import/geojson",
   marinas:     "/import/marinas.geojson",
-  formalities: "/import/formalities.geojson",
 };
 
 const IMPORT_TOTAL_KEY = {
   projects:    "total_projects",
   marinas:     "total_marinas",
-  formalities: "total_formalities",
 };
 
 export default function SettingsPanel({ t, mode, settings, onSaved, onImported, onProjectsCleared, onClose }) {
@@ -80,22 +74,21 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setImporting(true);
     const currentMode = mode || "projects";
+    if (currentMode === "formalities") {
+      alert("Import non supporté pour le mode Formalités — les Ports d'Entrée se régénèrent via le pipeline (vue Audit).");
+      return;
+    }
+    setImporting(true);
     const importUrl = IMPORT_URLS[currentMode] || IMPORT_URLS.projects;
     const totalKey = IMPORT_TOTAL_KEY[currentMode] || IMPORT_TOTAL_KEY.projects;
     try {
       const text = await file.text();
       const fc = JSON.parse(text);
-      // Server-side content-type sniffing: raise a friendlier error early if
-      // the file structure is obviously not what the current mode expects.
-      // (Formalities export uses `escale_name` in properties; marinas uses
-      // `source`+`priority`; projects uses `title`+`url`.)
       const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
       const isProj = "title" in first && "url" in first;
-      const isMar = "source" in first && "priority" in first && !("escale_name" in first);
-      const isForm = "escale_name" in first || "territory_code" in first;
-      const looksLike = isForm ? "formalities" : isMar ? "marinas" : isProj ? "projects" : "unknown";
+      const isMar = "source" in first && "priority" in first;
+      const looksLike = isMar ? "marinas" : isProj ? "projects" : "unknown";
       if (looksLike !== "unknown" && looksLike !== currentMode) {
         throw new Error(
           `Fichier détecté comme "${looksLike}" mais le mode actif est "${currentMode}". ` +
@@ -103,11 +96,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
         );
       }
       const { data } = await api.post(importUrl, fc, { timeout: 180000 });
-      const totalLabel = currentMode === "marinas"
-        ? "Total marinas"
-        : currentMode === "formalities"
-          ? "Total formalities"
-          : t("totalN");
+      const totalLabel = currentMode === "marinas" ? "Total marinas" : t("totalN");
       alert(
         `${t("importDone")}\n` +
           `• ${t("importedN")}: ${data.imported}\n` +

@@ -226,10 +226,10 @@ Blue Intelligence transforms the living web of maritime data into an executable 
   3. Résultat : `/api/route`, `/api/projects`, `/api/marinas`, `/api/settings`, `/api/funders`, `/api/categories`, `/api/donations/total` = tous KO côté client, tuiles Carto avortées par ricochet.
 
 ### Fix (1 ligne)
-- `REACT_APP_BACKEND_URL=https://anchorages-50nm.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
+- `REACT_APP_BACKEND_URL=https://formal-mode-refactor.preview.emergentagent.com` puis `sudo supervisorctl restart frontend` → CRA rebuild → bundle contient l'URL publique, plus aucune occurrence de `0.0.0.0:8001`.
 
 ### Verification externe (public URL)
-- `curl https://anchorages-50nm.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
+- `curl https://formal-mode-refactor.preview.emergentagent.com/api/projects` → HTTP 200, FeatureCollection **4 463 features**.
 - `curl .../api/marinas` → HTTP 200, FeatureCollection **212 features**.
 - `curl .../api/route` → HTTP 200, FeatureCollection **71 features** (Berry-Mappemonde).
 - MongoDB `blueintel_db` : projects=4463, marinas=212 — **DB intacte**, pas de wipe, pas de re-import nécessaire.
@@ -244,13 +244,13 @@ Blue Intelligence transforms the living web of maritime data into an executable 
 - `GET  /api/settings` → `cloudflare_model = @cf/openai/gpt-oss-120b` (configurable, tier Kimi dormant tant qu'un token Workers AI valide n'est pas fourni).
 
 ### Lesson learnt (à documenter dans les runbooks fork)
-- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://anchorages-50nm.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
+- Après relance d'un job, **toujours** vérifier que `REACT_APP_BACKEND_URL` pointe sur le slug public (`https://formal-mode-refactor.preview.emergentagent.com`), pas sur `http://0.0.0.0:8001`. Symptôme : shell OK, mais toutes les XHR bloquées par Private Network Access en HTTPS externe (pas de blank screen, juste zéro data).
 
 
 ## Update 2026-08-25 — Phase 4.0 (réanimation) + Phase 4A : mode "Formalités & Douanes"
 
 ### Phase 4.0 — Réanimation
-- `/app/backend/.env` et `/app/frontend/.env` recréés (les fichiers avaient été perdus après relance du job). Clés API réinjectées : `TINYFISH_API_KEY`, `OPENROUTER_API_KEY`, `EMERGENT_LLM_KEY` (récupérée via l'integration manager, `sk-emergent-2BaBcC37a89984a811`), `STRIPE_API_KEY=sk_test_emergent` (sandbox), `RESEND_API_KEY=` vide, `CLOUDFLARE_ACCOUNT_ID=` et `CLOUDFLARE_API_TOKEN=` vides (fall-through voulu, tier CF dormant). `REACT_APP_BACKEND_URL=https://anchorages-50nm.preview.emergentagent.com` (slug public confirmé).
+- `/app/backend/.env` et `/app/frontend/.env` recréés (les fichiers avaient été perdus après relance du job). Clés API réinjectées : `TINYFISH_API_KEY`, `OPENROUTER_API_KEY`, `EMERGENT_LLM_KEY` (récupérée via l'integration manager, `sk-emergent-2BaBcC37a89984a811`), `STRIPE_API_KEY=sk_test_emergent` (sandbox), `RESEND_API_KEY=` vide, `CLOUDFLARE_ACCOUNT_ID=` et `CLOUDFLARE_API_TOKEN=` vides (fall-through voulu, tier CF dormant). `REACT_APP_BACKEND_URL=https://formal-mode-refactor.preview.emergentagent.com` (slug public confirmé).
 - Dépendances Python réinstallées : `emergentintegrations` via l'extra-index-url officiel, puis `pip install fastapi motor pymongo httpx beautifulsoup4 readability-lxml resend python-dotenv uvicorn pydantic global-land-mask` pour couvrir ce qui manquait dans le venv du container relancé (le `requirements.txt` a un conflit litellm/emergentintegrations qui empêche `pip install -r` de résoudre — contourné en installant emergentintegrations d'abord seul, le reste ensuite).
 - `sudo supervisorctl restart all` → backend + frontend RUNNING.
 - Restauration data : la DB `blueintel_db` était vide (0 projet, 0 marina). `POST /api/marinas/build` (radius 10 NM, sans corridor) → **212 marinas insérées en 133 s** (124 OSM + 69 SHOM + 19 curated, répartition P1=192 · P2=17 · P3=3, 0 overpass_error). **Les 4 463 projets historiques restent à ré-importer par l'utilisateur via `POST /api/import/geojson` avec son GeoJSON de sauvegarde** — non fait cette phase (pas de sauvegarde locale disponible et hors périmètre 4A).
@@ -771,3 +771,46 @@ Vérifié e2e : Gemini OK (gemini-2.5-flash → 404, remplacé par gemini-3-flas
 ## Update 2026-06 — Mode "Tout enchaîner"
 - Dropdown du lot d'enrichissement : option "Tout"/"All" (value 0) → le backend sélectionne TOUTES les marinas restantes (limit 0 = sans limite). Confirmation window.confirm avant lancement (clés i18n enrichBatchAllOption / enrichBatchAllConfirm).
 - Vérifié e2e : limit 0 → 799 candidates sélectionnées, Stop → 797 SKIP "batch annulé", les 2 en cours terminées (source gemini), running=False.
+
+## Update 2026-08-26 — REFACTOR COMPLET du mode Formalités : [ZEE mondiale -> Ports d'Entrée plaisance]
+
+### Décisions utilisateur
+- Anciennes fiches formalités (13 territoires FR) SUPPRIMÉES — le mode Formalités devient uniquement la carte mondiale [ZEE -> PoE].
+- Périmètre : toutes les ZEE mondiales (285 zones VLIZ Marine Regions v12) dès le départ.
+- Recherche : SearXNG en 1ère intention (bloqué depuis le pod → fallback opérationnel = Gemini Google Search grounding, GEMINI_API_KEY).
+- LLM extraction : Gemini flash-latest JSON strict → fallback EMERGENT_LLM_KEY (gemini-2.5-flash via emergentintegrations).
+- Stockage : MongoDB + shapely (PostGIS écarté — inutile à cette échelle).
+
+### Backend (architecture conforme au plan de développement fourni)
+- `/app/backend/poe.py` (~600 l) : pipeline complet — (1) référentiel ZEE via WFS VLIZ paginé (285 zones, simplify shapely 0.03 stocké Mongo `eez_zones`, carte 0.06 → data/eez_world_map.geojson 18 Mo/3.5 Mo gzip, anchor antiméridien = representative_point) ; (2) whitelist auto : ISO alpha-2 (pycountry) x motifs gov/gouv/gob/go/govt/gub/gv validés Public Suffix List (tldextract offline) + data/poe_exceptions.json (manual ~40 pays + auto bootstrappé) ; (3) recherche SearXNG → Gemini grounding (redirects vertexaisearch résolus) ; (4) gatekeeper tldextract + bootstrapping exceptions ; (5) collecte httpx + trafilatura/PyMuPDF, hash MD5 par source (skip ré-extraction si inchangé) ; (6) extraction LLM JSON strict {"ports":[{name,city,note}]}, jamais d'invention ; (7) géocodage Nominatim (throttle 1.1s, countrycodes, variantes de noms) → GeoNames (GEONAMES_USERNAME optionnel) ; (8) validation spatiale point-in-EEZ shapely (tolérance côtière 0.5°), distance_km si hors polygone.
+- `/app/backend/poe_routes.py` : GET /api/poe/zones (+summary), GET /api/poe/zones/geojson (FileResponse gzip), POST/GET /api/poe/referential/build[/status], POST/GET /api/poe/zones/{mrgid}/generate[/status] (202+lock), POST/GET/POST /api/poe/generate-batch[/status|/cancel] (concurrency 2, limit 5/10/25/0=all, only_missing), GET /api/poe/ports (GeoJSON, filtres mrgid/country), GET /api/export/poe.geojson.
+- SUPPRIMÉ de server.py : /api/territories, /api/formalities/* (list/get/generate/batch/verify/immigration), /api/export|import/formalities.*, /api/zee/trigger-formalities, seeding startup ; modules formalities.py + formalities_gen.py supprimés ; collection Mongo `formalities` droppée au startup. /api/stats?mode=formalities = count poe_ports.
+- Piège récurrent corrigé : header HTTP X-EEZ-Source avec em-dash → UnicodeEncodeError latin-1 (même bug que X-Title Phase 4B) → ASCIIfié.
+- .env : EMERGENT_LLM_KEY réinjectée, GEONAMES_USERNAME= (vide). Nouveaux packages : trafilatura, pymupdf, tldextract, pycountry (requirements.txt appended ; conflit litellm/emergentintegrations préexistant inchangé).
+
+### Frontend
+- FormalitiesPanel.js réécrit : liste des 285 ZEE (drapeau iso2||sov_iso2, souverain, statut, badge PoE, stale), recherche, filtre statut, résumé X/285 générées · N ports, attributions VLIZ/Nominatim.
+- MapView.js : couche escales/fiches supprimée → choroplèthe ZEE (L.geoJSON lazy-load du fichier 18 Mo au 1er passage en mode formalities, styles par statut gris/ambre/ambre-dashed/rouge, restyle live via zoneItemsRef) + cluster PoE ambre (dots 14px). Popup ZEE : statut, ⚓ N PoE, date, bouton Générer/Régénérer (window.__biGeneratePoeZone → 202+poll), sources officielles cliquables, warning ia_sans_source, attribution. Popup PoE : nom/ville/note, badge validation spatiale (✓ ZEE / ⚠ hors ZEE ~km), source géocodage, sources, attribution Nominatim. flyToZone : fitBounds bbox, ou flyTo(anchor,5) si span>350° (fix antiméridien Fidji/Russie), openPopup(anchor).
+- BatchHub.js (carte SIA formalities) : bouton "Construire le référentiel ZEE mondial (VLIZ)" (progress+logs), batch PoE (select 5/10/25/Tout + checkbox only_missing + Stop + logs + résultats par zone). Section ZEE crossings supprimée (zee.py backend conservé mais plus exposé dans l'UI).
+- App.js : states/fetchers/handlers formalités remplacés (poeZones/poePorts poll 12s, __biGeneratePoeZone), onPoeRefresh → AuditView → BatchHub.
+- i18n : ~40 clés poe* EN+FR, toutes les clés formalities*/zee* legacy purgées (sauf modeFormalities + formalitiesDisclaimer réutilisées).
+- SettingsPanel : export formalities → /api/export/poe.geojson ; import désactivé en mode formalités (données régénérables).
+- Manuel EN/FR (server.py MANUALS) réécrit pour la section Formalités + hub Audit + pipeline.
+
+### Vérifié live (2026-08-26)
+- Référentiel : 285/285 ZEE en ~9 min (WFS paginé sortBy=mrgid), carte 18 040 Ko, gzip 3.5 Mo servi HTTP 200 en ~6 s.
+- Génération réelle : Fidji mrgid 8325 → 7 PoE statut ia (grounding 7 candidats, gatekeeper 4 officiels dont frcs.org.fj/baf.com.fj via exceptions manual, LLM 7 ports, Port Denarau/Vuda/Savusavu géocodés ✓ dans la ZEE). Batch 5 zones concurrency 2 : Alaska 13 PoE ia · Albanie 4 ia · Algérie 11 ia_sans_source · Abu Musa + Alhucemas erreur (honnête : rochers sans ports). Total post-tests : 4/285 générées, 35 ports.
+- Frontend : 285 polygones rendus, choroplèthe live, clic Fidji → fly Pacifique + popup FR complet, recherche/filtres OK.
+
+### Backlog
+- Lancer le batch complet des 281 ZEE restantes (~2-4 h, bouton "Tout" dans le SIA) — laissé à la main de l'utilisateur.
+- GEONAMES_USERNAME à renseigner pour activer le fallback GeoNames (Nominatim seul actuellement).
+- Cron de rafraîchissement des zones stale (>180 j) ; ré-essai automatique des zones en `erreur`.
+- SearXNG self-hosted éventuel pour honorer la 1ère intention du plan (instances publiques bloquées depuis le pod).
+
+### Post-tests 2026-08-26 (iteration_11 — 20/20 backend, 90% frontend)
+- FIX CRITIQUE : generate_zone_poe ne purge plus les poe_ports quand la ré-extraction retourne 0 port (ports précédents préservés + last_error, statut inchangé). Remplacement uniquement si extraction non vide.
+- FIX HIGH : bouton popup Générer — état global window.__biPoeGenState[mrgid] lu par le builder de popup (le rebuild du popup affiche "Génération…" disabled) + re-query DOM à chaque tick de poll.
+- FIX MEDIUM : antiméridien — maxBounds (viscosity 1) clampe le flyTo (Fidji 175°E → centre max ~146°E) ; le popup est désormais ré-ancré dans la vue effective (marge 12%) → toujours entièrement visible.
+- FIX LOW : géocodage aberrant (>300 km de la ZEE) → coordonnées rejetées (port conservé sans géométrie) ; contraste attributions popup/panel relevé ; tooltip last_error sur les zones en erreur dans la sidebar.
+- Tests régression : /app/backend/tests/test_poe_api.py (19 tests rapides), test_poe_generate.py (génération réelle Fidji ~40s + 409).

@@ -50,13 +50,12 @@ export default function App() {
     setShowAnchoragesRaw(v);
     try { localStorage.setItem("bi.showAnchorages", v ? "1" : "0"); } catch (_) { /* ignore */ }
   }, []);
-  // Phase 4A — Formalities mode data
+  // Refactor 2026-06 — Formalities mode = world [EEZ -> Ports of Entry]
   const [route, setRoute] = useState({ type: "FeatureCollection", features: [] });
-  const [territories, setTerritories] = useState(null);
-  const [formalities, setFormalities] = useState([]);
-  const [selectedTerritory, setSelectedTerritory] = useState(null);
-  const [selectedEscale, setSelectedEscale] = useState(null);
-  const [flyToEscale, setFlyToEscale] = useState(null); // {name, lat, lon, ts}
+  const [poeZones, setPoeZones] = useState({ count: 0, summary: null, items: [] });
+  const [poePorts, setPoePorts] = useState({ type: "FeatureCollection", features: [] });
+  const [selectedZone, setSelectedZone] = useState(null);   // mrgid
+  const [flyToZone, setFlyToZone] = useState(null);         // {mrgid, bbox, ts}
   const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
@@ -131,7 +130,7 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  // ---- Phase 4A: route + territories + formalities ----
+  // ---- Refactor 2026-06: route + EEZ zones + PoE ports ----
   const fetchRoute = useCallback(async () => {
     try {
       const { data } = await api.get("/route");
@@ -139,17 +138,17 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  const fetchTerritories = useCallback(async () => {
+  const fetchPoeZones = useCallback(async () => {
     try {
-      const { data } = await api.get("/territories");
-      setTerritories(data);
+      const { data } = await api.get("/poe/zones");
+      setPoeZones(data);
     } catch (e) { /* transient */ }
   }, []);
 
-  const fetchFormalities = useCallback(async () => {
+  const fetchPoePorts = useCallback(async () => {
     try {
-      const { data } = await api.get("/formalities");
-      setFormalities(data?.items || []);
+      const { data } = await api.get("/poe/ports");
+      setPoePorts(data);
     } catch (e) { /* transient */ }
   }, []);
 
@@ -264,96 +263,65 @@ export default function App() {
       }
     };
 
-    // ---- Phase 4B: formalities generation / verify / immigration handlers ----
-    // These do NOT block the UI — they kick off the async task and let
-    // FormalitiesPanel poll the status. App.js just refreshes the collection
-    // on completion so map + list + card update live.
-    window.__biGenerateFormality = async (code) => {
-      try {
-        const r = await api.post(`/formalities/${code}/generate`);
-        if (r.status === 202 || r.status === 200) return { ok: true };
-        return { ok: false, code: r.status };
-      } catch (e) {
-        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
-      }
-    };
-    window.__biVerifyFormality = async (code) => {
-      try {
-        await api.put(`/formalities/${code}/verify`);
-        await fetchFormalities();
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
-      }
-    };
-    // Phase 6 — button handlers wired to the map popup (formalities fiche
-    // was migrated from the sidebar to the popup). They kick the async
-    // generate / verify pipelines and update the button label so the user
-    // sees feedback without leaving the popup.
-    window.__biFormalityPopupRefresh = async (code) => {
-      const btn = document.querySelector('[data-testid="formalities-refresh-btn"]');
+    // ---- Refactor 2026-06: PoE generation handler (wired to the EEZ map popup) ----
+    // Kicks the async pipeline (202) then polls the status until done (~1-6 min)
+    // and refreshes zones + ports so the map recolours live.
+    window.__biPoeGenState = window.__biPoeGenState || {};
+    window.__biGeneratePoeZone = async (mrgid) => {
+      // The popup HTML is rebuilt on every zones/ports refetch — re-resolve the
+      // button on EVERY update and keep a global gen-state that the popup
+      // builder reads so a rebuilt popup renders the "Generating…" state too.
       const setBtn = (label, disabled = true) => {
+        const btn = document.querySelector('[data-testid="poe-generate-btn"]');
         if (!btn) return;
         btn.disabled = disabled;
         btn.textContent = label;
       };
-      const kick = await window.__biGenerateFormality(code);
-      if (!kick.ok && kick.code !== 409) {
-        setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), false);
-        return;
+      const finish = (label) => {
+        delete window.__biPoeGenState[mrgid];
+        setBtn(label, false);
+      };
+      window.__biPoeGenState[mrgid] = "running";
+      try {
+        const r = await api.post(`/poe/zones/${mrgid}/generate`);
+        if (r.status !== 202 && r.status !== 200) {
+          finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
+          return;
+        }
+      } catch (e) {
+        if (e?.response?.status !== 409) {
+          finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
+          return;
+        }
       }
-      setBtn("↻ " + (lang === "fr" ? "Rafraîchissement…" : "Refreshing…"));
-      // Poll status until done — up to ~6 min
-      for (let i = 0; i < 120; i++) {
+      setBtn("↻ " + (lang === "fr" ? "Génération…" : "Generating…"));
+      for (let i = 0; i < 150; i++) {
         await new Promise((res) => setTimeout(res, 3000));
+        setBtn("↻ " + (lang === "fr" ? "Génération…" : "Generating…"));
         try {
-          const st = await api.get(`/formalities/${code}/generate/status`);
+          const st = await api.get(`/poe/zones/${mrgid}/generate/status`);
           if (st.data?.state === "done") {
-            await fetchFormalities();
-            setBtn("✓ " + (lang === "fr" ? "Rafraîchie" : "Refreshed"), false);
-            break;
+            await fetchPoeZones();
+            await fetchPoePorts();
+            finish("✓ " + (lang === "fr" ? "Générée" : "Generated"));
+            return;
           }
           if (st.data?.state === "error") {
-            setBtn("↻ " + (lang === "fr" ? "Échec" : "Failed"), false);
-            break;
+            finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
+            return;
           }
         } catch (_) { /* transient */ }
       }
-    };
-    window.__biFormalityPopupVerify = async (code) => {
-      const btn = document.querySelector('[data-testid="formalities-verify-btn"]');
-      if (btn) btn.disabled = true;
-      const r = await window.__biVerifyFormality(code);
-      if (!r?.ok) {
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = "✓ " + (lang === "fr" ? "Échec" : "Failed");
-        }
-        return;
-      }
-      // Refetch formalities so the popup rebuilds with status=verifiee (green).
-      await fetchFormalities();
-    };
-    window.__biGenerateImmigration = async (code, nat) => {
-      try {
-        const r = await api.post(`/formalities/${code}/immigration/${nat}`);
-        return { ok: r.status === 202 || r.status === 200 };
-      } catch (e) {
-        return { ok: false, code: e?.response?.status || 0, msg: e?.message };
-      }
+      finish("↻ Timeout");
     };
 
     return () => {
       delete window.__biDonate;
       delete window.__biEnrichMarina;
       delete window.__biEnrichProject;
-      delete window.__biGenerateFormality;
-      delete window.__biVerifyFormality;
-      delete window.__biGenerateImmigration;
-      delete window.__biFormalityPopupRefresh;
-      delete window.__biFormalityPopupVerify;
+      delete window.__biGeneratePoeZone;
     };
-  }, [fetchMarinas, fetchProjects, fetchFormalities, lang]);
+  }, [fetchMarinas, fetchProjects, fetchPoeZones, fetchPoePorts, lang]);
 
   useEffect(() => {
     if (donateTarget && !donateTarget.title) {
@@ -371,8 +339,8 @@ export default function App() {
     fetchMarinas();
     fetchAnchorages();
     fetchRoute();
-    fetchTerritories();
-    fetchFormalities();
+    fetchPoeZones();
+    fetchPoePorts();
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(fetchProjects, 5000);
     const d = setInterval(fetchDonations, 10000);
@@ -380,22 +348,22 @@ export default function App() {
     // Marinas refresh only when a build might be running — a light 8s poll.
     const m = setInterval(fetchMarinas, 8000);
     const a = setInterval(fetchAnchorages, 10000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); clearInterval(a); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchAnchorages, fetchRoute, fetchTerritories, fetchFormalities]);
+    const z = setInterval(fetchPoeZones, 12000);
+    const pp = setInterval(fetchPoePorts, 12000);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); clearInterval(a); clearInterval(z); clearInterval(pp); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchAnchorages, fetchRoute, fetchPoeZones, fetchPoePorts]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
     setFlyToMarina({ id, lat, lon, ts: Date.now() });
   }, []);
 
-  // Phase 4A — Handler wired to both the sidebar rows and the map escale
-  // markers: opens the formality card for the given territory + centres the
-  // map on the escale coordinates.
-  const handleSelectEscale = useCallback((escaleName, territoryCode, coord) => {
-    setSelectedTerritory(territoryCode);
-    setSelectedEscale(escaleName);
-    if (coord && Array.isArray(coord)) {
-      setFlyToEscale({ name: escaleName, lat: coord[1], lon: coord[0], ts: Date.now() });
+  // Refactor 2026-06 — Handler wired to the sidebar rows and the EEZ polygons:
+  // selects the zone; when a bbox is supplied (sidebar click), also flies to it.
+  const handleSelectZone = useCallback((mrgid, bbox, anchor) => {
+    setSelectedZone(mrgid);
+    if (bbox && Array.isArray(bbox) && bbox.length === 4) {
+      setFlyToZone({ mrgid, bbox, anchor: anchor || null, ts: Date.now() });
     }
   }, []);
 
@@ -431,13 +399,9 @@ export default function App() {
         {mode === "formalities" && (
           <FormalitiesPanel
             t={t}
-            route={route}
-            formalities={formalities}
-            territories={territories}
-            selectedTerritory={selectedTerritory}
-            selectedEscale={selectedEscale}
-            onSelectEscale={handleSelectEscale}
-            onFormalitiesRefresh={fetchFormalities}
+            zones={poeZones}
+            selectedZone={selectedZone}
+            onSelectZone={handleSelectZone}
           />
         )}
         <main className="flex-1 relative min-w-0">
@@ -448,19 +412,18 @@ export default function App() {
               marinas={marinas}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
-              formalities={formalities}
-              territories={territories}
+              poeZones={poeZones.items}
+              poePorts={poePorts}
               route={route}
-              selectedTerritory={selectedTerritory}
-              selectedEscale={selectedEscale}
-              onSelectEscale={handleSelectEscale}
+              onSelectZone={handleSelectZone}
               flyToMarina={flyToMarina}
-              flyToEscale={flyToEscale}
+              flyToZone={flyToZone}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
           ) : (
-            <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }} onFormalitiesRefresh={fetchFormalities}
+            <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }}
+              onPoeRefresh={() => { fetchPoeZones(); fetchPoePorts(); }}
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
           )}
@@ -473,7 +436,6 @@ export default function App() {
             // dataset (never both, to avoid unnecessary re-fetches).
             onImported={(importedMode) => {
               if (importedMode === "marinas") fetchMarinas();
-              else if (importedMode === "formalities") fetchFormalities();
               else fetchProjects(true);
             }}
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
