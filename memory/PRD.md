@@ -41,13 +41,19 @@ Application OSINT de cartographie à deux pipelines : (1) scraper de Ports d'Ent
   - Validation OSM Overpass complète lancée sur les 1171 PoE (résumable via only_unchecked ; tuée par tout hot-reload backend — relancer POST /api/poe/validate-osm {"only_unchecked":true}).
   - Conformité : plafonds par pays supprimés (plus de ports[:25], coerce 150), tronquage 10k supprimé (60k/source + RAG), matrice requêtes multilingues 16 langues (localized_query), regex SERP élargie (brochures/tourisme/bagages/VTS/duty-free), Cross-Encoder ms-marco pour re-ranking géocodage (fallback bi-encoder), PDF 60 pages.
 
+- [2026-08-26 nuit] Classifieur SERP + Reprise auto (testing agent 17/17 + 35/36 régression) :
+  - Classifieur SERP (ml_core) : TF-IDF char n-grams sur URL + LogReg, weak supervision (195 URLs sources réelles vs négatifs synthétiques touristiques), acc=0.987/f1=0.983. Endpoints POST /api/ml/train/serp, POST /api/ml/serp/predict {"url"}. Intégré au pipeline PoE via poe.rank_candidates_ml (tri avant téléchargement + drop score<0.1 si ≥3 alternatives), appelé après serp_filter et après le Level-2 retry.
+  - Reprise auto des jobs : état persisté dans db.jobs (_id='osm_validation', desired/params/resumed), poe_routes._start_osm_task + schedule_job_resume() (délai 20s) appelé au startup de server.py. Respecte params.only_unchecked. Validé E2E (kill simulé → reprise → desired=false) + cas "reprise inutile".
+  - Validation OSM COMPLÈTE terminée : 1171/1171 PoE vérifiés, 678 haute confiance (≥0.5), 154 sans tag OSM à 3 km.
+  - Tests de régression réutilisables : tests/test_serp_ml_resume.py (rapide, sans coût LLM).
+
 ## Conformité spec (Document sans titre (6).md)
-- ✅ 21/25 items pleinement conformes (voir liste ci-dessus + itération précédente).
-- ⚠️ Partiels : traduction NLP requêtes (matrice statique 16 langues au lieu d'opus-mt local) ; classifieur SERP dédié titre/extrait (le gatekeeper ML couvre les pages, pas les SERP) ; crowdsourcing PoE avec lien de loi (le module existant couvre les projets).
+- ✅ 23/25 items pleinement conformes (classifieur SERP maintenant fait).
+- ⚠️ Partiels : traduction NLP requêtes (matrice statique 16 langues au lieu d'opus-mt local) ; crowdsourcing PoE avec lien de loi (le module existant couvre les projets).
 
 ## Backlog priorisé
-- P1 : Classifieur SERP dédié (titre+extrait → probabilité liste officielle) ; crowdsourcing PoE (proposition skipper + lien texte de loi + vérification auto).
-- P2 : opus-mt local pour traduction dynamique des requêtes ; persistance Mongo des états de jobs (survie aux reloads) + auto-resume validate-osm au démarrage ; croisement projets ↔ douanes ; ré-import des ~695 PoE non géocodés (nécessite sauvegarde complète) ; simplification géométrie ZEE à bas zoom (perfs carte).
+- P1 : Crowdsourcing PoE (proposition skipper + lien texte de loi + vérification auto).
+- P2 : opus-mt local pour traduction dynamique des requêtes ; filtre confiance OSM sur la carte ; croisement projets ↔ douanes ; ré-import des ~695 PoE non géocodés (nécessite sauvegarde complète) ; simplification géométrie ZEE à bas zoom (perfs carte) ; découpage server.py/marinas.py (>700 lignes, dette technique).
 
 ## Notes testing
 - Regression rapide : `cd /app/backend && python3 -m pytest tests/ -p no:randomly` (test_ner_unclos_osm.py = 16 tests non-destructifs).

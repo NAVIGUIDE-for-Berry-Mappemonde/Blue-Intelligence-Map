@@ -1780,3 +1780,5 @@ async def _startup_poe():
     # Rafraîchissement automatique : zones périmées re-vérifiées (monitoring MD5)
     # et erreurs re-tentées, sans action manuelle.
     poe_routes.start_auto_refresh()
+    # Reprise automatique des tâches de fond interrompues (validation OSM)
+    poe_routes.schedule_job_resume()

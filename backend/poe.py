@@ -410,6 +410,29 @@ async def search_grounded(zone: dict, whitelist: list[str], log, query_override:
     return await grounded_search(prompt, log=log, domain_fn=domain_of)
 
 
+def rank_candidates_ml(candidates: list[dict], log) -> list[dict]:
+    """Classifieur SERP (ml_core) : trie les candidats par probabilité de mener
+    à une liste officielle de ports AVANT tout téléchargement, et écarte les
+    scores très faibles quand des alternatives existent."""
+    if len(candidates) < 2:
+        return candidates
+    try:
+        from ml_core import predict_serp
+        scored = [((predict_serp(c.get("url") or "") or {}).get("score"), c) for c in candidates]
+    except Exception:
+        return candidates
+    if all(s is None for s, _ in scored):
+        return candidates
+    scored.sort(key=lambda x: x[0] if x[0] is not None else 0.5, reverse=True)
+    strong = [c for s, c in scored if s is None or s >= 0.1]
+    ranked = strong if len(strong) >= 3 else [c for _, c in scored]
+    dropped = len(scored) - len(ranked)
+    top = ", ".join(f"{c.get('domain') or '?'}={s:.2f}" for s, c in scored[:3] if s is not None)
+    log(f"classifieur SERP: priorisation avant téléchargement — {top}"
+        + (f" ({dropped} écarté(s), score < 0.1)" if dropped else ""))
+    return ranked
+
+
 # ---------------------------------------------------------------------------
 # 3. Collecte & parsing — cascade hybride N1/N2/N3 (extract_core)
 # ---------------------------------------------------------------------------
@@ -508,6 +531,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
     if not candidates:
         candidates, synthesis = await search_grounded(zone, whitelist, log)
     candidates = serp_filter(candidates)
+    candidates = rank_candidates_ml(candidates, log)
 
     # --- Gatekeeper + bootstrapping des exceptions ---
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
@@ -532,6 +556,7 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
         if extra:
             log(f"Level-2 retry: {len(extra)} source(s) supplémentaires trouvées")
             candidates += extra
+            candidates = rank_candidates_ml(candidates, log)
         official = [c for c in candidates if url_allowed(c["url"], whitelist)]
 
     rejected = [c for c in candidates if c not in official]

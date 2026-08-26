@@ -424,28 +424,74 @@ class OsmValidateBody(BaseModel):
     radius_m: int = 3000
 
 
-@router.post("/poe/validate-osm", status_code=202)
-async def poe_validate_osm(body: OsmValidateBody | None = None):
-    if OSM_STATE.running:
-        raise HTTPException(409, "OSM validation already running")
-    body = body or OsmValidateBody()
+def _start_osm_task(only_unchecked: bool, limit: int, radius_m: int, resumed: bool = False):
+    """Démarre la validation Overpass et persiste l'état du job dans db.jobs
+    (reprise automatique après kill/reload du serveur)."""
     OSM_STATE.reset()
     OSM_STATE.running = True
     OSM_STATE.started_at = time.time()
+    if resumed:
+        OSM_STATE.log("Reprise automatique — job interrompu par un redémarrage du serveur")
 
     async def _runner():
         try:
+            await _db.jobs.update_one(
+                {"_id": "osm_validation"},
+                {"$set": {"desired": True, "resumed": resumed, "started_at": poe.now_iso(),
+                          "params": {"only_unchecked": only_unchecked, "limit": limit,
+                                     "radius_m": radius_m}}},
+                upsert=True)
             OSM_STATE.summary = await osm_validate.validate_ports(
-                _db, OSM_STATE, only_unchecked=body.only_unchecked,
-                limit=body.limit, radius_m=body.radius_m)
+                _db, OSM_STATE, only_unchecked=only_unchecked, limit=limit, radius_m=radius_m)
+            await _db.jobs.update_one({"_id": "osm_validation"}, {"$set": {
+                "desired": False, "finished_at": poe.now_iso(),
+                "cancelled": OSM_STATE.cancel, "summary": OSM_STATE.summary}})
         except Exception as e:
+            # desired reste True en base → nouvelle tentative au prochain démarrage
             OSM_STATE.error = f"{type(e).__name__}: {e}"
-            OSM_STATE.log(f"FATAL: {OSM_STATE.error}")
+            OSM_STATE.log(f"FATAL: {OSM_STATE.error} — reprise auto au prochain démarrage")
         finally:
             OSM_STATE.finished_at = time.time()
             OSM_STATE.running = False
 
     asyncio.create_task(_runner())
+
+
+def schedule_job_resume(delay_s: float = 20.0):
+    """Reprise automatique des jobs de fond interrompus (appelé au startup).
+    Le délai évite de relancer pendant une rafale de hot-reloads."""
+    async def _resume():
+        await asyncio.sleep(delay_s)
+        try:
+            job = await _db.jobs.find_one({"_id": "osm_validation"})
+            if not job or not job.get("desired") or OSM_STATE.running:
+                return
+            params = job.get("params") or {}
+            only_unchecked = bool(params.get("only_unchecked", True))
+            q = {"lat": {"$ne": None}}
+            if only_unchecked:
+                q["osm_checked_at"] = {"$exists": False}
+            remaining = await _db.poe_ports.count_documents(q)
+            if remaining == 0:
+                await _db.jobs.update_one({"_id": "osm_validation"}, {"$set": {
+                    "desired": False, "finished_at": poe.now_iso(),
+                    "note": "reprise inutile: tous les PoE déjà vérifiés"}})
+                return
+            print(f"[resume] validation OSM interrompue détectée — reprise auto ({remaining} PoE restants)")
+            _start_osm_task(only_unchecked, int(params.get("limit") or 0),
+                            int(params.get("radius_m") or 3000), resumed=True)
+        except Exception as e:
+            print(f"[resume] échec de la reprise automatique: {e}")
+
+    asyncio.create_task(_resume())
+
+
+@router.post("/poe/validate-osm", status_code=202)
+async def poe_validate_osm(body: OsmValidateBody | None = None):
+    if OSM_STATE.running:
+        raise HTTPException(409, "OSM validation already running")
+    body = body or OsmValidateBody()
+    _start_osm_task(body.only_unchecked, body.limit, body.radius_m)
     return {"status": "started", "only_unchecked": body.only_unchecked,
             "limit": body.limit, "radius_m": body.radius_m}
 

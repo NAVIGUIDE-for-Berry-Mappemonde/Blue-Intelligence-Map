@@ -22,9 +22,11 @@ ANOMALY_REPORT_FILE = MODELS_DIR / "poe_anomaly_report.json"
 NER_DATASET_FILE = MODELS_DIR / "ner_dataset.jsonl"
 NER_MODEL_DIR = MODELS_DIR / "ner_spacy"
 NER_METRICS_FILE = MODELS_DIR / "ner_metrics.json"
+SERP_MODEL_FILE = MODELS_DIR / "serp_classifier.joblib"
 
 _gatekeeper_cache = None
 _ner_cache = None
+_serp_cache = None
 
 # Corpus terrestre synthétique — complète les négatifs réels (db.failed) trop rares.
 _LAND_NEGATIVES = [
@@ -70,7 +72,8 @@ async def dataset_stats(db) -> dict:
 
 
 def models_status() -> dict:
-    out = {"gatekeeper": None, "anomaly_report": None, "ner_dataset": None, "ner_model": None}
+    out = {"gatekeeper": None, "anomaly_report": None, "ner_dataset": None,
+           "ner_model": None, "serp_classifier": None}
     if GATEKEEPER_FILE.exists():
         try:
             import joblib
@@ -90,6 +93,13 @@ def models_status() -> dict:
             out["ner_model"] = json.loads(NER_METRICS_FILE.read_text())
         except Exception:
             pass
+    if SERP_MODEL_FILE.exists():
+        try:
+            import joblib
+            bundle = joblib.load(SERP_MODEL_FILE)
+            out["serp_classifier"] = {k: bundle.get(k) for k in ("trained_at", "n_pos", "n_neg", "accuracy", "f1")}
+        except Exception as e:
+            out["serp_classifier"] = {"error": str(e)[:100]}
     return out
 
 
@@ -400,3 +410,126 @@ def extract_entities(text: str) -> list[dict]:
             seen.add(k)
             uniq.append(e)
     return uniq
+
+
+# ---------------------------------------------------------------------------
+# Classifieur SERP (weak supervision) — prédit si une URL de résultat de
+# recherche mène à une liste officielle de ports, AVANT tout téléchargement.
+# Positifs : URLs sources ayant réellement produit des PoE en base.
+# Négatifs : corpus synthétique d'URLs touristiques/blogs/agrégateurs.
+# ---------------------------------------------------------------------------
+_SERP_NEG_TEMPLATES = [
+    "https://www.tripadvisor.com/Attractions-g{i}-Activities-{c}.html",
+    "https://www.booking.com/searchresults.html?ss={c}+marina+hotel",
+    "https://en.wikipedia.org/wiki/Tourism_in_{c}",
+    "https://www.cruisecritic.com/ports/newparent.cfm?port={c}",
+    "https://sailing-adventures.blogspot.com/2024/05/our-trip-to-{c}-beaches.html",
+    "https://forum.cruisersforum.com/threads/best-anchorages-{c}.{i}/",
+    "https://www.expedia.com/{c}-Vacations.d{i}.Travel-Guide",
+    "https://www.marinetraffic.com/en/ais/details/ports/{i}/{c}",
+    "https://maritime-news.com/{c}-yacht-show-highlights-{i}",
+    "https://www.pinterest.com/pin/{i}-sailing-{c}/",
+    "https://www.youtube.com/watch?v=sail{i}",
+    "https://travel-guide.net/{c}/top-10-beaches-and-resorts",
+    "https://yacht-charter-deals.com/destinations/{c}/prices",
+    "https://dutyfree-shopping.com/{c}/airport-terminal",
+    "https://baggage-allowances.info/{c}/customs-rules-for-tourists",
+    "https://www.hotels.com/{c}/waterfront-resorts",
+    "https://medium.com/@sailor{i}/exploring-{c}-by-boat",
+    "https://www.reddit.com/r/sailing/comments/{i}/visiting_{c}/",
+]
+
+
+async def build_serp_dataset(db):
+    pos = set()
+    async for p in db.poe_ports.find({}, {"source_urls": 1}):
+        for u in (p.get("source_urls") or []):
+            if isinstance(u, str) and u.startswith("http"):
+                pos.add(u.strip())
+    async for z in db.eez_zones.find({"poe_count": {"$gt": 0}}, {"sources": 1}):
+        for s in (z.get("sources") or []):
+            u = (s or {}).get("url")
+            if isinstance(u, str) and u.startswith("http"):
+                pos.add(u.strip())
+    names = []
+    async for z in db.eez_zones.find({}, {"name": 1}):
+        n = (z.get("name") or "").strip().replace(" ", "-")
+        if n:
+            names.append(n)
+    names = names or ["Atlantis"]
+    neg, i = [], 0
+    target = max(len(pos), 300)
+    while len(neg) < target:
+        neg.append(_SERP_NEG_TEMPLATES[i % len(_SERP_NEG_TEMPLATES)].format(
+            c=names[i % len(names)], i=10000 + i))
+        i += 1
+    return sorted(pos), neg
+
+
+def _train_serp_sync(pos: list[str], neg: list[str]) -> dict:
+    import joblib
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, f1_score
+
+    urls = pos + neg
+    labels = [1] * len(pos) + [0] * len(neg)
+    Xtr_u, Xte_u, ytr, yte = train_test_split(urls, labels, test_size=0.15,
+                                              random_state=42, stratify=labels)
+    vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), max_features=40000)
+    Xtr = vec.fit_transform(Xtr_u)
+    Xte = vec.transform(Xte_u)
+    clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+    clf.fit(Xtr, ytr)
+    pred = clf.predict(Xte)
+    metrics = {
+        "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "n_pos": len(pos), "n_neg": len(neg),
+        "accuracy": round(float(accuracy_score(yte, pred)), 4),
+        "f1": round(float(f1_score(yte, pred)), 4),
+    }
+    joblib.dump({"vectorizer": vec, "model": clf, **metrics}, SERP_MODEL_FILE)
+    return metrics
+
+
+async def train_serp(db, log=None) -> dict:
+    global _serp_cache
+    log = log or (lambda m: None)
+    pos, neg = await build_serp_dataset(db)
+    if len(pos) < 50:
+        raise ValueError(f"seulement {len(pos)} URLs sources positives en base — entraînement non significatif")
+    log(f"dataset SERP weak supervision: {len(pos)} URLs sources réelles (BDD PoE), {len(neg)} négatifs synthétiques")
+    metrics = await asyncio.to_thread(_train_serp_sync, pos, neg)
+    _serp_cache = None
+    log(f"classifieur SERP entraîné: accuracy={metrics['accuracy']} f1={metrics['f1']}")
+    return metrics
+
+
+def _load_serp():
+    global _serp_cache
+    if _serp_cache is not None:
+        return _serp_cache
+    if not SERP_MODEL_FILE.exists():
+        return None
+    try:
+        import joblib
+        _serp_cache = joblib.load(SERP_MODEL_FILE)
+    except Exception:
+        return None
+    return _serp_cache
+
+
+def predict_serp(url: str):
+    """Probabilité [0-1] que l'URL mène à une liste officielle de ports.
+    None si le modèle est absent ou entraîné sur trop peu de données."""
+    bundle = _load_serp()
+    if not bundle or bundle.get("n_pos", 0) < 50 or not url:
+        return None
+    try:
+        X = bundle["vectorizer"].transform([url])
+        score = float(bundle["model"].predict_proba(X)[0][1])
+        return {"score": round(score, 4), "official_list": score >= 0.5}
+    except Exception as e:
+        print(f"[ml_core] predict_serp failed: {type(e).__name__}: {e}")
+        return None
