@@ -168,7 +168,8 @@
       "gov.ky"
     ],
     "CW": [
-      "gobiernu.cw"
+      "gobiernu.cw",
+      "douane.cw"
     ],
     "CD": [
       "gouv.cd"
@@ -240,6 +241,9 @@
       "gov.vu",
       "ports.gov.vu",
       "customsinlandrevenue.gov.vu"
+    ],
+    "NL": [
+      "douane.nl"
     ]
   }
 }
