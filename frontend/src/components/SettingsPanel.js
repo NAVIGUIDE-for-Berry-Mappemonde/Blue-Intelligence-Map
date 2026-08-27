@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Download, FileDown, Trash2, Upload, X } from "lucide-react";
+import { Check, Download, FileDown, Upload, X } from "lucide-react";
 import api from "../api";
 
-const MODELS = [
-  "gemini-3-flash-preview",
-  "gemini-3.5-flash",
-  "gemini-3.1-pro-preview",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-];
+// Phase 6 — Extraction (project-swarm) section migrated to Audit → Projects card.
+// SettingsPanel now only hosts transverse concerns:
+//   - Documentation (manual EN/FR)
+//   - Data (import GeoJSON / contextual export / clear projects)
+//   - Marine filtering (coast distance, marine score)
+//   - Map (min zoom, max markers)
+//   - API keys (LLM + TinyFish)
+// The panel typography adopts the active mode's accent (cyan / red / amber).
 
 function Field({ label, children }) {
   return (
@@ -19,9 +20,28 @@ function Field({ label, children }) {
   );
 }
 
-const inputCls = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500";
+const inputCls = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50";
 
-export default function SettingsPanel({ t, lang, settings, onSaved, onImported, onProjectsCleared, onClose }) {
+// Phase 6 — contextual GeoJSON export URL, driven by the currently active mode.
+const EXPORT_URLS = {
+  projects:    "/api/export/geojson",
+  marinas:     "/api/export/marinas.geojson",
+  formalities: "/api/export/poe.geojson",
+};
+
+// 2026-08-24 bug-fix — import endpoint per mode. Formalities (PoE) data is
+// fully regenerable from the pipeline, so it has no import endpoint.
+const IMPORT_URLS = {
+  projects:    "/import/geojson",
+  marinas:     "/import/marinas.geojson",
+};
+
+const IMPORT_TOTAL_KEY = {
+  projects:    "total_projects",
+  marinas:     "total_marinas",
+};
+
+export default function SettingsPanel({ t, mode, settings, onSaved, onImported, onProjectsCleared, onClose }) {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -39,10 +59,9 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
     const body = { ...form };
     delete body.gemini_api_key_set;
     delete body.tinyfish_api_key_set;
-    ["tinyfish_agents", "extract_concurrency", "test_max_urls_per_seed", "full_max_urls_per_seed", "min_zoom", "max_markers", "max_partner_orgs", "saturation_limit"].forEach(
+    ["min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
-    body.rescan_after_days = parseFloat(body.rescan_after_days);
     await api.put("/settings", body);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -55,13 +74,38 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const currentMode = mode || "projects";
+    if (currentMode === "formalities") {
+      alert("Import non supporté pour le mode Formalités — les Ports d'Entrée se régénèrent via le pipeline (vue Audit).");
+      return;
+    }
     setImporting(true);
+    const importUrl = IMPORT_URLS[currentMode] || IMPORT_URLS.projects;
+    const totalKey = IMPORT_TOTAL_KEY[currentMode] || IMPORT_TOTAL_KEY.projects;
     try {
       const text = await file.text();
       const fc = JSON.parse(text);
-      const { data } = await api.post("/import/geojson", fc, { timeout: 180000 });
-      alert(`${t("importDone")}\n• ${t("importedN")}: ${data.imported}\n• ${t("mergedN")}: ${data.merged}\n• ${t("skippedN")}: ${data.skipped_existing}\n• ${t("invalidN")}: ${data.invalid}\n• ${t("totalN")}: ${data.total_projects}`);
-      if (onImported) onImported();
+      const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
+      const isProj = "title" in first && "url" in first;
+      const isMar = "source" in first && "priority" in first;
+      const looksLike = isMar ? "marinas" : isProj ? "projects" : "unknown";
+      if (looksLike !== "unknown" && looksLike !== currentMode) {
+        throw new Error(
+          `Fichier détecté comme "${looksLike}" mais le mode actif est "${currentMode}". ` +
+            `Bascule dans le bon mode avant d'importer.`,
+        );
+      }
+      const { data } = await api.post(importUrl, fc, { timeout: 180000 });
+      const totalLabel = currentMode === "marinas" ? "Total marinas" : t("totalN");
+      alert(
+        `${t("importDone")}\n` +
+          `• ${t("importedN")}: ${data.imported}\n` +
+          `• ${t("mergedN")}: ${data.merged}\n` +
+          `• ${t("skippedN")}: ${data.skipped_existing}\n` +
+          `• ${t("invalidN")}: ${data.invalid}\n` +
+          `• ${totalLabel}: ${data[totalKey]}`,
+      );
+      if (onImported) onImported(currentMode);
     } catch (err) {
       alert(`${t("importError")}: ${err.response?.data?.detail || err.message}`);
     } finally {
@@ -69,123 +113,81 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
     }
   };
 
+  const currentMode = mode || "projects";
+  const exportUrl = EXPORT_URLS[currentMode] || EXPORT_URLS.projects;
+
   return (
     <aside className="w-[320px] shrink-0 border-l border-line bg-surface overflow-y-auto" data-testid="settings-panel">
       <div className="flex items-center justify-between px-4 py-3 border-b border-line sticky top-0 bg-surface z-10">
-        <h3 className="font-heading font-bold text-sm text-white">{t("settings")}</h3>
-        <button data-testid="settings-close-btn" onClick={onClose} className="text-slate-500 hover:text-slate-200"><X size={15} /></button>
+        <h3 className="font-heading font-bold text-sm text-accent">{t("settings")}</h3>
+        <div className="flex items-center gap-2">
+          {saved && (
+            <span data-testid="settings-autosaved-hint" className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wide text-bio">
+              <Check size={11} /> {t("saved")}
+            </span>
+          )}
+          <button data-testid="settings-close-btn" onClick={onClose} className="text-slate-500 hover:text-accent"><X size={15} /></button>
+        </div>
       </div>
       <div className="p-4 space-y-5">
         {/* Docs */}
         <section>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70 mb-2">{t("downloads")}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70 mb-2">{t("downloads")}</p>
           <div className="flex gap-2">
             <button data-testid="manual-en-btn" onClick={() => dl("en")}
-              className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] border border-line rounded-sm text-slate-300 hover:bg-raised">
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] border border-line rounded-sm text-slate-300 hover:bg-raised hover:text-accent">
               <FileDown size={11} /> {t("manual")} EN
             </button>
             <button data-testid="manual-fr-btn" onClick={() => dl("fr")}
-              className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] border border-line rounded-sm text-slate-300 hover:bg-raised">
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] border border-line rounded-sm text-slate-300 hover:bg-raised hover:text-accent">
               <FileDown size={11} /> {t("manual")} FR
             </button>
           </div>
         </section>
 
-        {/* Data import */}
+        {/* Data import + contextual export */}
         <section>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70 mb-2">{t("dataSection")}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70 mb-2">{t("dataSection")}</p>
           <input ref={fileRef} data-testid="import-geojson-input" type="file" accept=".geojson,.json,application/geo+json,application/json"
             className="hidden" onChange={importFile} />
           <button data-testid="import-geojson-btn" onClick={() => fileRef.current?.click()} disabled={importing}
-            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-sonar/40 text-sonar rounded-sm hover:bg-sonar/10 disabled:opacity-40">
+            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
+            title={t("importGeojson") + " → " + t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}>
             <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
           </button>
-          <button data-testid="export-geojson-btn"
-            onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}/api/export/geojson`, "_blank")}
-            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-sonar/40 text-sonar rounded-sm hover:bg-sonar/10">
+          <p data-testid="settings-import-context-hint" className="mt-1 font-mono text-[9px] uppercase tracking-wide text-slate-500">
+            {t("settingsImportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
+          </p>
+          {/* Phase 6 — single contextual export button. URL follows the active mode. */}
+          <button data-testid="settings-export-btn"
+            onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}${exportUrl}`, "_blank")}
+            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10"
+            title={t("exportGeoJsonTooltip")}
+          >
             <Download size={12} /> {t("exportGeojson")}
           </button>
-          <button data-testid="clear-projects-btn"
-            onClick={async () => {
-              if (!window.confirm(t("clearProjectsConfirm"))) return;
-              await api.delete("/projects");
-              if (onProjectsCleared) onProjectsCleared();
-            }}
-            className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-alert/40 text-alert rounded-sm hover:bg-alert/10">
-            <Trash2 size={12} /> {t("clearProjects")}
-          </button>
+          <p data-testid="settings-export-context-hint" className="mt-1.5 font-mono text-[9px] uppercase tracking-wide text-slate-500">
+            {t("settingsExportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
+          </p>
+          {/* "Clear all projects" button removed 2026-06 per user request */}
         </section>
 
-        {/* Marine filtering */}
-        <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70">{t("marineFiltering")}</p>
-          <Field label={t("maxCoastKm")}>
-            <input data-testid="max-coast-km-input" type="number" value={form.max_coast_km} onChange={(e) => set("max_coast_km", e.target.value)} className={inputCls} />
-          </Field>
-          <Field label={`${t("minMarineScore")} (${form.min_marine_score})`}>
-            <input data-testid="min-marine-score-input" type="range" min="0" max="1" step="0.05" value={form.min_marine_score}
-              onChange={(e) => set("min_marine_score", e.target.value)} className="w-full accent-cyan-400" />
-          </Field>
-        </section>
+        {/* Phase 7 — Marine filtering block migrated to Audit → Projects card. */}
 
-        {/* Extraction */}
+        {/* Map — transverse */}
         <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70">{t("extraction")}</p>
-          <Field label={t("tinyfishAgents")}>
-            <select data-testid="tinyfish-agents-select" value={form.tinyfish_agents} onChange={(e) => set("tinyfish_agents", e.target.value)} className={inputCls}>
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-            </select>
-          </Field>
-          <Field label={`${t("concurrency")} (${form.extract_concurrency})`}>
-            <input data-testid="concurrency-input" type="range" min="1" max="20" value={form.extract_concurrency}
-              onChange={(e) => set("extract_concurrency", e.target.value)} className="w-full accent-cyan-400" />
-          </Field>
-          <Field label={t("gatekeeperModel")}>
-            <select data-testid="gatekeeper-model-select" value={form.gatekeeper_model} onChange={(e) => set("gatekeeper_model", e.target.value)} className={inputCls}>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </Field>
-          <Field label={t("extractModel")}>
-            <select data-testid="extract-model-select" value={form.extract_model} onChange={(e) => set("extract_model", e.target.value)} className={inputCls}>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </Field>
-          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-            <input data-testid="follow-money-checkbox" type="checkbox" checked={!!form.follow_the_money}
-              onChange={(e) => set("follow_the_money", e.target.checked)} className="accent-cyan-400" />
-            {t("followMoney")}
-          </label>
-          {form.follow_the_money && (
-            <Field label={t("maxPartnerOrgs")}>
-              <input data-testid="max-partner-orgs-input" type="number" min="1" max="20" value={form.max_partner_orgs}
-                onChange={(e) => set("max_partner_orgs", e.target.value)} className={inputCls} />
-            </Field>
-          )}
-          <Field label={t("autoStopLimit")}>
-            <input data-testid="saturation-limit-input" type="number" min="0" max="500" value={form.saturation_limit}
-              onChange={(e) => set("saturation_limit", e.target.value)} className={inputCls} />
-          </Field>
-          <Field label={t("rescanDays")}>
-            <input data-testid="rescan-days-input" type="number" min="0" max="365" step="0.5" value={form.rescan_after_days}
-              onChange={(e) => set("rescan_after_days", e.target.value)} className={inputCls} />
-          </Field>
-        </section>
-
-        {/* Map */}
-        <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70">{t("mapSettings")}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("mapSettings")}</p>
           <Field label={t("minZoom")}>
-            <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} className={inputCls} />
+            <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={t("maxMarkers")}>
-            <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} className={inputCls} />
+            <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
         </section>
 
-        {/* API keys */}
+        {/* API keys — transverse */}
         <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70">{t("apiKeys")}</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("apiKeys")}</p>
           <Field label={
             <>
               {t("geminiKey")}{" "}
@@ -196,7 +198,7 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
           }>
             <input data-testid="gemini-key-input" type="password" value={form.gemini_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("gemini_api_key", e.target.value)} className={inputCls} />
+              onChange={(e) => set("gemini_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={
             <>
@@ -208,14 +210,12 @@ export default function SettingsPanel({ t, lang, settings, onSaved, onImported, 
           }>
             <input data-testid="tinyfish-key-input" type="password" value={form.tinyfish_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("tinyfish_api_key", e.target.value)} className={inputCls} />
+              onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
         </section>
 
-        <button data-testid="save-settings-btn" onClick={save}
-          className="w-full flex items-center justify-center gap-2 py-2 font-heading font-bold text-sm rounded-sm bg-sonar/15 border border-sonar/60 text-sonar hover:bg-sonar/25">
-          {saved ? <><Check size={14} /> {t("saved")}</> : t("save")}
-        </button>
+        {/* Save button removed 2026-06 — settings now auto-save on field blur
+            (see the onBlur={save} handlers above). */}
       </div>
     </aside>
   );

@@ -1,7 +1,5 @@
 import asyncio
-import difflib
 import os
-import re
 import time
 import uuid
 from collections import deque
@@ -10,11 +8,13 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from readability import Document as ReadabilityDoc
 
 from ai import extract_project, gatekeeper_check, gemini_geocode, has_llm
 from categories import normalize_category
-from geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
+from dedup_core import is_duplicate
+from extract_core import extract_cascade
+from geo_core import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
+from rag_core import select_context
 from seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from tinyfish_client import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
                              tf_get_run, tf_run_async, tf_run_sse)
@@ -145,11 +145,11 @@ class Swarm:
         self.logs.clear()
         self.no_new_streak = 0
         self.saturated = False
-        self.log(f"Deploying TinyFish Swarm — mode: {mode.upper()}")
+        self.log(f"Deploying Swarm — mode: {mode.upper()} | cascade N1 (gratuit) → N2 → N3 TinyFish (dernier recours)")
         self.log(f"Auto-Stop armed: shutdown after {int(settings.get('saturation_limit', 50))} extractions without new project")
-        self.log(f"TinyFish key: {'ACTIVE' if self._tf_key() else 'MISSING → fallback crawler'}",
-                 "info" if self._tf_key() else "warn")
-        self.log(f"Gemini pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
+        self.log(f"TinyFish key: {'ACTIVE (N3 last-resort only)' if self._tf_key() else 'MISSING → N1/N2 only'}",
+                 "info")
+        self.log(f"LLM pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
                  "info" if has_llm(settings) else "warn")
         self.main_task = asyncio.create_task(self._run())
 
@@ -225,7 +225,7 @@ class Swarm:
         finally:
             self.running = False
 
-    # ---------- discovery ----------
+    # ---------- discovery (cascade : N1 crawler gratuit → N3 TinyFish dernier recours) ----------
     async def _discover(self, seed, max_urls, depth=0):
         # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
         known_urls = []
@@ -246,26 +246,32 @@ class Swarm:
             if known_urls:
                 self.log(f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission")
         key = self._tf_key()
-        engine = "TinyFish" if key else "Crawler"
-        aid = self.new_agent(engine, "discover", seed["url"], seed["name"])
+        aid = self.new_agent("Crawler N1", "discover", seed["url"], seed["name"])
         t0 = time.time()
         urls = []
-        used_engine = engine
-        tf_err = ""
+        used_engine = "Crawler"
+        crawl_err = tf_err = ""
         try:
-            if key:
-                self.agent_log(aid, f"TinyFish mission dispatched → {seed['url']}")
+            # --- N1 : crawler httpx gratuit en PREMIÈRE intention ---
+            self.set_agent(aid, status="RUNNING")
+            self.agent_log(aid, "N1: crawler httpx (gratuit, économie TinyFish)")
+            try:
+                urls = await self._crawl_discover(seed, max_urls)
+            except Exception as e:
+                crawl_err = f"{type(e).__name__}: {str(e)[:80]}"
+                self.agent_log(aid, f"N1 crawler échec: {crawl_err}")
+            # --- N3 : TinyFish uniquement si le crawler ne trouve rien ---
+            if not urls and key:
+                used_engine = "TinyFish"
+                self.set_agent(aid, engine="TinyFish N3")
+                self.agent_log(aid, "N1 vide → TinyFish (N3, dernier recours payant)")
+                self.log(f"[{seed['name']}] crawler N1 vide → mission TinyFish (JS/pagination complexe présumée)")
                 try:
                     urls = await self._tinyfish_discover(aid, seed, key, max_urls, known_urls)
                 except Exception as e:
                     tf_err = str(e)[:120]
                     self.agent_log(aid, f"TinyFish failed: {tf_err}")
                     self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
-            if not urls:
-                used_engine = "Crawler" if not key else "TinyFish+Crawler"
-                self.set_agent(aid, status="RUNNING")
-                self.agent_log(aid, "Fallback crawler engaged")
-                urls = await self._crawl_discover(seed, max_urls)
             urls = urls[:max_urls]
             if depth == 0 and (urls or known_urls):
                 new_count = len([u for u in urls if u not in set(known_urls)])
@@ -278,8 +284,8 @@ class Swarm:
                 )
             if urls:
                 self.set_agent(aid, status="SUCCESS")
-                self.agent_log(aid, f"{len(urls)} project URLs discovered")
-                self.log(f"[{seed['name']}] {len(urls)} project pages found → DeepLinkCache + queue")
+                self.agent_log(aid, f"{len(urls)} project URLs discovered ({used_engine})")
+                self.log(f"[{seed['name']}] {len(urls)} project pages found via {used_engine} → DeepLinkCache + queue")
                 for u in urls:
                     await self.db.deeplink_pages.update_one(
                         {"url": u}, {"$set": {"url": u, "funder": seed["name"], "source": seed["url"], "ts": now_iso()},
@@ -290,7 +296,7 @@ class Swarm:
             else:
                 self.set_agent(aid, status="FAILED")
                 self.log(f"[{seed['name']}] discovery returned 0 URLs", "warn")
-                detail = f"tinyfish: {tf_err}; crawler: 0 urls" if tf_err else "no urls found"
+                detail = f"crawler: {crawl_err or '0 urls'}; tinyfish: {tf_err or 'not attempted'}"
                 await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, detail)
                 await self.add_failed(seed["url"], seed["url"], seed["name"], detail, "discover")
         except asyncio.CancelledError:
@@ -429,40 +435,23 @@ class Swarm:
         if await self.db.projects.find_one({"url": url}):
             # Free URL-dedup skip: costs no credits, must NOT count toward Auto-Stop saturation
             return
-        aid = self.new_agent("Readability.js", "extract", url, source)
+        aid = self.new_agent("Cascade N1→N2", "extract", url, source)
         t0 = time.time()
         try:
             self.set_agent(aid, status="RUNNING")
-            self.agent_log(aid, "Fetching + Readability cleaning")
-            async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=UA) as client:
-                r = await client.get(url)
-                html = r.text
-            doc = ReadabilityDoc(html)
-            page_title = (doc.short_title() or "").strip() or url
-            summary_html = doc.summary()
-            soup = BeautifulSoup(summary_html, "html.parser")
-            text = re.sub(r"\s+", " ", soup.get_text(" ")).strip()
-            full_soup = BeautifulSoup(html, "html.parser")
-            if len(text) < 200:
-                text = re.sub(r"\s+", " ", full_soup.get_text(" ")).strip()[:8000]
-            meta = full_soup.find("meta", attrs={"name": "description"}) or \
-                full_soup.find("meta", attrs={"property": "og:description"})
-            meta_desc = meta.get("content", "").strip() if meta else ""
-            og_img = full_soup.find("meta", attrs={"property": "og:image"})
-            image = pick_image(full_soup, soup, url)
-            base_host = urlparse(url).netloc
-            ext_links, seen_d = [], set()
-            for a in full_soup.find_all("a", href=True):
-                href = urljoin(url, a["href"]).split("#")[0]
-                d = urlparse(href).netloc
-                name = re.sub(r"\s+", " ", a.get_text(" ")).strip()
-                if href.startswith("http") and d and d != base_host and d not in seen_d and 3 < len(name) < 80:
-                    seen_d.add(d)
-                    ext_links.append({"name": name, "url": href})
-                if len(ext_links) >= 15:
-                    break
+            self.agent_log(aid, "Cascade hybride: N1 trafilatura/PyMuPDF → N2 Readability")
+            page = await extract_cascade(url, min_chars=200, allow_tinyfish=False,
+                                         log=lambda m: self.agent_log(aid, m))
+            if not page["text"]:
+                raise ValueError(f"cascade N1/N2 sans texte exploitable ({page['level']})")
+            page_title = (page["title"] or "").strip() or url
+            text = page["text"]
+            meta_desc = page["meta_desc"]
+            image = page["image"]
+            ext_links = page["ext_links"]
+            self.agent_log(aid, f"texte extrait via {page['level']} ({len(text)} chars)")
 
-            self.agent_log(aid, "Gatekeeper Protocol (marine filter)")
+            self.agent_log(aid, "Gatekeeper Protocol (ML local → LLM cascade)")
             gk = await gatekeeper_check(page_title, text, self.settings)
             if not gk["accepted"]:
                 self.set_agent(aid, status="REJECTED")
@@ -472,8 +461,15 @@ class Swarm:
                 self._bump_saturation(False)
                 return
 
-            self.agent_log(aid, f"Extraction + S_ocean scoring ({'Gemini' if has_llm(self.settings) else 'heuristic'})")
-            proj = await extract_project(page_title, text, meta_desc, url, funder, self.settings, ext_links=ext_links)
+            # RAG local : sur les pages longues, seuls les chunks pertinents partent au LLM
+            llm_text = text
+            if len(text) > 6000:
+                llm_text = select_context(f"marine ocean coastal conservation project {page_title}",
+                                          text, max_chars=5000)
+                self.agent_log(aid, f"RAG: {len(text)} → {len(llm_text)} chars (chunks pertinents)")
+
+            self.agent_log(aid, f"Extraction + S_ocean scoring ({'LLM cascade' if has_llm(self.settings) else 'heuristic'})")
+            proj = await extract_project(page_title, llm_text, meta_desc, url, funder, self.settings, ext_links=ext_links)
 
             lat, lon = proj.get("latitude"), proj.get("longitude")
             geo_src = "extracted"
@@ -488,8 +484,8 @@ class Swarm:
                     g = await gemini_geocode(proj.get("location") or "", proj["title"], self.settings)
                     if g:
                         lat, lon = g
-                        geo_src = "gemini-geocoded"
-                        self.agent_log(aid, "Smart geocoding: Gemini estimated site coordinates")
+                        geo_src = "llm-geocoded"
+                        self.agent_log(aid, "Smart geocoding: LLM estimated site coordinates")
                 if lat is None:
                     g = await geocode(proj["title"])
                     if g:
@@ -510,7 +506,7 @@ class Swarm:
             merged = await self._dedup_merge(proj, url, funder, lat, lon)
             if merged:
                 self.set_agent(aid, status="SUCCESS")
-                self.agent_log(aid, "Merged with existing project (dedup <500m / similarity)")
+                self.agent_log(aid, "Merged with existing project (dedup_core: <500m / similarity)")
                 await self.telemetry(url, proj["engine"], "MERGED", (time.time() - t0) * 1000, 1)
                 self._bump_saturation(False)
                 return
@@ -522,7 +518,8 @@ class Swarm:
                 "location": proj.get("location"), "lat": float(lat), "lon": float(lon),
                 "s_ocean": proj.get("s_ocean", 0.5), "snapped": snapped, "geo_source": geo_src,
                 "category": category, "category_group": normalize_category(category),
-                "image": image, "engine": proj["engine"], "created_at": now_iso(),
+                "image": image, "engine": proj["engine"], "extract_level": page["level"],
+                "created_at": now_iso(),
             })
             self._bump_saturation(True)
             self.set_agent(aid, status="SUCCESS")
@@ -539,7 +536,7 @@ class Swarm:
         except Exception as e:
             self.set_agent(aid, status="FAILED")
             self.agent_log(aid, f"FAILED: {str(e)[:80]}")
-            await self.telemetry(url, "Readability.js", "FAILED", (time.time() - t0) * 1000, 0, str(e))
+            await self.telemetry(url, "Cascade N1→N2", "FAILED", (time.time() - t0) * 1000, 0, str(e))
             await self.add_failed(url, source, funder, str(e), "extract")
             self._bump_saturation(False)
 
@@ -552,13 +549,13 @@ class Swarm:
             return False
 
     async def _dedup_merge(self, proj, url, funder, lat, lon):
-        candidates = await self.db.projects.find({}, {"title": 1, "lat": 1, "lon": 1, "funders": 1, "url": 1}).to_list(3000)
+        """Déduplication spatio-textuelle mutualisée (dedup_core) — fusion non-destructive."""
+        candidate = {"title": proj["title"], "lat": lat, "lon": lon}
+        candidates = await self.db.projects.find({}, {"title": 1, "lat": 1, "lon": 1, "funders": 1, "url": 1}).to_list(30000)
         for c in candidates:
             if c.get("url") == url:
                 return True
-            dist = haversine_km(lat, lon, c["lat"], c["lon"])
-            sim = difflib.SequenceMatcher(None, proj["title"].lower(), c["title"].lower()).ratio()
-            if (dist < 0.5 and sim > 0.6) or sim > 0.9:
+            if is_duplicate(candidate, c):
                 funders = list(set((c.get("funders") or []) + [funder]))
                 await self.db.projects.update_one({"_id": c["_id"]}, {"$set": {"funders": funders}})
                 return True

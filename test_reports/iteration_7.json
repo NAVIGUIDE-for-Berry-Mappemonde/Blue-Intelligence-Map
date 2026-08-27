@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 7: verified the MPA-invisibility bug fix (adaptive maxAllowableOffset + gzip + Mongo cache) and the new LFP checkbox filter. Backend: 9/9 pytest cases pass in /app/backend/tests/test_mpa_simplify.py (NC/Coral Sea bbox 158,-26,172,-14 -> 200 with 76+ features including 'Natural Park of the Coral Sea' and 'Coral Sea Australian Marine Park', cached response ~1s, gzip content-encoding with wire size well under 5MB, invalid bbox -> 400, /api/projects regression OK). Frontend: MPA toggle renders polygons (paths in .leaflet-overlay-pane went 38 -> 328 after toggling on and zooming to Coral Sea / GBR at zoom 5.75), polygons clearly visible and tinted in screenshots, popup on Coral Sea polygon shows site name 'Chesterfield-Bellona' + 'LFP 5 - Most Restrictive (No-Take)' badge + managing authority 'Natural Park of the Coral Sea Management Committee' + ProtectedSeas Navigator CC BY 4.0 attribution. LFP legend shows 5 checkbox rows all checked; unchecking 1/2/3 reduced polygons 328 -> 303 with strikethrough labels, re-checking restored to 328. Toggle off removes all MPA polygons and the ProtectedSeas attribution and hides the legend. Zoom out/in x3 cycle clean, no console/UI errors. Project clusters and project popups unaffected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Map at deep zoom (after cluster expand over open ocean)", "issues": ["CARTO dark tiles render as a nearly featureless black/blank rectangle at high zoom over open sea - not a defect, but visually reads as a tile-load failure; consider a subtle ocean background or max useful zoom hint"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_mpa_simplify.py", "/app/test_reports/pytest/iter7_mpa.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/mpa: resultRecordCount is capped at 250 with no exceededTransferLimit check - dense bboxes (e.g. Mediterranean) can silently truncate MPAs; consider paging or surfacing a 'truncated' flag to the UI.",
+    "MapView.js loadMpa: no user-visible error/loading state if /api/mpa fails or times out (120s axios) - failure is silent apart from the console; a small error chip near mpa-toggle-btn would help.",
+    "MPA cache key rounds bbox to 0.1 deg but never bounds cache growth; add a TTL index on mpa_cache.ts so stale docs are reaped instead of only being age-checked on read."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "None (mpa_cache entries created/refreshed by the tested bboxes)",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "not required (no auth)",
+  "context_for_next_testing_agent": "The Leaflet map instance is not exposed on window, so navigation must be done via mouse dblclick/drag. Reliable trick used: page.evaluate helper that reads a loaded tile img src (/z/x/y.png) + its bounding rect to convert lon/lat -> screen px, then dblclick/drag toward that point (see iteration_7 flow). Coral Sea reached at zoom 5.75 by dblclicking toward lon 164/lat -20 then panning. MPA polygon vs project-marker paths must be compared by relative counts.",
+  "rca_of_the_issue": "Original bug (MPAs invisible) is fixed: ArcGIS query now sends maxAllowableOffset=(bbox_width/500) and geometryPrecision=4, so the NC bbox returns compact simplified geometry in seconds instead of a 50MB payload timing out; results are cached in Mongo for 3 days and gzipped over the wire. Verified end-to-end at both API and rendering level."
+}

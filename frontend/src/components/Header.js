@@ -1,17 +1,22 @@
-import { HandCoins, Map as MapIcon, Moon, Radar, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, Compass, HandCoins, Heart, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
-export default function Header({ lang, setLang, view, setView, showSettings, setShowSettings, status, t, basemap, setBasemap, donations }) {
+export default function Header({
+  lang, setLang, view, setView, showSettings, setShowSettings,
+  status, t, basemap, setBasemap, donations,
+  mode, setMode,
+  onOpenDonate,
+}) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 flex items-center justify-center border border-sonar/40 bg-sonar/10 rounded-sm">
-          <Waves size={18} className="text-sonar" />
+        <div className="w-8 h-8 flex items-center justify-center border border-accent/40 bg-accent/10 rounded-sm">
+          <Waves size={18} className="text-accent" />
         </div>
         <div>
           <h1 className="font-heading font-black text-lg leading-none tracking-tight text-white">
             Blue Intelligence
           </h1>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sonar/70 leading-none mt-1">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70 leading-none mt-1">
             {t("subtitle")}
           </p>
         </div>
@@ -23,26 +28,73 @@ export default function Header({ lang, setLang, view, setView, showSettings, set
         )}
       </div>
       <div className="flex items-center gap-2">
-        <div data-testid="donation-counter" title={t("donationCounterTitle")}
-          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/5 rounded-sm">
-          <HandCoins size={14} className="text-bio" />
-          <span className="font-heading font-black text-sm text-bio">
-            {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} €
-          </span>
-          <span className="font-mono text-[9px] uppercase tracking-wide text-bio/70">{t("donationsLabel")} ({donations?.count ?? 0})</span>
+        {/* Tri-mode switch (Phase 4A → 5, all three buttons follow the active theme) */}
+        <div
+          className="flex border border-line rounded-sm overflow-hidden"
+          title={t("modeSwitchTitle")}
+          data-testid="mode-switch"
+        >
+          <button
+            data-testid="mode-toggle-projects"
+            onClick={() => setMode("projects")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
+              mode === "projects"
+                ? "bg-sonar/15 text-sonar"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <Compass size={13} /> {t("modeProjects")}
+          </button>
+          <button
+            data-testid="mode-toggle-marinas"
+            onClick={() => setMode("marinas")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
+              mode === "marinas"
+                ? "bg-alert/15 text-alert"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <Anchor size={13} /> {t("modeMarinas")}
+          </button>
+          <button
+            data-testid="mode-toggle-formalities"
+            onClick={() => setMode("formalities")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+              mode === "formalities"
+                ? "bg-amberx/15 text-amberx"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <ScrollText size={13} /> {t("modeFormalities")}
+          </button>
         </div>
+        {/* Phase 5: donation CTA in header — opens Stripe checkout via App.js */}
+        <button
+          data-testid="donation-cta"
+          onClick={onOpenDonate}
+          title={t("donationCtaTooltip")}
+          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/15 rounded-sm text-bio font-semibold text-xs transition-colors"
+        >
+          <Heart size={13} className="fill-bio/30" />
+          <span className="hidden md:inline">{t("donationCta")}</span>
+          {donations?.count > 0 && (
+            <span className="font-mono text-[9px] text-bio/70 uppercase tracking-wide">
+              {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} € · {donations.count}
+            </span>
+          )}
+        </button>
         <div className="flex border border-line rounded-sm overflow-hidden">
           <button
             data-testid="view-toggle-map"
             onClick={() => setView("map")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ${view === "map" ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ${view === "map" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
           >
             <MapIcon size={13} /> {t("map")}
           </button>
           <button
             data-testid="view-toggle-audit"
             onClick={() => setView("audit")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "audit" ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "audit" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
           >
             <Radar size={13} /> {t("audit")}
           </button>
@@ -51,12 +103,12 @@ export default function Header({ lang, setLang, view, setView, showSettings, set
           <button
             data-testid="lang-toggle-en"
             onClick={() => setLang("en")}
-            className={`px-2.5 py-1.5 ${lang === "en" ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:bg-raised"}`}
+            className={`px-2.5 py-1.5 ${lang === "en" ? "bg-accent/15 text-accent" : "text-slate-400 hover:bg-raised"}`}
           >EN</button>
           <button
             data-testid="lang-toggle-fr"
             onClick={() => setLang("fr")}
-            className={`px-2.5 py-1.5 border-l border-line ${lang === "fr" ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:bg-raised"}`}
+            className={`px-2.5 py-1.5 border-l border-line ${lang === "fr" ? "bg-accent/15 text-accent" : "text-slate-400 hover:bg-raised"}`}
           >FR</button>
         </div>
         <button
@@ -70,7 +122,7 @@ export default function Header({ lang, setLang, view, setView, showSettings, set
         <button
           data-testid="settings-toggle-btn"
           onClick={() => setShowSettings(!showSettings)}
-          className={`p-2 border border-line rounded-sm ${showSettings ? "bg-sonar/15 text-sonar" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+          className={`p-2 border border-line rounded-sm ${showSettings ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
           title={t("settings")}
         >
           <Settings size={15} />

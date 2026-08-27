@@ -2,6 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Tri-mode theme tokens (Phase 5) ----------
+ * Projects mode    → cyan accent + neutral surfaces
+ * Marinas mode     → red accent + red-tinted surfaces
+ * Formalities mode → amberx accent + amber-tinted surfaces
+ *
+ * Every UI element uses `accent`/`surface`/`raised`/`line` (via Tailwind
+ * bindings in tailwind.config.js) so the whole app repaints on data-mode change.
+ * Hard-coded `alert`/`sonar`/`amberx` classes have been progressively removed
+ * from panels — the exceptions are semantic (icon color for "no source
+ * warning" alert red is intentional, kept as alert).
+ */
+:root,
+[data-mode="projects"] {
+  --accent-rgb: 0 240 255;         /* #00f0ff — cyan */
+  --accent-glow: rgba(0, 240, 255, 0.35);
+  --accent-tint: rgba(0, 240, 255, 0.06);
+  --accent-tint-strong: rgba(0, 240, 255, 0.10);
+  --surface-rgb: 15 23 42;         /* #0f172a — slate-900 */
+  --raised-rgb: 30 41 59;          /* #1e293b — slate-800 */
+  --line-rgb: 51 65 85;            /* #334155 — slate-700 */
+  --marker-fill: #00f0ff;
+  --marker-stroke: #0f172a;
+}
+[data-mode="marinas"] {
+  --accent-rgb: 255 74 74;         /* #ff4a4a — alert red */
+  --accent-glow: rgba(255, 74, 74, 0.35);
+  --accent-tint: rgba(255, 74, 74, 0.05);
+  --accent-tint-strong: rgba(255, 74, 74, 0.08);
+  --surface-rgb: 24 15 18;         /* slate-900 tinted red */
+  --raised-rgb: 42 22 26;
+  --line-rgb: 82 43 49;
+  --marker-fill: #ff4a4a;
+  --marker-stroke: #0f172a;
+}
+[data-mode="formalities"] {
+  --accent-rgb: 251 191 36;        /* #fbbf24 — amberx */
+  --accent-glow: rgba(251, 191, 36, 0.35);
+  --accent-tint: rgba(251, 191, 36, 0.05);
+  --accent-tint-strong: rgba(251, 191, 36, 0.08);
+  --surface-rgb: 24 20 12;         /* slate-900 tinted amber */
+  --raised-rgb: 42 34 20;
+  --line-rgb: 82 62 33;
+  --marker-fill: #fbbf24;
+  --marker-stroke: #0f172a;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -11,11 +57,16 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #0f172a; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #00f0ff66; }
+::-webkit-scrollbar-track { background: rgb(var(--surface-rgb)); }
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.35);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.65); }
+* { scrollbar-color: rgba(var(--accent-rgb), 0.4) rgb(var(--surface-rgb)); }
 
-::selection { background: #00f0ff33; color: #00f0ff; }
+::selection { background: rgba(var(--accent-rgb), 0.20); color: rgb(var(--accent-rgb)); }
 
 .console-scanlines {
   position: relative;
@@ -46,18 +97,32 @@ html, body, #root {
 .leaflet-popup-content-wrapper {
   background: rgba(15, 23, 42, 0.95);
   color: #e2e8f0;
-  border: 1px solid rgba(51, 65, 85, 0.8);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
   border-radius: 4px;
   backdrop-filter: blur(16px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 22px rgba(var(--accent-rgb), 0.10);
 }
-.leaflet-popup-tip { background: #0f172a; border: 1px solid #334155; }
-.leaflet-popup-content { margin: 12px 14px; }
+.leaflet-popup-tip { background: #0f172a; border: 1px solid rgba(var(--accent-rgb), 0.4); }
+/* Phase 6 — popups scrollable from top to bottom, themed scrollbar */
+.leaflet-popup-content {
+  margin: 12px 14px;
+  max-height: 62vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--accent-rgb), 0.5) rgba(15, 23, 42, 0.4);
+}
+.leaflet-popup-content::-webkit-scrollbar { width: 6px; }
+.leaflet-popup-content::-webkit-scrollbar-track { background: transparent; }
+.leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.4);
+  border-radius: 3px;
+}
+.leaflet-popup-content::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.7); }
 .leaflet-popup-close-button { color: #94a3b8 !important; }
 .leaflet-bar a {
   background: #0f172a !important;
-  color: #00f0ff !important;
-  border-color: #334155 !important;
+  color: rgb(var(--accent-rgb)) !important;
+  border-color: rgba(var(--accent-rgb), 0.35) !important;
 }
 .leaflet-bar a:hover { background: #1e293b !important; }
 
@@ -73,5 +138,116 @@ html, body, #root {
   justify-content: center;
   box-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
 }
+.bi-cluster-marina {
+  background: rgba(255, 74, 74, 0.15);
+  border: 2px solid #ff4a4a;
+  border-radius: 9999px;
+  color: #ff4a4a;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(255, 74, 74, 0.35);
+}
+/* Phase 8 — Anchorages cluster (teal) */
+.bi-cluster-anchorage {
+  background: rgba(45, 212, 191, 0.15);
+  border: 2px solid #2dd4bf;
+  border-radius: 9999px;
+  color: #2dd4bf;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.35);
+}
+/* Phase 7 — Formalities cluster (amber) + unified status dot for individual escales */
+.bi-cluster-formalities {
+  background: rgba(251, 191, 36, 0.15);
+  border: 2px solid #fbbf24;
+  border-radius: 9999px;
+  color: #fbbf24;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
+}
+/* Phase 7bis — Formalities status marker.
+   Explicitly override the default `.leaflet-div-icon` styles (white bg +
+   light grey border) that would otherwise leak through and create a visible
+   halo/ring on our dark map. The class name matches divIcon({className:"bi-status-icon"})
+   in MapView.js so leaflet's default styling is neutralised. */
+.bi-status-icon,
+.bi-status-icon.leaflet-div-icon {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.bi-status-icon > div { transition: transform 0.15s ease; }
+.bi-status-icon:hover > div { transform: scale(1.15); }
+
+/* Berry-Mappemonde route: neutral tooltip for segments + intermediate waypoints */
+.bi-route-tt {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(226, 232, 240, 0.35) !important;
+  border-radius: 3px;
+  padding: 4px 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+}
+.bi-route-tt::before { border-top-color: rgba(15, 23, 42, 0.92) !important; }
+/* Escale labels: small, always visible, neutral chip that reads on both basemaps */
+.leaflet-tooltip.bi-route-escale-label {
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  border: 1px solid rgba(226, 232, 240, 0.4);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.leaflet-tooltip.bi-route-escale-label::before { display: none; }
+
+/* Formalities mode — escale status ring badge for ports of entry */
+.bi-poe-ring {
+  filter: drop-shadow(0 0 4px rgba(248, 250, 252, 0.6));
+}
+/* Dashed border used for ia_sans_source escale markers */
+.bi-escale-marker--dashed {
+  stroke-dasharray: 3 3 !important;
+}
+
+/* Formalities mode — disclaimer banner */
+.bi-formalities-disclaimer {
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Phase 7 — Audit view themed wrapper.
+   Subtle accent-tinted background + accent-tinted top border, driven by the
+   active [data-mode] on <html>. Kept intentionally subtle so KPI/telemetry
+   cards inside remain readable. */
+.bi-audit-themed {
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.045) 0%, rgba(var(--accent-rgb), 0) 260px),
+    rgb(var(--surface-rgb));
+  border-top: 1px solid rgba(var(--accent-rgb), 0.18);
+}
+
 
 button { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }

@@ -1,0 +1,587 @@
+{
+  "summary": {
+    "ports_checked": 1171,
+    "anomalies_flagged": 50,
+    "previously_flagged_cleared": 0,
+    "zones": 165,
+    "checked_at": "2026-08-26T20:29:23Z"
+  },
+  "anomalies": [
+    {
+      "id": "5f1c4ec6-a5ef-496a-9fd9-5b5f97eff55c",
+      "name": "Dutch Harbor Small Boat Harbor",
+      "zone": "Alaska",
+      "lat": 53.8831064,
+      "lon": -166.552545,
+      "score": -0.0064,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "62103e67-166c-4ce0-8487-c3f1fdfbaee9",
+      "name": "Thursday Island",
+      "zone": "Australia",
+      "lat": -10.5786459,
+      "lon": 142.2189206,
+      "score": -0.0402,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "0458bc2d-bb63-4544-9ef1-8abbe71a963c",
+      "name": "Weipa",
+      "zone": "Australia",
+      "lat": -12.6652161,
+      "lon": 141.873714,
+      "score": -0.0325,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "20f4120f-a5bb-40cd-b230-36cb0bb4d837",
+      "name": "Darwin",
+      "zone": "Australia",
+      "lat": -12.4729475,
+      "lon": 130.9040298,
+      "score": -0.0984,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "1d416622-8d46-4863-ae74-544a7fc08a6f",
+      "name": "Albany",
+      "zone": "Australia",
+      "lat": -35.028019,
+      "lon": 117.8841916,
+      "score": -0.0576,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "0345ccd1-704d-4e43-84de-9601c27d47b3",
+      "name": "Broome",
+      "zone": "Australia",
+      "lat": -17.9628646,
+      "lon": 122.2320575,
+      "score": -0.0662,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "8b72fded-74c6-433f-b273-b4828f9147a7",
+      "name": "Carnarvon",
+      "zone": "Australia",
+      "lat": -24.8666251,
+      "lon": 113.6763702,
+      "score": -0.0555,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "e0158b5f-2ce8-4f92-b029-458080ba8d9d",
+      "name": "Dampier",
+      "zone": "Australia",
+      "lat": -20.615989,
+      "lon": 116.7799988,
+      "score": -0.0583,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "c326997f-207c-4747-9a17-43780a0bd9bb",
+      "name": "Esperance",
+      "zone": "Australia",
+      "lat": -33.8611665,
+      "lon": 121.8885159,
+      "score": -0.0253,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "34f83f2b-90e9-4233-bb06-4c18cf260722",
+      "name": "Geraldton",
+      "zone": "Australia",
+      "lat": -28.775663,
+      "lon": 114.614339,
+      "score": -0.0498,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "403c5f6b-e68c-4c45-99fd-eac7f9dfc641",
+      "name": "Port of Payra",
+      "zone": "Bangladesh",
+      "lat": 24.9037895,
+      "lon": 91.8655693,
+      "score": -0.0044,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "844af260-2922-4129-9601-646bccdaef85",
+      "name": "Luka Brčko",
+      "zone": "Bosnia and Herzegovina",
+      "lat": 44.8756731,
+      "lon": 18.8205143,
+      "score": -0.0457,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "5c91dad8-664e-4f86-85ac-f8dfbfa622a7",
+      "name": "Perućac – Višegrad",
+      "zone": "Bosnia and Herzegovina",
+      "lat": 43.7864291,
+      "lon": 19.294097,
+      "score": -0.0162,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "2df0fd8f-13a6-48b0-aa46-c7d95460bc3e",
+      "name": "Jamena – Donje Crnjelovo",
+      "zone": "Bosnia and Herzegovina",
+      "lat": 44.8562052,
+      "lon": 19.1480726,
+      "score": -0.0524,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "05cc122d-0751-48f1-8d55-bf77484f8403",
+      "name": "Lešnica – Janja",
+      "zone": "Bosnia and Herzegovina",
+      "lat": 44.6864436,
+      "lon": 19.0460211,
+      "score": -0.0381,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "46ff9376-5eaf-4d79-a775-8f7d5fc675c8",
+      "name": "ГКПП Свищов (Svishtov)",
+      "zone": "Bulgaria",
+      "lat": 43.6158817,
+      "lon": 25.3509536,
+      "score": -0.0545,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "ce9009c4-d988-4823-9173-23db7e84d75c",
+      "name": "ГКПП Русе (Ruse)",
+      "zone": "Bulgaria",
+      "lat": 43.8480413,
+      "lon": 25.9542057,
+      "score": -0.008,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "5a8da59b-39d4-410f-bcd0-e56332a785c7",
+      "name": "Arica",
+      "zone": "Chile",
+      "lat": -18.4792205,
+      "lon": -70.3214246,
+      "score": -0.008,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "b67f0ae9-e498-42b3-8b0b-4739b8622cf2",
+      "name": "Puerto Natales",
+      "zone": "Chile",
+      "lat": -51.735838,
+      "lon": -72.4904239,
+      "score": -0.0424,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "5c453dc8-726e-4c81-8c01-0d882b23705d",
+      "name": "Punta Arenas",
+      "zone": "Chile",
+      "lat": -53.1625688,
+      "lon": -70.907822,
+      "score": -0.0517,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "d6c8b3c9-ab47-4c4b-a845-a6e521aaac67",
+      "name": "Puerto Williams",
+      "zone": "Chile",
+      "lat": -54.9357749,
+      "lon": -67.6062504,
+      "score": -0.0693,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "f0a71a0b-0ea8-420f-aeb3-4e2dd02a13c6",
+      "name": "中山港口岸 (Zhongshan Port / Shenwan Marina)",
+      "zone": "China",
+      "lat": 39.6587994,
+      "lon": 118.4132323,
+      "score": -0.1223,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "d73866b0-ce95-49df-8c0b-cbb9e82232f3",
+      "name": "Zadar",
+      "zone": "Croatia",
+      "lat": 44.1168594,
+      "lon": 15.2353257,
+      "score": -0.0397,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "9cfdc8a8-5150-4db2-90fe-1b32bf9adb72",
+      "name": "Sali",
+      "zone": "Croatia",
+      "lat": 43.907916,
+      "lon": 15.1875435,
+      "score": -0.0453,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "c634b76d-78fc-4b78-8a80-7efb237f4f6c",
+      "name": "Božava",
+      "zone": "Croatia",
+      "lat": 44.1405853,
+      "lon": 14.9064248,
+      "score": -0.02,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "8472bc97-6289-4842-8b4e-060d384fcc02",
+      "name": "Port of Kinshasa / Beach Ngobila",
+      "zone": "Democratic Republic of the Congo",
+      "lat": -4.2995758,
+      "lon": 15.3169238,
+      "score": -0.0426,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "503d9c27-8d01-4627-b628-e160136c505d",
+      "name": "Morawhanna",
+      "zone": "Guyana",
+      "lat": 8.268851,
+      "lon": -59.7553788,
+      "score": -0.0228,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "c117bb1f-19ba-4e2c-b734-a9648e2660ad",
+      "name": "Guanaja (Bonacca / El Cayo)",
+      "zone": "Honduras",
+      "lat": 16.4421239,
+      "lon": -85.8870164,
+      "score": -0.0621,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "c8a86f37-8998-4197-88b9-15ec15c7a21a",
+      "name": "Brus Laguna",
+      "zone": "Honduras",
+      "lat": 15.8178082,
+      "lon": -84.5872592,
+      "score": -0.0674,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "8234c905-49eb-4aa7-91f6-6d250d5ceca4",
+      "name": "Švendubrės sezoninis upių PKP",
+      "zone": "Lithuania",
+      "lat": 53.9809426,
+      "lon": 23.9356672,
+      "score": -0.0759,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "d3898cd5-c873-4511-831d-be5a8c79a890",
+      "name": "La Paz",
+      "zone": "Mexico",
+      "lat": 19.3505168,
+      "lon": -98.9609329,
+      "score": -0.1365,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "7cd5b099-3386-465b-bbe5-4d070f70e3b2",
+      "name": "Murmansk",
+      "zone": "Russia",
+      "lat": 68.970665,
+      "lon": 33.07497,
+      "score": -0.0376,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "be8f92d3-2a0c-4bb0-b712-2aa84f536975",
+      "name": "Anadyr",
+      "zone": "Russia",
+      "lat": 64.7316875,
+      "lon": 177.5060925,
+      "score": -0.1317,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "2c94453a-3564-402e-a35c-9ea0bb7e71bc",
+      "name": "Vladivostok",
+      "zone": "Russia",
+      "lat": 43.1150678,
+      "lon": 131.8855768,
+      "score": -0.1547,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "e4135878-cef1-433a-ac48-99bfb0b5a59a",
+      "name": "Nakhodka",
+      "zone": "Russia",
+      "lat": 42.8469903,
+      "lon": 132.9606716,
+      "score": -0.1584,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "8214de88-b7b8-4d7a-95c7-1bd21fa15ac4",
+      "name": "Petropavlovsk-Kamchatsky",
+      "zone": "Russia",
+      "lat": 53.027194,
+      "lon": 158.6428015,
+      "score": -0.1096,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "9fd0ccfc-314b-4e1c-946f-ac8bd559422b",
+      "name": "Magadan",
+      "zone": "Russia",
+      "lat": 59.5645655,
+      "lon": 150.8078832,
+      "score": -0.1177,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "2caefef1-3b34-4611-b1d4-5e2d08b81503",
+      "name": "Port of Dakar",
+      "zone": "Senegal",
+      "lat": 14.6720332,
+      "lon": -17.4269192,
+      "score": -0.0439,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "4b172171-b000-43dc-857f-ced45534f919",
+      "name": "Suyeongman Marina",
+      "zone": "South Korea",
+      "lat": 35.1600749,
+      "lon": 129.1405084,
+      "score": -0.0439,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "e9dd9444-2fca-4632-ba37-46a5c06b775b",
+      "name": "Tongyeong Kumho Marina",
+      "zone": "South Korea",
+      "lat": 34.854254,
+      "lon": 128.433205,
+      "score": -0.0066,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "c288009b-9519-4baf-9e0b-47711e011895",
+      "name": "Yi Sun-sin Marina",
+      "zone": "South Korea",
+      "lat": 34.7446451,
+      "lon": 127.6730645,
+      "score": -0.0024,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "27cfdd10-d3f6-44fb-ac80-d5fbf089c587",
+      "name": "Mokpo Marina",
+      "zone": "South Korea",
+      "lat": 34.7843832,
+      "lon": 126.36824,
+      "score": -0.0397,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "3ddebe7b-9c2e-41db-b80b-8ebb014ecbbf",
+      "name": "Lindi Port",
+      "zone": "Tanzania",
+      "lat": -9.3985098,
+      "lon": 37.8997467,
+      "score": -0.0182,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "c426cece-279d-4cc7-8938-e79e99d3cb14",
+      "name": "Bridgeport",
+      "zone": "United States",
+      "lat": 38.2613605,
+      "lon": -119.2269816,
+      "score": -0.1783,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "0088e432-e552-4972-b0ba-0ee74153efdb",
+      "name": "Savannah",
+      "zone": "United States",
+      "lat": 43.0654611,
+      "lon": -76.7568196,
+      "score": -0.0204,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "98938526-0f54-4480-a157-b52fed68f255",
+      "name": "Puerto Deportivo de Colonia / Puerto de Colonia",
+      "zone": "Uruguay",
+      "lat": -34.4698592,
+      "lon": -57.8433679,
+      "score": -0.0432,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "cfa4b547-5689-413e-9f62-db4e94316f34",
+      "name": "Puerto Sauce (Juan Lacaze)",
+      "zone": "Uruguay",
+      "lat": -34.4397941,
+      "lon": -57.4429894,
+      "score": -0.0232,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "171049c2-1da9-467c-9d77-c52e69f1a993",
+      "name": "Puerto de Bella Unión",
+      "zone": "Uruguay",
+      "lat": -30.2612301,
+      "lon": -57.6059002,
+      "score": -0.0245,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "28d50dce-32da-4396-9e31-4c3682bece7a",
+      "name": "Porto de Belém",
+      "zone": "Brazil",
+      "lat": -1.1277371,
+      "lon": -48.4497171,
+      "score": -0.0353,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    },
+    {
+      "id": "d18a2a54-c2a0-4cd5-9dfd-2ceee149d49b",
+      "name": "Porto do Rio Grande",
+      "zone": "Brazil",
+      "lat": -32.041681,
+      "lon": -52.075975,
+      "score": -0.0887,
+      "methods": [
+        "isolation_forest",
+        "dbscan_noise"
+      ]
+    }
+  ]
+}
