@@ -35,8 +35,15 @@ from zee import (
 from pipeline import Swarm, now_iso
 from tinyfish_client import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
+MONGO_URL = (os.environ.get("MONGO_URL") or "").strip()
+DB_NAME = (os.environ.get("DB_NAME") or "").strip()
+if not MONGO_URL or not DB_NAME:
+    raise RuntimeError(
+        "Backend configuration missing: set MONGO_URL and DB_NAME in the preview environment"
+    )
+
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
 app = FastAPI(title="Blue Intelligence API")
 router = APIRouter(prefix="/api")
@@ -44,12 +51,12 @@ swarm = Swarm(db)
 
 DEFAULT_SETTINGS = {
     "_id": "global",
-    "gemini_api_key": "",
+    "openrouter_api_key": "",
     "tinyfish_api_key": "",
     "tinyfish_agents": 2,
     "extract_concurrency": 6,
-    "gatekeeper_model": "gemini-3-flash-preview",
-    "extract_model": "gemini-3.1-pro-preview",
+    "gatekeeper_model": "openai/gpt-4o-mini",
+    "extract_model": "openai/gpt-4o-mini",
     "max_coast_km": 50,
     "min_marine_score": 0.5,
     "test_max_urls_per_seed": 6,
@@ -69,11 +76,8 @@ DEFAULT_SETTINGS = {
     # `@cf/moonshotai/kimi-k2.6` after upgrading to Workers Paid activates Kimi with zero
     # code change.
     "cloudflare_model": "@cf/openai/gpt-oss-120b",
-    # Phase 5 — swarm extraction engine (used by ai.py). Defaults to gemini
-    # (unchanged historical behaviour). Alternates: "gpt" and "claude" (both via
-    # EMERGENT_LLM_KEY through emergentintegrations, zero config) and
-    # "openrouter" (uses OPENROUTER_API_KEY + openai/gpt-4o-mini).
-    "extraction_engine": "gemini",
+    # All structured extraction uses OpenRouter; there is deliberately no local fallback.
+    "extraction_engine": "openrouter",
 }
 
 
@@ -93,6 +97,7 @@ class DeployBody(BaseModel):
 
 
 class SettingsBody(BaseModel):
+    openrouter_api_key: str | None = None
     gemini_api_key: str | None = None
     tinyfish_api_key: str | None = None
     tinyfish_agents: int | None = None
@@ -138,6 +143,12 @@ def project_to_feature(p: dict) -> dict:
 
 @router.get("/")
 async def health():
+    return {"service": "Blue Intelligence", "status": "operational", "ts": now_iso()}
+
+
+@app.get("/", include_in_schema=False)
+async def root_health():
+    """Health probe for hosts that test the root URL instead of /api/."""
     return {"service": "Blue Intelligence", "status": "operational", "ts": now_iso()}
 
 
@@ -199,9 +210,9 @@ async def status():
     # instead of a hard-coded "GEMINI" badge.
     try:
         sdoc = await db.settings.find_one({"_id": "global"}) or {}
-        engine = sdoc.get("extraction_engine") or "gemini"
+        engine = sdoc.get("extraction_engine") or "openrouter"
     except Exception:
-        engine = "gemini"
+        engine = "openrouter"
     st["engine"] = engine
     return st
 

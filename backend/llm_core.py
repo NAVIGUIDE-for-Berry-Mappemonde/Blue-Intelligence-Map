@@ -1,11 +1,9 @@
 """
-llm_core.py — Adaptateur LLM universel (Core mutualisé PoE / Projets).
+llm_core.py — Adaptateur LLM OpenRouter obligatoire.
 
-Cascade automatique avec fallback : Gemini REST (si clé) → Emergent (clé
-universelle, gemini-2.5-flash) → OpenRouter (gpt-4o-mini, mode JSON).
-Fusionne le Gatekeeper marin (ex-ai.py) et l'extraction JSON stricte des
-ports d'entrée (ex-poe.py). Fournit aussi la recherche groundée
-(Gemini google_search si clé, sinon OpenRouter :online).
+Toutes les opérations LLM passent par l'API OpenRouter. Aucun fallback local,
+Gemini ou Emergent n'est utilisé : une clé OpenRouter manquante ou un appel
+échoué remonte explicitement une erreur.
 """
 import asyncio
 import json
@@ -16,9 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-GEMINI_REST_MODEL = "gemini-flash-latest"
-EMERGENT_MODEL = "gemini-2.5-flash"
-OPENROUTER_MODEL = "openai/gpt-4o-mini"
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 JSON_SYSTEM = ("You are the Blue Intelligence maritime OSINT engine. "
                "Reply ONLY with a single valid JSON object, no prose, no markdown fences.")
 
@@ -40,24 +37,16 @@ def _env(name: str) -> str:
 
 def get_llm_key(settings: dict | None = None) -> str:
     s = settings or {}
-    return (s.get("gemini_api_key") or _env("GEMINI_API_KEY") or _env("EMERGENT_LLM_KEY")).strip()
+    return (s.get("openrouter_api_key") or _env("OPENROUTER_API_KEY")).strip()
 
 
 def has_llm(settings: dict | None = None) -> bool:
-    return bool(available_engines(settings))
+    return bool(get_llm_key(settings))
 
 
 def available_engines(settings: dict | None = None) -> list[str]:
-    """Ordre de cascade selon les clés réellement disponibles."""
-    s = settings or {}
-    order = []
-    if (s.get("gemini_api_key") or _env("GEMINI_API_KEY")):
-        order.append("gemini")
-    if _env("EMERGENT_LLM_KEY"):
-        order.append("emergent")
-    if _env("OPENROUTER_API_KEY"):
-        order.append("openrouter")
-    return order
+    """Expose OpenRouter only when its required key is configured."""
+    return ["openrouter"] if get_llm_key(settings) else []
 
 
 # ---------------------------------------------------------------------------
@@ -111,14 +100,6 @@ async def _call_gemini_rest(prompt: str, system: str, key: str, json_mode: bool 
     raise RuntimeError("gemini rest exhausted retries")
 
 
-async def _call_emergent(prompt: str, system: str, key: str, model: str = EMERGENT_MODEL) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-    chat = LlmChat(api_key=key, session_id=f"llmcore-{uuid.uuid4()}",
-                   system_message=system).with_model("gemini", model)
-    resp = await chat.send_message(UserMessage(text=prompt))
-    return resp if isinstance(resp, str) else str(resp)
-
-
 async def _call_openrouter(prompt: str, system: str, key: str, model: str = OPENROUTER_MODEL,
                            json_mode: bool = True, max_tokens: int = 2000) -> str:
     payload = {
@@ -130,7 +111,7 @@ async def _call_openrouter(prompt: str, system: str, key: str, model: str = OPEN
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     async with httpx.AsyncClient(timeout=90) as client:
-        r = await client.post("https://openrouter.ai/api/v1/chat/completions",
+        r = await client.post(OPENROUTER_API_URL,
                               headers={"Authorization": f"Bearer {key}"}, json=payload)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
@@ -138,16 +119,12 @@ async def _call_openrouter(prompt: str, system: str, key: str, model: str = OPEN
 
 async def _dispatch(engine: str, prompt: str, system: str, settings: dict | None,
                     json_mode: bool, max_tokens: int) -> str:
-    s = settings or {}
-    if engine == "gemini":
-        key = (s.get("gemini_api_key") or _env("GEMINI_API_KEY")).strip()
-        return await _call_gemini_rest(prompt, system, key, json_mode=json_mode, max_tokens=max_tokens)
-    if engine == "emergent":
-        return await _call_emergent(prompt, system, _env("EMERGENT_LLM_KEY"))
-    if engine == "openrouter":
-        return await _call_openrouter(prompt, system, _env("OPENROUTER_API_KEY"),
-                                      json_mode=json_mode, max_tokens=max_tokens)
-    raise ValueError(f"unknown engine {engine}")
+    if engine != "openrouter":
+        raise ValueError(f"unsupported LLM engine: {engine}")
+    key = get_llm_key(settings)
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY is required")
+    return await _call_openrouter(prompt, system, key, json_mode=json_mode, max_tokens=max_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +132,10 @@ async def _dispatch(engine: str, prompt: str, system: str, settings: dict | None
 # ---------------------------------------------------------------------------
 async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
                    prefer: str | None = None, max_tokens: int = 2000, log=None) -> tuple[dict, str]:
-    """Retourne (dict, engine_utilisé). Cascade sur tous les backends disponibles."""
+    """Retourne (dict, engine utilisé) via OpenRouter uniquement."""
     order = available_engines(settings)
+    if not order:
+        raise RuntimeError("OPENROUTER_API_KEY is required; no local LLM fallback is available")
     if prefer and prefer in order:
         order.remove(prefer)
         order.insert(0, prefer)
@@ -179,6 +158,8 @@ async def ask_text(prompt: str, system: str = "You are a helpful assistant.",
                    settings: dict | None = None, prefer: str | None = None,
                    max_tokens: int = 2000) -> tuple[str, str]:
     order = available_engines(settings)
+    if not order:
+        raise RuntimeError("OPENROUTER_API_KEY is required; no local LLM fallback is available")
     if prefer and prefer in order:
         order.remove(prefer)
         order.insert(0, prefer)
@@ -225,7 +206,7 @@ async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
                     "engine": "ML Gatekeeper (local)"}
     # 2. LLM (cascade) ou heuristique
     if not available_engines(settings):
-        return heuristic_gatekeeper(f"{title} {text}", settings)
+        raise RuntimeError("OPENROUTER_API_KEY is required for gatekeeper checks")
     prompt = f"""Gatekeeper Protocol: decide if this project is a MARINE/OCEAN/COASTAL conservation, restoration or protection project.
 REJECT purely terrestrial (mountains, inland forests) or freshwater (lakes, rivers) projects, UNLESS it is an estuary with direct coastal impact.
 Project title: {title}
@@ -243,9 +224,7 @@ Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>
                 "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
                 "engine": f"{engine.title()} Gatekeeper"}
     except Exception as e:
-        res = heuristic_gatekeeper(f"{title} {text}", settings)
-        res["reason"] = f"llm failed ({str(e)[:80]}), {res['reason']}"
-        return res
+        raise RuntimeError(f"OpenRouter gatekeeper failed: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -329,14 +308,10 @@ async def grounded_search(prompt: str, log=None, domain_fn=None) -> tuple[list[d
     """Retourne (candidats [{url, domain}], synthèse texte)."""
     log = log or (lambda m: None)
     dom = domain_fn or _fallback_domain
-    gemini_key = _env("GEMINI_API_KEY")
-    if gemini_key:
-        return await _grounded_gemini(prompt, gemini_key, log, dom)
     or_key = _env("OPENROUTER_API_KEY")
-    if or_key:
-        return await _grounded_openrouter(prompt, or_key, log, dom)
-    log("grounded_search: aucune clé de recherche disponible")
-    return [], None
+    if not or_key:
+        raise RuntimeError("OPENROUTER_API_KEY is required for grounded search")
+    return await _grounded_openrouter(prompt, or_key, log, dom)
 
 
 async def _grounded_gemini(prompt: str, key: str, log, dom) -> tuple[list[dict], str | None]:

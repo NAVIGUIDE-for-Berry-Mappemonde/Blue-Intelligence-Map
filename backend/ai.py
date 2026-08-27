@@ -18,15 +18,13 @@ from llm_core import (
 
 
 async def _llm_json(prompt: str, model: str, key: str, engine: str = "gemini") -> dict:
-    """Rétrocompat : signature historique, routage via llm_core.ask_json."""
-    prefer = {"gemini": "gemini", "openrouter": "openrouter",
-              "gpt": "emergent", "claude": "emergent"}.get(engine, None)
-    data, _ = await ask_json(prompt, prefer=prefer)
+    """Rétrocompat : toutes les requêtes sont désormais routées vers OpenRouter."""
+    data, _ = await ask_json(prompt, settings={"openrouter_api_key": key}, prefer="openrouter")
     return data
 
 
 async def _gemini_json(prompt: str, model: str, key: str) -> dict:
-    data, _ = await ask_json(prompt, prefer="gemini")
+    data, _ = await ask_json(prompt, settings={"openrouter_api_key": key}, prefer="openrouter")
     return data
 
 
@@ -47,7 +45,7 @@ def heuristic_extract(title: str, text: str, meta_desc: str, settings: dict) -> 
 async def extract_project(title: str, text: str, meta_desc: str, url: str, funder: str,
                           settings: dict, ext_links=None) -> dict:
     if not available_engines(settings):
-        return heuristic_extract(title, text, meta_desc, settings)
+        raise RuntimeError("OPENROUTER_API_KEY is required for project extraction")
     links_block = ""
     if ext_links:
         links_block = "\nExternal organization links found on the page:\n" + \
@@ -84,5 +82,5 @@ Return JSON:
             "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
             "engine": f"{engine.title()} Extractor",
         }
-    except Exception:
-        return heuristic_extract(title, text, meta_desc, settings)
+    except Exception as exc:
+        raise RuntimeError(f"OpenRouter project extraction failed: {exc}") from exc

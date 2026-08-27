@@ -4,6 +4,21 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Local Python environments, caches and scraping artifacts
+.venv/
+venv/
+
+# Python caches and local scraping artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/data/cached_pdfs/
+backend/data/tld_cache/
+
+# Generated ML reports and training outputs
+backend/models/poe_anomaly_report.json
+backend/models/ner_metrics.json
 .env*
 !.env.example
 .env
