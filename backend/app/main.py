@@ -13,11 +13,11 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from app.db import client
-from app.routers import donations, formalities, marinas, misc, ml, projects, swarm
+from app.routers import donations, formalities, marinas, misc, ml, projects, runs, swarm
 
 app = FastAPI(title="Blue Intelligence API")
 
-for module in (projects, swarm, marinas, formalities, ml, donations, misc):
+for module in (projects, swarm, marinas, formalities, runs, ml, donations, misc):
     app.include_router(module.router)
 
 
@@ -65,4 +65,6 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    from app.core.render import shutdown_render
+    await shutdown_render()
     client.close()
