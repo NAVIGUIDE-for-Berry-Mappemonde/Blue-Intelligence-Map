@@ -1,4 +1,4 @@
-import { Anchor, ExternalLink, Loader2, MapPin, RefreshCw, Search } from "lucide-react";
+import { Anchor, ExternalLink, MapPin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
@@ -128,38 +128,59 @@ export default function MarinasPanel({
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface" data-testid="marinas-panel">
-      {/* Header block */}
+      {/* En-tête + recherche — structure uniforme des 3 modes */}
       <div className="p-4 border-b border-line">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-3">
           <Anchor size={18} className="text-alert" />
           <h2 className="font-heading font-bold text-white text-base">{t("modeMarinas")}</h2>
-          {/* Count removed 2026-06 (UX): duplicated the ITEMS MAPPED dashboard KPI */}
+          <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="marinas-count">
+            {features.length} {t("modeMarinas").toLowerCase()}
+          </span>
         </div>
-
-        {/* Search */}
         <div className="relative mb-3">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             data-testid="marinas-search-input"
             type="text"
+            name="marinas-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("marinasSearch")}
-            className="w-full pl-8 pr-2 py-2 bg-raised border border-line rounded-sm text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-alert/60"
+            className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
           />
         </div>
 
-        {/* Filters */}
-        <div className="grid grid-cols-2 gap-2 mb-3">
+        {/* Légende — cohérence avec le mode Projets */}
+        <div className="mb-3" data-testid="marinas-legend">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#ff4a4a", boxShadow: "0 0 6px #ff4a4a66" }} />
+              <span className="text-[11px] text-slate-300">{t("legendMarinaP1")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full shrink-0 opacity-60" style={{ background: "#ff4a4a" }} />
+              <span className="text-[11px] text-slate-300">{t("legendMarinaOther")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#2dd4bf", boxShadow: "0 0 6px #2dd4bf66" }} />
+              <span className="text-[11px] text-slate-300">{t("legendAnchorage")}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Filtres */}
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
+            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="marinas-filter-priority">
               {t("marinasFilterPriority")}
             </label>
             <select
+              id="marinas-filter-priority"
               data-testid="marinas-filter-priority"
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value)}
-              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-100 focus:outline-none focus:border-alert/60"
+              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
             >
               <option value="All">{t("marinasAll")}</option>
               <option value="1">1 · {t("marinasPriority1")}</option>
@@ -168,14 +189,15 @@ export default function MarinasPanel({
             </select>
           </div>
           <div>
-            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
+            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="marinas-filter-source">
               {t("marinasFilterSource")}
             </label>
             <select
+              id="marinas-filter-source"
               data-testid="marinas-filter-source"
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
-              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-100 focus:outline-none focus:border-alert/60"
+              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
             >
               <option value="All">{t("marinasAll")}</option>
               <option value="openstreetmap">{t("marinasSourceOSM")} ({bySrc.openstreetmap})</option>
@@ -184,11 +206,6 @@ export default function MarinasPanel({
             </select>
           </div>
         </div>
-
-        {/* Anchorages toggle moved to the SIA marinas card (2026-06) */}
-
-        {/* Phase 6 — Batch controls migrated to Audit view; sidebar keeps only the list.
-            Export button removed from the sidebar (available in Settings). */}
       </div>
 
       {/* List */}
@@ -243,14 +260,12 @@ export default function MarinasPanel({
         })}
       </div>
 
-      {/* Refresh footer */}
-      <div className="p-3 border-t border-line">
-        <button
-          onClick={() => onRefresh && onRefresh()}
-          className="w-full flex items-center justify-center gap-2 px-3 py-1.5 border border-line hover:border-alert/40 hover:text-alert text-slate-400 text-xs rounded-sm"
-        >
-          <RefreshCw size={12} /> {t("refresh") || "Refresh"}
-        </button>
+      {/* Attributions — pied uniforme avec le mode Formalités
+          (le bouton Refresh a été retiré : la liste se rafraîchit seule toutes les 8 s) */}
+      <div className="px-4 py-2 border-t border-line">
+        <p className="font-mono text-[10px] text-slate-300 leading-relaxed">
+          © OpenStreetMap (ODbL) · SHOM
+        </p>
       </div>
     </aside>
   );

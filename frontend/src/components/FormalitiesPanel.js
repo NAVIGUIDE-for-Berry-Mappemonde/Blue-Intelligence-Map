@@ -57,10 +57,14 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
       className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface"
       data-testid="formalities-panel"
     >
+      {/* En-tête + recherche — structure uniforme des 3 modes */}
       <div className="p-4 border-b border-line">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />
-          <h2 className="font-heading font-bold text-white text-base">{t("poeTitle")}</h2>
+          {/* Même libellé que le bouton de mode dans l'en-tête (cohérence),
+              le sous-titre précise le contenu (Ports d'Entrée). */}
+          <h2 className="font-heading font-bold text-white text-base">{t("modeFormalities")}</h2>
+          <span className="font-mono text-[10px] text-slate-500">· {t("poeTitle")}</span>
           <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="poe-zones-count">
             {items.length} {t("poeZonesCount")}
           </span>
@@ -68,27 +72,34 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
 
         <div
           data-testid="formalities-disclaimer"
-          className="bi-formalities-disclaimer text-[11px] leading-relaxed px-2.5 py-2 rounded-sm mb-2"
+          className="bi-formalities-disclaimer text-[11px] leading-relaxed px-2.5 py-2 rounded-sm mb-3"
         >
           ⚠️ {t("formalitiesDisclaimer")}
         </div>
 
-        {/* Search + status filter */}
-        <div className="relative mb-2">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+        <div className="relative mb-3">
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             data-testid="poe-search-input"
+            type="text"
+            name="poe-search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t("poeSearch")}
-            className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
           />
         </div>
+
+        {/* Filtre par statut */}
+        <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="poe-status-filter">
+          {t("poeAllStatuses")}
+        </label>
         <select
+          id="poe-status-filter"
           data-testid="poe-status-filter"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amberx/60"
+          className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
         >
           <option value="All">{t("poeAllStatuses")}</option>
           <option value="non_generee">{t("poeStatusNonGeneree")}</option>
@@ -97,14 +108,34 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
           <option value="erreur">{t("poeStatusErreur")}</option>
         </select>
 
+        {/* Légende — cohérence avec le mode Projets */}
+        <div className="mt-3" data-testid="poe-legend">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#fbbf24", boxShadow: "0 0 6px #fbbf2466" }} />
+              <span className="text-[11px] text-slate-300">{t("legendPoePort")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(251,191,36,0.25)", border: "1px solid #fbbf24" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusIa")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(100,116,139,0.15)", border: "1px solid #64748b" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusNonGeneree")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(255,74,74,0.15)", border: "1px solid #ff4a4a" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusErreur")}</span>
+            </div>
+          </div>
+        </div>
+
         {items.length > 0 && (
           <p className="mt-2 font-mono text-[9px] uppercase tracking-widest text-slate-500" data-testid="poe-summary">
             {generatedCount}/{items.length} {t("poeSummary")} · {summary.total_ports || 0} {t("poeSummaryPorts")}
           </p>
         )}
-        <p className="mt-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-          {t("poeSelectHint")}
-        </p>
       </div>
 
       {/* EEZ list */}

@@ -1,25 +1,63 @@
 import { Compass, Flag, Search } from "lucide-react";
 import ProjectList from "./ProjectList";
 
+/**
+ * Bandeau latéral du mode Projets — structure uniforme des 3 modes :
+ * en-tête (icône + titre + compteur) → recherche → filtres → liste → action.
+ * La légende cliquable fait office de filtre par catégorie (le menu déroulant
+ * redondant a été retiré).
+ */
 export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport }) {
   const legendCats = (categories || []).filter((c) => c.count > 0);
-  const totalVisible = (projects.features || []).length; // eslint-disable-line no-unused-vars
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0" data-testid="swarm-panel">
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Phase 6 — Sidebar header (Compass icon aligned with Marinas anchor + Formalities scroll) */}
+        {/* En-tête + recherche */}
         <section className="p-4 border-b border-line" data-testid="projects-panel-header">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-3">
             <Compass size={18} className="text-sonar" />
             <h2 className="font-heading font-bold text-white text-base">{t("modeProjects")}</h2>
-            {/* Count removed 2026-06 (UX): duplicated the ITEMS MAPPED dashboard KPI */}
+            <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="projects-count">
+              {funders.total} {t("projects")}
+            </span>
+          </div>
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              data-testid="project-search-input"
+              type="text"
+              name="project-search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("searchPlaceholder")}
+              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            />
           </div>
         </section>
 
-        {/* Legend (clickable) */}
+        {/* Filtre par organisation */}
+        <section className="p-4 border-b border-line">
+          <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="org-filter-select">
+            {t("orgFilter")}
+          </label>
+          <select
+            id="org-filter-select"
+            data-testid="org-filter-select"
+            value={funderFilter}
+            onChange={(e) => setFunderFilter(e.target.value)}
+            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
+          >
+            <option value="All">{t("allOrgs")} ({funders.total} {t("projects")})</option>
+            {funders.funders.map((f) => (
+              <option key={f.name} value={f.name}>{f.name} ({f.count})</option>
+            ))}
+          </select>
+        </section>
+
+        {/* Légende cliquable = filtre par catégorie */}
         <section className="p-4 border-b border-line" data-testid="map-legend">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">{t("legend")}</p>
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-2">{t("legend")}</p>
           <div className="grid grid-cols-1 gap-0.5">
             {legendCats.map((c) => (
               <button key={c.name} data-testid={`legend-item-${c.name}`}
@@ -33,49 +71,10 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
           </div>
         </section>
 
-        {/* Filters */}
-        <section className="p-4 border-b border-line">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">{t("orgFilter")}</p>
-          <select
-            data-testid="org-filter-select"
-            value={funderFilter}
-            onChange={(e) => setFunderFilter(e.target.value)}
-            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
-          >
-            <option value="All">{t("allOrgs")} ({funders.total} {t("projects")})</option>
-            {funders.funders.map((f) => (
-              <option key={f.name} value={f.name}>{f.name} ({f.count})</option>
-            ))}
-          </select>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2 mt-3">{t("catFilter")}</p>
-          <select
-            data-testid="category-filter-select"
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
-          >
-            <option value="All">{t("allCategories")}</option>
-            {legendCats.map((c) => (
-              <option key={c.name} value={c.name}>{t("cat_" + c.name)} ({c.count})</option>
-            ))}
-          </select>
-          <div className="relative mt-2">
-            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              data-testid="project-search-input"
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t("searchPlaceholder")}
-              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
-            />
-          </div>
-        </section>
-
         <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} />
       </div>
 
-      {/* Bottom action — Phase 6: only report button kept, export moved to Settings */}
+      {/* Action de pied — signaler un projet manquant */}
       <div className="shrink-0 p-3 border-t border-line bg-surface">
         <button
           data-testid="report-project-btn"

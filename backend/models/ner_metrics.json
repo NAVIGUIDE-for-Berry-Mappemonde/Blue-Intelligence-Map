@@ -1,6 +1,6 @@
 {
-  "trained_at": "2026-08-26T20:56:02Z",
-  "n_train": 5041,
+  "trained_at": "2026-08-28T06:18:53Z",
+  "n_train": 5043,
   "n_dev": 560,
   "dropped": 33,
   "labels": [
@@ -8,8 +8,8 @@
     "PORT_NAME",
     "PROJECT_NAME"
   ],
-  "ents_f": 0.9682,
-  "ents_p": 0.9682,
-  "ents_r": 0.9682,
-  "final_loss": 884.52
+  "ents_f": 0.9785,
+  "ents_p": 0.9763,
+  "ents_r": 0.9807,
+  "final_loss": 432.43
 }

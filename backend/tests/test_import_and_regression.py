@@ -14,6 +14,20 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / "frontend" / ".env")
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+
+
+def _cleanup_fixtures():
+    """Supprime les projets TEST_Import_* créés par cette suite (idempotent)."""
+    from pathlib import Path as _P
+    from dotenv import dotenv_values
+    from pymongo import MongoClient
+    env = dotenv_values(_P(__file__).resolve().parent.parent / ".env")
+    db = MongoClient(env["MONGO_URL"])[env["DB_NAME"]]
+    db.projects.delete_many({"url": {"$regex": r"test\.example\.com"}})
+
+
+import atexit
+atexit.register(_cleanup_fixtures)
 API = f"{BASE_URL}/api"
 
 
