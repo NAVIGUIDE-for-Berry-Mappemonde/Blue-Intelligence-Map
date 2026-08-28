@@ -71,57 +71,74 @@ effectué, (3) la proposition de rangement et de découpage cible.
 
 ---
 
-## 3. Proposition de rangement cible (non appliquée — évolution future)
+## 3. Rangement cible (APPLIQUÉ)
 
-Le backend actuel est plat (18 modules au même niveau) et `server.py` concentre
-~1 750 lignes. Découpage proposé, à iso-fonctionnalités :
+Le backend plat historique (18 modules au même niveau, `server.py` ~1 750 l.)
+a été réorganisé en paquet `app/` — la surface de routes est restée
+byte-identique (85/85 vérifiées contre `main`) :
 
 ```
 backend/
+├── server.py                   # shim : `from app.main import app` (uvicorn server:app inchangé)
 ├── app/
-│   ├── main.py                 # create_app(), middlewares, startup (≈80 l.)
-│   ├── config.py               # settings Mongo + DEFAULT_SETTINGS + env
-│   ├── db.py                   # client Motor, index
+│   ├── main.py                 # assemblage FastAPI, middlewares, startup/shutdown
+│   ├── config.py               # chemins (DATA_DIR, MODELS_DIR, ROUTE_FILE), env, DEFAULT_SETTINGS
+│   ├── db.py                   # client Motor + get_settings
+│   ├── state.py                # singletons partagés (swarm)
 │   ├── routers/                # 1 fichier = 1 domaine REST
-│   │   ├── projects.py         #   /projects, /import, /export, /categories, /report-project
-│   │   ├── swarm.py            #   /swarm/*, /failed/*, /stats, /telemetry
-│   │   ├── marinas.py          #   /marinas/*, /anchorages/*
-│   │   ├── formalities.py      #   /poe/* (act. poe_routes.py)
-│   │   ├── ml.py               #   /api/ml/* (act. ml_routes.py)
+│   │   ├── projects.py         #   /projects, /import|export geojson, /categories, enrich, /report-project
+│   │   ├── swarm.py            #   /swarm/*, /stats, /telemetry, /failed/* (Force Extract)
+│   │   ├── marinas.py          #   /marinas/*, /anchorages/*, enrich unitaire + batch
+│   │   ├── formalities.py      #   /poe/* (ex poe_routes.py)
+│   │   ├── ml.py               #   /api/ml/* (ex ml_routes.py)
 │   │   ├── donations.py        #   /donations/*, /payments/*, webhook Stripe
-│   │   └── misc.py             #   /settings, /manual, /route, /zee/*
+│   │   └── misc.py             #   santé, /settings, /manual, /route, /zee/*
 │   ├── services/               # logique métier (aucun import FastAPI)
-│   │   ├── swarm_pipeline.py   #   act. pipeline.py
-│   │   ├── poe_pipeline.py     #   act. poe.py
-│   │   ├── marina_build.py     #   act. marinas.py + anchorages.py
-│   │   ├── marina_enrich.py    #   act. enrichment.py
-│   │   ├── zee_crossings.py    #   act. zee.py
+│   │   ├── swarm_pipeline.py   #   ex pipeline.py
+│   │   ├── poe_pipeline.py     #   ex poe.py
+│   │   ├── marina_build.py     #   ex marinas.py
+│   │   ├── anchorage_build.py  #   ex anchorages.py
+│   │   ├── marina_enrich.py    #   ex enrichment.py
+│   │   ├── zee_crossings.py    #   ex zee.py
 │   │   └── osm_validate.py
 │   ├── core/                   # briques transverses réutilisables
-│   │   ├── llm.py              #   act. llm_core.py (OpenRouter)
-│   │   ├── geo.py              #   act. geo_core.py
-│   │   ├── extract.py          #   act. extract_core.py
-│   │   ├── dedup.py            #   act. dedup_core.py
-│   │   ├── rag.py              #   act. rag_core.py
-│   │   ├── ml.py               #   act. ml_core.py
-│   │   └── tasks.py            #   TaskState générique (act. dupliqué 4×)
+│   │   ├── llm.py              #   ex llm_core.py (OpenRouter)
+│   │   ├── geo.py              #   ex geo_core.py
+│   │   ├── extract.py          #   ex extract_core.py
+│   │   ├── dedup.py            #   ex dedup_core.py
+│   │   ├── rag.py              #   ex rag_core.py
+│   │   ├── ml.py               #   ex ml_core.py
+│   │   ├── tinyfish.py         #   ex tinyfish_client.py
+│   │   └── tasks.py            #   TaskState générique (remplace 4 classes dupliquées)
 │   └── static_data/            # seeds.py, categories.py
 ├── data/ · models/ · tests/
 ```
 
-Fonctions à re-découper en priorité :
+Fonctions re-découpées :
 
-1. **`poe.generate_zone_poe` (~280 l.)** → 5 étapes pures : `refresh_known_sources`,
-   `search_candidates`, `collect_texts`, `extract_and_geocode`, `persist_zone` ;
-2. **`server.py`** → éclater en routers (le gros du gain de lisibilité) ;
+1. **`poe_pipeline.generate_zone_poe`** → orchestrateur + 5 étapes :
+   `_skip_if_unchanged` (monitoring MD5/sémantique), `_find_sources`
+   (recherche + gatekeeper + Level-2 + bootstrapping), `_collect_texts`
+   (cascade N1/N2/N3), `_extract_and_geocode`, `_persist_zone` (upsert
+   non-destructif) ;
+2. **`server.py`** → 7 routers par domaine (voir ci-dessus) ;
 3. **États de tâches** (`TaskState`, `EnrichBatchState`, `ZeeComputeState`,
-   `BuildState`) → une seule classe générique `core/tasks.py`, voire une
-   collection Mongo `jobs` pour survivre aux redémarrages ;
-4. **Frontend** : `MapView.js` (>900 l.) → séparer par couche
-   (`layers/ProjectsLayer.js`, `layers/MarinasLayer.js`, `layers/EezLayer.js`)
-   et extraire les popups en composants ; `BatchHub.js` → 1 carte par fichier
-   (`audit/ProjectsCard.js`, `audit/MarinasCard.js`, `audit/FormalitiesCard.js`).
+   `BuildState`) → une seule classe `app/core/tasks.TaskState` + helpers
+   `prune_tasks` / `new_task` ;
+4. **Frontend** :
+   - `MapView.js` (899 l. → ~300 l.) : orchestrateur + modules par couche sous
+     `components/map/` (`constants.js`, `zonePopup.js`, `useRouteLayer.js`,
+     `useProjectsLayer.js`, `useMarinasLayer.js`, `useAnchoragesLayer.js`,
+     `useFormalitiesLayers.js`) ;
+   - `BatchHub.js` (709 l. → 36 l.) : dispatcheur + 1 carte par fichier sous
+     `components/audit/` (`CardShell.js`, `ProjectsCard.js`, `MarinasCard.js`,
+     `FormalitiesCard.js`) — le polling d'une carte ne tourne que lorsqu'elle
+     est montée.
 
-Cette migration est mécanique (déplacements + imports) et peut se faire
-progressivement, un domaine à la fois, la suite `backend/tests/` servant de
-filet de sécurité.
+### Évolutions futures possibles
+
+- Persister les états de tâches dans une collection Mongo `jobs` pour survivre
+  aux redémarrages (déjà fait pour la validation OSM) ;
+- Extraire les prompts LLM dans des fichiers dédiés (`app/core/prompts/`) ;
+- Basculer la lecture des réglages sur un cache TTL pour éviter un aller-retour
+  Mongo par requête.
