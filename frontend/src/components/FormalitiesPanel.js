@@ -57,8 +57,9 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
       className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface"
       data-testid="formalities-panel"
     >
+      {/* En-tête + recherche — structure uniforme des 3 modes */}
       <div className="p-4 border-b border-line">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />
           <h2 className="font-heading font-bold text-white text-base">{t("poeTitle")}</h2>
           <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="poe-zones-count">
@@ -68,27 +69,34 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
 
         <div
           data-testid="formalities-disclaimer"
-          className="bi-formalities-disclaimer text-[11px] leading-relaxed px-2.5 py-2 rounded-sm mb-2"
+          className="bi-formalities-disclaimer text-[11px] leading-relaxed px-2.5 py-2 rounded-sm mb-3"
         >
           ⚠️ {t("formalitiesDisclaimer")}
         </div>
 
-        {/* Search + status filter */}
-        <div className="relative mb-2">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+        <div className="relative mb-3">
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             data-testid="poe-search-input"
+            type="text"
+            name="poe-search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t("poeSearch")}
-            className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
           />
         </div>
+
+        {/* Filtre par statut */}
+        <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="poe-status-filter">
+          {t("poeAllStatuses")}
+        </label>
         <select
+          id="poe-status-filter"
           data-testid="poe-status-filter"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amberx/60"
+          className="w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
         >
           <option value="All">{t("poeAllStatuses")}</option>
           <option value="non_generee">{t("poeStatusNonGeneree")}</option>
@@ -102,9 +110,6 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
             {generatedCount}/{items.length} {t("poeSummary")} · {summary.total_ports || 0} {t("poeSummaryPorts")}
           </p>
         )}
-        <p className="mt-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-          {t("poeSelectHint")}
-        </p>
       </div>
 
       {/* EEZ list */}

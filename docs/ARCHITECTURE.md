@@ -135,7 +135,32 @@ Fonctions re-découpées :
      `FormalitiesCard.js`) — le polling d'une carte ne tourne que lorsqu'elle
      est montée.
 
-### Évolutions futures possibles
+## 4. Renommages
+
+### Features visibles (appliqués)
+
+| Avant | Après | Raison |
+|-------|-------|--------|
+| « Swarm Intelligence Audit » (bouton d'en-tête) | **Console** (titre : « Console de supervision » / "Operations Console") | Plus court, décrit la fonction réelle (supervision + déclencheurs), sans jargon |
+| Bouton « Soutenir Blue Intelligence » (dons Stripe) | **supprimé** | Stripe abandonné — tout le code dons/paiement a été retiré |
+| Sélecteur « Moteur d'extraction » (Gemini/GPT/Claude/OpenRouter) | badge statique **OpenRouter** | Un seul moteur désormais |
+| Menu déroulant « Filtre par catégorie » (mode Projets) | **supprimé** | Redondant avec la légende cliquable, qui filtre déjà |
+| Bouton « Rafraîchir » (bandeau Marinas) | **supprimé** | La liste se rafraîchit automatiquement toutes les 8 s |
+
+### Fonctions du code (proposition — à appliquer au fil de l'eau)
+
+| Actuel | Proposé | Raison |
+|--------|---------|--------|
+| `swarm_pipeline.Swarm.deploy` | `Swarm.start_discovery` | « deploy » évoque un déploiement d'infrastructure |
+| `poe_pipeline.generate_zone_poe` | `generate_ports_of_entry` | Expliciter l'objet produit |
+| `marina_enrich.enrich_via_tinyfish` | `scrape_official_site` | Décrit l'action, pas le fournisseur |
+| `core.llm.ask_json` / `ask_text` | `complete_json` / `complete_text` | Vocabulaire standard des complétions LLM |
+| `core.geo.snap_to_ocean` | inchangé | Nom déjà exact |
+| `routers/swarm._force_extract_one` | `force_extract_failed_url` | Préciser la cible (URL en échec) |
+| `core.rag.select_context` | `select_relevant_chunks` | Décrit le mécanisme (similarité par chunks) |
+| État `ia` / `ia_sans_source` (statuts ZEE) | `generee` / `generee_sans_source` | « ia » est ambigu ; migration à faire côté données + UI en une passe dédiée |
+
+## 5. Évolutions futures possibles
 
 - Persister les états de tâches dans une collection Mongo `jobs` pour survivre
   aux redémarrages (déjà fait pour la validation OSM) ;

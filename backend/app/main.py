@@ -13,11 +13,11 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from app.db import client
-from app.routers import donations, formalities, marinas, misc, ml, projects, swarm
+from app.routers import formalities, marinas, misc, ml, projects, swarm
 
 app = FastAPI(title="Blue Intelligence API")
 
-for module in (projects, swarm, marinas, formalities, ml, donations, misc):
+for module in (projects, swarm, marinas, formalities, ml, misc):
     app.include_router(module.router)
 
 

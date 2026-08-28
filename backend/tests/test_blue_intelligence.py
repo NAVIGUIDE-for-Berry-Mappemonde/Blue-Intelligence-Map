@@ -34,8 +34,10 @@ def test_swarm_status_shape(s):
         assert k in d, f"missing {k}"
     assert isinstance(d["agents"], list)
     assert isinstance(d["logs"], list)
-    assert d["tinyfish"] is True  # real key present
-    assert d["llm"] is False  # no Anthropic key
+    # Indicateurs de capacité — dépendent des clés configurées, on ne teste que la forme
+    assert isinstance(d["tinyfish"], bool)
+    assert isinstance(d["llm"], bool)
+    assert d["engine"] == "openrouter"
 
 
 # ---------- Projects & GeoJSON ----------
@@ -102,8 +104,8 @@ def test_settings_defaults(s):
     r = s.get(f"{API}/settings")
     assert r.status_code == 200
     d = r.json()
-    assert d["anthropic_api_key_set"] is False
-    assert d["tinyfish_api_key_set"] is True
+    assert isinstance(d["openrouter_api_key_set"], bool)
+    assert isinstance(d["tinyfish_api_key_set"], bool)
     assert "_id" not in d
     assert "extract_concurrency" in d
     assert "min_marine_score" in d

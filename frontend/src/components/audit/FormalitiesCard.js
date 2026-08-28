@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Radar, Sparkles, Square } from "lucide-react";
+import { Loader2, Radar, ScrollText, Sparkles, Square } from "lucide-react";
 import api from "../../api";
 import CardShell from "./CardShell";
 
@@ -90,7 +90,7 @@ export default function FormalitiesCard({ t, onPoeRefresh }) {
 
   return (
     <div data-testid="audit-batch-hub" data-mode-card="formalities">
-      <CardShell borderCls="border-amberx/40">
+      <CardShell title={t("modeFormalities")} icon={<ScrollText size={13} className="text-amberx" />} borderCls="border-amberx/40">
         {/* --- EEZ referential (VLIZ Marine Regions) --- */}
         <div>
           <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">

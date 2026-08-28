@@ -50,13 +50,6 @@ export default function AuditView({ t, mode, status, refresh, onPoeRefresh, show
     return () => clearInterval(i);
   }, [load, loadSettings]);
 
-  const clearAudit = async () => {
-    if (!window.confirm(t("clearAuditConfirm"))) return;
-    await api.delete("/audit");
-    load();
-  };
-  void clearAudit; // kept for potential re-enable; button removed 2026-06
-
   const forceOne = async (id) => {
     setForcing((f) => ({ ...f, [id]: true }));
     try { await api.post(`/failed/${id}/force`); } catch (e) { alert(e.response?.data?.detail || e.message); }
@@ -69,8 +62,10 @@ export default function AuditView({ t, mode, status, refresh, onPoeRefresh, show
   return (
     <div className="h-full overflow-y-auto p-5 space-y-5 bi-audit-themed" data-testid="audit-view">
       <div className="flex items-center justify-between">
-        <h2 className="font-heading font-black text-xl text-accent">{t("audit")}</h2>
-        {/* "Clear database" button removed 2026-06 per user request */}
+        <h2 className="font-heading font-black text-xl text-accent">{t("auditTitle")}</h2>
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">
+          {t("mode" + (mode || "projects").charAt(0).toUpperCase() + (mode || "projects").slice(1))}
+        </span>
       </div>
 
       {/* Phase 7 — Contextual Swarm Intelligence Hub: only the active mode's card

@@ -12,7 +12,7 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | **Marinas** | rouge | Marinas et points d'amarrage le long de la route Berry-Mappemonde, curatés depuis OpenStreetMap/SHOM et enrichis par IA (canal VHF, places visiteurs, services…) |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 
-S'y ajoutent une console **Audit** opérateur (déclencheurs batch, télémétrie, KPIs), des exports/imports GeoJSON contextuels et une cagnotte de dons globale (Stripe).
+S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
 
 ## Architecture
 
@@ -85,8 +85,6 @@ npm start                   # http://localhost:3000
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
 | `TINYFISH_API_KEY` | optionnel | Agent de scraping TinyFish (extraction de dernier recours) |
 | `GEONAMES_USERNAME` | optionnel | Compte GeoNames (fallback de géocodage après Nominatim) |
-| `STRIPE_API_KEY` | pour les dons | Clé secrète Stripe (`sk_…`) |
-| `STRIPE_WEBHOOK_SECRET` | pour les dons | Secret de signature du webhook Stripe (`whsec_…`) |
 | `RESEND_API_KEY` | optionnel | Envoi d'emails de signalement de projets (Resend) |
 | `SENDER_EMAIL` / `REPORT_RECIPIENT` | optionnel | Expéditeur / destinataire des signalements |
 
@@ -101,7 +99,6 @@ npm start                   # http://localhost:3000
 1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…). Avec le reverse proxy ci-dessous, laisser `REACT_APP_BACKEND_URL` vide (mode même-origine).
 2. **Backend** : `uvicorn server:app --host 0.0.0.0 --port 8001` derrière un reverse proxy qui route `/api/*` vers le port 8001 (le backend n'expose que des routes `/api/*`).
 3. **MongoDB** : instance managée (Atlas) recommandée ; les index sont créés automatiquement au démarrage.
-4. **Stripe** : déclarer le webhook `https://blueintelligence.online/api/webhook/stripe` (événement `checkout.session.completed`) et reporter le `whsec_…` dans `STRIPE_WEBHOOK_SECRET`.
 
 ## API (aperçu)
 
@@ -111,7 +108,21 @@ npm start                   # http://localhost:3000
 - `GET /api/marinas` · `POST /api/marinas/build` · `POST /api/marinas/enrich-batch` — mode Marinas
 - `GET /api/poe/zones` · `POST /api/poe/zones/{mrgid}/generate` · `GET /api/poe/ports` — mode Formalités
 - `GET /api/export/{geojson|marinas.geojson|poe.geojson}` — exports GeoJSON
-- `POST /api/donations/checkout` · `GET /api/donations/total` — dons Stripe
+
+## Données initiales (seed)
+
+Le dossier `seed/` contient les exports GeoJSON de production :
+
+```bash
+# Projets (4 463) — via l'API
+curl -X POST http://localhost:8001/api/import/geojson \
+  -H "Content-Type: application/json" --data-binary @seed/projects.geojson
+# Ports d'Entrée (1 169) + statuts des zones — via le script
+python scripts/restore_data.py poe seed/ports_of_entry.geojson
+python scripts/restore_data.py zones
+```
+
+Le référentiel des 285 ZEE se construit depuis la Console (mode Formalités → « Construire le référentiel ZEE »).
 
 ## Tests
 
