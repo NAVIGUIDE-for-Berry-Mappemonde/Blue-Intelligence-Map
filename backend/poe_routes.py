@@ -3,7 +3,6 @@ poe_routes.py — Endpoints FastAPI du mode Formalités refactoré [ZEE -> Ports
 Injecté dans l'app principale via poe_routes.init(db) + app.include_router(poe_routes.router).
 """
 import asyncio
-import os
 import time
 
 from fastapi import APIRouter, Body, HTTPException
@@ -20,13 +19,6 @@ _db = None
 def init(db):
     global _db
     _db = db
-
-
-def _keys() -> tuple[str | None, str | None]:
-    return (
-        (os.environ.get("GEMINI_API_KEY") or "").strip() or None,
-        (os.environ.get("EMERGENT_LLM_KEY") or "").strip() or None,
-    )
 
 
 class TaskState:
@@ -104,7 +96,6 @@ def _ts_of(iso: str | None) -> float | None:
 
 
 async def _auto_refresh_cycle():
-    gem, emg = _keys()
     now = time.time()
     zones = await _db.eez_zones.find({}, {"geometry": 0}).to_list(500)
     stale, errored = [], []
@@ -138,7 +129,7 @@ async def _auto_refresh_cycle():
         prev_gen = z.get("generated_at")
         try:
             doc = await asyncio.wait_for(
-                poe.generate_zone_poe(_db, mrgid, gem, emg,
+                poe.generate_zone_poe(_db, mrgid,
                                       logger=lambda m, n=z.get("name"): _auto_log(f"[{n}] {m}"),
                                       force=force),
                 timeout=360,
@@ -273,7 +264,6 @@ async def poe_generate(mrgid: int, force: bool = False):
     GEN_LOCKS.add(mrgid)
     GEN_TASKS[mrgid] = {"state": "running", "started_at": time.time(), "finished_at": None,
                         "result": None, "error": None, "logs": []}
-    gem, emg = _keys()
 
     async def _runner():
         task = GEN_TASKS[mrgid]
@@ -285,7 +275,7 @@ async def poe_generate(mrgid: int, force: bool = False):
 
         try:
             doc = await asyncio.wait_for(
-                poe.generate_zone_poe(_db, mrgid, gem, emg, logger=log_fn, force=force),
+                poe.generate_zone_poe(_db, mrgid, logger=log_fn, force=force),
                 timeout=360,
             )
             task["result"] = poe.zone_to_item(doc) if doc else None
@@ -334,7 +324,6 @@ async def poe_generate_batch(body: PoeBatchBody | None = None):
     if not docs:
         raise HTTPException(400, "No candidate EEZ (build the referential or uncheck only_missing)")
 
-    gem, emg = _keys()
     BATCH_STATE.reset()
     BATCH_STATE.running = True
     BATCH_STATE.started_at = time.time()
@@ -359,7 +348,7 @@ async def poe_generate_batch(body: PoeBatchBody | None = None):
                     try:
                         doc = await asyncio.wait_for(
                             poe.generate_zone_poe(
-                                _db, mrgid, gem, emg,
+                                _db, mrgid,
                                 logger=lambda m: BATCH_STATE.log(f"[{d.get('name')}] {m}"),
                                 force=body.force,
                             ),

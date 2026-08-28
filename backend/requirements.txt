@@ -21,11 +21,9 @@ courlan==1.4.0
 cryptography==50.0.0
 cssselect==1.5.0
 dateparser==1.4.2
-distro==1.9.0
 dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
-emergentintegrations==0.2.0
 execnet==2.1.2
 fastapi==0.110.1
 fastuuid==0.14.0
@@ -34,16 +32,6 @@ flake8==7.3.0
 frozenlist==1.8.0
 fsspec==2026.7.0
 global-land-mask==1.0.0
-google-ai-generativelanguage==0.6.15
-google-api-core==2.33.0
-google-api-python-client==2.198.0
-google-auth==2.56.3
-google-auth-httplib2==0.4.1
-google-genai==2.18.1
-google-generativeai==0.8.6
-googleapis-common-protos==1.75.0
-grpcio==1.83.0
-grpcio-status==1.71.2
 h11==0.16.0
 hf-xet==1.6.0
 htmldate==1.10.0
@@ -56,7 +44,6 @@ importlib_metadata==9.0.0
 iniconfig==2.3.0
 isort==8.0.1
 Jinja2==3.1.6
-jiter==0.16.0
 jmespath==1.1.0
 joblib==1.5.3
 jq==1.12.0
@@ -64,7 +51,6 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 jusText==3.0.2
 librt==0.15.0
-litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl#sha256=adf398c513273de9341f61822296c6b2145f7f2dc4a69daf3ac04829f5bde3f8
 lxml==6.1.2
 lxml_html_clean==0.4.5
 markdown-it-py==4.2.0
@@ -80,7 +66,6 @@ narwhals==2.25.0
 networkx==3.6.1
 numpy==2.4.6
 oauthlib==3.3.1
-openai==1.99.9
 packaging==26.3
 pandas==3.0.5
 passlib==1.7.4
@@ -91,8 +76,6 @@ pillow==12.3.0
 platformdirs==4.11.3
 pluggy==1.6.0
 propcache==0.5.2
-proto-plus==1.28.2
-protobuf==5.29.6
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycodestyle==2.14.0
@@ -142,7 +125,6 @@ stripe==14.4.1
 sympy==1.14.0
 tenacity==9.1.4
 threadpoolctl==3.6.0
-tiktoken==0.14.0
 tld==0.13.2
 tldextract==5.3.2
 tokenizers==0.23.1

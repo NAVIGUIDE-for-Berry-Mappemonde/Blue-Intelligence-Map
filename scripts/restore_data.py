@@ -2,19 +2,21 @@
 restore_data.py — Restauration NON-DESTRUCTIVE des sauvegardes GeoJSON.
 
 Usage:
-  python3 /app/scripts/restore_data.py poe /tmp/poe_backup.geojson
-  python3 /app/scripts/restore_data.py zones          # backfill statuts après build référentiel
+  python3 scripts/restore_data.py poe /tmp/poe_backup.geojson
+  python3 scripts/restore_data.py zones          # backfill statuts après build référentiel
 Les projets se restaurent via l'endpoint existant POST /api/import/geojson.
 """
 import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
-sys.path.insert(0, "/app/backend")
+BACKEND = Path(__file__).resolve().parent.parent / "backend"
+sys.path.insert(0, str(BACKEND))
 from dotenv import load_dotenv
 
-load_dotenv("/app/backend/.env")
+load_dotenv(BACKEND / ".env")
 from pymongo import MongoClient
 from dedup_core import normalize_name
 

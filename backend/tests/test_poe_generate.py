@@ -1,4 +1,4 @@
-"""Slow test — real unitary PoE generation (Gemini + Nominatim) on Fiji mrgid=8325."""
+"""Slow test — real unitary PoE generation (OpenRouter + Nominatim) on Fiji mrgid=8325."""
 import os
 import time
 
