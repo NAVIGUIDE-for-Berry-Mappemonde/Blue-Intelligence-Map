@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, FileDown, Upload, X } from "lucide-react";
-import api from "../api";
+import api, { BACKEND_URL } from "../api";
 
 // Phase 6 — Extraction (project-swarm) section migrated to Audit → Projects card.
 // SettingsPanel now only hosts transverse concerns:
@@ -68,7 +68,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     onSaved();
   };
 
-  const dl = (l) => window.open(`${process.env.REACT_APP_BACKEND_URL}/api/manual?lang=${l}`, "_blank");
+  const dl = (l) => window.open(`${BACKEND_URL}/api/manual?lang=${l}`, "_blank");
 
   const importFile = async (e) => {
     const file = e.target.files?.[0];
@@ -160,7 +160,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           </p>
           {/* Phase 6 — single contextual export button. URL follows the active mode. */}
           <button data-testid="settings-export-btn"
-            onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}${exportUrl}`, "_blank")}
+            onClick={() => window.open(`${BACKEND_URL}${exportUrl}`, "_blank")}
             className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10"
             title={t("exportGeoJsonTooltip")}
           >

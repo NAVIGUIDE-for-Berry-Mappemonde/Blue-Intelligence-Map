@@ -94,11 +94,11 @@ npm start                   # http://localhost:3000
 
 | Variable | Obligatoire | Rôle |
 |----------|-------------|------|
-| `REACT_APP_BACKEND_URL` | ✅ | URL publique du backend, sans slash final |
+| `REACT_APP_BACKEND_URL` | optionnel | URL publique du backend (sans slash final). **Laisser vide pour le mode même-origine** : en dev le proxy CRA route `/api` vers `localhost:8001`, en production le reverse proxy sert `/api/*`. Ne renseigner que si le backend vit sur un autre domaine |
 
 ## Déploiement sur blueintelligence.online
 
-1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…) avec `REACT_APP_BACKEND_URL=https://blueintelligence.online` au moment du build.
+1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…). Avec le reverse proxy ci-dessous, laisser `REACT_APP_BACKEND_URL` vide (mode même-origine).
 2. **Backend** : `uvicorn server:app --host 0.0.0.0 --port 8001` derrière un reverse proxy qui route `/api/*` vers le port 8001 (le backend n'expose que des routes `/api/*`).
 3. **MongoDB** : instance managée (Atlas) recommandée ; les index sont créés automatiquement au démarrage.
 4. **Stripe** : déclarer le webhook `https://blueintelligence.online/api/webhook/stripe` (événement `checkout.session.completed`) et reporter le `whsec_…` dans `STRIPE_WEBHOOK_SECRET`.
