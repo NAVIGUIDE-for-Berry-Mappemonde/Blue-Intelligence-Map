@@ -117,17 +117,44 @@ async def _nominatim_rows(query: str, country_code: str | None = None, limit: in
         return []
 
 
+_geonames_lock = asyncio.Lock()
+_last_geonames = 0.0
+_geonames_disabled_reason: str | None = None
+
+
+def geonames_status() -> str:
+    """'ok' | 'no_account' | raison de désactivation (401, quota, compte non activé)."""
+    if not (os.environ.get("GEONAMES_USERNAME") or "").strip():
+        return "no_account"
+    return _geonames_disabled_reason or "ok"
+
+
 async def _geonames_rows(query: str, country_code: str | None = None, limit: int = 1) -> list[dict]:
+    global _last_geonames, _geonames_disabled_reason
     gn_user = (os.environ.get("GEONAMES_USERNAME") or "").strip()
-    if not gn_user:
+    if not gn_user or _geonames_disabled_reason:
         return []
+    async with _geonames_lock:  # politesse ~1 req/s (quota gratuit 1000/h)
+        wait = 1.0 - (time.time() - _last_geonames)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_geonames = time.time()
     params = {"q": query, "maxRows": limit, "username": gn_user}
     if country_code:
         params["country"] = country_code.upper()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get("http://api.geonames.org/searchJSON", params=params)
-            return (r.json().get("geonames") or []) if r.status_code == 200 else []
+            body = r.json() if "json" in (r.headers.get("content-type") or "") else {}
+            status = (body or {}).get("status") or {}
+            # 10 = authorization exception (compte absent / webservice non activé),
+            # 18/19/20 = quotas — on désactive pour la suite du process (évite
+            # des centaines d'appels voués à l'échec).
+            if r.status_code in (401, 403) or status.get("value") in (10, 18, 19, 20):
+                _geonames_disabled_reason = (status.get("message")
+                                             or f"http {r.status_code}")[:120]
+                return []
+            return (body.get("geonames") or []) if r.status_code == 200 else []
     except Exception:
         return []
 
@@ -184,10 +211,8 @@ def _rerank_rows(query_ctx: str, rows: list[dict], name_key: str) -> dict:
         return rows[0]
 
 
-async def geocode_port(port: dict, zone: dict, log=None) -> tuple[float, float, str] | None:
-    """Géocodage d'un port d'entrée : variantes de noms, Nominatim (avec pays),
-    re-ranking sémantique des candidats, fallback GeoNames."""
-    log = log or (lambda m: None)
+def _port_queries(port: dict, zone: dict) -> tuple[list[str], str]:
+    """Échelle de requêtes de géocodage d'un port + contexte de re-ranking."""
     name = port["name"]
     territory = zone.get("name") or ""
     variants = port_name_variants(name)
@@ -199,20 +224,61 @@ async def geocode_port(port: dict, zone: dict, log=None) -> tuple[float, float, 
     if port.get("city"):
         queries.append(f"{port['city']}, {territory}")
     queries.append(f"{name} port, {zone.get('sovereign') or territory}")
-
-    cc = (zone.get("iso2") or "").lower() or None
     ctx = f"{name} port harbour marina customs, {territory}"
+    return queries, ctx
+
+
+async def _geocode_port_nominatim(port: dict, zone: dict) -> tuple[float, float] | None:
+    queries, ctx = _port_queries(port, zone)
+    cc = (zone.get("iso2") or "").lower() or None
     for q in queries:
         rows = await _nominatim_rows(q, cc, limit=3)
         if rows:
             best = _rerank_rows(ctx, rows, "display_name")
-            return float(best["lat"]), float(best["lon"]), "nominatim"
-    rows = await _geonames_rows(f"{name} {territory}", None, limit=3)
-    if rows:
-        best = _rerank_rows(ctx, rows, "name")
-        return float(best["lat"]), float(best["lng"]), "geonames"
-    log(f"géocodage: aucun résultat pour « {name} »")
+            return float(best["lat"]), float(best["lon"])
     return None
+
+
+async def _geocode_port_geonames(port: dict, zone: dict) -> tuple[float, float] | None:
+    name = port["name"]
+    territory = zone.get("name") or ""
+    _, ctx = _port_queries(port, zone)
+    cc = (zone.get("iso2") or "").upper() or None
+    for q, country in ((name, cc), (f"{name} {territory}", None)):
+        rows = await _geonames_rows(q, country, limit=3)
+        if rows:
+            best = _rerank_rows(ctx, rows, "name")
+            return float(best["lat"]), float(best["lng"])
+    return None
+
+
+async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
+    """GÉOCODAGE PARALLÈLE COMPARÉ : Nominatim (données OSM) ∥ GeoNames (base
+    indépendante) — plus de cascade. L'accord des deux fournisseurs à < 2 km
+    est un signal de confiance fort ; le désaccord est arbitré en aval
+    (point-in-EEZ). Retourne :
+      {nominatim: [lat, lon]|None, geonames: [lat, lon]|None,
+       agreement_km: float|None, agree: bool|None, geonames_available: bool}
+    agree=None quand un seul fournisseur a répondu (GeoNames absent/désactivé)."""
+    log = log or (lambda m: None)
+    nomi, geon = await asyncio.gather(
+        _geocode_port_nominatim(port, zone),
+        _geocode_port_geonames(port, zone),
+    )
+    agreement_km = None
+    agree = None
+    if nomi and geon:
+        agreement_km = round(haversine_km(nomi[0], nomi[1], geon[0], geon[1]), 2)
+        agree = agreement_km <= 2.0
+    if not nomi and not geon:
+        log(f"géocodage: aucun résultat pour « {port['name']} »")
+    return {
+        "nominatim": list(nomi) if nomi else None,
+        "geonames": list(geon) if geon else None,
+        "agreement_km": agreement_km,
+        "agree": agree,
+        "geonames_available": geonames_status() == "ok",
+    }
 
 
 # ---------------------------------------------------------------------------

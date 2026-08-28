@@ -11,6 +11,7 @@ __pycache__/
 # Caches runtime du backend
 backend/data/.tld_cache/
 backend/data/cached_pdfs/
+backend/data/runs/
 .env*
 !.env.example
 .env

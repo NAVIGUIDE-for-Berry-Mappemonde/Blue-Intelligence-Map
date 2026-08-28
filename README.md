@@ -59,6 +59,7 @@ Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les 
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+python -m playwright install chromium   # rendu local des pages JS (pipeline PoE)
 cp .env.example .env        # puis renseigner les variables (voir ci-dessous)
 uvicorn server:app --host 0.0.0.0 --port 8001
 ```
@@ -83,8 +84,9 @@ npm start                   # http://localhost:3000
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM unique de l'application |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
-| `TINYFISH_API_KEY` | optionnel | Agent de scraping TinyFish (extraction de dernier recours) |
-| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (fallback de géocodage après Nominatim) |
+| `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise désormais le rendu Playwright local, gratuit) |
+| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames — activer le « free webservice » sur geonames.org) |
+| `SEARXNG_URL` | optionnel | Instance SearXNG auto-hébergée (voir `infra/searxng/`) — prioritaire sur les instances publiques pour la recherche PoE |
 | `STRIPE_API_KEY` | pour les dons | Clé secrète Stripe (`sk_…`) |
 | `STRIPE_WEBHOOK_SECRET` | pour les dons | Secret de signature du webhook Stripe (`whsec_…`) |
 | `RESEND_API_KEY` | optionnel | Envoi d'emails de signalement de projets (Resend) |

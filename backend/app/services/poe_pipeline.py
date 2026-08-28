@@ -28,14 +28,15 @@ import uuid
 import httpx
 import pycountry
 import tldextract
-from shapely.geometry import shape, Point, mapping
+from shapely.geometry import shape, mapping
 from shapely.prepared import prep
 
-from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name
+from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
+from app.core.events import ZoneRecorder, emit
 from app.core.extract import extract_cascade, internal_followups, serp_filter
-from app.core.geo import geocode_port
+from app.core.geo import geocode_port_dual, point_in_eez
 from app.core.llm import extract_ports, grounded_search
-from app.core.rag import content_changed, select_context
+from app.core.rag import select_context, semantic_similarity
 
 from app.config import DATA_DIR as DATA
 
@@ -60,11 +61,19 @@ OFFICIAL_TOKENS = re.compile(
     re.I,
 )
 
-SEARX_INSTANCES = [
+SEARX_PUBLIC_INSTANCES = [
     "https://searx.be",
     "https://search.inetol.net",
     "https://priv.au",
 ]
+
+
+def searx_instances() -> list[str]:
+    """Instance SearXNG auto-hébergée (SEARXNG_URL, cf. infra/searxng/) en tête,
+    instances publiques en secours."""
+    own = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/")
+    return ([own] if own else []) + SEARX_PUBLIC_INSTANCES
+
 
 # ---------------------------------------------------------------------------
 # Matrice de recherche multilingue par ZEE (génération de requêtes localisées)
@@ -379,7 +388,7 @@ async def build_referential(db, state, force: bool = False):
 # 2. Recherche : SearXNG -> recherche groundée (llm_core) + Level-2 Retry
 # ---------------------------------------------------------------------------
 async def search_searxng(query: str, log) -> list[dict]:
-    for inst in SEARX_INSTANCES:
+    for inst in searx_instances():
         try:
             async with httpx.AsyncClient(timeout=8, headers={"User-Agent": UA}) as client:
                 r = await client.get(f"{inst}/search", params={"q": query, "format": "json"})
@@ -408,10 +417,11 @@ async def search_grounded(zone: dict, whitelist: list[str], log, query_override:
     return await grounded_search(prompt, log=log, domain_fn=domain_of)
 
 
-def rank_candidates_ml(candidates: list[dict], log) -> list[dict]:
+def rank_candidates_ml(candidates: list[dict], log, scores_out: list | None = None) -> list[dict]:
     """Classifieur SERP (ml_core) : trie les candidats par probabilité de mener
     à une liste officielle de ports AVANT tout téléchargement, et écarte les
-    scores très faibles quand des alternatives existent."""
+    scores très faibles quand des alternatives existent.
+    scores_out (optionnel) reçoit [{url, domain, score}] pour le journal."""
     if len(candidates) < 2:
         return candidates
     try:
@@ -419,6 +429,9 @@ def rank_candidates_ml(candidates: list[dict], log) -> list[dict]:
         scored = [((predict_serp(c.get("url") or "") or {}).get("score"), c) for c in candidates]
     except Exception:
         return candidates
+    if scores_out is not None:
+        scores_out.extend({"url": c.get("url"), "domain": c.get("domain"), "score": s}
+                          for s, c in scored)
     if all(s is None for s, _ in scored):
         return candidates
     scored.sort(key=lambda x: x[0] if x[0] is not None else 0.5, reverse=True)
@@ -435,12 +448,15 @@ def rank_candidates_ml(candidates: list[dict], log) -> list[dict]:
 # 3. Collecte & parsing — cascade hybride N1/N2/N3 (extract_core)
 # ---------------------------------------------------------------------------
 async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
-    """Retourne (texte, md5). Cascade N1 (trafilatura/PyMuPDF) -> N2 (Readability).
-    N3 TinyFish volontairement désactivé ici (monitoring/refresh: pas de crédit)."""
+    """Retourne (texte, md5). Cascade N1/N2 + rendu Chromium local (gratuit).
+    Une page bloquée (interstitiel anti-bot) est invalidée, jamais ingérée."""
     try:
-        res = await extract_cascade(url, min_chars=200, allow_tinyfish=False, log=log)
+        res = await extract_cascade(url, min_chars=200, log=log)
     except Exception as e:
         log(f"fetch {domain_of(url)}: échec ({type(e).__name__})")
+        return None, None
+    if res.get("blocked"):
+        log(f"fetch {domain_of(url)}: page de blocage anti-bot — source invalidée")
         return None, None
     text = res["text"]
     if text:
@@ -449,25 +465,66 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# 4. Extraction JSON stricte — délégué à llm_core (OpenRouter + fallback NER)
+# 4. Extraction PARALLÈLE comparée : LLM (OpenRouter) ∥ NER local (spaCy)
 # ---------------------------------------------------------------------------
-async def extract_ports_llm(context: str, zone: dict, log) -> list[dict]:
-    try:
-        return await extract_ports(context, zone, log=log)
-    except Exception as e:
-        log(f"LLM: échec OpenRouter ({type(e).__name__}: {str(e)[:100]})")
-        # Fallback NER local (spaCy entraîné sur la BDD) — extraction sans LLM
+async def extract_ports_llm(context: str, zone: dict, log, rec=None) -> list[dict]:
+    """LLM et NER local tournent EN PARALLÈLE sur le même contexte et leurs
+    listes sont comparées port par port (plus de simple fallback) :
+      - port vu par les deux  → extraction_agreement=True (signal de confiance) ;
+      - port vu par le LLM seul → extraction_agreement=False (à recouper) ;
+      - noms vus par le NER seul → journalisés comme candidats à vérifier ;
+      - LLM indisponible → la liste NER devient le fallback (comportement conservé).
+    """
+    async def _llm():
+        try:
+            return await extract_ports(context, zone, log=log), None
+        except Exception as e:
+            return None, e
+
+    async def _ner():
         try:
             from app.core.ml import extract_entities
-            ents = extract_entities(context[:20000])
-            ports = [{"name": e["text"][:120], "city": None,
-                      "note": "extraction NER locale (fallback sans LLM)"}
-                     for e in ents if e["label"] == "PORT_NAME"]
-            if ports:
-                log(f"NER local: {len(ports)} port(s) extraits en fallback (sans LLM)")
-            return ports[:50]
+            ents = await asyncio.to_thread(extract_entities, context[:20000])
+            return [e["text"].strip()[:120] for e in ents if e["label"] == "PORT_NAME"]
         except Exception:
-            return []
+            return None  # NER indisponible (modèle absent) — signal neutre
+
+    (llm_ports, llm_err), ner_names = await asyncio.gather(_llm(), _ner())
+    ner_names = list(dict.fromkeys(ner_names)) if ner_names is not None else None
+
+    if llm_ports is None:
+        log(f"LLM: échec OpenRouter ({type(llm_err).__name__}: {str(llm_err)[:100]})")
+        if ner_names:
+            ports = [{"name": n, "city": None,
+                      "note": "extraction NER locale (fallback sans LLM)",
+                      "extraction_engine": "ner", "extraction_agreement": None}
+                     for n in ner_names][:50]
+            log(f"NER local: {len(ports)} port(s) extraits en fallback (sans LLM)")
+            await emit(rec, "extraction_compare", llm_n=None, ner_n=len(ner_names),
+                       fallback="ner", llm_error=str(llm_err)[:120])
+            return ports
+        await emit(rec, "extraction_compare", llm_n=None, ner_n=0,
+                   fallback="none", llm_error=str(llm_err)[:120])
+        return []
+
+    for p in llm_ports:
+        p["extraction_engine"] = "llm"
+        p["extraction_agreement"] = (
+            any(text_similarity(p["name"], n) >= 0.6 for n in ner_names)
+            if ner_names is not None else None
+        )
+    both = [p["name"] for p in llm_ports if p.get("extraction_agreement")]
+    llm_only = [p["name"] for p in llm_ports if p.get("extraction_agreement") is False]
+    ner_only = ([n for n in ner_names
+                 if not any(text_similarity(n, p["name"]) >= 0.6 for p in llm_ports)]
+                if ner_names is not None else [])
+    if ner_names is not None:
+        log(f"extraction comparée: {len(both)} port(s) confirmés LLM∩NER, "
+            f"{len(llm_only)} LLM seul, {len(ner_only)} NER seul (candidats à vérifier)")
+    await emit(rec, "extraction_compare", llm_n=len(llm_ports),
+               ner_n=(len(ner_names) if ner_names is not None else None),
+               both=both, llm_only=llm_only, ner_only=ner_only)
+    return llm_ports
 
 
 _normalize_name = normalize_name  # rétrocompat
@@ -476,59 +533,124 @@ _normalize_name = normalize_name  # rétrocompat
 # ---------------------------------------------------------------------------
 # Pipeline complet pour UNE zone — orchestrateur + 5 étapes
 # ---------------------------------------------------------------------------
-async def _skip_if_unchanged(db, zone: dict, force: bool, log) -> dict | None:
-    """Étape 1 — Monitoring MD5 + sémantique des sources CONNUES avant toute
-    recherche. Retourne le doc zone (mis à jour) si la ré-extraction peut être
-    sautée, None sinon."""
+async def _skip_if_unchanged(db, zone: dict, force: bool, log, rec=None) -> dict | None:
+    """Étape 1 — Monitoring des sources CONNUES avant toute recherche.
+    DOUBLE VERDICT PARALLÈLE : le hash MD5 et la similarité sémantique sont
+    TOUS DEUX calculés et consignés pour chaque source (plus de cascade), puis
+    une matrice de décision tranche :
+      - MD5 identique                      → inchangé (skip) ;
+      - MD5 différent, similarité >= 0.95  → changement cosmétique (skip, consigné) ;
+      - similarité < 0.95 ou source K.O.   → ré-extraction complète.
+    Retourne le doc zone (mis à jour) si la ré-extraction peut être sautée."""
     mrgid = int(zone["mrgid"])
     known_hashes = zone.get("source_hashes") or {}
     if force or not known_hashes or zone.get("status") not in ("ia", "ia_sans_source") or not zone.get("poe_count", 0):
         return None
-    fresh, fresh_texts = {}, {}
+    old_excerpts = zone.get("source_excerpts") or {}
+    verdicts = []
+    fresh_hashes = {}
     for url in list(known_hashes.keys())[:3]:
         text, md5 = await fetch_and_parse(url, log)
+        md5_same = (md5 == known_hashes.get(url)) if md5 else None
+        sim = None
+        if text and old_excerpts.get(url):
+            sim = round(semantic_similarity(old_excerpts[url], text), 4)
+        verdicts.append({"url": url, "md5_same": md5_same, "semantic_sim": sim})
         if md5:
-            fresh[url] = md5
-        if text:
-            fresh_texts[url] = text
-    if fresh and fresh == known_hashes:
-        log("MD5 inchangés (sources connues) — ré-extraction sautée")
-        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {"checked_at": now_iso()}})
-        return await db.eez_zones.find_one({"mrgid": mrgid})
-    old_excerpts = zone.get("source_excerpts") or {}
-    if fresh and old_excerpts and all(
-        u in old_excerpts and u in fresh_texts and not content_changed(old_excerpts[u], fresh_texts[u], 0.95)
-        for u in fresh
-    ):
-        log("monitoring sémantique: similarité cosinus >= 0.95 — changement HTML mineur, ré-extraction sautée")
+            fresh_hashes[url] = md5
+        await emit(rec, "monitoring_source", url=url, md5_known=known_hashes.get(url),
+                   md5_fresh=md5, md5_same=md5_same, semantic_sim=sim,
+                   chars=len(text or ""))
+
+    def _source_unchanged(v):
+        if v["md5_same"] is True:
+            return True
+        return v["semantic_sim"] is not None and v["semantic_sim"] >= 0.95
+
+    reachable = [v for v in verdicts if v["md5_same"] is not None or v["semantic_sim"] is not None]
+    skip = bool(reachable) and all(_source_unchanged(v) for v in verdicts)
+    if skip:
+        cosmetic = [v["url"] for v in verdicts if v["md5_same"] is False]
+        reason = "md5" if not cosmetic else "semantic"
+        log("monitoring: sources inchangées "
+            + ("(MD5 identiques)" if reason == "md5"
+               else f"(MD5 modifiés mais similarité >= 0.95 : changement cosmétique sur {len(cosmetic)} source(s))")
+            + " — ré-extraction sautée")
+        await emit(rec, "monitoring_decision", skip=True, reason=reason, verdicts=verdicts)
         await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {
-            "checked_at": now_iso(), "source_hashes": {**known_hashes, **fresh},
+            "checked_at": now_iso(),
+            "source_hashes": {**known_hashes, **fresh_hashes},
+            "monitoring_verdicts": verdicts,
         }})
         return await db.eez_zones.find_one({"mrgid": mrgid})
     log("contenu source modifié ou source injoignable — pipeline complet relancé")
+    await emit(rec, "monitoring_decision", skip=False, reason="changed_or_unreachable",
+               verdicts=verdicts)
     return None
 
 
-async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
+def _merge_candidates(*groups: list[dict]) -> list[dict]:
+    """Union de listes de candidats, dédupliquée par URL puis domaine."""
+    seen_urls, seen_domains, out = set(), set(), []
+    for group in groups:
+        for c in group or []:
+            u, d = c.get("url"), c.get("domain")
+            if not u or u in seen_urls:
+                continue
+            if d and d in seen_domains:
+                continue
+            seen_urls.add(u)
+            if d:
+                seen_domains.add(d)
+            out.append(c)
+    return out
+
+
+async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log, rec=None
                         ) -> tuple[list[dict], bool, str | None]:
-    """Étape 2 — Recherche (SearXNG -> localisée -> groundée), filtrage SERP,
-    priorisation ML, gatekeeper whitelist, Level-2 Retry et bootstrapping.
+    """Étape 2 — Recherche PARALLÈLE (requête anglaise ∥ requête localisée,
+    résultats unionés — plus de cascade), complément groundé si union vide,
+    filtrage SERP, priorisation ML, gatekeeper whitelist, Level-2 Retry et
+    bootstrapping. Chaque décision et chaque candidat rejeté sont journalisés.
     Retourne (sources retenues, strictement officielles ?, synthèse groundée)."""
     name = zone.get("name") or zone.get("geoname")
 
-    # Recherche (niveau 1) : anglais puis requête localisée (matrice multilingue)
-    query = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
-    candidates = await search_searxng(query, log)
-    if not candidates:
-        loc_q = localized_query(zone)
-        if loc_q:
-            log(f"requête localisée ({LANG_BY_ISO2.get((zone.get('sov_iso2') or zone.get('iso2') or '').upper())}): {loc_q[:80]}")
-            candidates = await search_searxng(loc_q, log)
+    # Recherche parallèle : anglais ∥ langue locale (matrice multilingue)
+    query_en = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
+    loc_q = localized_query(zone)
+    lang = LANG_BY_ISO2.get((zone.get("sov_iso2") or zone.get("iso2") or "").upper())
+    searches = [search_searxng(query_en, log)]
+    if loc_q:
+        log(f"recherche parallèle EN ∥ localisée ({lang}): {loc_q[:80]}")
+        searches.append(search_searxng(loc_q, log))
+    results = await asyncio.gather(*searches)
+    res_en = results[0]
+    res_loc = results[1] if len(results) > 1 else []
+    await emit(rec, "search", engine="searxng", lang="en", query=query_en,
+               n=len(res_en), results=res_en)
+    if loc_q:
+        await emit(rec, "search", engine="searxng", lang=lang, query=loc_q,
+                   n=len(res_loc), results=res_loc)
+    candidates = _merge_candidates(res_en, res_loc)
+    if res_en or res_loc:
+        log(f"union des recherches: {len(res_en)} EN + {len(res_loc)} localisés → {len(candidates)} candidats")
+
     synthesis = None
     if not candidates:
         candidates, synthesis = await search_grounded(zone, whitelist, log)
+        await emit(rec, "search", engine="grounded", lang="en", query="(prompt groundé)",
+                   n=len(candidates), results=candidates,
+                   synthesis_chars=len(synthesis or ""))
+
+    before_filter = list(candidates)
     candidates = serp_filter(candidates)
-    candidates = rank_candidates_ml(candidates, log)
+    dropped_filter = [c.get("url") for c in before_filter if c not in candidates]
+    if dropped_filter:
+        await emit(rec, "serp_filter", kept=len(candidates), dropped=dropped_filter)
+    scores: list = []
+    candidates = rank_candidates_ml(candidates, log, scores_out=scores)
+    if scores:
+        await emit(rec, "serp_rank", scores=scores)
 
     # Gatekeeper whitelist
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
@@ -539,6 +661,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
         q2 = (f"{zone.get('sovereign') or name} customs administration official website "
               f"designated ports of entry clearance pleasure craft {name}")
         extra = await search_searxng(q2, log)
+        await emit(rec, "search", engine="searxng", lang="en", query=q2, level2=True,
+                   n=len(extra), results=extra)
         syn2 = None
         if not extra:
             extra, syn2 = await search_grounded(zone, whitelist, log, query_override=(
@@ -546,6 +670,9 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
                 f"{zone.get('sovereign') or name} and the page listing designated ports of entry "
                 f"(clearance ports) for foreign pleasure craft in {name}. Cite the official URLs."
             ))
+            await emit(rec, "search", engine="grounded", lang="en", query=q2, level2=True,
+                       n=len(extra or []), results=extra or [],
+                       synthesis_chars=len(syn2 or ""))
         if syn2 and not synthesis:
             synthesis = syn2
         known_domains = {c["domain"] for c in candidates}
@@ -568,6 +695,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
                     auto.append(c["domain"])
             save_exceptions(exceptions)
             log(f"bootstrapping: {[c['domain'] for c in boot]} ajoutés à exceptions.json (auto)")
+            await emit(rec, "bootstrap", domains=[c["domain"] for c in boot])
             official = boot
     strictly_official = bool(official)
     if not official:
@@ -576,20 +704,33 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
         log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) non officielles retenues (ia_sans_source)")
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
+    await emit(rec, "gatekeeper", whitelist=whitelist[:12],
+               official=[c["domain"] for c in official],
+               rejected=[c["domain"] for c in rejected],
+               strictly_official=strictly_official)
     return official, strictly_official, synthesis
 
 
-async def _collect_texts(official: list[dict], log
+async def _collect_texts(official: list[dict], log, rec=None
                          ) -> tuple[list[str], dict, list[dict], dict]:
-    """Étape 3 — Collecte des textes sources : cascade N1/N2 (+ depth-2
-    sélectif), puis UN SEUL appel N3 TinyFish si tout a échoué.
+    """Étape 3 — Collecte des textes sources : cascade double-parsing N1∥N2
+    + depth-2 sélectif + rendu Chromium local (N3-render, gratuit — a remplacé
+    TinyFish). Les pages de blocage anti-bot sont invalidées, jamais ingérées.
     Retourne (texts, hashes MD5, sources utilisées, extraits)."""
     texts, hashes, used_sources, excerpts = [], {}, [], {}
     for c in official[:3]:
         try:
-            res = await extract_cascade(c["url"], min_chars=200, allow_tinyfish=False, log=log)
+            res = await extract_cascade(c["url"], min_chars=200, log=log)
         except Exception as e:
             log(f"fetch {c['domain']}: échec ({type(e).__name__})")
+            await emit(rec, "fetch", url=c["url"], domain=c["domain"],
+                       level="failed", error=type(e).__name__)
+            continue
+        await emit(rec, "fetch", url=c["url"], domain=c["domain"], level=res["level"],
+                   chars=len(res["text"]), md5=res["md5"], blocked=res.get("blocked", False),
+                   render_used=res.get("render_used", False), parse=res.get("parse"))
+        if res.get("blocked"):
+            log(f"fetch {c['domain']}: page de blocage anti-bot — source écartée")
             continue
         if res["md5"]:
             hashes[c["url"]] = res["md5"]
@@ -599,43 +740,32 @@ async def _collect_texts(official: list[dict], log
         if len(text) < 400 and res.get("html"):
             for fu in internal_followups(res["html"], c["url"], limit=2):
                 try:
-                    sub = await extract_cascade(fu, min_chars=200, allow_tinyfish=False, log=log)
+                    sub = await extract_cascade(fu, min_chars=200, log=log)
                 except Exception:
                     continue
-                if sub["text"]:
+                if sub["text"] and not sub.get("blocked"):
                     log(f"depth-2: {fu[:80]} → {len(sub['text'])} chars")
+                    await emit(rec, "depth2", parent=c["url"], url=fu,
+                               chars=len(sub["text"]), level=sub["level"])
                     text = (text + "\n" + sub["text"]).strip()
         if text and len(text) > 200:
             texts.append(f"[SOURCE: {c['url']}]\n{text[:60000]}")  # pas de tronquage court : le RAG condense
             excerpts[c["url"]] = text[:2500]
             used_sources.append({"url": c["url"], "domain": c["domain"],
                                  "md5": hashes.get(c["url"]), "collected_at": now_iso()})
-
-    # N3 TinyFish : UN SEUL appel max par zone, uniquement si N1+N2 ont tout raté
-    tf_key = (os.environ.get("TINYFISH_API_KEY") or "").strip() or None
-    if not texts and tf_key and official:
-        target = official[0]
-        log(f"N1/N2 épuisés sur toutes les sources → N3 TinyFish sur {target['domain']} (dernier recours, cap 120s)")
-        try:
-            res = await extract_cascade(target["url"], min_chars=200, allow_tinyfish=True,
-                                        tinyfish_key=tf_key, log=log)
-            if res["text"] and len(res["text"]) > 200:
-                hashes[target["url"]] = res["md5"]
-                texts.append(f"[SOURCE: {target['url']}]\n{res['text'][:60000]}")
-                excerpts[target["url"]] = res["text"][:2500]
-                used_sources.append({"url": target["url"], "domain": target["domain"],
-                                     "md5": res["md5"], "collected_at": now_iso()})
-        except Exception as e:
-            log(f"N3 TinyFish: échec ({type(e).__name__})")
+            await emit(rec, "source_used", url=c["url"], domain=c["domain"], chars=len(text))
     return texts, hashes, used_sources, excerpts
 
 
-async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log) -> list[dict]:
-    """Étape 4 — Extraction LLM (OpenRouter, fallback NER local) puis géocodage
-    (Nominatim -> GeoNames) et validation spatiale point-in-EEZ de chaque port."""
+async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
+                               rec=None, run=None) -> list[dict]:
+    """Étape 4 — Extraction parallèle comparée (LLM ∥ NER) puis GÉOCODAGE DOUBLE
+    (Nominatim ∥ GeoNames, données indépendantes) : l'accord < 2 km devient un
+    signal de confiance, le désaccord est arbitré par la validation point-in-EEZ.
+    Chaque candidat des deux fournisseurs est journalisé."""
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
-    ports = await extract_ports_llm(context, zone, log)
+    ports = await extract_ports_llm(context, zone, log, rec=rec)
 
     geom = None
     try:
@@ -651,41 +781,128 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         if not norm or norm in seen_names:
             continue
         seen_names.add(norm)
-        geo = await geocode_port(p, zone, log)
-        lat = lon = None
-        source = None
-        validated = False
-        dist_km = None
-        if geo:
-            lat, lon, source = geo
-            if prepared is not None:
-                pt = Point(lon, lat)
-                if prepared.contains(pt):
-                    validated, dist_km = True, 0.0
-                else:
-                    d = geom.distance(pt)
-                    dist_km = round(d * 111.0, 1)
-                    validated = d <= 0.5  # tolérance côtière ~55 km (les PoE sont à terre)
-                    if dist_km > 300:
-                        # Géocodage manifestement aberrant — coordonnées rejetées.
-                        log(f"  ⚠ {p['name']}: géocodage aberrant ({dist_km} km de la ZEE) — coordonnées rejetées")
-                        lat = lon = source = None
-                        dist_km = None
-        docs.append({
+
+        geo = await geocode_port_dual(p, zone, log)
+        cands = []
+        for source in ("nominatim", "geonames"):
+            coords = geo.get(source)
+            if not coords:
+                continue
+            if prepared is not None or geom is not None:
+                v, d = point_in_eez(coords[0], coords[1], geom, prepared)
+            else:
+                v, d = False, None
+            cands.append({"source": source, "lat": coords[0], "lon": coords[1],
+                          "validated": v, "dist_km": d})
+
+        chosen, arbitration = None, None
+        valid_cands = [c for c in cands if c["validated"]]
+        if len(cands) == 1:
+            chosen, arbitration = cands[0], "single"
+        elif len(cands) == 2:
+            if geo.get("agree"):
+                chosen, arbitration = cands[0], "agree"       # accord < 2 km : Nominatim (plus fin)
+            elif valid_cands:
+                chosen, arbitration = valid_cands[0], "eez"   # désaccord : arbitrage point-in-EEZ
+            else:
+                chosen, arbitration = cands[0], "first"
+
+        # Rejet des géocodages manifestement aberrants (> 300 km de la ZEE),
+        # en basculant sur l'autre fournisseur s'il est plausible.
+        if chosen and chosen["dist_km"] is not None and chosen["dist_km"] > 300:
+            other = next((c for c in cands if c is not chosen
+                          and (c["dist_km"] is None or c["dist_km"] <= 300)), None)
+            if other:
+                log(f"  ⚠ {p['name']}: {chosen['source']} aberrant ({chosen['dist_km']} km) "
+                    f"— bascule sur {other['source']}")
+                chosen, arbitration = other, "eez_aberrant_switch"
+            else:
+                log(f"  ⚠ {p['name']}: géocodage aberrant ({chosen['dist_km']} km de la ZEE) — coordonnées rejetées")
+                chosen, arbitration = None, "aberrant_rejected"
+
+        lat = chosen["lat"] if chosen else None
+        lon = chosen["lon"] if chosen else None
+        source = chosen["source"] if chosen else None
+        validated = bool(chosen["validated"]) if chosen else False
+        dist_km = chosen["dist_km"] if chosen else None
+
+        await emit(rec, "geocode", port=p["name"],
+                   nominatim=geo.get("nominatim"), geonames=geo.get("geonames"),
+                   geonames_available=geo.get("geonames_available"),
+                   agreement_km=geo.get("agreement_km"), agree=geo.get("agree"),
+                   candidates=cands, chosen=source, arbitration=arbitration)
+
+        doc = {
             "_id": str(uuid.uuid4()),
             "mrgid": mrgid,
             "zone_name": name,
-            "country_iso2": zone.get("iso2"),
+            "country_iso2": zone.get("iso2") or zone.get("sov_iso2"),
             "name": p["name"], "city": p.get("city"), "note": p.get("note"),
             "lat": lat, "lon": lon, "geocode_source": source,
             "validated": validated, "distance_km": dist_km,
+            "geocode_agree": geo.get("agree"),
+            "geocode_agreement_km": geo.get("agreement_km"),
+            "geocode_alternates": {"nominatim": geo.get("nominatim"),
+                                   "geonames": geo.get("geonames")},
+            "geocode_arbitration": arbitration,
+            "extraction_engine": p.get("extraction_engine"),
+            "extraction_agreement": p.get("extraction_agreement"),
             "source_urls": [s["url"] for s in used_sources],
             "extracted_at": now_iso(),
             "dedup_key": f"{mrgid}:{norm}",
-        })
+        }
+        if run is not None:
+            doc["run_id"] = run.run_id
+        docs.append(doc)
+        agree_note = ""
+        if geo.get("agree") is True:
+            agree_note = f" ✓ accord géocodeurs ({geo.get('agreement_km')} km)"
+        elif geo.get("agree") is False:
+            agree_note = f" ⚠ désaccord géocodeurs ({geo.get('agreement_km')} km, arbitrage {arbitration})"
         log(f"  ⚓ {p['name']} → {'%.3f, %.3f' % (lat, lon) if lat is not None else 'non géocodé'}"
-            f"{' ✓ ZEE' if validated else (f' ⚠ hors ZEE ({dist_km} km)' if lat is not None else '')}")
+            f"{' ✓ ZEE' if validated else (f' ⚠ hors ZEE ({dist_km} km)' if lat is not None else '')}"
+            + agree_note)
+        await emit(rec, "port", name=p["name"], city=p.get("city"), lat=lat, lon=lon,
+                   validated=validated, distance_km=dist_km,
+                   extraction_agreement=p.get("extraction_agreement"),
+                   geocode_agree=geo.get("agree"))
     return docs
+
+
+async def _persist_zone_run(db, zone: dict, docs: list[dict], status: str,
+                            used_sources: list[dict], hashes: dict, run, rec, log) -> dict:
+    """Étape 5 (mode run versionné) — Écriture dans l'ESPACE DU RUN uniquement :
+    poe_run_ports / poe_run_zones. Les collections v1 (poe_ports, eez_zones) ne
+    sont jamais touchées. Idempotent par (run_id, mrgid) : une re-génération de
+    la zone dans le même run remplace ses ports."""
+    mrgid = int(zone["mrgid"])
+    docs = deduplicate_list(docs, title_key="name") if docs else []
+    ports_coll = db[run.ports_coll]
+    await ports_coll.delete_many({"run_id": run.run_id, "mrgid": mrgid})
+    if docs:
+        await ports_coll.insert_many(docs)
+    zone_doc = {
+        "run_id": run.run_id,
+        "mrgid": mrgid,
+        "name": zone.get("name"),
+        "geoname": zone.get("geoname"),
+        "iso2": zone.get("iso2"),
+        "sov_iso2": zone.get("sov_iso2"),
+        "sovereign": zone.get("sovereign"),
+        "status": status if docs else "erreur",
+        "poe_count": len(docs),
+        "sources": used_sources,
+        "source_hashes": hashes,
+        "generated_at": now_iso(),
+        "last_error": None if docs else "aucun port d'entrée extrait des sources",
+    }
+    await db[run.zones_coll].update_one(
+        {"run_id": run.run_id, "mrgid": mrgid}, {"$set": zone_doc}, upsert=True)
+    await emit(rec, "persist", inserted=len(docs), status=zone_doc["status"],
+               run_id=run.run_id)
+    log(f"terminé (run {run.run_id[:8]}): {len(docs)} PoE écrits dans l'espace du run, "
+        f"statut {zone_doc['status']}")
+    return zone_doc
 
 
 async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
@@ -747,67 +964,100 @@ async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
     return await db.eez_zones.find_one({"mrgid": mrgid})
 
 
-async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) -> dict:
-    """Orchestrateur : monitoring -> recherche -> collecte -> extraction -> écriture."""
+async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, run=None) -> dict:
+    """Orchestrateur : monitoring -> recherche -> collecte -> extraction -> écriture.
+
+    run (RunContext, optionnel) : mode « run versionné from scratch » — le
+    monitoring est court-circuité (pipeline complet forcé), chaque micro-étape
+    émet un événement structuré, et l'écriture va dans l'espace du run
+    (poe_run_ports / poe_run_zones) sans toucher aux collections v1."""
     log = logger or (lambda m: None)
     zone = await db.eez_zones.find_one({"mrgid": int(mrgid)})
     if not zone:
         raise ValueError(f"ZEE mrgid={mrgid} inconnue — construire le référentiel d'abord")
     name = zone.get("name") or zone.get("geoname")
+    rec = ZoneRecorder(run.recorder, int(mrgid), name) if run is not None else None
+    t0 = time.time()
     exceptions = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
     log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
+    await emit(rec, "zone_start", iso2=zone.get("iso2"), sov_iso2=zone.get("sov_iso2"),
+               sovereign=zone.get("sovereign"), pol_type=zone.get("pol_type"),
+               whitelist=whitelist)
 
-    # 1. Monitoring prioritaire des sources connues
-    unchanged = await _skip_if_unchanged(db, zone, force, log)
-    if unchanged is not None:
-        return unchanged
+    try:
+        # 1. Monitoring prioritaire des sources connues (jamais en mode run :
+        #    un run from scratch refait TOUT le pipeline)
+        if run is None:
+            unchanged = await _skip_if_unchanged(db, zone, force, log, rec)
+            if unchanged is not None:
+                return unchanged
 
-    # 2. Recherche + gatekeeper
-    official, strictly_official, synthesis = await _find_sources(zone, whitelist, exceptions, log)
+        # 2. Recherche + gatekeeper
+        official, strictly_official, synthesis = await _find_sources(zone, whitelist, exceptions, log, rec)
 
-    # 3. Collecte des textes
-    texts, hashes, used_sources, excerpts = await _collect_texts(official, log)
+        # 3. Collecte des textes
+        texts, hashes, used_sources, excerpts = await _collect_texts(official, log, rec)
 
-    # Monitoring MD5 post-collecte : skip si contenu strictement identique
-    old_hashes = zone.get("source_hashes") or {}
-    if (not force and hashes and old_hashes and hashes == old_hashes
-            and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0):
-        log("MD5 inchangés — ré-extraction sautée (contenu source identique)")
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
-        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+        # Monitoring MD5 post-collecte : skip si contenu strictement identique
+        old_hashes = zone.get("source_hashes") or {}
+        if (run is None and not force and hashes and old_hashes and hashes == old_hashes
+                and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0):
+            log("MD5 inchangés — ré-extraction sautée (contenu source identique)")
+            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
+            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
 
-    # Assemblage du contexte (textes + synthèse groundée éventuelle)
-    context_parts = list(texts)
-    if synthesis:
-        # La synthèse provient de la recherche groundée sur les sources officielles ;
-        # elle est toujours jointe au contexte (les pages gov listent rarement
-        # les ports en HTML brut). Le statut reste piloté par le gatekeeper.
-        context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
-        if not texts:
-            strictly_official = False
-            log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
-    if not context_parts:
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
-            "status": "erreur", "last_error": "aucun contenu source exploitable",
-            "generated_at": now_iso(), "sources": used_sources, "source_hashes": hashes,
-        }})
-        log("ERREUR: aucun contenu exploitable")
-        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+        # Assemblage du contexte (textes + synthèse groundée éventuelle)
+        context_parts = list(texts)
+        if synthesis:
+            # La synthèse provient de la recherche groundée sur les sources officielles ;
+            # elle est toujours jointe au contexte (les pages gov listent rarement
+            # les ports en HTML brut). Le statut reste piloté par le gatekeeper.
+            context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
+            if not texts:
+                strictly_official = False
+                log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
+        if not context_parts:
+            log("ERREUR: aucun contenu exploitable")
+            await emit(rec, "zone_error", error="aucun contenu source exploitable",
+                       duration_s=round(time.time() - t0, 1))
+            if run is not None:
+                return await _persist_zone_run(db, zone, [], "erreur",
+                                               used_sources, hashes, run, rec, log)
+            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+                "status": "erreur", "last_error": "aucun contenu source exploitable",
+                "generated_at": now_iso(), "sources": used_sources, "source_hashes": hashes,
+            }})
+            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
 
-    # RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM
-    context = "\n\n".join(context_parts)
-    if len(context) > 15000:
-        context = select_context(f"official ports of entry customs clearance foreign yachts {name}",
-                                 context, max_chars=15000)
-        log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
+        # RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM
+        context = "\n\n".join(context_parts)
+        raw_chars = len(context)
+        if len(context) > 15000:
+            context = select_context(f"official ports of entry customs clearance foreign yachts {name}",
+                                     context, max_chars=15000)
+            log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
+        await emit(rec, "context", sources=len(texts), synthesis=bool(synthesis),
+                   raw_chars=raw_chars, final_chars=len(context))
 
-    # 4. Extraction + géocodage + validation spatiale
-    docs = await _extract_and_geocode(zone, context, used_sources, log)
+        # 4. Extraction + géocodage + validation spatiale
+        docs = await _extract_and_geocode(zone, context, used_sources, log, rec, run)
 
-    # 5. Écriture non-destructive
-    status = "ia" if strictly_official else "ia_sans_source"
-    return await _persist_zone(db, zone, docs, status, used_sources, hashes, excerpts, log)
+        # 5. Écriture : espace du run (versionné) ou collections v1 (non-destructif)
+        status = "ia" if strictly_official else "ia_sans_source"
+        if run is not None:
+            result = await _persist_zone_run(db, zone, docs, status,
+                                             used_sources, hashes, run, rec, log)
+        else:
+            result = await _persist_zone(db, zone, docs, status, used_sources, hashes, excerpts, log)
+        await emit(rec, "zone_done", status=(result or {}).get("status"),
+                   poe_count=(result or {}).get("poe_count", 0),
+                   duration_s=round(time.time() - t0, 1))
+        return result
+    except Exception as e:
+        await emit(rec, "zone_error", error=f"{type(e).__name__}: {str(e)[:200]}",
+                   duration_s=round(time.time() - t0, 1))
+        raise
 
 
 # ---------------------------------------------------------------------------

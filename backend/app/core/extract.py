@@ -1,14 +1,19 @@
 """
-extract_core.py — Extraction hybride en cascade (économie de crédits TinyFish).
+extract_core.py — Extraction hybride en cascade, 100 % locale et gratuite.
 
-  N1 (gratuit, ms)   : httpx direct + trafilatura (HTML) / PyMuPDF (PDF)
-  N2 (gratuit)       : Readability-lxml + BeautifulSoup
-  N3 (payant, capé)  : TinyFish — uniquement si N1 et N2 échouent ET autorisé
+  N1/N2 (gratuit, ms)    : httpx direct + DOUBLE PARSING comparé
+                           trafilatura ∥ Readability/BS4 (le plus riche gagne,
+                           la similarité entre les deux est un signal de qualité)
+  N3 (gratuit, local)    : rendu navigateur Playwright/Chromium (render_core)
+                           pour les pages JavaScript et les challenges « soft ».
 
-Fournit aussi : filtrage SERP par regex, métadonnées de page (og:image, liens
-externes), et suivi sélectif des liens internes (depth=2 : /annuaire, /contacts…).
+Fournit aussi : filtrage SERP par regex (agrégateurs, réseaux sociaux, pages
+interstitielles anti-bot), détection des pages de blocage (un challenge n'est
+JAMAIS ingéré comme du contenu), métadonnées de page (og:image, liens externes)
+et suivi sélectif des liens internes (depth=2 : /annuaire, /contacts…).
 """
 import asyncio
+import difflib
 import hashlib
 import re
 from urllib.parse import urljoin, urlparse
@@ -24,7 +29,24 @@ SERP_EXCLUDE_RE = re.compile(
     r"|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
     r"|hotels?\.com|kayak\.|skyscanner|cruisemapper|vesselfinder"
     r"|brochure|touris[mt]|baggage|luggage|duty.?free|/vts[-_/.]|vts.?manual"
+    # pages interstitielles / anti-bot : jamais des sources légitimes
+    r"|//unblock\.|\.unblock\.|/cdn-cgi/|captcha|datadome|perimeterx"
+    r"|queue-it\.net|incapsula|distilnetworks"
     r"|\.docx?($|\?)|\.xlsx?($|\?)|\.pptx?($|\?)|\.zip($|\?)|\.exe($|\?))",
+    re.I,
+)
+
+# --- Détection des pages de blocage (challenges anti-bot, interstitiels) ------
+BLOCKED_MARKERS_RE = re.compile(
+    r"checking your browser|just a moment|verify (?:that )?you are (?:a )?human"
+    r"|are you a robot|enable javascript and cookies|cf-browser-verification"
+    r"|_cf_chl_|cf_chl_opt|attention required.{0,4}cloudflare|cloudflare ray id"
+    r"|px-captcha|datadome|request unsuccessful|incapsula incident"
+    r"|access to this page has been denied|pardon our interruption"
+    r"|please complete the security check|request has been blocked"
+    r"|automated access to this (?:site|page)|ddos protection by"
+    r"|complete the captcha|prove (?:that )?you are human|browser verification"
+    r"|unblock request|access from your area has been temporarily limited",
     re.I,
 )
 
@@ -36,7 +58,8 @@ FOLLOWUP_PATTERNS = (
 
 
 def serp_filter(results: list[dict], url_key: str = "url", extra_re=None) -> list[dict]:
-    """Rejette les URLs non pertinentes (agrégateurs, réseaux sociaux, binaires)."""
+    """Rejette les URLs non pertinentes (agrégateurs, réseaux sociaux, binaires,
+    pages interstitielles anti-bot)."""
     out = []
     for r in results:
         u = r.get(url_key) or ""
@@ -48,6 +71,15 @@ def serp_filter(results: list[dict], url_key: str = "url", extra_re=None) -> lis
             continue
         out.append(r)
     return out
+
+
+def looks_blocked(text: str, html: str = "", title: str = "") -> bool:
+    """True si la page est un challenge anti-bot / interstitiel de blocage.
+    Un vrai contenu réglementaire long qui *cite* ces mots reste accepté."""
+    probe = " ".join(p for p in (title or "", (text or "")[:4000], (html or "")[:6000]) if p)
+    if not probe or not BLOCKED_MARKERS_RE.search(probe):
+        return False
+    return len((text or "").strip()) < 1500
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +106,46 @@ def parse_html_n2(html: str) -> dict:
         full = BeautifulSoup(html, "html.parser")
         text = re.sub(r"\s+", " ", full.get_text(" ")).strip()[:12000]
     return {"text": text, "title": title}
+
+
+def _parse_similarity(a: str, b: str) -> float:
+    """Similarité entre les textes des deux parseurs (signal de qualité)."""
+    if not a or not b:
+        return 0.0
+    na = re.sub(r"\s+", " ", a)[:3000]
+    nb = re.sub(r"\s+", " ", b)[:3000]
+    return round(difflib.SequenceMatcher(None, na, nb).ratio(), 3)
+
+
+async def dual_parse_html(html: str) -> dict:
+    """PARSING PARALLÈLE comparé : trafilatura ∥ Readability sur le même HTML.
+    Le texte le plus riche gagne ; la similarité entre les deux est conservée
+    comme signal (accord fort = extraction robuste, divergence = à inspecter).
+    Retourne {text, level, title, n1_chars, n2_chars, similarity, agree}."""
+    async def _n1():
+        try:
+            return (await asyncio.to_thread(parse_html_n1, html)).strip()
+        except Exception:
+            return ""
+
+    async def _n2():
+        try:
+            return await asyncio.to_thread(parse_html_n2, html)
+        except Exception:
+            return {"text": "", "title": ""}
+
+    t1, n2 = await asyncio.gather(_n1(), _n2())
+    t2, title2 = (n2.get("text") or "").strip(), (n2.get("title") or "").strip()
+    sim = _parse_similarity(t1, t2)
+    if len(t1) >= len(t2):
+        text, level = t1, "N1-trafilatura"
+    else:
+        text, level = t2, "N2-readability"
+    return {
+        "text": text, "level": level, "title": title2,
+        "n1_chars": len(t1), "n2_chars": len(t2),
+        "similarity": sim, "agree": (sim >= 0.55) if (t1 and t2) else None,
+    }
 
 
 def page_metadata(html: str, url: str) -> dict:
@@ -132,37 +204,6 @@ def internal_followups(html: str, base_url: str, patterns=FOLLOWUP_PATTERNS, lim
 
 
 # ---------------------------------------------------------------------------
-# N3 — TinyFish (dernier recours payant, capé à 120 s)
-# ---------------------------------------------------------------------------
-TF_TEXT_SCHEMA = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}, "title": {"type": "string"}},
-    "required": ["text"],
-}
-
-
-async def _tinyfish_text(url: str, key: str, log=None) -> dict:
-    from app.core.tinyfish import tf_run_async, tf_get_run
-    log = log or (lambda m: None)
-    goal = ("Extract the complete readable text content of this page, including any "
-            "list of ports of entry, project descriptions, contact directories or "
-            "regulatory annexes. Navigate pagination if present. Do not invent content.")
-    body = await tf_run_async(url, goal, TF_TEXT_SCHEMA, key, max_duration_s=120)
-    run_id = body.get("run_id")
-    if not run_id:
-        raise ValueError(body.get("error", "no run_id"))
-    for _ in range(48):
-        await asyncio.sleep(3)
-        run = await tf_get_run(run_id, key)
-        st = run.get("status", "")
-        if st in ("COMPLETED", "FAILED", "CANCELLED"):
-            if st != "COMPLETED":
-                raise ValueError(f"tinyfish run {st}: {str(run.get('error'))[:100]}")
-            return run.get("result") or {}
-    raise TimeoutError("tinyfish N3 timed out (144s)")
-
-
-# ---------------------------------------------------------------------------
 # Cascade principale
 # ---------------------------------------------------------------------------
 async def fetch_raw(url: str, timeout: int = 25):
@@ -172,16 +213,20 @@ async def fetch_raw(url: str, timeout: int = 25):
         return r.content, (r.headers.get("content-type") or "").lower()
 
 
-async def extract_cascade(url: str, min_chars: int = 200, allow_tinyfish: bool = False,
-                          tinyfish_key: str | None = None, log=None) -> dict:
+async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = True,
+                          log=None) -> dict:
     """
-    Retourne {url, text, md5, level, title, meta_desc, image, ext_links, is_pdf, html}.
-    level ∈ N1-pymupdf | N1-trafilatura | N2-readability | N3-tinyfish | failed.
+    Retourne {url, text, md5, level, title, meta_desc, image, ext_links,
+              is_pdf, html, blocked, render_used, parse}.
+    level ∈ N1-pymupdf | N1-trafilatura | N2-readability | N3-render | blocked | failed.
     md5 = empreinte du texte extrait (stable) sinon du contenu brut.
+    blocked = page interstitielle anti-bot détectée (contenu invalidé, jamais ingéré).
+    parse = {n1_chars, n2_chars, similarity, agree} — double parsing comparé.
     """
     log = log or (lambda m: None)
     out = {"url": url, "text": "", "md5": None, "level": "failed", "title": "",
-           "meta_desc": "", "image": None, "ext_links": [], "is_pdf": False, "html": None}
+           "meta_desc": "", "image": None, "ext_links": [], "is_pdf": False,
+           "html": None, "blocked": False, "render_used": False, "parse": None}
 
     content = None
     ctype = ""
@@ -210,38 +255,48 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_tinyfish: bool =
                 out.update({k: meta[k] for k in ("title", "meta_desc", "image", "ext_links")})
             except Exception:
                 pass
-            # N1 — trafilatura (ultra-rapide, gratuit)
-            try:
-                text = await asyncio.to_thread(parse_html_n1, html)
-                out["text"] = (text or "").strip()
-                if len(out["text"]) >= min_chars:
-                    out["level"] = "N1-trafilatura"
-            except Exception as e:
-                log(f"N1 trafilatura: échec ({type(e).__name__})")
-            # N2 — Readability + BeautifulSoup si N1 trop pauvre
-            if len(out["text"]) < min_chars:
-                try:
-                    n2 = await asyncio.to_thread(parse_html_n2, html)
-                    if len(n2["text"]) > len(out["text"]):
-                        out["text"] = n2["text"]
-                        out["title"] = out["title"] or n2["title"]
-                    if len(out["text"]) >= min_chars:
-                        out["level"] = "N2-readability"
-                except Exception as e:
-                    log(f"N2 readability: échec ({type(e).__name__})")
+            parsed = await dual_parse_html(html)
+            out["parse"] = {k: parsed[k] for k in ("n1_chars", "n2_chars", "similarity", "agree")}
+            out["title"] = out["title"] or parsed["title"]
+            if looks_blocked(parsed["text"], html, out["title"]):
+                out["blocked"] = True
+                log("page interstitielle anti-bot détectée — contenu invalidé")
+            elif len(parsed["text"]) >= min_chars:
+                out["text"] = parsed["text"]
+                out["level"] = parsed["level"]
+            elif parsed["text"]:
+                out["text"] = parsed["text"]
 
-    # N3 — TinyFish uniquement en dernier recours ET si explicitement autorisé
-    if len(out["text"]) < min_chars and allow_tinyfish and tinyfish_key:
-        try:
-            log("N1/N2 épuisés → N3 TinyFish (dernier recours payant, cap 120s)")
-            res = await _tinyfish_text(url, tinyfish_key, log)
-            text = (res.get("text") or "").strip()
-            if len(text) > len(out["text"]):
-                out["text"] = text
-                out["title"] = out["title"] or (res.get("title") or "")
-                out["level"] = "N3-tinyfish"
-        except Exception as e:
-            log(f"N3 TinyFish: échec ({type(e).__name__}: {str(e)[:80]})")
+    # N3 — rendu navigateur local (gratuit) : pages JS et challenges « soft ».
+    needs_render = (not out["is_pdf"]) and (out["blocked"] or len(out["text"]) < min_chars)
+    if needs_render and allow_render:
+        from app.core.render import render_html
+        rendered = await render_html(url, log=log)
+        if rendered:
+            out["render_used"] = True
+            parsed = await dual_parse_html(rendered)
+            r_blocked = looks_blocked(parsed["text"], rendered, parsed["title"])
+            if not r_blocked and len(parsed["text"]) > len(out["text"]):
+                out["text"] = parsed["text"]
+                out["html"] = rendered
+                out["title"] = out["title"] or parsed["title"]
+                out["parse"] = {k: parsed[k] for k in ("n1_chars", "n2_chars", "similarity", "agree")}
+                out["level"] = "N3-render"
+                out["blocked"] = False
+                try:
+                    meta = await asyncio.to_thread(page_metadata, rendered, url)
+                    for k in ("meta_desc", "image", "ext_links"):
+                        out[k] = out[k] or meta[k]
+                except Exception:
+                    pass
+                log(f"N3-render: {len(out['text'])} chars via Chromium local")
+            elif r_blocked:
+                out["blocked"] = True
+
+    if out["blocked"]:
+        out["text"] = ""
+        out["level"] = "blocked"
+        return out
 
     if out["text"]:
         out["md5"] = hashlib.md5(out["text"].encode("utf-8")).hexdigest()

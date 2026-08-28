@@ -1,0 +1,20 @@
+# SearXNG auto-hébergé — moteur de recherche du pipeline PoE (open source, AGPL).
+#
+# Les instances SearXNG publiques bloquent le format JSON ou répondent 429 :
+# une instance locale garantit des SERP gratuits, illimités et multi-moteurs.
+#
+# Démarrage : docker compose -f infra/searxng/docker-compose.yml up -d
+# Backend   : SEARXNG_URL=http://127.0.0.1:8888 dans backend/.env
+#             (l'instance locale passe en tête de liste, les publiques restent
+#              en secours ; sans la variable, comportement inchangé)
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: blue-intelligence-searxng
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+    restart: unless-stopped

@@ -1,0 +1,24 @@
+# Configuration SearXNG minimale pour Blue Intelligence.
+# - format json activé (requis par le pipeline PoE : /search?format=json)
+# - limiter désactivé (instance privée, non exposée publiquement)
+use_default_settings: true
+
+server:
+  secret_key: "blue-intelligence-change-me"
+  limiter: false
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: mojeek
+    disabled: false
