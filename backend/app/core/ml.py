@@ -13,9 +13,9 @@ initial ("trésor") — AUCUNE écriture destructive sur ces collections.
 import asyncio
 import json
 import time
-from pathlib import Path
 
-MODELS_DIR = Path(__file__).parent / "models"
+from app.config import MODELS_DIR
+
 MODELS_DIR.mkdir(exist_ok=True)
 GATEKEEPER_FILE = MODELS_DIR / "gatekeeper_tfidf_logreg.joblib"
 ANOMALY_REPORT_FILE = MODELS_DIR / "poe_anomaly_report.json"
@@ -200,7 +200,7 @@ def predict_relevance(text: str):
 # Anomalies spatiales des PoE (IsolationForest + DBSCAN — non-destructif)
 # ---------------------------------------------------------------------------
 async def scan_poe_anomalies(db, state=None, contamination: float = 0.05) -> dict:
-    from geo_core import isolation_forest_scores, dbscan_noise_flags, haversine_km
+    from app.core.geo import isolation_forest_scores, dbscan_noise_flags, haversine_km
     log = state.log if state else (lambda m: None)
     ports = await db.poe_ports.find({"lat": {"$ne": None}, "lon": {"$ne": None}}).to_list(20000)
     if len(ports) < 20:

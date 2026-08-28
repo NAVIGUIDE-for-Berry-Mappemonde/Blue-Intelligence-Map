@@ -5,6 +5,7 @@ Tests des jobs longs non-destructifs :
 Verifie qu'AUCUN champ name/lat/lon des poe_ports n'est modifie et que les
 comptes globaux (projects / poe_ports) ne diminuent jamais.
 """
+from pathlib import Path
 import os
 import time
 
@@ -13,10 +14,10 @@ import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL")
             or frontend_env.get("REACT_APP_BACKEND_URL")).rstrip("/")
-backend_env = dotenv_values("/app/backend/.env")
+backend_env = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
 
 
 @pytest.fixture(scope="module")

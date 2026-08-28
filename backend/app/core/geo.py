@@ -176,7 +176,7 @@ def _rerank_rows(query_ctx: str, rows: list[dict], name_key: str) -> dict:
     if len(rows) <= 1:
         return rows[0]
     try:
-        from rag_core import rerank_candidates
+        from app.core.rag import rerank_candidates
         labels = [str(r.get(name_key) or "") for r in rows]
         best_idx = rerank_candidates(query_ctx, labels)[0][0]
         return rows[best_idx]

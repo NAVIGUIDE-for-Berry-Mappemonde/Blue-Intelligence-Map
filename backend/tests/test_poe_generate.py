@@ -1,11 +1,12 @@
 """Slow test — real unitary PoE generation (OpenRouter + Nominatim) on Fiji mrgid=8325."""
+from pathlib import Path
 import os
 import time
 
 import requests
 from dotenv import dotenv_values
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or frontend_env["REACT_APP_BACKEND_URL"]).rstrip("/")
 MRGID = 8325
 

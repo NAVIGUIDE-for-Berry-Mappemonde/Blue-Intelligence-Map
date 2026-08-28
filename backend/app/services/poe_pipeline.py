@@ -19,13 +19,11 @@ Architecture :
                              Bottom-Up osm_confidence / anomalies sont préservés).
 """
 import asyncio
-import hashlib
 import json
 import os
 import re
 import time
 import uuid
-from pathlib import Path
 
 import httpx
 import pycountry
@@ -33,14 +31,14 @@ import tldextract
 from shapely.geometry import shape, Point, mapping
 from shapely.prepared import prep
 
-from dedup_core import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name
-from extract_core import extract_cascade, internal_followups, serp_filter
-from geo_core import geocode_port
-from llm_core import extract_ports, grounded_search
-from rag_core import content_changed, select_context
+from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name
+from app.core.extract import extract_cascade, internal_followups, serp_filter
+from app.core.geo import geocode_port
+from app.core.llm import extract_ports, grounded_search
+from app.core.rag import content_changed, select_context
 
-ROOT = Path(__file__).parent
-DATA = ROOT / "data"
+from app.config import DATA_DIR as DATA
+
 EXCEPTIONS_FILE = DATA / "poe_exceptions.json"
 MAP_FILE = DATA / "eez_world_map.geojson"
 
@@ -417,7 +415,7 @@ def rank_candidates_ml(candidates: list[dict], log) -> list[dict]:
     if len(candidates) < 2:
         return candidates
     try:
-        from ml_core import predict_serp
+        from app.core.ml import predict_serp
         scored = [((predict_serp(c.get("url") or "") or {}).get("score"), c) for c in candidates]
     except Exception:
         return candidates
@@ -460,7 +458,7 @@ async def extract_ports_llm(context: str, zone: dict, log) -> list[dict]:
         log(f"LLM: échec OpenRouter ({type(e).__name__}: {str(e)[:100]})")
         # Fallback NER local (spaCy entraîné sur la BDD) — extraction sans LLM
         try:
-            from ml_core import extract_entities
+            from app.core.ml import extract_entities
             ents = extract_entities(context[:20000])
             ports = [{"name": e["text"][:120], "city": None,
                       "note": "extraction NER locale (fallback sans LLM)"}
@@ -476,47 +474,49 @@ _normalize_name = normalize_name  # rétrocompat
 
 
 # ---------------------------------------------------------------------------
-# Pipeline complet pour UNE zone
+# Pipeline complet pour UNE zone — orchestrateur + 5 étapes
 # ---------------------------------------------------------------------------
-async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) -> dict:
-    log = logger or (lambda m: None)
-    zone = await db.eez_zones.find_one({"mrgid": int(mrgid)})
-    if not zone:
-        raise ValueError(f"ZEE mrgid={mrgid} inconnue — construire le référentiel d'abord")
-    name = zone.get("name") or zone.get("geoname")
-    exceptions = load_exceptions()
-    whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
-    log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
-
-    # --- Monitoring MD5 + sémantique prioritaire : re-fetch des sources CONNUES
-    # avant toute recherche. Si le contenu n'a pas changé (hash identique OU
-    # similarité cosinus >= 0.95), aucune ré-extraction. ---
+async def _skip_if_unchanged(db, zone: dict, force: bool, log) -> dict | None:
+    """Étape 1 — Monitoring MD5 + sémantique des sources CONNUES avant toute
+    recherche. Retourne le doc zone (mis à jour) si la ré-extraction peut être
+    sautée, None sinon."""
+    mrgid = int(zone["mrgid"])
     known_hashes = zone.get("source_hashes") or {}
-    if not force and known_hashes and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0:
-        fresh, fresh_texts = {}, {}
-        for url in list(known_hashes.keys())[:3]:
-            text, md5 = await fetch_and_parse(url, log)
-            if md5:
-                fresh[url] = md5
-            if text:
-                fresh_texts[url] = text
-        if fresh and fresh == known_hashes:
-            log("MD5 inchangés (sources connues) — ré-extraction sautée")
-            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
-            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
-        old_excerpts = zone.get("source_excerpts") or {}
-        if fresh and old_excerpts and all(
-            u in old_excerpts and u in fresh_texts and not content_changed(old_excerpts[u], fresh_texts[u], 0.95)
-            for u in fresh
-        ):
-            log("monitoring sémantique: similarité cosinus >= 0.95 — changement HTML mineur, ré-extraction sautée")
-            await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
-                "checked_at": now_iso(), "source_hashes": {**known_hashes, **fresh},
-            }})
-            return await db.eez_zones.find_one({"mrgid": int(mrgid)})
-        log("contenu source modifié ou source injoignable — pipeline complet relancé")
+    if force or not known_hashes or zone.get("status") not in ("ia", "ia_sans_source") or not zone.get("poe_count", 0):
+        return None
+    fresh, fresh_texts = {}, {}
+    for url in list(known_hashes.keys())[:3]:
+        text, md5 = await fetch_and_parse(url, log)
+        if md5:
+            fresh[url] = md5
+        if text:
+            fresh_texts[url] = text
+    if fresh and fresh == known_hashes:
+        log("MD5 inchangés (sources connues) — ré-extraction sautée")
+        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {"checked_at": now_iso()}})
+        return await db.eez_zones.find_one({"mrgid": mrgid})
+    old_excerpts = zone.get("source_excerpts") or {}
+    if fresh and old_excerpts and all(
+        u in old_excerpts and u in fresh_texts and not content_changed(old_excerpts[u], fresh_texts[u], 0.95)
+        for u in fresh
+    ):
+        log("monitoring sémantique: similarité cosinus >= 0.95 — changement HTML mineur, ré-extraction sautée")
+        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {
+            "checked_at": now_iso(), "source_hashes": {**known_hashes, **fresh},
+        }})
+        return await db.eez_zones.find_one({"mrgid": mrgid})
+    log("contenu source modifié ou source injoignable — pipeline complet relancé")
+    return None
 
-    # --- Recherche (niveau 1) : anglais puis requête localisée (matrice multilingue) ---
+
+async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log
+                        ) -> tuple[list[dict], bool, str | None]:
+    """Étape 2 — Recherche (SearXNG -> localisée -> groundée), filtrage SERP,
+    priorisation ML, gatekeeper whitelist, Level-2 Retry et bootstrapping.
+    Retourne (sources retenues, strictement officielles ?, synthèse groundée)."""
+    name = zone.get("name") or zone.get("geoname")
+
+    # Recherche (niveau 1) : anglais puis requête localisée (matrice multilingue)
     query = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
     candidates = await search_searxng(query, log)
     if not candidates:
@@ -530,10 +530,10 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
     candidates = serp_filter(candidates)
     candidates = rank_candidates_ml(candidates, log)
 
-    # --- Gatekeeper + bootstrapping des exceptions ---
+    # Gatekeeper whitelist
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
 
-    # --- Level-2 Retry Query : recherche ciblée sur l'organisation douanière ---
+    # Level-2 Retry Query : recherche ciblée sur l'organisation douanière
     if not official:
         log("Level-2 retry: recherche ciblée sur l'organisation douanière nationale")
         q2 = (f"{zone.get('sovereign') or name} customs administration official website "
@@ -556,6 +556,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
             candidates = rank_candidates_ml(candidates, log)
         official = [c for c in candidates if url_allowed(c["url"], whitelist)]
 
+    # Bootstrapping des exceptions (domaines d'État non couverts par la PSL)
     rejected = [c for c in candidates if c not in official]
     cc_low = (zone.get("iso2") or "").lower()
     if not official and rejected and cc_low:
@@ -575,9 +576,14 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
         log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) non officielles retenues (ia_sans_source)")
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
+    return official, strictly_official, synthesis
 
-    # --- Collecte + hash MD5 (cascade N1/N2, depth=2 sélectif) ---
-    tf_key = (os.environ.get("TINYFISH_API_KEY") or "").strip() or None
+
+async def _collect_texts(official: list[dict], log
+                         ) -> tuple[list[str], dict, list[dict], dict]:
+    """Étape 3 — Collecte des textes sources : cascade N1/N2 (+ depth-2
+    sélectif), puis UN SEUL appel N3 TinyFish si tout a échoué.
+    Retourne (texts, hashes MD5, sources utilisées, extraits)."""
     texts, hashes, used_sources, excerpts = [], {}, [], {}
     for c in official[:3]:
         try:
@@ -605,7 +611,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
             used_sources.append({"url": c["url"], "domain": c["domain"],
                                  "md5": hashes.get(c["url"]), "collected_at": now_iso()})
 
-    # --- N3 TinyFish : UN SEUL appel max par zone, uniquement si N1+N2 ont tout raté ---
+    # N3 TinyFish : UN SEUL appel max par zone, uniquement si N1+N2 ont tout raté
+    tf_key = (os.environ.get("TINYFISH_API_KEY") or "").strip() or None
     if not texts and tf_key and official:
         target = official[0]
         log(f"N1/N2 épuisés sur toutes les sources → N3 TinyFish sur {target['domain']} (dernier recours, cap 120s)")
@@ -620,43 +627,16 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
                                      "md5": res["md5"], "collected_at": now_iso()})
         except Exception as e:
             log(f"N3 TinyFish: échec ({type(e).__name__})")
+    return texts, hashes, used_sources, excerpts
 
-    # --- Monitoring MD5 : skip si contenu inchangé ---
-    old_hashes = zone.get("source_hashes") or {}
-    if (not force and hashes and old_hashes and hashes == old_hashes
-            and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0):
-        log("MD5 inchangés — ré-extraction sautée (contenu source identique)")
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
-        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
 
-    context_parts = list(texts)
-    if synthesis:
-        # La synthèse provient de la recherche groundée sur les sources officielles ;
-        # elle est toujours jointe au contexte (les pages gov listent rarement
-        # les ports en HTML brut). Le statut reste piloté par le gatekeeper.
-        context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
-        if not texts:
-            strictly_official = False
-            log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
-    if not context_parts:
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
-            "status": "erreur", "last_error": "aucun contenu source exploitable",
-            "generated_at": now_iso(), "sources": used_sources, "source_hashes": hashes,
-        }})
-        log("ERREUR: aucun contenu exploitable")
-        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
-
-    # --- RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM ---
-    context = "\n\n".join(context_parts)
-    if len(context) > 15000:
-        context = select_context(f"official ports of entry customs clearance foreign yachts {name}",
-                                 context, max_chars=15000)
-        log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
-
-    # --- Extraction LLM (llm_core / OpenRouter) ---
+async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log) -> list[dict]:
+    """Étape 4 — Extraction LLM (OpenRouter, fallback NER local) puis géocodage
+    (Nominatim -> GeoNames) et validation spatiale point-in-EEZ de chaque port."""
+    mrgid = int(zone["mrgid"])
+    name = zone.get("name") or zone.get("geoname")
     ports = await extract_ports_llm(context, zone, log)
 
-    # --- Géocodage (geo_core) + validation spatiale ---
     geom = None
     try:
         geom = await asyncio.to_thread(shape, zone["geometry"])
@@ -693,7 +673,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
                         dist_km = None
         docs.append({
             "_id": str(uuid.uuid4()),
-            "mrgid": int(mrgid),
+            "mrgid": mrgid,
             "zone_name": name,
             "country_iso2": zone.get("iso2"),
             "name": p["name"], "city": p.get("city"), "note": p.get("note"),
@@ -705,14 +685,20 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
         })
         log(f"  ⚓ {p['name']} → {'%.3f, %.3f' % (lat, lon) if lat is not None else 'non géocodé'}"
             f"{' ✓ ZEE' if validated else (f' ⚠ hors ZEE ({dist_km} km)' if lat is not None else '')}")
+    return docs
 
-    status = "ia" if strictly_official else "ia_sans_source"
+
+async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
+                        used_sources: list[dict], hashes: dict, excerpts: dict, log) -> dict:
+    """Étape 5 — Écriture non-destructive : dédup interne, upsert des ports
+    (les enrichissements Bottom-Up sont préservés), statut de la zone."""
+    mrgid = int(zone["mrgid"])
     if docs:
-        # Déduplication interne (dedup_core: Haversine <500m + fuzzy >60%)
+        # Déduplication interne (core.dedup: Haversine <500m + fuzzy >60%)
         docs = deduplicate_list(docs, title_key="name")
         # Upsert NON-DESTRUCTIF : les PoE existants sont enrichis, jamais purgés
         # (préserve les champs Bottom-Up: osm_confidence, spatial_anomaly…).
-        existing_ports = await db.poe_ports.find({"mrgid": int(mrgid)}).to_list(500)
+        existing_ports = await db.poe_ports.find({"mrgid": mrgid}).to_list(500)
         inserted = merged = 0
         for d in docs:
             match = next((e for e in existing_ports if e.get("dedup_key") == d["dedup_key"]), None)
@@ -729,8 +715,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
                 await db.poe_ports.insert_one(d)
                 existing_ports.append(d)
                 inserted += 1
-        poe_count = await db.poe_ports.count_documents({"mrgid": int(mrgid)})
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+        poe_count = await db.poe_ports.count_documents({"mrgid": mrgid})
+        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {
             "status": status,
             "poe_count": poe_count,
             "generated_at": now_iso(),
@@ -744,12 +730,12 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
         # Ré-extraction vide sur une zone déjà peuplée : on PRÉSERVE les ports
         # existants (le pipeline de recherche est non déterministe).
         log(f"0 port extrait — {zone.get('poe_count')} PoE existants préservés (aucune purge)")
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {
             "checked_at": now_iso(),
             "last_error": "ré-extraction vide — ports précédents conservés",
         }})
     else:
-        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+        await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {
             "status": "erreur",
             "poe_count": 0,
             "generated_at": now_iso(),
@@ -758,7 +744,70 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) ->
             "last_error": "aucun port d'entrée extrait des sources",
         }})
         log("terminé: 0 PoE, statut erreur")
-    return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+    return await db.eez_zones.find_one({"mrgid": mrgid})
+
+
+async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) -> dict:
+    """Orchestrateur : monitoring -> recherche -> collecte -> extraction -> écriture."""
+    log = logger or (lambda m: None)
+    zone = await db.eez_zones.find_one({"mrgid": int(mrgid)})
+    if not zone:
+        raise ValueError(f"ZEE mrgid={mrgid} inconnue — construire le référentiel d'abord")
+    name = zone.get("name") or zone.get("geoname")
+    exceptions = load_exceptions()
+    whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
+    log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
+
+    # 1. Monitoring prioritaire des sources connues
+    unchanged = await _skip_if_unchanged(db, zone, force, log)
+    if unchanged is not None:
+        return unchanged
+
+    # 2. Recherche + gatekeeper
+    official, strictly_official, synthesis = await _find_sources(zone, whitelist, exceptions, log)
+
+    # 3. Collecte des textes
+    texts, hashes, used_sources, excerpts = await _collect_texts(official, log)
+
+    # Monitoring MD5 post-collecte : skip si contenu strictement identique
+    old_hashes = zone.get("source_hashes") or {}
+    if (not force and hashes and old_hashes and hashes == old_hashes
+            and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0):
+        log("MD5 inchangés — ré-extraction sautée (contenu source identique)")
+        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
+        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+
+    # Assemblage du contexte (textes + synthèse groundée éventuelle)
+    context_parts = list(texts)
+    if synthesis:
+        # La synthèse provient de la recherche groundée sur les sources officielles ;
+        # elle est toujours jointe au contexte (les pages gov listent rarement
+        # les ports en HTML brut). Le statut reste piloté par le gatekeeper.
+        context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
+        if not texts:
+            strictly_official = False
+            log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
+    if not context_parts:
+        await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {
+            "status": "erreur", "last_error": "aucun contenu source exploitable",
+            "generated_at": now_iso(), "sources": used_sources, "source_hashes": hashes,
+        }})
+        log("ERREUR: aucun contenu exploitable")
+        return await db.eez_zones.find_one({"mrgid": int(mrgid)})
+
+    # RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM
+    context = "\n\n".join(context_parts)
+    if len(context) > 15000:
+        context = select_context(f"official ports of entry customs clearance foreign yachts {name}",
+                                 context, max_chars=15000)
+        log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
+
+    # 4. Extraction + géocodage + validation spatiale
+    docs = await _extract_and_geocode(zone, context, used_sources, log)
+
+    # 5. Écriture non-destructive
+    status = "ia" if strictly_official else "ia_sans_source"
+    return await _persist_zone(db, zone, docs, status, used_sources, hashes, excerpts, log)
 
 
 # ---------------------------------------------------------------------------

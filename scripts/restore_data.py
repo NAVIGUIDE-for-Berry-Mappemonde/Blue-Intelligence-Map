@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv(BACKEND / ".env")
 from pymongo import MongoClient
-from dedup_core import normalize_name
+from app.core.dedup import normalize_name
 
 client = MongoClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]

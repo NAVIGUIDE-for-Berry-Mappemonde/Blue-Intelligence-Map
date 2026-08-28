@@ -4,6 +4,7 @@ verifie le monitoring (MD5 / semantique) ou une re-extraction avec upsert
 non-destructif, et que poe_count ne descend jamais sous 4.
 Test long (60-120s) — ne regenerer aucune autre zone.
 """
+from pathlib import Path
 import os
 import time
 
@@ -12,10 +13,10 @@ import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL")
             or frontend_env.get("REACT_APP_BACKEND_URL")).rstrip("/")
-backend_env = dotenv_values("/app/backend/.env")
+backend_env = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
 MRGID = 8397
 
 

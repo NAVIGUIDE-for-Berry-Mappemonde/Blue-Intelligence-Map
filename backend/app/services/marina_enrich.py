@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from typing import Any, Callable, Optional
@@ -189,7 +188,7 @@ async def enrich_via_tinyfish(
     """
     Use TinyFish run-async + poll (rather than run-sync) so we can bound the wait budget precisely.
     """
-    from tinyfish_client import tf_get_run, tf_run_async
+    from app.core.tinyfish import tf_get_run, tf_run_async
 
     tags = marina.get("tags") or {}
     url_hint = tags.get("website") or tags.get("contact:website") or tags.get("url")
@@ -278,7 +277,7 @@ async def enrich_via_openrouter(
     min_credit_usd: float = 0.5,
     logger: Optional[Callable[[str], None]] = None,
 ) -> Optional[dict]:
-    from llm_core import openrouter_model
+    from app.core.llm import openrouter_model
     model = model or openrouter_model()
     if not or_key:
         return None

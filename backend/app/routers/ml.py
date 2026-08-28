@@ -1,17 +1,17 @@
 """
-ml_routes.py — Endpoints FastAPI du Bootstrapping ML (weak supervision, anomalies, NER).
-Injecté via ml_routes.init(db) + app.include_router(ml_routes.router).
+app.routers.ml — Endpoints FastAPI du Bootstrapping ML (weak supervision, anomalies, NER).
 """
 import asyncio
 import time
 
 from fastapi import APIRouter, Body, HTTPException
 
-import ml_core
-from poe_routes import TaskState
+from app.core import ml as ml_core
+from app.core import rag as rag_core
+from app.core.tasks import TaskState
+from app.db import db as _db
 
 router = APIRouter(prefix="/api/ml")
-_db = None
 
 TRAIN_STATE = TaskState()
 ANOM_STATE = TaskState()
@@ -19,14 +19,8 @@ NER_STATE = TaskState()
 SERP_STATE = TaskState()
 
 
-def init(db):
-    global _db
-    _db = db
-
-
 @router.get("/status")
 async def ml_status():
-    import rag_core
     return {
         "dataset": await ml_core.dataset_stats(_db),
         "models": ml_core.models_status(),

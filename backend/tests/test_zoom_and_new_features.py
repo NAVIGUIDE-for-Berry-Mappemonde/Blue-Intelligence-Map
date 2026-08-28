@@ -104,7 +104,7 @@ def test_saturation_bump_triggers_stop_and_reset():
     # Import in-process pipeline
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from pipeline import Swarm
+    from app.services.swarm_pipeline import Swarm
 
     async def run():
         sw = Swarm(_FakeDB())

@@ -22,7 +22,7 @@ import re
 import time
 import unicodedata
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -96,7 +96,9 @@ SHOM_CATSCF_LABELS = {
 }
 
 
-CURATED_SEED_FILE = Path(__file__).parent / "data" / "curated_marinas.json"
+from app.config import DATA_DIR
+
+CURATED_SEED_FILE = DATA_DIR / "curated_marinas.json"
 
 # Compliant User-Agent per https://wiki.openstreetmap.org/wiki/API_usage_policy
 # — identify the app + a contact so mirror operators can reach us if needed.
@@ -891,22 +893,8 @@ def priority_for(lat: float, lon: float, wps: list[Waypoint]) -> tuple[int, Wayp
 # ------------------------------------------------------------------------
 
 
-@dataclass
-class BuildState:
-    running: bool = False
-    started_at: float | None = None
-    finished_at: float | None = None
-    progress: int = 0
-    total: int = 0
-    logs: list[str] = field(default_factory=list)
-    summary: dict | None = None
-    error: str | None = None
-
-    def log(self, msg: str):
-        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-        # keep last 200 lines
-        if len(self.logs) > 200:
-            self.logs = self.logs[-200:]
+# État de build unifié (voir app/core/tasks.py)
+from app.core.tasks import BuildState  # noqa: E402
 
 
 def load_curated_marinas() -> list[dict]:

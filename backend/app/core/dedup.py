@@ -8,7 +8,7 @@ import difflib
 import unicodedata
 import re
 
-from geo_core import haversine_km
+from app.core.geo import haversine_km
 
 DIST_THRESHOLD_KM = 0.5
 SIM_THRESHOLD_LOW = 0.60

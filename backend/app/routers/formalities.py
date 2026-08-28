@@ -1,54 +1,19 @@
 """
-poe_routes.py — Endpoints FastAPI du mode Formalités refactoré [ZEE -> Ports d'Entrée].
-Injecté dans l'app principale via poe_routes.init(db) + app.include_router(poe_routes.router).
+app.routers.formalities — Endpoints FastAPI du mode Formalités [ZEE -> Ports d'Entrée].
 """
 import asyncio
 import time
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-import poe
-import osm_validate
+from app.core.tasks import TaskState, new_task
+from app.db import db as _db
+from app.services import poe_pipeline as poe
+from app.services import osm_validate
 
 router = APIRouter(prefix="/api")
-_db = None
-
-
-def init(db):
-    global _db
-    _db = db
-
-
-class TaskState:
-    def __init__(self):
-        self.running = False
-        self.started_at = None
-        self.finished_at = None
-        self.progress = 0
-        self.total = 0
-        self.results: list[dict] = []
-        self.logs: list[str] = []
-        self.error = None
-        self.summary = None
-        self.cancel = False
-
-    def log(self, msg: str):
-        self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-        if len(self.logs) > 800:
-            self.logs = self.logs[-800:]
-
-    def reset(self):
-        self.__init__()
-
-    def status(self):
-        return {
-            "running": self.running, "started_at": self.started_at, "finished_at": self.finished_at,
-            "progress": self.progress, "total": self.total, "results": self.results[-40:],
-            "logs_tail": self.logs[-60:], "error": self.error, "summary": self.summary,
-            "cancelling": self.cancel and self.running,
-        }
 
 
 REF_STATE = TaskState()
@@ -262,8 +227,7 @@ async def poe_generate(mrgid: int, force: bool = False):
     for k in [k for k, v in GEN_TASKS.items() if v.get("finished_at") and time.time() - v["finished_at"] > 3600]:
         GEN_TASKS.pop(k, None)
     GEN_LOCKS.add(mrgid)
-    GEN_TASKS[mrgid] = {"state": "running", "started_at": time.time(), "finished_at": None,
-                        "result": None, "error": None, "logs": []}
+    GEN_TASKS[mrgid] = new_task()
 
     async def _runner():
         task = GEN_TASKS[mrgid]

@@ -1,6 +1,7 @@
 """Iteration 13 — NER spaCy, qualification UNCLOS, badges OSM sur /poe/ports.
 NON-DESTRUCTIF : aucune génération, aucun purge. Ne touche pas la tâche Overpass en cours.
 """
+from pathlib import Path
 import os
 import sys
 import time
@@ -10,17 +11,17 @@ import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
 if not base_url:
     raise RuntimeError("REACT_APP_BACKEND_URL manquant")
 BASE_URL = base_url.rstrip("/")
 
-backend_env = dotenv_values("/app/backend/.env")
+backend_env = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
 MONGO_URL = backend_env.get("MONGO_URL")
 DB_NAME = backend_env.get("DB_NAME")
 
-sys.path.insert(0, "/app/backend")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 @pytest.fixture(scope="session")
@@ -82,19 +83,19 @@ class TestMlNer:
 # ---------------------------------------------------------------- UNCLOS unit
 class TestUnclosUnit:
     def test_overlapping_claim(self):
-        import poe
+        from app.services import poe_pipeline as poe
         out = poe.qualify_unclos({"poe_count": 0, "pol_type": "Overlapping claim",
                                   "anchor": [0, 10], "name": "x"})
         assert out and out["code"] == "overlapping_claim", out
         assert out.get("basis")
 
     def test_zone_with_poe_returns_none(self):
-        import poe
+        from app.services import poe_pipeline as poe
         assert poe.qualify_unclos({"poe_count": 5, "pol_type": "200NM",
                                    "anchor": [0, 10], "name": "x"}) is None
 
     def test_joint_and_antarctic_and_uninhabited(self):
-        import poe
+        from app.services import poe_pipeline as poe
         assert poe.qualify_unclos({"poe_count": 0, "pol_type": "Joint regime",
                                    "anchor": [0, 10], "name": "x"})["code"] == "joint_regime"
         assert poe.qualify_unclos({"poe_count": 0, "pol_type": "200NM",
@@ -105,13 +106,13 @@ class TestUnclosUnit:
                                    "anchor": [0, 10], "name": "Cuba"})["code"] == "sovereign_entry"
 
     def test_localized_query_fr(self):
-        import poe
+        from app.services import poe_pipeline as poe
         q = poe.localized_query({"sov_iso2": "FR", "name": "Martinique"})
         assert q and "Martinique" in q, q
         assert "ports d'entrée" in q, q
 
     def test_localized_query_multilang(self):
-        import poe
+        from app.services import poe_pipeline as poe
         assert len(poe.QUERY_TEMPLATES) >= 16, len(poe.QUERY_TEMPLATES)
         assert "官方入境港口" in poe.localized_query({"sov_iso2": "CN", "name": "Hainan"})
         assert poe.localized_query({"sov_iso2": "XX", "name": "Nowhere"}) is None
