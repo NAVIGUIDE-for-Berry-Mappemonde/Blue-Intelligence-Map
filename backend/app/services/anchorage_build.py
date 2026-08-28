@@ -27,7 +27,7 @@ from typing import Iterable
 
 import httpx
 
-from marinas import (
+from app.services.marina_build import (
     METERS_PER_NM,
     OVERPASS_ENDPOINTS,
     USER_AGENT,

@@ -142,7 +142,7 @@ TF_TEXT_SCHEMA = {
 
 
 async def _tinyfish_text(url: str, key: str, log=None) -> dict:
-    from tinyfish_client import tf_run_async, tf_get_run
+    from app.core.tinyfish import tf_run_async, tf_get_run
     log = log or (lambda m: None)
     goal = ("Extract the complete readable text content of this page, including any "
             "list of ports of entry, project descriptions, contact directories or "

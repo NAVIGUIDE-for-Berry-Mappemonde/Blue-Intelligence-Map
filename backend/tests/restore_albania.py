@@ -1,10 +1,11 @@
 """Utility: re-run generation for Albania (mrgid=5670) to restore data lost during regression test."""
+from pathlib import Path
 import time
 
 import requests
 from dotenv import dotenv_values
 
-BASE_URL = dotenv_values("/app/frontend/.env")["REACT_APP_BACKEND_URL"].rstrip("/")
+BASE_URL = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")["REACT_APP_BACKEND_URL"].rstrip("/")
 
 r = requests.post(f"{BASE_URL}/api/poe/zones/5670/generate", params={"force": "true"}, timeout=60)
 print("POST", r.status_code, r.text[:200])

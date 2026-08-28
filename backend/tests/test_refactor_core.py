@@ -14,15 +14,15 @@ import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
 
-sys.path.insert(0, "/app/backend")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
 if not base_url:
     raise RuntimeError("REACT_APP_BACKEND_URL missing")
 BASE_URL = base_url.rstrip("/")
 
-backend_env = dotenv_values("/app/backend/.env")
+backend_env = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
 MONGO_URL = backend_env.get("MONGO_URL")
 DB_NAME = backend_env.get("DB_NAME")
 
@@ -43,8 +43,8 @@ def mongo():
 
 # --- Modules core : importabilité -------------------------------------------
 class TestCoreImports:
-    @pytest.mark.parametrize("mod", ["llm_core", "geo_core", "dedup_core", "extract_core",
-                                     "rag_core", "ml_core", "osm_validate"])
+    @pytest.mark.parametrize("mod", ["app.core.llm", "app.core.geo", "app.core.dedup", "app.core.extract",
+                                     "app.core.rag", "app.core.ml", "app.services.osm_validate"])
     def test_module_importable(self, mod):
         m = importlib.import_module(mod)
         assert m is not None
@@ -53,19 +53,19 @@ class TestCoreImports:
 # --- dedup_core : unitaire ---------------------------------------------------
 class TestDedupCore:
     def test_duplicate_same_port_close(self):
-        import dedup_core
+        from app.core import dedup as dedup_core
         a = {"title": "Port de Papeete", "lat": -17.535, "lon": -149.57}
         b = {"title": "Papeete Port", "lat": -17.536, "lon": -149.571}
         assert dedup_core.is_duplicate(a, b) is True
 
     def test_not_duplicate_far_and_different(self):
-        import dedup_core
+        from app.core import dedup as dedup_core
         a = {"title": "Port de Papeete", "lat": -17.535, "lon": -149.57}
         b = {"title": "Harbour of Nuku Hiva", "lat": -18.435, "lon": -149.57}  # ~100 km
         assert dedup_core.is_duplicate(a, b) is False
 
     def test_merge_docs_non_destructive(self):
-        import dedup_core
+        from app.core import dedup as dedup_core
         existing = {"title": "Port A", "city": "Papeete", "note": None}
         updates = dedup_core.merge_docs(existing, {"title": "Autre", "note": "douane", "new": 1})
         assert "title" not in updates  # champ existant jamais écrasé
@@ -73,7 +73,7 @@ class TestDedupCore:
         assert updates["new"] == 1
 
     def test_deduplicate_list(self):
-        import dedup_core
+        from app.core import dedup as dedup_core
         docs = [
             {"title": "Port de Papeete", "lat": -17.535, "lon": -149.57},
             {"title": "Papeete Port", "lat": -17.536, "lon": -149.571},
@@ -167,7 +167,7 @@ class TestNerExport:
         assert r.status_code == 200
         d = r.json()
         assert "file" in d and d.get("lines", 0) > 5000, d
-        p = Path("/app/backend/models/ner_dataset.jsonl")
+        p = Path(__file__).resolve().parent.parent / "models" / "ner_dataset.jsonl"
         assert p.exists()
         first = p.open(encoding="utf-8").readline()
         assert json.loads(first)

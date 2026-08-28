@@ -37,7 +37,7 @@ from typing import Callable
 import httpx
 
 try:
-    from marinas import USER_AGENT
+    from app.services.marina_build import USER_AGENT
 except ImportError:
     USER_AGENT = "BlueIntelligence/1.0 (Berry-Mappemonde expedition)"
 
@@ -45,7 +45,8 @@ except ImportError:
 # Configuration
 # ---------------------------------------------------------------------------
 
-DATA_DIR = Path(__file__).parent / "data"
+from app.config import DATA_DIR
+
 EEZ_FILE = DATA_DIR / "eez_french.geojson"
 
 VLIZ_WFS_URL = "https://geo.vliz.be/geoserver/MarineRegions/wfs"

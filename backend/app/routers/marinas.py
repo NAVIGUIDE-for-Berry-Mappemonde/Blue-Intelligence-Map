@@ -1,0 +1,572 @@
+"""app.routers.marinas — Marinas & mouillages : build (OSM/SHOM), imports/exports,
+enrichissement IA à l'unité et par lot."""
+import asyncio
+import os
+import time
+import uuid
+
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from app.config import ROUTE_FILE
+from app.core.llm import get_llm_key
+from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
+from app.db import db, get_settings
+from app.services.anchorage_build import build_anchorages as run_build_anchorages, anchorages_to_geojson
+from app.services.marina_build import build_marinas as run_build_marinas, marinas_to_geojson
+from app.services.marina_enrich import ENRICH_FIELDS, enrich_marina
+from app.services.swarm_pipeline import now_iso
+from app.state import swarm
+
+router = APIRouter(prefix="/api")
+
+# ---------------------------------------------------------------------------
+# Import — Marinas GeoJSON (2026-08-24 bug-fix: previously only projects had
+# an import endpoint; the sidebar "Import GeoJSON" button silently sent
+# marinas/formalities exports to the projects endpoint, discarding them).
+# Accepts the `FeatureCollection` produced by `/api/export/marinas.geojson`.
+# Each feature.properties.id is used as the Mongo `_id` for idempotent
+# upserts, so re-importing the same file is a no-op (updated count grows,
+# imported stays at 0).
+# ---------------------------------------------------------------------------
+@router.post("/import/marinas.geojson")
+async def import_marinas_geojson(fc: dict = Body(...)):
+    feats = fc.get("features") or []
+    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+        raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    imported = updated = invalid = 0
+    for f in feats:
+        try:
+            geom = f.get("geometry") or {}
+            if geom.get("type") != "Point":
+                invalid += 1
+                continue
+            coords = geom.get("coordinates") or []
+            if len(coords) < 2:
+                invalid += 1
+                continue
+            lon, lat = float(coords[0]), float(coords[1])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                invalid += 1
+                continue
+            p = f.get("properties") or {}
+            name = str(p.get("name") or "").strip()
+            if not name:
+                invalid += 1
+                continue
+            mid = str(p.get("id") or "").strip() or str(uuid.uuid4())
+            doc = {
+                "_id": mid,
+                "name": name,
+                "lat": lat,
+                "lon": lon,
+                "source": p.get("source") or "curated",
+                "priority": int(p.get("priority") or 3),
+                "nearest_waypoint": p.get("nearest_waypoint") or {},
+                "tags": p.get("tags") or {},
+                "osm_id": p.get("osm_id"),
+                "enriched": bool(p.get("enriched")),
+                "enrichment_source": p.get("enrichment_source"),
+                "enriched_at": p.get("enriched_at"),
+                "stale": bool(p.get("stale")),
+                "canal_vhf": p.get("canal_vhf"),
+                "places_visiteurs": p.get("places_visiteurs"),
+                "tirant_eau_max_metres": p.get("tirant_eau_max_metres"),
+                "score_protection_meteo": p.get("score_protection_meteo"),
+                "services_disponibles": p.get("services_disponibles"),
+                "telephone_capitainerie": p.get("telephone_capitainerie"),
+                "resume_avis": p.get("resume_avis"),
+                "fetched_at": p.get("fetched_at") or now_iso(),
+            }
+            existing = await db.marinas.find_one({"_id": mid})
+            if existing:
+                await db.marinas.update_one({"_id": mid}, {"$set": doc})
+                updated += 1
+            else:
+                await db.marinas.insert_one(doc)
+                imported += 1
+        except Exception:
+            invalid += 1
+    total = await db.marinas.count_documents({})
+    swarm.log(f"Marinas GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid", "success")
+    return {"imported": imported, "merged": updated, "skipped_existing": 0, "invalid": invalid, "total_marinas": total}
+
+# ---------- Marinas (Phase 2) ----------
+MARINA_BUILD_STATE = BuildState()
+# Phase 8 — Anchorages (Mouillages)
+ANCHORAGE_BUILD_STATE = BuildState()
+
+
+@router.get("/marinas")
+async def list_marinas(
+    priority: int | None = None,
+    source: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if source:
+        q["source"] = source
+    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return marinas_to_geojson(docs)
+
+
+@router.get("/export/marinas.geojson")
+async def export_marinas():
+    docs = await db.marinas.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = marinas_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
+    )
+
+class MarinasBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    # Phase 8 — continuous 50 NM band: 25 NM sampling step × ±25 NM buffer
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
+
+
+@router.post("/marinas/build")
+async def marinas_build_start(body: MarinasBuildBody | None = None):
+    if MARINA_BUILD_STATE.running:
+        raise HTTPException(409, "A marinas build is already running")
+    body = body or MarinasBuildBody()
+    settings = await get_settings()
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.marinas.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_marinas(
+                marinas_coll=db.marinas,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=MARINA_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
+
+
+@router.get("/marinas/build/status")
+async def marinas_build_status():
+    s = MARINA_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/marinas/count")
+async def marinas_count():
+    return {
+        "total": await db.marinas.count_documents({}),
+        "by_priority": {
+            "1": await db.marinas.count_documents({"priority": 1}),
+            "2": await db.marinas.count_documents({"priority": 2}),
+            "3": await db.marinas.count_documents({"priority": 3}),
+        },
+        "by_source": {
+            "openstreetmap": await db.marinas.count_documents({"source": "openstreetmap"}),
+            "shom": await db.marinas.count_documents({"source": "shom"}),
+            "curated": await db.marinas.count_documents({"source": "curated"}),
+        },
+        "enriched": await db.marinas.count_documents({"enriched": True}),
+    }
+
+
+# ---------- Anchorages (Phase 8 — Mouillages) ----------
+
+class AnchoragesBuildBody(BaseModel):
+    radius_nm: float | None = None
+    clear_before: bool = False
+    include_corridor: bool = True
+    # Same corridor defaults as marinas: ±25 NM band (25 NM step × ±25 NM buffer)
+    corridor_step_nm: float = 25.0
+    corridor_radius_nm: float = 25.0
+
+
+@router.get("/anchorages")
+async def list_anchorages(
+    priority: int | None = None,
+    anchorage_type: str | None = None,
+):
+    q: dict = {}
+    if priority is not None:
+        q["priority"] = int(priority)
+    if anchorage_type:
+        q["anchorage_type"] = anchorage_type
+    docs = await db.anchorages.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    return anchorages_to_geojson(docs)
+
+
+@router.get("/export/anchorages.geojson")
+async def export_anchorages():
+    docs = await db.anchorages.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    fc = anchorages_to_geojson(docs)
+    return JSONResponse(
+        fc,
+        headers={"Content-Disposition": "attachment; filename=anchorages.geojson"},
+    )
+
+
+@router.post("/anchorages/build")
+async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
+    if ANCHORAGE_BUILD_STATE.running:
+        raise HTTPException(409, "An anchorages build is already running")
+    body = body or AnchoragesBuildBody()
+    settings = await get_settings()
+    # Reuse marina_search_radius_nm as default waypoint radius for anchorages too
+    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+
+    if body.clear_before:
+        await db.anchorages.delete_many({})
+
+    async def _runner():
+        try:
+            await run_build_anchorages(
+                anchorages_coll=db.anchorages,
+                route_path=ROUTE_FILE,
+                radius_nm=radius_nm,
+                state=ANCHORAGE_BUILD_STATE,
+                include_corridor=body.include_corridor,
+                corridor_step_nm=body.corridor_step_nm,
+                corridor_radius_nm=body.corridor_radius_nm,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_runner())
+    return {
+        "started": True,
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": body.corridor_step_nm,
+        "corridor_radius_nm": body.corridor_radius_nm,
+        "corridor_band_nm": body.corridor_radius_nm * 2,
+    }
+
+
+@router.get("/anchorages/build/status")
+async def anchorages_build_status():
+    s = ANCHORAGE_BUILD_STATE
+    return {
+        "running": s.running,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
+
+
+@router.get("/anchorages/count")
+async def anchorages_count():
+    return {
+        "total": await db.anchorages.count_documents({}),
+        "by_priority": {
+            "1": await db.anchorages.count_documents({"priority": 1}),
+            "2": await db.anchorages.count_documents({"priority": 2}),
+            "3": await db.anchorages.count_documents({"priority": 3}),
+        },
+        "by_type": {
+            "anchorage": await db.anchorages.count_documents({"anchorage_type": "anchorage"}),
+            "anchor_berth": await db.anchorages.count_documents({"anchorage_type": "anchor_berth"}),
+            "bay": await db.anchorages.count_documents({"anchorage_type": "bay"}),
+        },
+    }
+
+
+# ---------- Marina enrichment (Phase 3) ----------
+# Per-id lock so the SAME marina can't be enriched concurrently.
+ENRICH_LOCKS: set[str] = set()
+# Per-id state registry for on-demand tasks (marinas + projects). Kept in-memory,
+# TTL-cleaned when a new task starts.
+MARINA_ENRICH_TASKS: dict[str, dict] = {}
+
+
+
+
+class MarinaEnrichBatchBody(BaseModel):
+    limit: int = 10   # 0 = toutes les marinas restantes (mode "Tout enchaîner")
+    priority: int | None = None
+    include_enriched: bool = False   # if True, re-enrich already-enriched ones
+    stale_only: bool = False   # if True, filter to stale-only (needs enriched_at)
+
+
+ENRICH_BATCH_STATE = TaskState(max_logs=400)
+
+
+_MARINA_ENGINE_LABELS = {
+    "tinyfish": "TinyFish",
+    "openrouter": "OpenRouter",
+    "fallback": "OSM Fallback",
+}
+
+
+async def _marina_telemetry(marina: dict, status: str, duration_ms: float, engine: str, results: int, detail: str):
+    """Telemetry row tagged dataset=marinas so the Audit table tracks each enrichment."""
+    tags = marina.get("tags") or {}
+    target = tags.get("website") or tags.get("contact:website") or tags.get("url") or f"marina:{marina.get('name')}"
+    await db.telemetry.insert_one({
+        "_id": str(uuid.uuid4()), "url": target, "engine": engine, "status": status,
+        "duration_ms": int(duration_ms), "results": results, "detail": str(detail)[:500],
+        "ts": now_iso(), "dataset": "marinas",
+    })
+
+
+async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
+    """Run the enrichment chain and upsert the enriched fields on the marina doc."""
+    settings = await get_settings()
+    tf_key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip() or None
+    or_key = get_llm_key(settings) or None
+    # Économie de crédits : après un échec TinyFish, on ne re-paye plus pour cette marina.
+    skip_tf = skip_tinyfish or bool(marina.get("tinyfish_failed"))
+    t0 = time.time()
+    try:
+        result = await enrich_marina(
+            marina,
+            tinyfish_key=tf_key,
+            openrouter_key=or_key,
+            min_credit_usd=min_credit_usd,
+            logger=log_fn,
+            skip_tinyfish=skip_tf,
+        )
+    except Exception as e:
+        await _marina_telemetry(marina, "FAILED", (time.time() - t0) * 1000, "Enrichment", 0,
+                                f"{marina.get('name')} — {type(e).__name__}: {e}")
+        raise
+    tf_attempted = result.pop("_tinyfish_attempted", False)
+    update = {**result, "stale": False,
+              "enrich_attempts": int(marina.get("enrich_attempts") or 0) + 1}
+    if tf_attempted and result.get("enrichment_source") != "tinyfish":
+        update["tinyfish_failed"] = True
+    await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+    src = result.get("enrichment_source") or ""
+    filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
+    await _marina_telemetry(
+        marina,
+        "SUCCESS" if result.get("enriched") else "FAILED",
+        (time.time() - t0) * 1000,
+        _MARINA_ENGINE_LABELS.get(src, src or "?"),
+        len(filled),
+        f"{marina.get('name')} — champs: {', '.join(filled) or 'aucun'}",
+    )
+    return result
+
+
+@router.post("/marinas/{marina_id}/enrich", status_code=202)
+async def marina_enrich_one(marina_id: str):
+    """
+    Start marina enrichment as a background task and return 202 immediately.
+    Poll GET /api/marinas/{marina_id}/enrich/status for progress/result.
+    """
+    if marina_id in ENRICH_LOCKS:
+        raise HTTPException(409, "Enrichment already in progress for this marina")
+    marina = await db.marinas.find_one({"_id": marina_id})
+    if not marina:
+        raise HTTPException(404, "marina not found")
+    settings = await get_settings()
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+
+    prune_tasks(MARINA_ENRICH_TASKS)
+    ENRICH_LOCKS.add(marina_id)
+    MARINA_ENRICH_TASKS[marina_id] = new_task()
+
+    async def _runner():
+        task = MARINA_ENRICH_TASKS[marina_id]
+
+        def log_fn(msg: str):
+            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+            if len(task["logs"]) > 200:
+                task["logs"] = task["logs"][-200:]
+
+        try:
+            await _run_marina_enrich_one(marina, min_credit, log_fn)
+            fresh = await db.marinas.find_one({"_id": marina_id})
+            task["result"] = {
+                k: fresh.get(k) for k in (
+                    "_id", "name", "lat", "lon", "source", "priority",
+                    "nearest_waypoint", "tags", "osm_id", "enriched",
+                    "enrichment_source", "enriched_at", "stale",
+                    *ENRICH_FIELDS,
+                )
+            }
+            task["state"] = "done"
+        except Exception as e:
+            task["error"] = f"{type(e).__name__}: {e}"
+            task["state"] = "error"
+        finally:
+            task["finished_at"] = time.time()
+            ENRICH_LOCKS.discard(marina_id)
+
+    asyncio.create_task(_runner())
+    return {"status": "started", "marina_id": marina_id}
+
+
+@router.get("/marinas/{marina_id}/enrich/status")
+async def marina_enrich_status(marina_id: str):
+    """Poll the state of an on-demand marina enrichment. Returns 'idle' if no task."""
+    task = MARINA_ENRICH_TASKS.get(marina_id)
+    if not task:
+        return {"state": "idle", "marina_id": marina_id}
+    return {
+        "state": task["state"],
+        "marina_id": marina_id,
+        "started_at": task["started_at"],
+        "finished_at": task["finished_at"],
+        "result": task["result"],
+        "error": task["error"],
+        "logs_tail": task["logs"][-30:],
+    }
+
+
+@router.post("/marinas/enrich-batch")
+async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
+    if ENRICH_BATCH_STATE.running:
+        raise HTTPException(409, "A marinas enrichment batch is already running")
+    body = body or MarinaEnrichBatchBody()
+    settings = await get_settings()
+    concurrency = int(settings.get("marina_batch_concurrency") or 2)
+    min_credit = float(settings.get("openrouter_min_credits_usd") or 0.5)
+    stale_days = int(settings.get("enrich_stale_days") or 365)
+
+    # Selection query
+    q: dict = {}
+    if body.priority is not None:
+        q["priority"] = int(body.priority)
+    if body.stale_only:
+        # cutoff timestamp
+        cutoff = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(time.time() - stale_days * 86400),
+        )
+        q["$or"] = [{"enriched_at": {"$lt": cutoff}}, {"enriched": {"$ne": True}}]
+    elif not body.include_enriched:
+        q["$or"] = [{"enriched": {"$ne": True}}, {"enriched": False}]
+        # Économie de crédits : après 2 tentatives échouées, la marina sort des lots
+        # automatiques (toujours relançable à l'unité via son bouton Enrich).
+        q["enrich_attempts"] = {"$not": {"$gte": 2}}
+
+    limit = int(body.limit or 0)
+    candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(limit if limit > 0 else None)
+
+    ENRICH_BATCH_STATE.running = True
+    ENRICH_BATCH_STATE.started_at = time.time()
+    ENRICH_BATCH_STATE.finished_at = None
+    ENRICH_BATCH_STATE.progress = 0
+    ENRICH_BATCH_STATE.total = len(candidates)
+    ENRICH_BATCH_STATE.results = []
+    ENRICH_BATCH_STATE.logs = []
+    ENRICH_BATCH_STATE.error = None
+    ENRICH_BATCH_STATE.cancel = False
+
+    async def _runner():
+        try:
+            ENRICH_BATCH_STATE.log(
+                f"Selected {len(candidates)} marinas (concurrency={concurrency}, "
+                f"limit={body.limit}, priority={body.priority}, min_credit=${min_credit})"
+            )
+            sem = asyncio.Semaphore(max(1, concurrency))
+            counter = {"i": 0}
+
+            async def _one(m):
+                async with sem:
+                    if ENRICH_BATCH_STATE.cancel:
+                        ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: batch annulé")
+                        return
+                    if m["_id"] in ENRICH_LOCKS:
+                        ENRICH_BATCH_STATE.log(f"SKIP {m['name']}: already locked")
+                        return
+                    ENRICH_LOCKS.add(m["_id"])
+                    ENRICH_BATCH_STATE.log(f"→ {m['name']} (P{m.get('priority')})")
+                    per_logs: list[str] = []
+                    try:
+                        result = await _run_marina_enrich_one(
+                            m, min_credit,
+                            lambda s: (per_logs.append(s), ENRICH_BATCH_STATE.log(f"  {s}")),
+                        )
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"],
+                            "source": result.get("enrichment_source"),
+                            "enriched": result.get("enriched"),
+                            "fields_filled": [k for k in ENRICH_FIELDS if result.get(k) is not None],
+                        })
+                    except Exception as e:
+                        ENRICH_BATCH_STATE.log(f"  FAILED: {type(e).__name__}: {e}")
+                        ENRICH_BATCH_STATE.results.append({
+                            "id": m["_id"], "name": m["name"], "error": f"{type(e).__name__}: {e}",
+                        })
+                    finally:
+                        ENRICH_LOCKS.discard(m["_id"])
+                        counter["i"] += 1
+                        ENRICH_BATCH_STATE.progress = counter["i"]
+
+            await asyncio.gather(*(_one(m) for m in candidates))
+            by_src = {"tinyfish": 0, "openrouter": 0, "fallback": 0}
+            for r in ENRICH_BATCH_STATE.results:
+                s = r.get("source")
+                if s in by_src:
+                    by_src[s] += 1
+            ENRICH_BATCH_STATE.log(f"Done. Sources: {by_src}")
+        except Exception as e:
+            ENRICH_BATCH_STATE.error = f"{type(e).__name__}: {e}"
+            ENRICH_BATCH_STATE.log(f"FATAL {ENRICH_BATCH_STATE.error}")
+        finally:
+            ENRICH_BATCH_STATE.finished_at = time.time()
+            ENRICH_BATCH_STATE.running = False
+
+    asyncio.create_task(_runner())
+    return {"started": True, "selected": len(candidates), "concurrency": concurrency}
+
+
+@router.post("/marinas/enrich-batch/cancel")
+async def marina_enrich_batch_cancel():
+    """Stop the running enrichment batch — remaining marinas are not launched."""
+    if not ENRICH_BATCH_STATE.running:
+        raise HTTPException(409, "No enrichment batch is running")
+    ENRICH_BATCH_STATE.cancel = True
+    ENRICH_BATCH_STATE.log("⛔ Stop demandé — les marinas restantes ne seront pas lancées")
+    return {"cancelling": True}
+
+
+@router.get("/marinas/enrich-batch/status")
+async def marina_enrich_batch_status():
+    s = ENRICH_BATCH_STATE
+    return {
+        "running": s.running,
+        "cancelling": s.cancel,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "results": s.results,
+        "logs_tail": s.logs[-60:],
+        "error": s.error,
+    }

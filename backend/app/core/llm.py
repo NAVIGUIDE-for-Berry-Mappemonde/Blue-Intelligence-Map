@@ -154,7 +154,7 @@ async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
     # 1. Classifieur local (bootstrappé sur les projets existants) : si très
     # confiant, décision sans appel LLM (économie de crédits).
     try:
-        from ml_core import predict_relevance
+        from app.core.ml import predict_relevance
         ml = predict_relevance(f"{title} {text[:2500]}")
     except Exception:
         ml = None

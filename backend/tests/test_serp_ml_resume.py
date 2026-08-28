@@ -3,6 +3,7 @@ Tests itération 14 — Classifieur SERP (ml_core/ml_routes), rank_candidates_ml
 et régressions PoE (zones/ports). La reprise auto (poe_routes.schedule_job_resume)
 est testée séparément en E2E (restart backend requis) — voir script /app/tests/.
 """
+from pathlib import Path
 import os
 import sys
 import time
@@ -11,13 +12,13 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
-frontend_env = dotenv_values("/app/frontend/.env")
+frontend_env = dotenv_values(Path(__file__).resolve().parent.parent.parent / "frontend" / ".env")
 base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
 if not base_url:
     raise RuntimeError("REACT_APP_BACKEND_URL missing")
 BASE_URL = base_url.rstrip("/")
 
-sys.path.insert(0, "/app/backend")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 @pytest.fixture(scope="session")
@@ -143,7 +144,7 @@ class TestRankCandidatesMl:
         ]
 
     def test_gov_ranked_before_tripadvisor(self):
-        import poe
+        from app.services import poe_pipeline as poe
         logs = []
         ranked = poe.rank_candidates_ml(self._cands(), logs.append)
         domains = [c["domain"] for c in ranked]
@@ -152,13 +153,13 @@ class TestRankCandidatesMl:
         assert logs and "classifieur SERP" in logs[0]
 
     def test_single_candidate_returned_as_is(self):
-        import poe
+        from app.services import poe_pipeline as poe
         one = self._cands()[:1]
         assert poe.rank_candidates_ml(one, lambda m: None) == one
         assert poe.rank_candidates_ml([], lambda m: None) == []
 
     def test_low_score_dropped_only_with_alternatives(self):
-        import poe
+        from app.services import poe_pipeline as poe
         cands = self._cands() + [
             {"url": "https://booking.example.org/hotel/deals/9999", "domain": "booking.example.org"},
             {"url": "https://www.cbp.gov/travel/pleasure-boats/ports-of-entry", "domain": "cbp.gov"},

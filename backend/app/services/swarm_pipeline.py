@@ -9,14 +9,14 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from llm_core import extract_project, gatekeeper_check, has_llm, llm_geocode
-from categories import normalize_category
-from dedup_core import is_duplicate
-from extract_core import extract_cascade
-from geo_core import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
-from rag_core import select_context
-from seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
-from tinyfish_client import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
+from app.core.llm import extract_project, gatekeeper_check, has_llm, llm_geocode
+from app.static_data.categories import normalize_category
+from app.core.dedup import is_duplicate
+from app.core.extract import extract_cascade
+from app.core.geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
+from app.core.rag import select_context
+from app.static_data.seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
+from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
                              tf_get_run, tf_run_async, tf_run_sse)
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
