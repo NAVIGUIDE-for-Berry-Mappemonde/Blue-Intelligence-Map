@@ -4461,6 +4461,8 @@
 {"text": "Science pour tous. A public outreach initiative by Geo-Ocean sharing marine geosciences and oceanography research. It offers educational videos, interactive games, and resources on deep-sea ecosystems, hydrothermal vents, submarine canyons, and geological hazards.", "entities": [[0, 17, "PROJECT_NAME"]]}
 {"text": "Projets en cours - Laboratoire LEMAR. Portfolio of ongoing marine environmental research projects conducted by the Laboratoire des Sciences de l'Environnement Marin (LEMAR), covering topics such as oceanography, climate change, marine biodiversity, and pollution.", "entities": [[0, 36, "PROJECT_NAME"]]}
 {"text": "Laboratoire LEMAR UMR 6539 - Projets terminés. Archive of completed marine environmental research projects conducted by the Laboratoire des sciences de l'Environnement MARin, spanning topics like biodiversity, ecotoxicology, microplastics, and pelagic ecosystems.", "entities": [[0, 45, "PROJECT_NAME"]]}
+{"text": "TEST_Import_A_357874ac54. Sample imported project A", "entities": [[0, 24, "PROJECT_NAME"]]}
+{"text": "TEST_Import_B_357874ac54. Sample imported project B", "entities": [[0, 24, "PROJECT_NAME"]]}
 {"text": "Anchorage Small Boat Harbor, Anchorage (Alaska).", "entities": [[0, 27, "PORT_NAME"], [40, 46, "LOCATION"]]}
 {"text": "Haines Small Boat Harbor, Haines (Alaska).", "entities": [[0, 24, "PORT_NAME"], [34, 40, "LOCATION"]]}
 {"text": "Port Chilkoot, Haines (Alaska).", "entities": [[0, 13, "PORT_NAME"], [23, 29, "LOCATION"]]}

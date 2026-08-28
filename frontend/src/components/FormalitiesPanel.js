@@ -61,7 +61,10 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
       <div className="p-4 border-b border-line">
         <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />
-          <h2 className="font-heading font-bold text-white text-base">{t("poeTitle")}</h2>
+          {/* Même libellé que le bouton de mode dans l'en-tête (cohérence),
+              le sous-titre précise le contenu (Ports d'Entrée). */}
+          <h2 className="font-heading font-bold text-white text-base">{t("modeFormalities")}</h2>
+          <span className="font-mono text-[10px] text-slate-500">· {t("poeTitle")}</span>
           <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="poe-zones-count">
             {items.length} {t("poeZonesCount")}
           </span>
@@ -104,6 +107,29 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
           <option value="ia_sans_source">{t("poeStatusIaSansSource")}</option>
           <option value="erreur">{t("poeStatusErreur")}</option>
         </select>
+
+        {/* Légende — cohérence avec le mode Projets */}
+        <div className="mt-3" data-testid="poe-legend">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#fbbf24", boxShadow: "0 0 6px #fbbf2466" }} />
+              <span className="text-[11px] text-slate-300">{t("legendPoePort")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(251,191,36,0.25)", border: "1px solid #fbbf24" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusIa")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(100,116,139,0.15)", border: "1px solid #64748b" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusNonGeneree")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 shrink-0 rounded-[2px]" style={{ background: "rgba(255,74,74,0.15)", border: "1px solid #ff4a4a" }} />
+              <span className="text-[11px] text-slate-300">{t("poeStatusErreur")}</span>
+            </div>
+          </div>
+        </div>
 
         {items.length > 0 && (
           <p className="mt-2 font-mono text-[9px] uppercase tracking-widest text-slate-500" data-testid="poe-summary">

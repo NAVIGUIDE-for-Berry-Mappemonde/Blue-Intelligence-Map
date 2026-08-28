@@ -150,6 +150,25 @@ export default function MarinasPanel({
           />
         </div>
 
+        {/* Légende — cohérence avec le mode Projets */}
+        <div className="mb-3" data-testid="marinas-legend">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#ff4a4a", boxShadow: "0 0 6px #ff4a4a66" }} />
+              <span className="text-[11px] text-slate-300">{t("legendMarinaP1")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full shrink-0 opacity-60" style={{ background: "#ff4a4a" }} />
+              <span className="text-[11px] text-slate-300">{t("legendMarinaOther")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#2dd4bf", boxShadow: "0 0 6px #2dd4bf66" }} />
+              <span className="text-[11px] text-slate-300">{t("legendAnchorage")}</span>
+            </div>
+          </div>
+        </div>
+
         {/* Filtres */}
         <div className="grid grid-cols-2 gap-2">
           <div>

@@ -101,8 +101,10 @@ class TestAnomalyScan:
 class TestOsmValidate:
     def test_validate_osm_non_destructive(self, api, mongo):
         before = snapshot(mongo)
+        # only_unchecked=False : robuste même quand la base a déjà été
+        # entièrement validée (revalide 3 ports — opération non destructive).
         r = api.post(f"{BASE_URL}/api/poe/validate-osm",
-                     json={"limit": 3, "only_unchecked": True}, timeout=60)
+                     json={"limit": 3, "only_unchecked": False}, timeout=60)
         assert r.status_code == 202, r.text[:300]
 
         st = wait_done(api, f"{BASE_URL}/api/poe/validate-osm/status", timeout=180)
