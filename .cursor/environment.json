@@ -1,0 +1,22 @@
+{
+  "name": "Blue Intelligence",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "cd backend && . .venv/bin/activate && uvicorn server:app --host 0.0.0.0 --port 8001",
+      "description": "FastAPI backend (Blue Intelligence API) on http://localhost:8001"
+    },
+    {
+      "name": "frontend",
+      "command": "cd frontend && BROWSER=none npm start",
+      "description": "React (CRA) dev server on http://localhost:3000"
+    }
+  ],
+  "ports": [
+    { "name": "frontend", "port": 3000 },
+    { "name": "backend", "port": 8001 }
+  ]
+}
