@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from ai import extract_project, gatekeeper_check, gemini_geocode, has_llm
+from llm_core import extract_project, gatekeeper_check, has_llm, llm_geocode
 from categories import normalize_category
 from dedup_core import is_duplicate
 from extract_core import extract_cascade
@@ -481,7 +481,7 @@ class Swarm:
                         lat, lon = g
                         geo_src = "geocoded:location"
                 if lat is None:
-                    g = await gemini_geocode(proj.get("location") or "", proj["title"], self.settings)
+                    g = await llm_geocode(proj.get("location") or "", proj["title"], self.settings)
                     if g:
                         lat, lon = g
                         geo_src = "llm-geocoded"

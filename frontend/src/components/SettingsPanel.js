@@ -48,7 +48,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, gemini_api_key: "", tinyfish_api_key: "" });
+    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "" });
   }, [settings]);
 
   if (!form) return null;
@@ -57,7 +57,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
 
   const save = async () => {
     const body = { ...form };
-    delete body.gemini_api_key_set;
+    delete body.openrouter_api_key_set;
     delete body.tinyfish_api_key_set;
     ["min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
@@ -190,15 +190,15 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("apiKeys")}</p>
           <Field label={
             <>
-              {t("geminiKey")}{" "}
-              <span className={form.gemini_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.gemini_api_key_set ? t("keySet") : t("keyNotSet")})
+              {t("openrouterKey")}{" "}
+              <span className={form.openrouter_api_key_set ? "text-bio" : "text-amberx"}>
+                ({form.openrouter_api_key_set ? t("keySet") : t("keyNotSet")})
               </span>
             </>
           }>
-            <input data-testid="gemini-key-input" type="password" value={form.gemini_api_key}
+            <input data-testid="openrouter-key-input" type="password" value={form.openrouter_api_key}
               placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("gemini_api_key", e.target.value)} onBlur={save} className={inputCls} />
+              onChange={(e) => set("openrouter_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={
             <>

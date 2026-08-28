@@ -1,24 +1,27 @@
 """
-llm_core.py — Adaptateur LLM universel (Core mutualisé PoE / Projets).
+llm_core.py — Adaptateur LLM unique (OpenRouter).
 
-Cascade automatique avec fallback : Gemini REST (si clé) → Emergent (clé
-universelle, gemini-2.5-flash) → OpenRouter (gpt-4o-mini, mode JSON).
-Fusionne le Gatekeeper marin (ex-ai.py) et l'extraction JSON stricte des
-ports d'entrée (ex-poe.py). Fournit aussi la recherche groundée
-(Gemini google_search si clé, sinon OpenRouter :online).
+Tous les appels IA de l'application passent par OpenRouter :
+  - ask_json / ask_text        : complétions (mode JSON strict ou texte libre)
+  - gatekeeper_check           : filtre marin (pré-filtre ML local puis LLM)
+  - extract_project            : extraction structurée d'un projet marin
+  - extract_ports              : extraction stricte des Ports d'Entrée
+  - llm_geocode                : géocodage intelligent
+  - grounded_search            : recherche web groundée (suffixe :online)
+
+Clé : OPENROUTER_API_KEY (env) ou settings["openrouter_api_key"] (UI).
+Modèle : OPENROUTER_MODEL (env, défaut openai/gpt-4o-mini).
 """
 import asyncio
 import json
 import os
 import re
-import uuid
 from urllib.parse import urlparse
 
 import httpx
 
-GEMINI_REST_MODEL = "gemini-flash-latest"
-EMERGENT_MODEL = "gemini-2.5-flash"
-OPENROUTER_MODEL = "openai/gpt-4o-mini"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MODEL = "openai/gpt-4o-mini"
 JSON_SYSTEM = ("You are the Blue Intelligence maritime OSINT engine. "
                "Reply ONLY with a single valid JSON object, no prose, no markdown fences.")
 
@@ -38,30 +41,22 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
+def openrouter_model() -> str:
+    return _env("OPENROUTER_MODEL") or DEFAULT_MODEL
+
+
 def get_llm_key(settings: dict | None = None) -> str:
+    """Clé OpenRouter : settings (UI) prioritaire, sinon variable d'environnement."""
     s = settings or {}
-    return (s.get("gemini_api_key") or _env("GEMINI_API_KEY") or _env("EMERGENT_LLM_KEY")).strip()
+    return (s.get("openrouter_api_key") or _env("OPENROUTER_API_KEY")).strip()
 
 
 def has_llm(settings: dict | None = None) -> bool:
-    return bool(available_engines(settings))
-
-
-def available_engines(settings: dict | None = None) -> list[str]:
-    """Ordre de cascade selon les clés réellement disponibles."""
-    s = settings or {}
-    order = []
-    if (s.get("gemini_api_key") or _env("GEMINI_API_KEY")):
-        order.append("gemini")
-    if _env("EMERGENT_LLM_KEY"):
-        order.append("emergent")
-    if _env("OPENROUTER_API_KEY"):
-        order.append("openrouter")
-    return order
+    return bool(get_llm_key(settings))
 
 
 # ---------------------------------------------------------------------------
-# Parsing JSON robuste (fusion ai.py + poe.py)
+# Parsing JSON robuste
 # ---------------------------------------------------------------------------
 def parse_json_flexible(txt: str):
     txt = re.sub(r"^```(json)?|```$", "", (txt or "").strip(), flags=re.M).strip()
@@ -85,114 +80,63 @@ def parse_json_flexible(txt: str):
 
 
 # ---------------------------------------------------------------------------
-# Backends
+# Backend unique : OpenRouter
 # ---------------------------------------------------------------------------
-async def _call_gemini_rest(prompt: str, system: str, key: str, json_mode: bool = True,
-                            max_tokens: int = 2048, retries: int = 2) -> str:
-    body = {
-        "contents": [{"parts": [{"text": f"{system}\n\n{prompt}"}]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens},
-    }
-    if json_mode:
-        body["generationConfig"]["responseMimeType"] = "application/json"
-    for attempt in range(retries):
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_REST_MODEL}:generateContent?key={key}",
-                json=body,
-            )
-            if r.status_code in (429, 500, 503) and attempt < retries - 1:
-                await asyncio.sleep(10 * (attempt + 1))
-                continue
-            r.raise_for_status()
-            d = r.json()
-        return "".join(p.get("text", "")
-                       for p in ((d.get("candidates") or [{}])[0].get("content") or {}).get("parts", []))
-    raise RuntimeError("gemini rest exhausted retries")
-
-
-async def _call_emergent(prompt: str, system: str, key: str, model: str = EMERGENT_MODEL) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-    chat = LlmChat(api_key=key, session_id=f"llmcore-{uuid.uuid4()}",
-                   system_message=system).with_model("gemini", model)
-    resp = await chat.send_message(UserMessage(text=prompt))
-    return resp if isinstance(resp, str) else str(resp)
-
-
-async def _call_openrouter(prompt: str, system: str, key: str, model: str = OPENROUTER_MODEL,
-                           json_mode: bool = True, max_tokens: int = 2000) -> str:
+async def _call_openrouter(prompt: str, system: str, key: str, model: str | None = None,
+                           json_mode: bool = True, max_tokens: int = 2000,
+                           retries: int = 2) -> str:
     payload = {
-        "model": model,
+        "model": model or openrouter_model(),
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": max_tokens,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    async with httpx.AsyncClient(timeout=90) as client:
-        r = await client.post("https://openrouter.ai/api/v1/chat/completions",
-                              headers={"Authorization": f"Bearer {key}"}, json=payload)
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
-
-
-async def _dispatch(engine: str, prompt: str, system: str, settings: dict | None,
-                    json_mode: bool, max_tokens: int) -> str:
-    s = settings or {}
-    if engine == "gemini":
-        key = (s.get("gemini_api_key") or _env("GEMINI_API_KEY")).strip()
-        return await _call_gemini_rest(prompt, system, key, json_mode=json_mode, max_tokens=max_tokens)
-    if engine == "emergent":
-        return await _call_emergent(prompt, system, _env("EMERGENT_LLM_KEY"))
-    if engine == "openrouter":
-        return await _call_openrouter(prompt, system, _env("OPENROUTER_API_KEY"),
-                                      json_mode=json_mode, max_tokens=max_tokens)
-    raise ValueError(f"unknown engine {engine}")
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "HTTP-Referer": "https://blueintelligence.online",
+        "X-Title": "Blue Intelligence",
+    }
+    for attempt in range(retries):
+        async with httpx.AsyncClient(timeout=90) as client:
+            r = await client.post(OPENROUTER_URL, headers=headers, json=payload)
+            if r.status_code in (429, 500, 502, 503) and attempt < retries - 1:
+                await asyncio.sleep(8 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+    raise RuntimeError("openrouter exhausted retries")
 
 
 # ---------------------------------------------------------------------------
-# API publique — cascade avec fallback automatique
+# API publique
 # ---------------------------------------------------------------------------
 async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
-                   prefer: str | None = None, max_tokens: int = 2000, log=None) -> tuple[dict, str]:
-    """Retourne (dict, engine_utilisé). Cascade sur tous les backends disponibles."""
-    order = available_engines(settings)
-    if prefer and prefer in order:
-        order.remove(prefer)
-        order.insert(0, prefer)
-    errors = []
-    for engine in order:
-        try:
-            raw = await _dispatch(engine, prompt, system, settings, True, max_tokens)
-            data = parse_json_flexible(raw)
-            if isinstance(data, dict):
-                return data, engine
-            errors.append(f"{engine}: no JSON in output")
-        except Exception as e:
-            errors.append(f"{engine}: {type(e).__name__}: {str(e)[:100]}")
-            if log:
-                log(f"llm_core: {engine} en échec ({type(e).__name__}) — fallback suivant")
-    raise RuntimeError("All LLM backends failed: " + " | ".join(errors[:3]))
+                   max_tokens: int = 2000, log=None) -> dict:
+    """Complétion en mode JSON strict. Lève RuntimeError si pas de clé ou pas de JSON."""
+    key = get_llm_key(settings)
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY missing")
+    raw = await _call_openrouter(prompt, system, key, json_mode=True, max_tokens=max_tokens)
+    data = parse_json_flexible(raw)
+    if isinstance(data, dict):
+        return data
+    if log:
+        log("llm_core: no JSON in OpenRouter output")
+    raise RuntimeError("openrouter: no JSON in output")
 
 
 async def ask_text(prompt: str, system: str = "You are a helpful assistant.",
-                   settings: dict | None = None, prefer: str | None = None,
-                   max_tokens: int = 2000) -> tuple[str, str]:
-    order = available_engines(settings)
-    if prefer and prefer in order:
-        order.remove(prefer)
-        order.insert(0, prefer)
-    errors = []
-    for engine in order:
-        try:
-            return await _dispatch(engine, prompt, system, settings, False, max_tokens), engine
-        except Exception as e:
-            errors.append(f"{engine}: {type(e).__name__}")
-    raise RuntimeError("All LLM backends failed: " + " | ".join(errors[:3]))
+                   settings: dict | None = None, max_tokens: int = 2000) -> str:
+    key = get_llm_key(settings)
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY missing")
+    return await _call_openrouter(prompt, system, key, json_mode=False, max_tokens=max_tokens)
 
 
 # ---------------------------------------------------------------------------
-# Gatekeeper marin (fusion ai.py) + pré-filtre ML local (weak supervision)
+# Gatekeeper marin + pré-filtre ML local (weak supervision)
 # ---------------------------------------------------------------------------
 def heuristic_gatekeeper(text: str, settings: dict) -> dict:
     low = text.lower()
@@ -223,8 +167,8 @@ async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
             return {"accepted": False, "score": round(ml["score"], 3),
                     "reason": "ML gatekeeper: high-confidence non-marine (local model, no LLM call)",
                     "engine": "ML Gatekeeper (local)"}
-    # 2. LLM (cascade) ou heuristique
-    if not available_engines(settings):
+    # 2. LLM (OpenRouter) ou heuristique
+    if not has_llm(settings):
         return heuristic_gatekeeper(f"{title} {text}", settings)
     prompt = f"""Gatekeeper Protocol: decide if this project is a MARINE/OCEAN/COASTAL conservation, restoration or protection project.
 REJECT purely terrestrial (mountains, inland forests) or freshwater (lakes, rivers) projects, UNLESS it is an estuary with direct coastal impact.
@@ -234,14 +178,11 @@ Page content (truncated):
 
 Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>"}}"""
     try:
-        prefer = settings.get("extraction_engine")
-        prefer = {"gpt": "emergent", "claude": "emergent"}.get(prefer, prefer)
-        out, engine = await ask_json(prompt, settings=settings,
-                                     prefer=prefer if prefer in ("gemini", "emergent", "openrouter") else None)
+        out = await ask_json(prompt, settings=settings)
         score = float(out.get("score", 0))
         return {"accepted": bool(out.get("marine")) and score >= float(settings.get("min_marine_score", 0.5)),
                 "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
-                "engine": f"{engine.title()} Gatekeeper"}
+                "engine": "OpenRouter Gatekeeper"}
     except Exception as e:
         res = heuristic_gatekeeper(f"{title} {text}", settings)
         res["reason"] = f"llm failed ({str(e)[:80]}), {res['reason']}"
@@ -249,7 +190,60 @@ Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>
 
 
 # ---------------------------------------------------------------------------
-# Extraction stricte des Ports d'Entrée (fusion poe.py)
+# Extraction structurée d'un projet marin (ex ai.extract_project)
+# ---------------------------------------------------------------------------
+def heuristic_extract(title: str, text: str, meta_desc: str, settings: dict) -> dict:
+    desc = (meta_desc or text[:400]).strip().replace("\n", " ")
+    desc = re.sub(r"\s+", " ", desc)[:250]
+    gk = heuristic_gatekeeper(f"{title} {text}", settings)
+    return {"title": title[:200], "description": desc, "location": None,
+            "latitude": None, "longitude": None, "s_ocean": gk["score"],
+            "engine": "Heuristic Extractor"}
+
+
+async def extract_project(title: str, text: str, meta_desc: str, url: str, funder: str,
+                          settings: dict, ext_links=None) -> dict:
+    if not has_llm(settings):
+        return heuristic_extract(title, text, meta_desc, settings)
+    links_block = ""
+    if ext_links:
+        links_block = "\nExternal organization links found on the page:\n" + \
+            "\n".join(f"- {l['name']}: {l['url']}" for l in ext_links[:15])
+    prompt = f"""Extract structured data from this marine conservation project page.
+URL: {url}
+Funder: {funder}
+Page title: {title}
+Content (truncated):
+{text[:5000]}{links_block}
+
+Return JSON:
+{{"title": "<official project name>",
+ "description": "<ecological impact synthesis, WHAT and WHY, max 250 chars, do not repeat title>",
+ "location": "<most specific geographic place name, e.g. 'Banc d'Arguin, Mauritania', or null if global>",
+ "latitude": <decimal or null>,
+ "longitude": <decimal or null>,
+ "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>,
+ "category": "<exactly one of: MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other>",
+ "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
+    try:
+        out = await ask_json(prompt, settings=settings)
+        return {
+            "title": str(out.get("title") or title)[:200],
+            "description": str(out.get("description") or "")[:250],
+            "location": out.get("location"),
+            "latitude": out.get("latitude"),
+            "longitude": out.get("longitude"),
+            "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
+            "category": str(out.get("category") or "Other"),
+            "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
+            "engine": "OpenRouter Extractor",
+        }
+    except Exception:
+        return heuristic_extract(title, text, meta_desc, settings)
+
+
+# ---------------------------------------------------------------------------
+# Extraction stricte des Ports d'Entrée
 # ---------------------------------------------------------------------------
 POE_EXTRACT_PROMPT = """Tu extrais les PORTS D'ENTRÉE OFFICIELS (ports de clearance douanière) pour les navires de PLAISANCE étrangers dans : {name} ({sovereign}).
 
@@ -284,19 +278,19 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
         sovereign=zone.get("sovereign") or "",
         context=context[:20000],
     )
-    data, engine = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
-                                  settings=settings, max_tokens=2500, log=log)
+    data = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
+                          settings=settings, max_tokens=2500, log=log)
     ports = coerce_ports(data)
     if log:
-        log(f"LLM {engine}: {len(ports)} port(s) extraits")
+        log(f"LLM OpenRouter: {len(ports)} port(s) extraits")
     return ports
 
 
 # ---------------------------------------------------------------------------
-# Géocodage intelligent par LLM (ex ai.gemini_geocode)
+# Géocodage intelligent par LLM
 # ---------------------------------------------------------------------------
 async def llm_geocode(location: str, title: str, settings: dict):
-    if not available_engines(settings):
+    if not has_llm(settings):
         return None
     prompt = f"""You are a maritime geocoding expert. Give the best-estimate GPS coordinates for this marine conservation project site.
 Project: {title}
@@ -305,7 +299,7 @@ Location description: {location or 'unknown'}
 Rules: prefer the actual project site (reef, bay, MPA, coastal zone) over any city or HQ. If the location is a coastal region, return a point in the adjacent waters.
 Return JSON: {{"latitude": <decimal>, "longitude": <decimal>, "confidence": <0.0-1.0>}}. If you truly cannot estimate, use confidence 0."""
     try:
-        out, _ = await ask_json(prompt, settings=settings, max_tokens=300)
+        out = await ask_json(prompt, settings=settings, max_tokens=300)
         lat, lon = float(out.get("latitude")), float(out.get("longitude"))
         if float(out.get("confidence", 0)) >= 0.4 and -90 <= lat <= 90 and -180 <= lon <= 180 and not (lat == 0 and lon == 0):
             return lat, lon
@@ -315,7 +309,7 @@ Return JSON: {{"latitude": <decimal>, "longitude": <decimal>, "confidence": <0.0
 
 
 # ---------------------------------------------------------------------------
-# Recherche groundée : Gemini google_search (si clé) sinon OpenRouter :online
+# Recherche groundée : OpenRouter web search (suffixe :online)
 # ---------------------------------------------------------------------------
 def _fallback_domain(url: str) -> str:
     try:
@@ -326,86 +320,22 @@ def _fallback_domain(url: str) -> str:
 
 
 async def grounded_search(prompt: str, log=None, domain_fn=None) -> tuple[list[dict], str | None]:
-    """Retourne (candidats [{url, domain}], synthèse texte)."""
+    """Retourne (candidats [{url, domain}], synthèse texte) via OpenRouter :online."""
     log = log or (lambda m: None)
     dom = domain_fn or _fallback_domain
-    gemini_key = _env("GEMINI_API_KEY")
-    if gemini_key:
-        return await _grounded_gemini(prompt, gemini_key, log, dom)
-    or_key = _env("OPENROUTER_API_KEY")
-    if or_key:
-        return await _grounded_openrouter(prompt, or_key, log, dom)
-    log("grounded_search: aucune clé de recherche disponible")
-    return [], None
-
-
-async def _grounded_gemini(prompt: str, key: str, log, dom) -> tuple[list[dict], str | None]:
-    body = {"contents": [{"parts": [{"text": prompt}]}], "tools": [{"google_search": {}}]}
-    d = None
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_REST_MODEL}:generateContent?key={key}",
-                    json=body,
-                )
-                if r.status_code in (429, 500, 503) and attempt < 2:
-                    log(f"Gemini grounding: HTTP {r.status_code} — retry dans {10 * (attempt + 1)}s")
-                    await asyncio.sleep(10 * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                d = r.json()
-                break
-        except Exception as e:
-            if attempt < 2:
-                log(f"Gemini grounding: {type(e).__name__} — retry")
-                await asyncio.sleep(8)
-                continue
-            log(f"Gemini grounding: échec ({type(e).__name__}: {e})")
-            return [], None
-    if d is None:
+    key = _env("OPENROUTER_API_KEY")
+    if not key:
+        log("grounded_search: OPENROUTER_API_KEY absente")
         return [], None
-    cand = (d.get("candidates") or [{}])[0]
-    synthesis = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []))
-    chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
-    raw = []
-    for c in chunks:
-        w = c.get("web") or {}
-        if w.get("uri"):
-            raw.append({"redirect": w["uri"], "title": (w.get("title") or "").strip().lower()})
-    log(f"Gemini grounding: {len(raw)} sources candidates, synthèse {len(synthesis)} chars")
-
-    async def _resolve(item):
-        try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                async with client.stream("GET", item["redirect"]) as r:
-                    return {"url": str(r.url), "domain": dom(str(r.url))}
-        except Exception:
-            t = item["title"]
-            if re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", t or ""):
-                return {"url": f"https://{t}/", "domain": t}
-            return None
-
-    resolved = await asyncio.gather(*(_resolve(x) for x in raw[:10]))
-    seen, out = set(), []
-    for x in resolved:
-        if x and x["domain"] and x["domain"] not in seen:
-            seen.add(x["domain"])
-            out.append(x)
-    return out, synthesis
-
-
-async def _grounded_openrouter(prompt: str, key: str, log, dom) -> tuple[list[dict], str | None]:
-    """OpenRouter web search (suffixe :online) — citations dans message.annotations."""
     payload = {
-        "model": f"{OPENROUTER_MODEL}:online",
+        "model": f"{openrouter_model()}:online",
         "messages": [{"role": "user", "content": prompt + "\n\nCite the official source URLs you used."}],
         "temperature": 0,
         "max_tokens": 1800,
     }
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post("https://openrouter.ai/api/v1/chat/completions",
+            r = await client.post(OPENROUTER_URL,
                                   headers={"Authorization": f"Bearer {key}"}, json=payload)
             r.raise_for_status()
             msg = r.json()["choices"][0]["message"]

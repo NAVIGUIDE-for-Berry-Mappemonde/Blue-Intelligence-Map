@@ -1,16 +1,16 @@
 """
 poe.py — Pipeline souverain [ZEE / Pays] -> [Ports d'Entrée plaisance].
 
-Architecture (refactor Core mutualisé 2026-08) :
+Architecture :
   1. Délimitation ZEE      : VLIZ Marine Regions WFS (World EEZ v12, ~285 zones), simplifié shapely.
-  2. Recherche ciblée      : SearXNG -> recherche groundée (llm_core: Gemini grounding ou
-                             OpenRouter :online) + Level-2 Retry Query (organisation douanière).
+  2. Recherche ciblée      : SearXNG -> recherche groundée (llm_core: OpenRouter :online)
+                             + Level-2 Retry Query (organisation douanière).
   3. Whitelist automatique : ISO 3166-1 alpha-2 x motifs d'État validés PSL (tldextract)
                              + exceptions.json auto-enrichi + filtrage SERP regex (extract_core).
   4. Collecte & parsing    : cascade hybride extract_core — N1 httpx+trafilatura/PyMuPDF ->
                              N2 Readability/BS4 -> N3 TinyFish (1 seul appel max/zone, dernier recours).
                              Depth=2 sélectif sur liens internes réglementaires.
-  5. Extraction structurée : llm_core (cascade Gemini -> Emergent -> OpenRouter, JSON strict)
+  5. Extraction structurée : llm_core (OpenRouter, JSON strict)
                              + RAG local (rag_core) sur les contextes longs.
   6. Géocodage             : geo_core (Nominatim -> GeoNames, re-ranking sémantique).
                              Validation spatiale point-in-EEZ (shapely).
@@ -398,7 +398,7 @@ async def search_searxng(query: str, log) -> list[dict]:
 
 
 async def search_grounded(zone: dict, whitelist: list[str], log, query_override: str | None = None):
-    """Recherche groundée via llm_core (Gemini google_search si clé, sinon OpenRouter :online)."""
+    """Recherche groundée via llm_core (OpenRouter :online)."""
     name = zone.get("name") or zone.get("geoname")
     hints = ", ".join(whitelist[:6]) if whitelist else "official government domains"
     prompt = query_override or (
@@ -451,15 +451,13 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# 4. Extraction JSON stricte — délégué à llm_core (cascade + fallback)
+# 4. Extraction JSON stricte — délégué à llm_core (OpenRouter + fallback NER)
 # ---------------------------------------------------------------------------
-async def extract_ports_llm(context: str, zone: dict, gemini_key: str | None,
-                            emergent_key: str | None, log) -> list[dict]:
-    settings = {"gemini_api_key": gemini_key or ""}
+async def extract_ports_llm(context: str, zone: dict, log) -> list[dict]:
     try:
-        return await extract_ports(context, zone, settings=settings, log=log)
+        return await extract_ports(context, zone, log=log)
     except Exception as e:
-        log(f"LLM: échec de tous les backends ({type(e).__name__}: {str(e)[:100]})")
+        log(f"LLM: échec OpenRouter ({type(e).__name__}: {str(e)[:100]})")
         # Fallback NER local (spaCy entraîné sur la BDD) — extraction sans LLM
         try:
             from ml_core import extract_entities
@@ -480,8 +478,7 @@ _normalize_name = normalize_name  # rétrocompat
 # ---------------------------------------------------------------------------
 # Pipeline complet pour UNE zone
 # ---------------------------------------------------------------------------
-async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key: str | None,
-                            logger=None, force: bool = False) -> dict:
+async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False) -> dict:
     log = logger or (lambda m: None)
     zone = await db.eez_zones.find_one({"mrgid": int(mrgid)})
     if not zone:
@@ -656,8 +653,8 @@ async def generate_zone_poe(db, mrgid: int, gemini_key: str | None, emergent_key
                                  context, max_chars=15000)
         log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
 
-    # --- Extraction LLM (cascade llm_core) ---
-    ports = await extract_ports_llm(context, zone, gemini_key, emergent_key, log)
+    # --- Extraction LLM (llm_core / OpenRouter) ---
+    ports = await extract_ports_llm(context, zone, log)
 
     # --- Géocodage (geo_core) + validation spatiale ---
     geom = None

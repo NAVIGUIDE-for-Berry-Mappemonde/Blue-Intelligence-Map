@@ -18,12 +18,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
-from ai import extract_project, gatekeeper_check, get_llm_key
+from llm_core import extract_project, gatekeeper_check, get_llm_key
 from categories import CATEGORY_GROUPS, normalize_category
 from enrichment import ENRICH_FIELDS, enrich_marina, is_stale
 import poe_routes
 import ml_routes
-from geo import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
+from geo_core import haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
 from marinas import BuildState, build_marinas as run_build_marinas, marinas_to_geojson
 from anchorages import build_anchorages as run_build_anchorages, anchorages_to_geojson
 from zee import (
@@ -44,12 +44,12 @@ swarm = Swarm(db)
 
 DEFAULT_SETTINGS = {
     "_id": "global",
-    "gemini_api_key": "",
+    # Tous les appels IA passent par OpenRouter (clé UI prioritaire, sinon
+    # OPENROUTER_API_KEY ; modèle via OPENROUTER_MODEL, défaut openai/gpt-4o-mini).
+    "openrouter_api_key": "",
     "tinyfish_api_key": "",
     "tinyfish_agents": 2,
     "extract_concurrency": 6,
-    "gatekeeper_model": "gemini-3-flash-preview",
-    "extract_model": "gemini-3.1-pro-preview",
     "max_coast_km": 50,
     "min_marine_score": 0.5,
     "test_max_urls_per_seed": 6,
@@ -64,26 +64,12 @@ DEFAULT_SETTINGS = {
     "marina_batch_concurrency": 2,
     "openrouter_min_credits_usd": 0.5,
     "enrich_stale_days": 365,
-    # Cloudflare Workers AI: dormant while the provided token is rejected + Kimi is paywalled
-    # on Free tier. Default model is the free-plan-eligible gpt-oss-120b. Switching to
-    # `@cf/moonshotai/kimi-k2.6` after upgrading to Workers Paid activates Kimi with zero
-    # code change.
-    "cloudflare_model": "@cf/openai/gpt-oss-120b",
-    # Phase 5 — swarm extraction engine (used by ai.py). Defaults to gemini
-    # (unchanged historical behaviour). Alternates: "gpt" and "claude" (both via
-    # EMERGENT_LLM_KEY through emergentintegrations, zero config) and
-    # "openrouter" (uses OPENROUTER_API_KEY + openai/gpt-4o-mini).
-    "extraction_engine": "gemini",
 }
 
 
 async def get_settings() -> dict:
     doc = await db.settings.find_one({"_id": "global"})
-    merged = {**DEFAULT_SETTINGS, **(doc or {})}
-    for k in ("gatekeeper_model", "extract_model"):
-        if not str(merged.get(k, "")).startswith("gemini"):
-            merged[k] = DEFAULT_SETTINGS[k]
-    return merged
+    return {**DEFAULT_SETTINGS, **(doc or {})}
 
 
 class DeployBody(BaseModel):
@@ -93,12 +79,10 @@ class DeployBody(BaseModel):
 
 
 class SettingsBody(BaseModel):
-    gemini_api_key: str | None = None
+    openrouter_api_key: str | None = None
     tinyfish_api_key: str | None = None
     tinyfish_agents: int | None = None
     extract_concurrency: int | None = None
-    gatekeeper_model: str | None = None
-    extract_model: str | None = None
     max_coast_km: float | None = None
     min_marine_score: float | None = None
     test_max_urls_per_seed: int | None = None
@@ -113,7 +97,6 @@ class SettingsBody(BaseModel):
     marina_batch_concurrency: int | None = None
     openrouter_min_credits_usd: float | None = None
     enrich_stale_days: int | None = None
-    cloudflare_model: str | None = None
 
 
 def project_to_feature(p: dict) -> dict:
@@ -195,14 +178,8 @@ async def stop():
 @router.get("/swarm/status")
 async def status():
     st = swarm.status()
-    # Phase 5 — expose the active LLM engine so the UI can render it dynamically
-    # instead of a hard-coded "GEMINI" badge.
-    try:
-        sdoc = await db.settings.find_one({"_id": "global"}) or {}
-        engine = sdoc.get("extraction_engine") or "gemini"
-    except Exception:
-        engine = "gemini"
-    st["engine"] = engine
+    # Moteur LLM unique : OpenRouter (badge dynamique côté UI).
+    st["engine"] = "openrouter"
     return st
 
 
@@ -812,19 +789,8 @@ class EnrichBatchState:
 ENRICH_BATCH_STATE = EnrichBatchState()
 
 
-def _keys() -> tuple[str | None, str | None, str | None, str | None]:
-    return (
-        (os.environ.get("TINYFISH_API_KEY") or "").strip() or None,
-        (os.environ.get("OPENROUTER_API_KEY") or "").strip() or None,
-        (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "").strip() or None,
-        (os.environ.get("CLOUDFLARE_API_TOKEN") or "").strip() or None,
-    )
-
-
 _MARINA_ENGINE_LABELS = {
-    "gemini": "Gemini",
     "tinyfish": "TinyFish",
-    "cloudflare": "Cloudflare AI",
     "openrouter": "OpenRouter",
     "fallback": "OSM Fallback",
 }
@@ -843,9 +809,9 @@ async def _marina_telemetry(marina: dict, status: str, duration_ms: float, engin
 
 async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
     """Run the enrichment chain and upsert the enriched fields on the marina doc."""
-    tf_key, or_key, cf_account, cf_token = _keys()
     settings = await get_settings()
-    gemini_key = get_llm_key(settings)
+    tf_key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip() or None
+    or_key = get_llm_key(settings) or None
     # Économie de crédits : après un échec TinyFish, on ne re-paye plus pour cette marina.
     skip_tf = skip_tinyfish or bool(marina.get("tinyfish_failed"))
     t0 = time.time()
@@ -854,9 +820,6 @@ async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, sk
             marina,
             tinyfish_key=tf_key,
             openrouter_key=or_key,
-            cf_account=cf_account,
-            cf_token=cf_token,
-            gemini_key=gemini_key,
             min_credit_usd=min_credit_usd,
             logger=log_fn,
             skip_tinyfish=skip_tf,
@@ -1108,7 +1071,7 @@ async def _run_project_enrich(project_id: str, task: dict):
     import httpx as _httpx
     from bs4 import BeautifulSoup as _BS
     from readability import Document as _Doc
-    from ai import extract_project as _extract, gatekeeper_check as _gk
+    from llm_core import extract_project as _extract, gatekeeper_check as _gk
     from pipeline import UA as _UA, pick_image as _pick_image
 
     try:
@@ -1301,12 +1264,15 @@ async def mpa_deprecated(bbox: str = ""):
 async def read_settings():
     s = await get_settings()
     s.pop("_id", None)
-    if s.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY"):
-        s["gemini_api_key_set"] = True
-        s["gemini_api_key"] = ""
+    # Nettoyage des clés héritées d'anciennes versions (Gemini/Emergent/Cloudflare).
+    for legacy in ("gemini_api_key", "anthropic_api_key", "cloudflare_model",
+                   "gatekeeper_model", "extract_model", "extraction_engine"):
+        s.pop(legacy, None)
+    if s.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY"):
+        s["openrouter_api_key_set"] = True
+        s["openrouter_api_key"] = ""
     else:
-        s["gemini_api_key_set"] = False
-    s.pop("anthropic_api_key", None)
+        s["openrouter_api_key_set"] = False
     if s.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY"):
         s["tinyfish_api_key_set"] = True
         s["tinyfish_api_key"] = ""
@@ -1318,7 +1284,7 @@ async def read_settings():
 @router.put("/settings")
 async def write_settings(body: SettingsBody):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("gemini_api_key", "tinyfish_api_key"):
+    for k in ("openrouter_api_key", "tinyfish_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
     if updates:
@@ -1330,7 +1296,7 @@ MANUALS = {
     "en": """# Blue Intelligence — User Manual
 
 ## Overview
-Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers three complementary modes, an operator Audit console, contextual GeoJSON exports and a single global donation pot. AI-generated content is produced by an OpenRouter + Gemini (fallback) synthesis pipeline; the swarm extraction engine is configurable in Settings (Gemini default · Claude · OpenRouter).
+Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers three complementary modes, an operator Audit console, contextual GeoJSON exports and a single global donation pot. All AI-generated content is produced through OpenRouter (model configurable via the OPENROUTER_MODEL environment variable).
 
 ## Three modes (header switch)
 The header pill lets you switch between three modes. Each mode paints the app with its own accent theme (cyan · red · amber) and shows its dedicated sidebar and map layer.
@@ -1380,21 +1346,21 @@ Operator console reserved for the crew / admin. It groups **all batch triggers**
 - **Documentation**: download this manual (EN/FR).
 - **Data**: Import GeoJSON (validates coordinates, counts and merges duplicates), Export GeoJSON, Clear all projects.
 - **Marine filtering**: max coast distance (km), minimum marine score.
-- **Extraction**: parallel TinyFish agents (1–2), extraction concurrency (1–20), **extraction engine selector** (Gemini · Claude · OpenRouter), model per stage (Gatekeeper / Extraction+Scoring), Follow the Money toggle, Auto-Stop limit.
+- **Extraction**: parallel TinyFish agents (1–2), extraction concurrency (1–20), Follow the Money toggle, Auto-Stop limit.
 - **Map**: minimum zoom, max markers.
-- **API keys**: TinyFish and LLM (stored server-side, never exposed).
+- **API keys**: TinyFish and OpenRouter (stored server-side, never exposed).
 
 ## Pipeline (how it works)
 1. **Discovery**: TinyFish web agents navigate foundation portals (SSE live streaming, polling fallback, HTTP crawler fallback).
 2. **Extraction**: Readability cleans the page → LLM Gatekeeper rejects terrestrial/freshwater projects → LLM extracts title, description (<250 chars), location, category, partners and S_ocean score.
 3. **Geocoding**: extracted GPS → Nominatim → LLM smart geocoding → Point-in-Ocean test → coastal snapping when inland.
 4. **Deduplication**: URL match, spatial proximity (<500 m) + title similarity (>90%) → funders merged.
-5. **Ports of Entry pipeline (Formalities mode)**: search engines (SearXNG, Google-grounded Gemini) find the official customs/immigration sources of each EEZ; a whitelist of government domains (auto-generated from ISO codes + Public Suffix List + exceptions file) filters them; the pages/PDFs are parsed (trafilatura / PyMuPDF); a light LLM extracts the official PoE list as strict JSON; each port is geocoded (Nominatim/GeoNames) and spatially validated inside its EEZ polygon (shapely). MD5 hashes of the sources prevent useless re-extraction. The pipeline never invents content.
+5. **Ports of Entry pipeline (Formalities mode)**: search engines (SearXNG, OpenRouter web search) find the official customs/immigration sources of each EEZ; a whitelist of government domains (auto-generated from ISO codes + Public Suffix List + exceptions file) filters them; the pages/PDFs are parsed (trafilatura / PyMuPDF); a light LLM extracts the official PoE list as strict JSON; each port is geocoded (Nominatim/GeoNames) and spatially validated inside its EEZ polygon (shapely). MD5 hashes of the sources prevent useless re-extraction. The pipeline never invents content.
 """,
     "fr": """# Blue Intelligence — Manuel utilisateur
 
 ## Vue d'ensemble
-Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose trois modes complémentaires, une console Audit opérateur, des exports GeoJSON contextuels et une cagnotte de dons globale unique. Les contenus produits par IA le sont via un pipeline de synthèse OpenRouter + Gemini (fallback) ; le moteur d'extraction du swarm est configurable dans les Paramètres (Gemini par défaut · Claude · OpenRouter).
+Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose trois modes complémentaires, une console Audit opérateur, des exports GeoJSON contextuels et une cagnotte de dons globale unique. Tous les contenus produits par IA le sont via OpenRouter (modèle configurable via la variable d'environnement OPENROUTER_MODEL).
 
 ## Trois modes (bascule dans l'en-tête)
 La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habille l'app avec sa teinte d'accent propre (cyan · rouge · ambre) et affiche son bandeau et sa couche de carte dédiés.
@@ -1444,16 +1410,16 @@ Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les d
 - **Documentation** : télécharger ce manuel (EN/FR).
 - **Données** : Importer GeoJSON (validation des coordonnées, comptage et fusion des doublons), Exporter GeoJSON, Effacer tous les projets.
 - **Filtrage marin** : distance max à la côte (km), score marin minimum.
-- **Extraction** : agents TinyFish en parallèle (1–2), concurrence des extractions (1–20), **sélecteur de moteur d'extraction** (Gemini · Claude · OpenRouter), modèle par étape (Gatekeeper / Extraction+Scoring), interrupteur Follow the Money, limite Auto-Stop.
+- **Extraction** : agents TinyFish en parallèle (1–2), concurrence des extractions (1–20), interrupteur Follow the Money, limite Auto-Stop.
 - **Carte** : zoom minimum, marqueurs max.
-- **Clés API** : TinyFish et LLM (stockées côté serveur, jamais exposées).
+- **Clés API** : TinyFish et OpenRouter (stockées côté serveur, jamais exposées).
 
 ## Pipeline (fonctionnement)
 1. **Découverte** : les agents web TinyFish naviguent sur les portails des fondations (flux SSE en direct, repli polling, repli crawler HTTP).
 2. **Extraction** : Readability nettoie la page → un LLM Gatekeeper rejette les projets terrestres/eau douce → un LLM extrait titre, description (<250 caractères), lieu, catégorie, partenaires et score S_ocean.
 3. **Géocodage** : GPS extrait → Nominatim → géocodage intelligent par LLM → test Point-in-Ocean → recalage côtier si à l'intérieur des terres.
 4. **Déduplication** : URL identique, proximité spatiale (<500 m) + similarité de titre (>90 %) → financeurs fusionnés.
-5. **Pipeline Ports d'Entrée (mode Formalités)** : des moteurs de recherche (SearXNG, Gemini avec grounding Google) trouvent les sources officielles douanes/immigration de chaque ZEE ; une whitelist de domaines gouvernementaux (auto-générée depuis les codes ISO + Public Suffix List + fichier d'exceptions) les filtre ; les pages/PDF sont parsés (trafilatura / PyMuPDF) ; un LLM léger extrait la liste des PoE officiels en JSON strict ; chaque port est géocodé (Nominatim/GeoNames) puis validé spatialement dans son polygone ZEE (shapely). Les hash MD5 des sources évitent toute ré-extraction inutile. Le pipeline n'invente jamais de contenu.
+5. **Pipeline Ports d'Entrée (mode Formalités)** : des moteurs de recherche (SearXNG, recherche web OpenRouter) trouvent les sources officielles douanes/immigration de chaque ZEE ; une whitelist de domaines gouvernementaux (auto-générée depuis les codes ISO + Public Suffix List + fichier d'exceptions) les filtre ; les pages/PDF sont parsés (trafilatura / PyMuPDF) ; un LLM léger extrait la liste des PoE officiels en JSON strict ; chaque port est géocodé (Nominatim/GeoNames) puis validé spatialement dans son polygone ZEE (shapely). Les hash MD5 des sources évitent toute ré-extraction inutile. Le pipeline n'invente jamais de contenu.
 """,
 }
 
@@ -1471,14 +1437,14 @@ async def manual(lang: str = "en"):
     )
 
 
-# ---------- Donations (Stripe sandbox) ----------
+# ---------- Donations (Stripe, SDK officiel) ----------
 DONATION_PACKAGES = {"don_5": 5.0, "don_10": 10.0, "don_25": 25.0, "don_50": 50.0, "don_100": 100.0}
 
 
-def _stripe_checkout(request: Request):
-    from emergentintegrations.payments.stripe.checkout import StripeCheckout
-    host_url = str(request.base_url)
-    return StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{host_url}api/webhook/stripe")
+def _stripe():
+    import stripe as stripe_sdk
+    stripe_sdk.api_key = os.environ["STRIPE_API_KEY"]
+    return stripe_sdk
 
 
 class DonationCheckoutBody(BaseModel):
@@ -1493,24 +1459,30 @@ async def donation_checkout(body: DonationCheckoutBody, request: Request):
     amount = DONATION_PACKAGES.get(body.package_id)
     if amount is None:
         raise HTTPException(400, "invalid package_id")
-    from emergentintegrations.payments.stripe.checkout import CheckoutSessionRequest
-    sc = _stripe_checkout(request)
-    req = CheckoutSessionRequest(
-        amount=amount,
-        currency="eur",
+    sdk = _stripe()
+    session = await asyncio.to_thread(
+        sdk.checkout.Session.create,
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "eur",
+                "product_data": {"name": "Don Blue Intelligence"},
+                "unit_amount": int(amount * 100),
+            },
+            "quantity": 1,
+        }],
         success_url=f"{body.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{body.origin_url}/payment/cancel",
         metadata={"project_id": body.project_id or "", "project_title": (body.project_title or "")[:100], "package_id": body.package_id},
     )
-    session = await sc.create_checkout_session(req)
     await db.payment_transactions.insert_one({
-        "_id": str(uuid.uuid4()), "session_id": session.session_id,
+        "_id": str(uuid.uuid4()), "session_id": session.id,
         "package_id": body.package_id, "amount": amount, "currency": "eur",
         "project_id": body.project_id, "project_title": body.project_title,
         "status": "initiated", "payment_status": "pending",
         "created_at": now_iso(), "updated_at": now_iso(),
     })
-    return {"checkout_url": session.url, "session_id": session.session_id}
+    return {"checkout_url": session.url, "session_id": session.id}
 
 
 @router.get("/payments/status/{session_id}")
@@ -1520,8 +1492,8 @@ async def payment_status(session_id: str, request: Request):
         raise HTTPException(404, "Transaction not found")
     if record.get("payment_status") != "paid":
         try:
-            sc = _stripe_checkout(request)
-            st = await sc.get_checkout_status(session_id)
+            sdk = _stripe()
+            st = await asyncio.to_thread(sdk.checkout.Session.retrieve, session_id)
             if st.payment_status == "paid" or st.status == "complete":
                 await db.payment_transactions.update_one(
                     {"session_id": session_id, "payment_status": {"$ne": "paid"}},
@@ -1726,19 +1698,23 @@ app.add_middleware(GZipMiddleware, minimum_size=1500)
 
 @app.post("/api/webhook/stripe")
 async def stripe_webhook(request: Request):
-    from emergentintegrations.payments.stripe.checkout import StripeCheckout
-    host_url = str(request.base_url)
-    sc = StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{host_url}api/webhook/stripe")
+    """Webhook Stripe — signature vérifiée avec STRIPE_WEBHOOK_SECRET."""
+    sdk = _stripe()
+    whsec = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not whsec:
+        raise HTTPException(400, "STRIPE_WEBHOOK_SECRET not configured")
     body = await request.body()
     try:
-        wh = await sc.handle_webhook(body, request.headers.get("Stripe-Signature"))
+        event = sdk.Webhook.construct_event(body, request.headers.get("Stripe-Signature"), whsec)
     except Exception as e:
         raise HTTPException(400, f"webhook error: {e}")
-    if wh.payment_status == "paid":
-        await db.payment_transactions.update_one(
-            {"session_id": wh.session_id, "payment_status": {"$ne": "paid"}},
-            {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
-        )
+    if event["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        session = event["data"]["object"]
+        if session.get("payment_status") == "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": session["id"], "payment_status": {"$ne": "paid"}},
+                {"$set": {"status": "completed", "payment_status": "paid", "updated_at": now_iso()}},
+            )
     return {"status": "ok"}
 
 

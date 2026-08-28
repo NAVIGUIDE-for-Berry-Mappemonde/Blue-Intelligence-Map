@@ -14,18 +14,12 @@ import api from "../api";
  * Projects card hosts (Phase 6 + Phase 7):
  *   - Swarm ops (Test/Full, Clear DB, Deploy/Stop, log stream)
  *   - Project-swarm-exclusive settings: TinyFish agents, concurrency,
- *     extraction engine, gatekeeper/extract models, follow-the-money,
- *     auto-stop, rescan days
+ *     follow-the-money, auto-stop, rescan days
  *   - PHASE 7: Marine filtering (max coast km, min marine score) — migrated
  *     from SettingsPanel because it's projects-exclusive.
+ *
+ * All LLM calls go through OpenRouter (model set server-side via OPENROUTER_MODEL).
  */
-const MODELS = [
-  "gemini-3-flash-preview",
-  "gemini-3.5-flash",
-  "gemini-3.1-pro-preview",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-];
 const smallInput = "w-full bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50";
 
 /** Card shell — extracted from BatchHub to keep component identity stable across renders. */
@@ -60,9 +54,6 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
       setForm((f) => f || {
         tinyfish_agents: settings.tinyfish_agents,
         extract_concurrency: settings.extract_concurrency,
-        extraction_engine: settings.extraction_engine || "gemini",
-        gatekeeper_model: settings.gatekeeper_model,
-        extract_model: settings.extract_model,
         follow_the_money: !!settings.follow_the_money,
         max_partner_orgs: settings.max_partner_orgs,
         saturation_limit: settings.saturation_limit,
@@ -657,29 +648,9 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
             </div>
             <div>
               <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("extractionEngine")}</label>
-              <select
-                data-testid="extraction-engine-select"
-                value={form.extraction_engine || "gemini"}
-                onChange={(e) => set("extraction_engine", e.target.value)}
-                className={smallInput}
-              >
-                <option value="gemini">Gemini (via Emergent LLM key)</option>
-                <option value="gpt">GPT (via Emergent LLM key)</option>
-                <option value="claude">Claude (via Emergent LLM key)</option>
-                <option value="openrouter">OpenRouter</option>
-              </select>
-            </div>
-            <div>
-              <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("gatekeeperModel")}</label>
-              <select data-testid="gatekeeper-model-select" value={form.gatekeeper_model} onChange={(e) => set("gatekeeper_model", e.target.value)} className={smallInput}>
-                {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block font-mono text-[9px] uppercase tracking-wide text-slate-500 mb-1">{t("extractModel")}</label>
-              <select data-testid="extract-model-select" value={form.extract_model} onChange={(e) => set("extract_model", e.target.value)} className={smallInput}>
-                {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              <div data-testid="extraction-engine-badge" className={`${smallInput} bg-black/30 text-sonar cursor-default`}>
+                OpenRouter
+              </div>
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
               <input data-testid="follow-money-checkbox" type="checkbox" checked={!!form.follow_the_money}
