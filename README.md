@@ -68,9 +68,21 @@ uvicorn server:app --host 0.0.0.0 --port 8001
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # REACT_APP_BACKEND_URL=http://localhost:8001
-npm start                   # http://localhost:3000
+cp .env.example .env        # laisser REACT_APP_BACKEND_URL vide (même-origine)
+npm start                   # http://localhost:3000 (dev, hot reload)
 ```
+
+### Preview Cloud Agent / accès distant (un seul port)
+
+Pour visualiser l'application depuis l'interface Cursor (onglet **Ports** ou **Browser**) sans problème de `localhost` côté client :
+
+```bash
+bash .cursor/preview.sh     # build + UI + API sur http://localhost:8001
+```
+
+Ouvrir le port **8001** (« Application UI + API ») dans l'onglet **Ports** de la page de l'agent Cursor, puis cliquer sur le lien **Open in Browser**. L'UI et l'API partagent la même origine — aucun appel réseau vers `localhost:8001` depuis le navigateur distant.
+
+Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le développement.
 
 ## Variables d'environnement (secrets)
 

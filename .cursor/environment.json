@@ -5,18 +5,18 @@
   "start": "bash .cursor/start.sh",
   "terminals": [
     {
-      "name": "backend",
-      "command": "cd backend && . .venv/bin/activate && uvicorn server:app --host 0.0.0.0 --port 8001",
-      "description": "FastAPI backend (Blue Intelligence API) on http://localhost:8001"
+      "name": "app",
+      "command": "cd backend && . .venv/bin/activate && SERVE_FRONTEND=1 uvicorn server:app --host 0.0.0.0 --port 8001",
+      "description": "Application complète (UI + API) sur http://localhost:8001 — ouvrir ce port dans l'onglet Ports / Browser"
     },
     {
-      "name": "frontend",
+      "name": "frontend-dev",
       "command": "cd frontend && BROWSER=none npm start",
-      "description": "React (CRA) dev server on http://localhost:3000"
+      "description": "React dev server (hot reload) sur http://localhost:3000 — réservé au développement"
     }
   ],
   "ports": [
-    { "name": "frontend", "port": 3000 },
-    { "name": "backend", "port": 8001 }
+    { "name": "Application (UI + API)", "port": 8001 },
+    { "name": "Dev frontend (hot reload)", "port": 3000 }
   ]
 }
