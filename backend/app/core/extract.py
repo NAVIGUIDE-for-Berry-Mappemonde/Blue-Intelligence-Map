@@ -16,10 +16,15 @@ import asyncio
 import difflib
 import hashlib
 import re
+import threading
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+# PyMuPDF n'est pas sûr en usage concurrent multi-threads (crash natif
+# « double free or corruption » constaté en run complet) — parsing sérialisé.
+_pdf_lock = threading.Lock()
 
 UA_BROWSER = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
@@ -90,8 +95,9 @@ def looks_blocked(text: str, html: str = "", title: str = "") -> bool:
 # ---------------------------------------------------------------------------
 def parse_pdf_text(content: bytes, max_pages: int = 60) -> str:
     import fitz
-    with fitz.open(stream=content, filetype="pdf") as pdf:
-        return "\n".join(page.get_text() for page in pdf[:max_pages])
+    with _pdf_lock:
+        with fitz.open(stream=content, filetype="pdf") as pdf:
+            return "\n".join(page.get_text() for page in pdf[:max_pages])
 
 
 def parse_html_n1(html: str) -> str:
