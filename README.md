@@ -12,7 +12,7 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | **Marinas** | rouge | Marinas et points d'amarrage le long de la route Berry-Mappemonde, curatés depuis OpenStreetMap/SHOM et enrichis par IA (canal VHF, places visiteurs, services…) |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 
-S'y ajoutent une console **Audit** opérateur (déclencheurs batch, télémétrie, KPIs), des exports/imports GeoJSON contextuels et une cagnotte de dons globale (Stripe).
+S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
 
 ## Architecture
 
@@ -69,9 +69,21 @@ uvicorn server:app --host 0.0.0.0 --port 8001
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # REACT_APP_BACKEND_URL=http://localhost:8001
-npm start                   # http://localhost:3000
+cp .env.example .env        # laisser REACT_APP_BACKEND_URL vide (même-origine)
+npm start                   # http://localhost:3000 (dev, hot reload)
 ```
+
+### Preview Cloud Agent / accès distant (un seul port)
+
+Pour visualiser l'application depuis l'interface Cursor (onglet **Ports** ou **Browser**) sans problème de `localhost` côté client :
+
+```bash
+bash .cursor/preview.sh     # build + UI + API sur http://localhost:8001
+```
+
+Ouvrir le port **8001** (« Application UI + API ») dans l'onglet **Ports** de la page de l'agent Cursor, puis cliquer sur le lien **Open in Browser**. L'UI et l'API partagent la même origine — aucun appel réseau vers `localhost:8001` depuis le navigateur distant.
+
+Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le développement.
 
 ## Variables d'environnement (secrets)
 
@@ -84,11 +96,9 @@ npm start                   # http://localhost:3000
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM unique de l'application |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
-| `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise désormais le rendu Playwright local, gratuit) |
+| `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise le rendu Playwright local) |
 | `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames — activer le « free webservice » sur geonames.org) |
 | `SEARXNG_URL` | optionnel | Instance SearXNG auto-hébergée (voir `infra/searxng/`) — prioritaire sur les instances publiques pour la recherche PoE |
-| `STRIPE_API_KEY` | pour les dons | Clé secrète Stripe (`sk_…`) |
-| `STRIPE_WEBHOOK_SECRET` | pour les dons | Secret de signature du webhook Stripe (`whsec_…`) |
 | `RESEND_API_KEY` | optionnel | Envoi d'emails de signalement de projets (Resend) |
 | `SENDER_EMAIL` / `REPORT_RECIPIENT` | optionnel | Expéditeur / destinataire des signalements |
 
@@ -96,14 +106,13 @@ npm start                   # http://localhost:3000
 
 | Variable | Obligatoire | Rôle |
 |----------|-------------|------|
-| `REACT_APP_BACKEND_URL` | ✅ | URL publique du backend, sans slash final |
+| `REACT_APP_BACKEND_URL` | optionnel | URL publique du backend (sans slash final). **Laisser vide pour le mode même-origine** : en dev le proxy CRA route `/api` vers `localhost:8001`, en production le reverse proxy sert `/api/*`. Ne renseigner que si le backend vit sur un autre domaine |
 
 ## Déploiement sur blueintelligence.online
 
-1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…) avec `REACT_APP_BACKEND_URL=https://blueintelligence.online` au moment du build.
+1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…). Avec le reverse proxy ci-dessous, laisser `REACT_APP_BACKEND_URL` vide (mode même-origine).
 2. **Backend** : `uvicorn server:app --host 0.0.0.0 --port 8001` derrière un reverse proxy qui route `/api/*` vers le port 8001 (le backend n'expose que des routes `/api/*`).
 3. **MongoDB** : instance managée (Atlas) recommandée ; les index sont créés automatiquement au démarrage.
-4. **Stripe** : déclarer le webhook `https://blueintelligence.online/api/webhook/stripe` (événement `checkout.session.completed`) et reporter le `whsec_…` dans `STRIPE_WEBHOOK_SECRET`.
 
 ## API (aperçu)
 
@@ -112,8 +121,23 @@ npm start                   # http://localhost:3000
 - `POST /api/swarm/deploy` · `GET /api/swarm/status` — pipeline de découverte
 - `GET /api/marinas` · `POST /api/marinas/build` · `POST /api/marinas/enrich-batch` — mode Marinas
 - `GET /api/poe/zones` · `POST /api/poe/zones/{mrgid}/generate` · `GET /api/poe/ports` — mode Formalités
+- `POST /api/poe/runs` · `GET /api/poe/runs/{id}/status` · `GET /api/poe/runs/{id}/diff` · `GET /api/poe/runs/{id}/report` — runs versionnés PoE
 - `GET /api/export/{geojson|marinas.geojson|poe.geojson}` — exports GeoJSON
-- `POST /api/donations/checkout` · `GET /api/donations/total` — dons Stripe
+
+## Données initiales (seed)
+
+Le dossier `seed/` contient les exports GeoJSON de production :
+
+```bash
+# Projets (4 463) — via l'API
+curl -X POST http://localhost:8001/api/import/geojson \
+  -H "Content-Type: application/json" --data-binary @seed/projects.geojson
+# Ports d'Entrée (1 169) + statuts des zones — via le script
+python scripts/restore_data.py poe seed/ports_of_entry.geojson
+python scripts/restore_data.py zones
+```
+
+Le référentiel des 285 ZEE se construit depuis la Console (mode Formalités → « Construire le référentiel ZEE »).
 
 ## Tests
 

@@ -1,10 +1,9 @@
-import { Anchor, Compass, HandCoins, Heart, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
-  status, t, basemap, setBasemap, donations,
+  status, t, basemap, setBasemap,
   mode, setMode,
-  onOpenDonate,
 }) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
@@ -68,21 +67,6 @@ export default function Header({
             <ScrollText size={13} /> {t("modeFormalities")}
           </button>
         </div>
-        {/* Phase 5: donation CTA in header — opens Stripe checkout via App.js */}
-        <button
-          data-testid="donation-cta"
-          onClick={onOpenDonate}
-          title={t("donationCtaTooltip")}
-          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/15 rounded-sm text-bio font-semibold text-xs transition-colors"
-        >
-          <Heart size={13} className="fill-bio/30" />
-          <span className="hidden md:inline">{t("donationCta")}</span>
-          {donations?.count > 0 && (
-            <span className="font-mono text-[9px] text-bio/70 uppercase tracking-wide">
-              {(donations?.total_eur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0 })} € · {donations.count}
-            </span>
-          )}
-        </button>
         <div className="flex border border-line rounded-sm overflow-hidden">
           <button
             data-testid="view-toggle-map"

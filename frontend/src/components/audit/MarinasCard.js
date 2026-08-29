@@ -87,7 +87,7 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
 
   return (
     <div data-testid="audit-batch-hub" data-mode-card="marinas">
-      <CardShell borderCls="border-alert/40">
+      <CardShell title={t("modeMarinas")} icon={<Anchor size={13} className="text-alert" />} borderCls="border-alert/40">
         <div>
           <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
             {t("auditMarinasBuild")}

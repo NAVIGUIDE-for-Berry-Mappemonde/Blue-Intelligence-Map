@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Play, Square } from "lucide-react";
+import { Check, Compass, Play, Square } from "lucide-react";
 import api from "../../api";
 import CardShell, { smallInput } from "./CardShell";
 
@@ -69,7 +69,7 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
 
   return (
     <div data-testid="audit-batch-hub" data-mode-card="projects">
-      <CardShell borderCls="border-sonar/40">
+      <CardShell title={t("modeProjects")} icon={<Compass size={13} className="text-sonar" />} borderCls="border-sonar/40">
         {/* Status pills */}
         <div className="flex items-center gap-2 flex-wrap">
           <span

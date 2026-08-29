@@ -60,7 +60,8 @@ fi
 echo "==> [4/4] Frontend (npm)"
 if [ ! -f "$REPO/frontend/.env" ]; then
   cat > "$REPO/frontend/.env" <<'EOF'
-REACT_APP_BACKEND_URL=http://localhost:8001
+# Laisser vide pour le mode même-origine (preview Cloud Agent + prod derrière reverse proxy).
+REACT_APP_BACKEND_URL=
 PORT=3000
 DANGEROUSLY_DISABLE_HOST_CHECK=true
 WDS_SOCKET_PORT=0
@@ -69,5 +70,9 @@ EOF
 fi
 cd "$REPO/frontend"
 npm install
+
+echo "==> [5/5] Frontend production build (preview unifié port 8001)"
+cd "$REPO/frontend"
+CI=true REACT_APP_BACKEND_URL= npm run build
 
 echo "==> install.sh complete"

@@ -8,7 +8,6 @@ import FormalitiesPanel from "./components/FormalitiesPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import SettingsPanel from "./components/SettingsPanel";
-import { DonateModal, PaymentReturn } from "./components/Donations";
 import ReportModal from "./components/ReportModal";
 
 // Read the persisted mode on boot. Default = "projects". (Phase 4A — 3 modes)
@@ -34,8 +33,6 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [basemap, setBasemap] = useState("dark");
   const [settings, setSettings] = useState(null);
-  const [donations, setDonations] = useState({ total_eur: 0, count: 0 });
-  const [donateTarget, setDonateTarget] = useState(null);
   const [showReport, setShowReport] = useState(false);
   const [categories, setCategories] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -51,12 +48,10 @@ export default function App() {
     try { localStorage.setItem("bi.showAnchorages", v ? "1" : "0"); } catch (_) { /* ignore */ }
   }, []);
   // Refactor 2026-06 — Formalities mode = world [EEZ -> Ports of Entry]
-  const [route, setRoute] = useState({ type: "FeatureCollection", features: [] });
   const [poeZones, setPoeZones] = useState({ count: 0, summary: null, items: [] });
   const [poePorts, setPoePorts] = useState({ type: "FeatureCollection", features: [] });
   const [selectedZone, setSelectedZone] = useState(null);   // mrgid
   const [flyToZone, setFlyToZone] = useState(null);         // {mrgid, bbox, ts}
-  const [paymentReturn, setPaymentReturn] = useState(window.location.pathname.startsWith("/payment/"));
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
   // creates a fresh `t` → MapView props change → the formalities marker
@@ -101,13 +96,6 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  const fetchDonations = useCallback(async () => {
-    try {
-      const { data } = await api.get("/donations/total");
-      setDonations(data);
-    } catch (e) { /* transient */ }
-  }, []);
-
   const fetchCategories = useCallback(async () => {
     try {
       const { data } = await api.get("/categories");
@@ -130,14 +118,6 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  // ---- Refactor 2026-06: route + EEZ zones + PoE ports ----
-  const fetchRoute = useCallback(async () => {
-    try {
-      const { data } = await api.get("/route");
-      setRoute(data);
-    } catch (e) { /* transient */ }
-  }, []);
-
   const fetchPoeZones = useCallback(async () => {
     try {
       const { data } = await api.get("/poe/zones");
@@ -153,9 +133,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.__biDonate = (id) => {
-      setDonateTarget({ id, title: null });
-    };
     // Phase 3.1 — async enrichment via 202 + poll status.
     // Polls every 2.5s until state != "running" (max ~180s).
     const pollUntilDone = async (endpoint, onDone, onErr, maxAttempts = 72) => {
@@ -316,7 +293,6 @@ export default function App() {
     };
 
     return () => {
-      delete window.__biDonate;
       delete window.__biEnrichMarina;
       delete window.__biEnrichProject;
       delete window.__biGeneratePoeZone;
@@ -324,34 +300,24 @@ export default function App() {
   }, [fetchMarinas, fetchProjects, fetchPoeZones, fetchPoePorts, lang]);
 
   useEffect(() => {
-    if (donateTarget && !donateTarget.title) {
-      const f = (projects.features || []).find((x) => x.properties.id === donateTarget.id);
-      if (f) setDonateTarget({ id: donateTarget.id, title: f.properties.title });
-    }
-  }, [donateTarget, projects]);
-
-  useEffect(() => {
     fetchStatus();
     fetchProjects();
     fetchSettings();
-    fetchDonations();
     fetchCategories();
     fetchMarinas();
     fetchAnchorages();
-    fetchRoute();
     fetchPoeZones();
     fetchPoePorts();
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(fetchProjects, 5000);
-    const d = setInterval(fetchDonations, 10000);
     const c = setInterval(fetchCategories, 15000);
     // Marinas refresh only when a build might be running — a light 8s poll.
     const m = setInterval(fetchMarinas, 8000);
     const a = setInterval(fetchAnchorages, 10000);
     const z = setInterval(fetchPoeZones, 12000);
     const pp = setInterval(fetchPoePorts, 12000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(d); clearInterval(c); clearInterval(m); clearInterval(a); clearInterval(z); clearInterval(pp); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchDonations, fetchCategories, fetchMarinas, fetchAnchorages, fetchRoute, fetchPoeZones, fetchPoePorts]);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(a); clearInterval(z); clearInterval(pp); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
@@ -373,9 +339,7 @@ export default function App() {
         lang={lang} setLang={setLang} view={view} setView={setView}
         showSettings={showSettings} setShowSettings={setShowSettings}
         status={status} t={t} basemap={basemap} setBasemap={setBasemap}
-        donations={donations}
         mode={mode} setMode={setMode}
-        onOpenDonate={() => setDonateTarget({ id: null, title: null, global: true })}
       />
       <div className="flex flex-1 min-h-0">
         {mode === "projects" && (
@@ -414,7 +378,6 @@ export default function App() {
               showAnchorages={showAnchorages}
               poeZones={poeZones.items}
               poePorts={poePorts}
-              route={route}
               onSelectZone={handleSelectZone}
               flyToMarina={flyToMarina}
               flyToZone={flyToZone}
@@ -441,14 +404,8 @@ export default function App() {
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
         )}
       </div>
-      {donateTarget && (
-        <DonateModal t={t} target={donateTarget} onClose={() => setDonateTarget(null)} />
-      )}
       {showReport && (
         <ReportModal t={t} onClose={() => setShowReport(false)} onSubmitted={() => { setShowReport(false); }} />
-      )}
-      {paymentReturn && (
-        <PaymentReturn t={t} onDone={() => { setPaymentReturn(false); fetchDonations(); }} />
       )}
     </div>
   );
