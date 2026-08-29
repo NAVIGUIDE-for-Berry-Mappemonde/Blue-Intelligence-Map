@@ -340,3 +340,81 @@ class TestRunReport:
         assert "# Rapport de run PoE" in md
         assert "Comparaison port par port" in md
         assert "Géocodage double" in md
+
+
+# --- Filet known_ports (Mexique SCT, Niue Alofi) -----------------------------
+class TestKnownPorts:
+    def test_mexico_sct_list_loaded(self):
+        entry = poe.known_entry_for({"iso2": "MX"})
+        assert entry and "puertos-y-terminales" in (entry.get("source_url") or "")
+        names = {p["name"] for p in entry["ports"]}
+        assert len(entry["ports"]) >= 100
+        assert "Ensenada" in names and "Manzanillo" in names
+        assert "Veracruz" in names and "Cabo San Lucas" in names
+
+    def test_niue_alofi(self):
+        entry = poe.known_entry_for({"iso2": "NU"})
+        assert entry and entry["ports"][0]["name"] == "Alofi"
+        assert entry.get("source_url") in (None, "")
+
+    def test_seed_url_mexico_pinned(self):
+        cands = poe.seed_url_candidates({"iso2": "MX"})
+        assert any("puertos-y-terminales" in c["url"] for c in cands)
+        assert all(c.get("domain") for c in cands)
+
+    def test_docs_from_known_use_official_coords(self):
+        zone = {
+            "mrgid": 8429, "iso2": "MX", "name": "Mexico",
+            "geometry": {"type": "Polygon", "coordinates": [[
+                [-118, 14], [-86, 14], [-86, 33], [-118, 33], [-118, 14],
+            ]]},
+        }
+        docs, meta = asyncio.run(poe._docs_from_known_ports(zone, lambda m: None))
+        assert len(docs) >= 100
+        assert meta.get("strict") is True
+        ens = next(d for d in docs if d["name"] == "Ensenada")
+        assert ens["geocode_source"] == "official_list"
+        assert ens["lat"] and ens["lon"]
+        assert ens["extraction_engine"] == "known"
+
+
+# --- UNCLOS : îles vides du run ----------------------------------------------
+class TestUnclosEmptyIslands:
+    def test_uninhabited_run_islands(self):
+        for name in (
+            "Macquarie Island", "Clipperton Island", "Jarvis Island",
+            "Palmyra Atoll", "Howland and Baker Islands", "Juan de Nova Island",
+            "Bassas da India",
+        ):
+            q = poe.qualify_unclos({"poe_count": 0, "pol_type": "200NM",
+                                    "anchor": [0, 10], "name": name})
+            assert q and q["code"] == "uninhabited", (name, q)
+
+    def test_overlapping_uninhabited_stays_claim(self):
+        for name in (
+            "Wake Island / Enenkio", "Glorioso Islands", "Ile Tromelin",
+            "Abu musa, Greater and Lesser Tunb", "Navassa Island",
+        ):
+            q = poe.qualify_unclos({"poe_count": 0, "pol_type": "Overlapping claim",
+                                    "anchor": [0, 10], "name": name})
+            assert q and q["code"] == "overlapping_claim", (name, q)
+
+    def test_abu_musa_uninhabited_when_not_overlapping(self):
+        q = poe.qualify_unclos({"poe_count": 0, "pol_type": "200NM",
+                                "anchor": [0, 10], "name": "Abu musa, Greater and Lesser Tunb"})
+        assert q and q["code"] == "uninhabited", q
+
+
+# --- NER réentraîné : texte réglementaire, plus seulement « Nom, ville (zone) »
+class TestNerRegulatory:
+    def test_extracts_ports_from_prose(self):
+        from app.core.ml import extract_entities, has_ner_model
+        assert has_ner_model()
+        samples = {
+            "The designated ports of entry for foreign pleasure craft include Ensenada.": "Ensenada",
+            "Foreign yachts must clear customs at Alofi in Niue.": "Alofi",
+            "Port de Papeete, Tahiti (French Polynesia). Clearance douanière au quai.": "Papeete",
+        }
+        for text, needle in samples.items():
+            ports = [e["text"] for e in extract_entities(text) if e["label"] == "PORT_NAME"]
+            assert any(needle in p for p in ports), (text, ports)

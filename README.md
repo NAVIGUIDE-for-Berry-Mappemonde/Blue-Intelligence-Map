@@ -97,7 +97,7 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM unique de l'application |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
 | `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise le rendu Playwright local) |
-| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames — activer le « free webservice » sur geonames.org) |
+| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames). Sur [geonames.org/manageaccount](https://www.geonames.org/manageaccount) : **Click to enable** le webservice gratuit — sans ça l'API renvoie l'erreur 10 et le pipeline désactive GeoNames pour le process |
 | `SEARXNG_URL` | optionnel | Instance SearXNG auto-hébergée (voir `infra/searxng/`) — prioritaire sur les instances publiques pour la recherche PoE |
 | `RESEND_API_KEY` | optionnel | Envoi d'emails de signalement de projets (Resend) |
 | `SENDER_EMAIL` / `REPORT_RECIPIENT` | optionnel | Expéditeur / destinataire des signalements |

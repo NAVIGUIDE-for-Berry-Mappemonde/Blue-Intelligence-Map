@@ -41,6 +41,7 @@ from app.core.rag import select_context, semantic_similarity
 from app.config import DATA_DIR as DATA
 
 EXCEPTIONS_FILE = DATA / "poe_exceptions.json"
+KNOWN_PORTS_FILE = DATA / "poe_known_ports.json"
 MAP_FILE = DATA / "eez_world_map.geojson"
 
 WFS_URL = "https://geo.vliz.be/geoserver/MarineRegions/wfs"
@@ -130,7 +131,8 @@ UNINHABITED_RE = re.compile(
     r"|south georgia|sandwich|peter i|baker|howland|jarvis|johnston|kingman"
     r"|palmyra|wake|navassa|ashmore|cartier|coral sea|macquarie|prince edward isl"
     r"|tromelin|europa|glorioso|glorieuses|juan de nova|bassas da india|chagos"
-    r"|clipperton|midway|paracel|spratly|scarborough|matthew|hunter",
+    r"|clipperton|midway|paracel|spratly|scarborough|matthew|hunter"
+    r"|abu musa|tunb|enenkio",
     re.I,
 )
 
@@ -178,6 +180,44 @@ def load_exceptions() -> dict:
         return json.loads(EXCEPTIONS_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {"manual": {}, "auto": {}}
+
+
+def load_known_ports() -> dict:
+    """Ports confirmés à la main (filet quand l'extraction d'une zone échoue)."""
+    try:
+        return json.loads(KNOWN_PORTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def known_entry_for(zone: dict, known: dict | None = None) -> dict | None:
+    known = known if known is not None else load_known_ports()
+    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
+        if cc and (known.get(cc.upper()) or {}).get("ports"):
+            return known[cc.upper()]
+    return None
+
+
+def seed_url_candidates(zone: dict, exceptions: dict | None = None,
+                        known: dict | None = None) -> list[dict]:
+    """URLs officielles épinglées (exceptions.seed_urls + source known_ports)."""
+    exc = exceptions or load_exceptions()
+    known = known if known is not None else load_known_ports()
+    urls: list[str] = []
+    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
+        if not cc:
+            continue
+        urls.extend((exc.get("seed_urls") or {}).get(cc.upper()) or [])
+        src = (known.get(cc.upper()) or {}).get("source_url")
+        if src:
+            urls.append(src)
+    seen, out = set(), []
+    for u in urls:
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        out.append({"url": u, "domain": domain_of(u)})
+    return out
 
 
 def save_exceptions(exc: dict):
@@ -699,6 +739,10 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             log(f"bootstrapping: {[c['domain'] for c in boot]} ajoutés à exceptions.json (auto)")
             await emit(rec, "bootstrap", domains=[c["domain"] for c in boot])
             official = boot
+    seeds = seed_url_candidates(zone, exceptions)
+    if seeds:
+        official = _merge_candidates(seeds, official)
+        log(f"sources épinglées: {[c['domain'] for c in seeds]}")
     strictly_official = bool(official)
     if not official:
         # dernier recours : domaines du pays même non gouvernementaux (statut
@@ -879,6 +923,69 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
                    extraction_agreement=p.get("extraction_agreement"),
                    geocode_agree=geo.get("agree"))
     return docs
+
+
+async def _docs_from_known_ports(zone: dict, log, rec=None, run=None) -> tuple[list[dict], dict]:
+    """Filet humain : ports confirmés (liste officielle épinglée ou confirmation
+    manuelle) quand l'extraction n'a rien produit. Les coordonnées fournies
+    évitent un géocodage de masse ; le point-in-EEZ reste appliqué."""
+    entry = known_entry_for(zone)
+    if not entry:
+        return [], {}
+    src_url = entry.get("source_url")
+    used = ([{"url": src_url, "domain": domain_of(src_url), "collected_at": now_iso()}]
+            if src_url else [])
+    whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"))
+    strict = bool(src_url and url_allowed(src_url, whitelist))
+
+    geom = prepared = None
+    try:
+        geom = await asyncio.to_thread(shape, zone["geometry"])
+        prepared = prep(geom)
+    except Exception:
+        pass
+
+    docs, seen = [], set()
+    for p in entry["ports"]:
+        norm = normalize_name(p["name"])
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        lat = p.get("lat")
+        lon = p.get("lon")
+        if lat is None or lon is None:
+            geo = await geocode_port_dual(p, zone, log)
+            chosen = geo.get("nominatim") or geo.get("geonames")
+            if chosen:
+                lat, lon = chosen[0], chosen[1]
+        validated, dist_km = False, None
+        if lat is not None and lon is not None and (prepared is not None or geom is not None):
+            validated, dist_km = point_in_eez(float(lat), float(lon), geom, prepared)
+        doc = {
+            "_id": str(uuid.uuid4()),
+            "mrgid": int(zone["mrgid"]),
+            "zone_name": zone.get("name") or zone.get("geoname"),
+            "country_iso2": zone.get("iso2") or zone.get("sov_iso2"),
+            "name": p["name"], "city": p.get("city"),
+            "note": p.get("activity") or entry.get("note"),
+            "lat": float(lat) if lat is not None else None,
+            "lon": float(lon) if lon is not None else None,
+            "geocode_source": "official_list" if lat is not None else None,
+            "validated": validated, "distance_km": dist_km,
+            "extraction_engine": "known",
+            "extraction_agreement": None,
+            "source_urls": [s["url"] for s in used],
+            "extracted_at": now_iso(),
+            "dedup_key": f"{int(zone['mrgid'])}:{norm}",
+        }
+        if run is not None:
+            doc["run_id"] = run.run_id
+        docs.append(doc)
+    log(f"filet known_ports: {len(docs)} port(s) pour {zone.get('iso2')} "
+        f"({entry.get('source_label') or 'manuel'})")
+    await emit(rec, "known_ports", iso2=zone.get("iso2"), n=len(docs),
+               source_url=src_url, strictly_official=strict)
+    return docs, {"strict": strict, "used_sources": used, "source_url": src_url}
 
 
 async def _persist_zone_run(db, zone: dict, docs: list[dict], status: str,
@@ -1084,6 +1191,15 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                 docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run)
                 if docs:
                     strictly_official = False  # ports issus de la synthèse, pas des pages officielles
+
+        if not docs:
+            known_docs, known_meta = await _docs_from_known_ports(zone, log, rec, run)
+            if known_docs:
+                docs = known_docs
+                if known_meta.get("used_sources"):
+                    used_sources = used_sources or known_meta["used_sources"]
+                strictly_official = bool(known_meta.get("strict"))
+                log("0 port extrait — filet known_ports appliqué")
 
         # 5. Écriture : espace du run (versionné) ou collections v1 (non-destructif)
         status = "ia" if strictly_official else "ia_sans_source"

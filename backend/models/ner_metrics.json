@@ -1,15 +1,15 @@
 {
-  "trained_at": "2026-08-28T06:18:53Z",
-  "n_train": 5043,
-  "n_dev": 560,
-  "dropped": 33,
+  "trained_at": "2026-08-29T04:45:00Z",
+  "n_train": 8612,
+  "n_dev": 956,
+  "dropped": 38,
   "labels": [
     "LOCATION",
     "PORT_NAME",
     "PROJECT_NAME"
   ],
-  "ents_f": 0.9785,
-  "ents_p": 0.9763,
-  "ents_r": 0.9807,
-  "final_loss": 432.43
+  "ents_f": 0.9811,
+  "ents_p": 0.9776,
+  "ents_r": 0.9847,
+  "final_loss": 1092.46
 }

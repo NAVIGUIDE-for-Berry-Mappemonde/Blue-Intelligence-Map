@@ -111,7 +111,9 @@
       "aduana.cl"
     ],
     "MX": [
-      "gob.mx"
+      "gob.mx",
+      "semar.gob.mx",
+      "anam.gob.mx"
     ],
     "ES": [
       "gob.es",
@@ -244,6 +246,11 @@
     ],
     "NL": [
       "douane.nl"
+    ]
+  },
+  "seed_urls": {
+    "MX": [
+      "https://www.gob.mx/puertosymarinamercante/acciones-y-programas/puertos-y-terminales"
     ]
   }
 }
