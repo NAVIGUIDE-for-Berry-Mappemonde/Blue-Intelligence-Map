@@ -44,6 +44,18 @@ class TestSerpFilterInterstitials:
         kept = [r["url"] for r in serp_filter(results)]
         assert kept == ["https://customs.gov.fj/ports-of-entry"]
 
+    def test_dictionary_and_tcp_port_sites_rejected(self):
+        results = [
+            {"url": "https://twominenglish.com/official-meaning/"},
+            {"url": "https://www.askdifference.com/official-vs-unofficial/"},
+            {"url": "https://www.vocabulary.com/dictionary/official"},
+            {"url": "https://www.guiahardware.es/puertos-de-red-mas-conocidos/"},
+            {"url": "https://www.stationx.net/common-ports-cheat-sheet/"},
+            {"url": "https://www.douane.gouv.fr/demarche/ports-entree"},
+        ]
+        kept = [r["url"] for r in serp_filter(results)]
+        assert kept == ["https://www.douane.gouv.fr/demarche/ports-entree"]
+
 
 # --- Hygiène : détection des pages de blocage --------------------------------
 class TestLooksBlocked:

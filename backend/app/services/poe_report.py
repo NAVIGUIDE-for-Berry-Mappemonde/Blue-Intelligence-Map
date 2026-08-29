@@ -345,4 +345,33 @@ def report_to_markdown(rep: dict) -> str:
             f"{ds['resourced']} re-sourcés)")
         add(f"- **Nouveaux (run seul) : {ds['added']}** ; **disparus (v1 seule) : {ds['removed']}**")
         add("")
+        d = rep["diff"]
+        churn = sorted(d.get("zones") or [],
+                       key=lambda z: -(z.get("added", 0) + z.get("removed", 0)))[:8]
+        if churn:
+            add("Zones au plus fort renouvellement (ajouts + disparitions) :")
+            for zrow in churn:
+                add(f"- {zrow.get('zone_name')}: v1={zrow.get('v1_count')} → v2={zrow.get('v2_count')} "
+                    f"(appariés {zrow.get('matched')}, +{zrow.get('added')}, −{zrow.get('removed')})")
+            add("")
+        if d.get("added_sample"):
+            add("Exemples de ports **nouveaux** :")
+            for p in d["added_sample"][:6]:
+                add(f"- [{p.get('zone_name')}] {p.get('name')}"
+                    + (f" ({(p.get('source_urls') or ['?'])[0]})" if p.get("source_urls") else ""))
+            add("")
+        if d.get("removed_sample"):
+            add("Exemples de ports **disparus** (présents en v1 seulement) :")
+            for p in d["removed_sample"][:6]:
+                add(f"- [{p.get('zone_name')}] {p.get('name')}"
+                    + (f" ({(p.get('source_urls') or ['?'])[0]})" if p.get("source_urls") else ""))
+            add("")
+        flagged = d.get("matched_flagged_sample") or []
+        if flagged:
+            add("Exemples de ports **appariés mais modifiés** :")
+            for m in flagged[:6]:
+                flags = ", ".join(m.get("flags") or [])
+                add(f"- [{m.get('zone_name')}] {m.get('v1', {}).get('name')} → {m.get('v2', {}).get('name')} "
+                    f"({flags}" + (f", {m.get('move_km')} km" if m.get("move_km") else "") + ")")
+            add("")
     return "\n".join(lines)
