@@ -59,6 +59,7 @@ Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les 
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+python -m playwright install chromium   # rendu local des pages JS (pipeline PoE)
 cp .env.example .env        # puis renseigner les variables (voir ci-dessous)
 uvicorn server:app --host 0.0.0.0 --port 8001
 ```
@@ -95,8 +96,9 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM unique de l'application |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
-| `TINYFISH_API_KEY` | optionnel | Agent de scraping TinyFish (extraction de dernier recours) |
-| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (fallback de géocodage après Nominatim) |
+| `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise le rendu Playwright local) |
+| `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames — activer le « free webservice » sur geonames.org) |
+| `SEARXNG_URL` | optionnel | Instance SearXNG auto-hébergée (voir `infra/searxng/`) — prioritaire sur les instances publiques pour la recherche PoE |
 | `RESEND_API_KEY` | optionnel | Envoi d'emails de signalement de projets (Resend) |
 | `SENDER_EMAIL` / `REPORT_RECIPIENT` | optionnel | Expéditeur / destinataire des signalements |
 
@@ -119,6 +121,7 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 - `POST /api/swarm/deploy` · `GET /api/swarm/status` — pipeline de découverte
 - `GET /api/marinas` · `POST /api/marinas/build` · `POST /api/marinas/enrich-batch` — mode Marinas
 - `GET /api/poe/zones` · `POST /api/poe/zones/{mrgid}/generate` · `GET /api/poe/ports` — mode Formalités
+- `POST /api/poe/runs` · `GET /api/poe/runs/{id}/status` · `GET /api/poe/runs/{id}/diff` · `GET /api/poe/runs/{id}/report` — runs versionnés PoE
 - `GET /api/export/{geojson|marinas.geojson|poe.geojson}` — exports GeoJSON
 
 ## Données initiales (seed)

@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import formalities, marinas, misc, ml, projects, swarm
+from app.routers import formalities, marinas, misc, ml, projects, runs, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -41,7 +41,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _SERVE_FRONTEND else "/openapi.json",
 )
 
-for module in (projects, swarm, marinas, formalities, ml, misc):
+for module in (projects, swarm, marinas, formalities, runs, ml, misc):
     app.include_router(module.router)
 
 
@@ -90,6 +90,8 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    from app.core.render import shutdown_render
+    await shutdown_render()
     client.close()
 
 

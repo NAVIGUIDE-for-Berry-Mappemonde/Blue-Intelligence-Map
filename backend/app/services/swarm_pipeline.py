@@ -440,7 +440,7 @@ class Swarm:
         try:
             self.set_agent(aid, status="RUNNING")
             self.agent_log(aid, "Cascade hybride: N1 trafilatura/PyMuPDF → N2 Readability")
-            page = await extract_cascade(url, min_chars=200, allow_tinyfish=False,
+            page = await extract_cascade(url, min_chars=200,
                                          log=lambda m: self.agent_log(aid, m))
             if not page["text"]:
                 raise ValueError(f"cascade N1/N2 sans texte exploitable ({page['level']})")
