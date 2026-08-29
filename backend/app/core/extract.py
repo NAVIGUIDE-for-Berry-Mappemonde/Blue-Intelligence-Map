@@ -29,6 +29,9 @@ SERP_EXCLUDE_RE = re.compile(
     r"|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
     r"|hotels?\.com|kayak\.|skyscanner|cruisemapper|vesselfinder"
     r"|brochure|touris[mt]|baggage|luggage|duty.?free|/vts[-_/.]|vts.?manual"
+    # dictionnaires / encyclopédies / how-to : jamais des sources de PoE
+    r"|merriam-webster|dictionary\.com|thefreedictionary|cambridge\.org/(?:\w+/)?dictionary"
+    r"|wiktionary|britannica\.com|wikihow|howtogeek|investopedia|linguee|wordreference"
     # pages interstitielles / anti-bot : jamais des sources légitimes
     r"|//unblock\.|\.unblock\.|/cdn-cgi/|captcha|datadome|perimeterx"
     r"|queue-it\.net|incapsula|distilnetworks"

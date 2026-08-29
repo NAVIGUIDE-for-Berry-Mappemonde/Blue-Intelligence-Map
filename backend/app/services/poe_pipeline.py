@@ -701,8 +701,18 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             official = boot
     strictly_official = bool(official)
     if not official:
-        # dernier recours : domaines du pays même non gouvernementaux (statut ia_sans_source)
-        official = [c for c in rejected if cc_low and c["domain"].endswith("." + cc_low)][:2] or rejected[:2]
+        # dernier recours : domaines du pays même non gouvernementaux (statut
+        # ia_sans_source). Les sites GOUVERNEMENTAUX D'AUTRES PAYS sont exclus
+        # (un ccTLD étranger + token régalien = ports du mauvais pays).
+        cc_ok = {c for c in (cc_low, (zone.get("sov_iso2") or "").lower()) if c}
+
+        def _foreign_gov(domain: str) -> bool:
+            suffix = domain.rsplit(".", 1)[-1].lower()
+            return (len(suffix) == 2 and suffix not in cc_ok
+                    and bool(OFFICIAL_TOKENS.search(domain)))
+
+        national = [c for c in rejected if cc_low and c["domain"].endswith("." + cc_low)]
+        official = (national or [c for c in rejected if not _foreign_gov(c["domain"])])[:2]
         log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) non officielles retenues (ia_sans_source)")
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
@@ -1044,6 +1054,23 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
 
         # 4. Extraction + géocodage + validation spatiale
         docs = await _extract_and_geocode(zone, context, used_sources, log, rec, run)
+
+        # Filet de sécurité : 0 port extrait des pages collectées ET aucune
+        # synthèse groundée encore tentée → un (seul) recours à la recherche
+        # groundée, dont la synthèse est jointe au contexte puis ré-extraite.
+        # (Les pages gov listent rarement les ports en HTML brut ; sans ce
+        # filet, les zones à pages minces finissent toutes en erreur.)
+        if not docs and synthesis is None:
+            log("0 port extrait des pages collectées — recours à la synthèse groundée (retry unique)")
+            _, syn_retry = await search_grounded(zone, whitelist, log)
+            await emit(rec, "search", engine="grounded", lang="en",
+                       query="(retry synthèse après 0 port)", retry=True,
+                       n=0, synthesis_chars=len(syn_retry or ""))
+            if syn_retry:
+                context_retry = f"{context}\n\n[SYNTHÈSE DE RECHERCHE (à recouper)]\n{syn_retry[:6000]}"
+                docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run)
+                if docs:
+                    strictly_official = False  # ports issus de la synthèse, pas des pages officielles
 
         # 5. Écriture : espace du run (versionné) ou collections v1 (non-destructif)
         status = "ia" if strictly_official else "ia_sans_source"
