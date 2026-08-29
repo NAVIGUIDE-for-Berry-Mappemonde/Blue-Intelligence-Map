@@ -397,6 +397,16 @@ class TestStructuredDiscovery:
         names = {p["name"] for p in ports}
         assert "Bahía Colonet" in names and "Ensenada" in names
 
+    def test_catalog_per_source_keeps_last_port(self):
+        from app.core.extract import extract_structured_ports
+        joined = (
+            f"[SOURCE: https://gob.mx/page]\n{self._MX_JINA}\n"
+            "[SOURCE: https://example.gob.mx/ley.pdf]\n"
+            "1.- Disposiciones generales\nTexte de loi sans coordonnées.\n"
+        )
+        names = {p["name"] for p in extract_structured_ports(joined)}
+        assert {"Bahía Colonet", "Ensenada", "Manzanillo"} <= names
+
     def test_legal_port_of_phrasing(self):
         from app.core.extract import extract_structured_ports
         text = ("No plant material may be imported into Niue except through "

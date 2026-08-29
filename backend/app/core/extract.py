@@ -279,7 +279,26 @@ def looks_like_port_catalog(text: str) -> bool:
 def extract_structured_ports(text: str) -> list[dict]:
     """Lit une liste officielle dans le texte source (pas une liste figée) :
     titres « N.- Nom » + lat/lon, ou tournure légale « port of X ».
-    Les coordonnées du décret sont conservées pour éviter un géocodage de masse."""
+    Les coordonnées du décret sont conservées pour éviter un géocodage de masse.
+    Chaque bloc [SOURCE: …] est lu isolément : concaténer un PDF de loi à un
+    catalogue ne doit pas avaler le dernier port."""
+    if not text:
+        return []
+    parts = re.split(r"\n(?=\[SOURCE: )", text) if "[SOURCE:" in text else [text]
+    if len(parts) == 1:
+        return _extract_structured_ports_one(text)
+    out, seen_keys = [], set()
+    for part in parts:
+        for p in _extract_structured_ports_one(part):
+            key = p["name"].casefold()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            out.append(p)
+    return out
+
+
+def _extract_structured_ports_one(text: str) -> list[dict]:
     out, seen = [], set()
     for m in _CATALOG_HEAD.finditer(text or ""):
         name = " ".join(m.group(1).split()).strip()
