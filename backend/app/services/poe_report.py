@@ -67,12 +67,20 @@ async def build_run_report(db, run_id: str, include_diff: bool = True) -> dict:
     }
 
     # --- Gatekeeper ----------------------------------------------------------
-    gk = by_step.get("gatekeeper", [])
+    # Une zone relancée (reprise) émet plusieurs événements : on ne garde que le
+    # DERNIER par zone. Les domaines retenus en repli (ia_sans_source) ne sont
+    # PAS des domaines officiels — ils sont comptés à part.
+    gk_by_zone: dict = {}
+    for e in by_step.get("gatekeeper", []):
+        gk_by_zone[e.get("mrgid")] = e
+    gk = list(gk_by_zone.values())
     official_domains: dict[str, int] = {}
+    fallback_domains: dict[str, int] = {}
     rejected_domains: dict[str, int] = {}
     for e in gk:
+        bucket = official_domains if e["payload"].get("strictly_official") else fallback_domains
         for d in e["payload"].get("official") or []:
-            official_domains[d] = official_domains.get(d, 0) + 1
+            bucket[d] = bucket.get(d, 0) + 1
         for d in e["payload"].get("rejected") or []:
             rejected_domains[d] = rejected_domains.get(d, 0) + 1
     gatekeeper_stats = {
@@ -83,6 +91,7 @@ async def build_run_report(db, run_id: str, include_diff: bool = True) -> dict:
         "serp_dropped_urls": sum(len(e["payload"].get("dropped") or [])
                                  for e in by_step.get("serp_filter", [])),
         "top_official_domains": _top(official_domains),
+        "top_fallback_domains": _top(fallback_domains),
         "top_rejected_domains": _top(rejected_domains),
     }
 
@@ -115,12 +124,17 @@ async def build_run_report(db, run_id: str, include_diff: bool = True) -> dict:
     }
 
     # --- Extraction LLM ∥ NER ---------------------------------------------------
-    extr = by_step.get("extraction_compare", [])
-    ner_available = [e for e in extr if e["payload"].get("ner_n") is not None]
+    # Dernier événement par zone (les retries synthèse émettent plusieurs
+    # comparaisons) ; « NER actif » = le NER a réellement détecté des noms
+    # (un NER muet est un signal neutre, pas une disponibilité).
+    extr_by_zone: dict = {}
+    for e in by_step.get("extraction_compare", []):
+        extr_by_zone[e.get("mrgid")] = e
+    extr = list(extr_by_zone.values())
     extraction_stats = {
         "zones_extracted": len(extr),
         "llm_ports_total": sum(e["payload"].get("llm_n") or 0 for e in extr),
-        "ner_available_zones": len(ner_available),
+        "ner_active_zones": sum(1 for e in extr if (e["payload"].get("ner_n") or 0) > 0),
         "confirmed_llm_and_ner": sum(len(e["payload"].get("both") or []) for e in extr),
         "llm_only": sum(len(e["payload"].get("llm_only") or []) for e in extr),
         "ner_only_candidates": sum(len(e["payload"].get("ner_only") or []) for e in extr),
@@ -266,6 +280,9 @@ def report_to_markdown(rep: dict) -> str:
     if g.get("top_official_domains"):
         add("- Domaines officiels les plus utilisés : "
             + ", ".join(f"{d} ({n})" for d, n in g["top_official_domains"][:8]))
+    if g.get("top_fallback_domains"):
+        add("- Domaines de repli non officiels les plus retenus (`ia_sans_source`) : "
+            + ", ".join(f"{d} ({n})" for d, n in g["top_fallback_domains"][:8]))
     add("")
 
     add("## Collecte (cascade + double parsing comparé)")
@@ -286,7 +303,7 @@ def report_to_markdown(rep: dict) -> str:
     add("## Extraction LLM ∥ NER (parallèle comparé)")
     add("")
     add(f"- {x['llm_ports_total']} ports extraits par le LLM sur {x['zones_extracted']} zones ; "
-        f"NER local disponible sur {x['ner_available_zones']} zones")
+        f"NER local actif (≥ 1 détection) sur {x['ner_active_zones']} zones")
     add(f"- **{x['confirmed_llm_and_ner']} ports confirmés par les deux extracteurs**, "
         f"{x['llm_only']} vus par le LLM seul, {x['ner_only_candidates']} noms vus par le NER "
         f"seul (candidats à vérifier) ; {x['ner_fallbacks']} zone(s) en fallback NER pur")
