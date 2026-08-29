@@ -507,18 +507,20 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None) -> list[dic
                    fallback="none", llm_error=str(llm_err)[:120])
         return []
 
+    # NER muet (modèle absent OU zéro entité détectée) → signal NEUTRE, pas un désaccord
+    has_ner_signal = bool(ner_names)
     for p in llm_ports:
         p["extraction_engine"] = "llm"
         p["extraction_agreement"] = (
             any(text_similarity(p["name"], n) >= 0.6 for n in ner_names)
-            if ner_names is not None else None
+            if has_ner_signal else None
         )
     both = [p["name"] for p in llm_ports if p.get("extraction_agreement")]
     llm_only = [p["name"] for p in llm_ports if p.get("extraction_agreement") is False]
     ner_only = ([n for n in ner_names
                  if not any(text_similarity(n, p["name"]) >= 0.6 for p in llm_ports)]
-                if ner_names is not None else [])
-    if ner_names is not None:
+                if has_ner_signal else [])
+    if has_ner_signal:
         log(f"extraction comparée: {len(both)} port(s) confirmés LLM∩NER, "
             f"{len(llm_only)} LLM seul, {len(ner_only)} NER seul (candidats à vérifier)")
     await emit(rec, "extraction_compare", llm_n=len(llm_ports),

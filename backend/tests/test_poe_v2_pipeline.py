@@ -155,6 +155,17 @@ class TestExtractionCompare:
         assert ev["ner_only"] == ["Beta Quay"]
         assert ev["both"] == ["Port Alpha"]
 
+    def test_empty_ner_is_neutral_not_disagreement(self, monkeypatch):
+        async def fake_llm(context, zone, settings=None, log=None):
+            return [{"name": "Port Alpha", "city": None, "note": None}]
+
+        import app.core.ml as ml
+        monkeypatch.setattr(poe, "extract_ports", fake_llm)
+        monkeypatch.setattr(ml, "extract_entities", lambda text: [])  # NER muet
+        ports = asyncio.run(poe.extract_ports_llm("ctx", {"name": "Testland"},
+                                                  lambda m: None))
+        assert ports[0]["extraction_agreement"] is None
+
     def test_llm_failure_falls_back_to_ner(self, monkeypatch):
         async def broken_llm(context, zone, settings=None, log=None):
             raise RuntimeError("no key")
