@@ -75,7 +75,8 @@ BLOCKED_MARKERS_RE = re.compile(
 FOLLOWUP_PATTERNS = (
     "annuaire", "contact", "directory", "port-of-entry", "ports-of-entry",
     "clearance", "douane", "customs", "bureaux", "offices", "liste", "list-of",
-    "projets", "projects", "annexe",
+    "projets", "projects", "annexe", "habilit", "designated", "decreto",
+    "gazette", "legislation", "aduana", "anexo",
 )
 
 
@@ -241,25 +242,52 @@ def _is_mirror_url(url: str) -> bool:
     return host.endswith("jina.ai") or host.endswith("web.archive.org") or host.endswith("archive.org")
 
 
-# « 4.- Ensenada » ou premier item Jina « [1.-](url)Bahía Colonet »
-_HEAD = r"(?:\[\d+\.-\]\([^)]+\)|\d+\.-\s+)"
+# « 4.- Ensenada », « 1. Apia », ou premier item Jina « [1.-](url)Bahía Colonet »
+_HEAD = r"(?:\[\d+\.-\]\([^)]+\)|\d+\.-\s+|\d+[.)]\s+)"
 _CATALOG_HEAD = re.compile(
     rf"(?:^|\n)(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
     rf"((?:.*\n){{0,16}}?)(?=(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
     re.M,
 )
-# Jina : **Latitud:**31.89  — tables markdown : | Latitud: | 31.89 |
+# Jina : **Latitud:**31.89  — EN : Latitude: -13.8  — tables : | Latitud: | 31.89 |
 _CATALOG_SEP = r"[\s|*]*"
-_CATALOG_LAT = re.compile(rf"Latitud:{_CATALOG_SEP}([-0-9.]+)", re.I)
-_CATALOG_LON = re.compile(rf"Longitud:{_CATALOG_SEP}([-0-9.]+)", re.I)
-_CATALOG_STATE = re.compile(rf"Entidad federativa:{_CATALOG_SEP}([^\n|*]+)", re.I)
+_CATALOG_LAT = re.compile(rf"(?:latitud(?:e)?|lat\.?):{_CATALOG_SEP}([+-]?\d+(?:\.\d+)?)", re.I)
+_CATALOG_LON = re.compile(rf"(?:longitud(?:e)?|long\.?|lng|lon):{_CATALOG_SEP}([+-]?\d+(?:\.\d+)?)", re.I)
+_CATALOG_STATE = re.compile(
+    rf"(?:entidad federativa|province|state|région|region|departamento|governorate):"
+    rf"{_CATALOG_SEP}([^\n|*]+)",
+    re.I,
+)
+# Tournures légales : port of Alofi, port de Papeete, puerto de Ensenada, porto de Santos…
 _PORT_OF_RE = re.compile(
-    r"\bport of ([A-Z][A-Za-z][\w' -]{0,40}?)(?=,|;|\.| the | or |\n)",
+    r"\b(?:ports?\s+of\s+|porto?s?\s+d(?:e\s+|['’])|puertos?\s+de\s+|"
+    r"portos?\s+de\s+|havens?\s+van\s+|hafen\s+von\s+|porti?\s+di\s+)"
+    r"([A-ZÀ-Ý][\w'’. -]{0,40}?)(?=,|;|\.| the | or |\n| et | ou | y | e | und | oder )",
+    re.I,
 )
 _PORT_OF_SKIP = frozenset({
-    "entry", "entries", "call", "departure", "the", "a", "an", "any",
-    "registry", "register", "destination",
+    "entry", "entries", "entrée", "entree", "entrada", "ingresso",
+    "call", "departure", "the", "a", "an", "any",
+    "registry", "register", "registre", "destination",
+    "commerce", "plaisance", "recreo", "recreio", "mer", "mar",
+    "base", "principal",
 })
+_CATALOG_MARKERS_RE = re.compile(
+    r"puertos habilitados|designated ports|ports? d['’]entrée|"
+    r"ports? of entry|puertos de entrada|portos de entrada",
+    re.I,
+)
+_PDF_ABS_RE = re.compile(r"https?://[^\s\]\)'\"<>]+\.pdf(?:\?[^\s\]\)'\"<>]*)?", re.I)
+_PDF_HREF_RE = re.compile(
+    r"""(?:href|src)\s*=\s*["']([^"']+\.pdf(?:\?[^"']*)?)["']""",
+    re.I,
+)
+_PDF_MD_RE = re.compile(r"\[[^\]]*\]\(([^)]+\.pdf(?:\?[^)]*)?)\)", re.I)
+_LIST_PDF_RE = re.compile(
+    r"puerto|terminal|habilit|port.?of.?entry|ports.?of.?entry|"
+    r"customs|douane|aduana|clearance|gazett|legislat|designat|liste",
+    re.I,
+)
 
 
 def looks_hard_challenge(text: str = "", html: str = "", title: str = "") -> bool:
@@ -269,11 +297,16 @@ def looks_hard_challenge(text: str = "", html: str = "", title: str = "") -> boo
 
 
 def looks_like_port_catalog(text: str) -> bool:
+    """Vrai catalogue (coords ou décret numéroté), pas une loi quelconque
+    qui contient « 1. Article »."""
     if not text:
         return False
-    return (len(_CATALOG_HEAD.findall(text)) >= 8
-            or text.lower().count("latitud:") >= 8
-            or text.lower().count("puertos habilitados") >= 1 and text.count(".-") >= 8)
+    lat_hits = len(re.findall(r"latitud(?:e)?\s*:", text, re.I))
+    if lat_hits >= 8:
+        return True
+    if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= 8 or lat_hits >= 3):
+        return True
+    return False
 
 
 def extract_structured_ports(text: str) -> list[dict]:
@@ -331,10 +364,45 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         seen.add(name.casefold())
         out.append({
             "name": name[:120], "city": None,
-            "note": "« port of … » dans un texte légal",
+            "note": "tournure légale (« port of / port de / puerto de … »)",
             "extraction_engine": "catalog",
         })
     return out
+
+
+def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
+    """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret)."""
+    if not text or not base_url:
+        return []
+    raw: list[str] = list(_PDF_ABS_RE.findall(text))
+    raw += [urljoin(base_url, h) for h in _PDF_HREF_RE.findall(text)]
+    raw += [urljoin(base_url, h) for h in _PDF_MD_RE.findall(text)]
+    base_host = (urlparse(base_url).hostname or "").lower()
+    scored, seen = [], set()
+    for u in raw:
+        u = (u or "").split("#")[0]
+        if not u.startswith("http") or u in seen or _is_mirror_url(u):
+            continue
+        if SERP_EXCLUDE_RE.search(u):
+            continue
+        host = (urlparse(u).hostname or "").lower()
+        listish = bool(_LIST_PDF_RE.search(u))
+        if host != base_host and not listish:
+            continue
+        seen.add(u)
+        scored.append((0 if listish else 1, u))
+    scored.sort()
+    return [u for _, u in scored[:limit]]
+
+
+def should_follow_attachments(text: str, url: str) -> bool:
+    """Suivre un PDF même si la page est déjà longue (leçon SCT : la liste
+    est souvent le fichier lié, pas le HTML)."""
+    blob = f"{url} {text[:4000]}"
+    return (looks_like_port_catalog(text or "")
+            or bool(_CATALOG_MARKERS_RE.search(blob))
+            or bool(_LIST_PDF_RE.search(url or ""))
+            or len(text or "") < 800)
 
 
 async def _fetch_bytes(url: str, headers: dict, timeout: float):

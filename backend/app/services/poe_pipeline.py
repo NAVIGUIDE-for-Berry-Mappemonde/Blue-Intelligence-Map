@@ -35,7 +35,8 @@ from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs,
 from app.core.events import ZoneRecorder, emit
 from app.core.extract import (
     extract_cascade, extract_structured_ports, internal_followups,
-    looks_like_port_catalog, serp_filter,
+    looks_like_port_catalog, official_attachments, serp_filter,
+    should_follow_attachments,
 )
 from app.core.geo import geocode_port_dual, point_in_eez
 from app.core.llm import extract_ports, grounded_search
@@ -99,23 +100,29 @@ LANG_BY_ISO2 = {
     "DE": "de", "NL": "nl", "TH": "th", "VN": "vi", "KR": "ko",
 }
 QUERY_TEMPLATES = {
-    "fr": "ports d'entrée officiels douane dédouanement navires de plaisance étrangers {name}",
-    "es": "puertos de entrada oficiales aduana despacho yates extranjeros {name}",
-    "pt": "portos de entrada oficiais alfândega desembaraço embarcações de recreio estrangeiras {name}",
-    "ar": "موانئ الدخول الرسمية الجمارك اليخوت الأجنبية {name}",
-    "id": "pelabuhan masuk resmi bea cukai kapal pesiar asing {name}",
-    "it": "porti di ingresso ufficiali dogana imbarcazioni da diporto straniere {name}",
-    "el": "επίσημα λιμάνια εισόδου τελωνείο ξένα σκάφη αναψυχής {name}",
-    "tr": "resmi giriş limanları gümrük yabancı yatlar {name}",
-    "ru": "официальные порты въезда таможня иностранные яхты {name}",
-    "zh": "官方入境港口 海关 外国游艇 {name}",
-    "ja": "公式入国港 税関 外国ヨット {name}",
-    "de": "offizielle Einklarierungshäfen Zoll ausländische Sportboote {name}",
-    "nl": "officiële havens van binnenkomst douane buitenlandse pleziervaartuigen {name}",
-    "th": "ท่าเรือเข้าเมืองอย่างเป็นทางการ ศุลกากร เรือยอชท์ต่างชาติ {name}",
-    "vi": "cảng nhập cảnh chính thức hải quan du thuyền nước ngoài {name}",
-    "ko": "공식 입국 항구 세관 외국 요트 {name}",
+    "fr": "ports d'entrée officiels liste douane décret désignés {name}",
+    "es": "puertos habilitados puertos de entrada oficiales decreto aduana lista {name}",
+    "pt": "portos de entrada oficiais lista alfândega decreto designados {name}",
+    "ar": "موانئ الدخول الرسمية قائمة الجمارك مرسوم {name}",
+    "id": "pelabuhan masuk resmi daftar bea cukai keputusan {name}",
+    "it": "porti di ingresso ufficiali elenco dogana decreto {name}",
+    "el": "επίσημα λιμάνια εισόδου κατάλογος τελωνείο διάταγμα {name}",
+    "tr": "resmi giriş limanları liste gümrük kararname {name}",
+    "ru": "официальные порты въезда список таможня указ {name}",
+    "zh": "官方入境港口 名单 海关 法令 {name}",
+    "ja": "公式入国港 一覧 税関 政令 {name}",
+    "de": "offizielle Eingangshäfen Liste Zoll Verordnung {name}",
+    "nl": "officiële havens van binnenkomst lijst douane besluit {name}",
+    "th": "ท่าเรือเข้าเมืองอย่างเป็นทางการ รายชื่อ ศุลกากร {name}",
+    "vi": "cảng nhập cảnh chính thức danh sách hải quan nghị định {name}",
+    "ko": "공식 입국 항구 목록 세관 법령 {name}",
 }
+
+_LIST_URL_TOKENS = (
+    "port-of-entry", "ports-of-entry", "habilit", "puertos", "designated",
+    "decreto", "gazette", "customs", "douane", "aduana", "legislat",
+    "portos-de-entrada", "ports-entree",
+)
 
 
 def localized_query(zone: dict) -> str | None:
@@ -201,10 +208,23 @@ def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict
     return out
 
 
+def default_search_hints(zone: dict) -> list[str]:
+    """Leçon Niue / Mexique, pour TOUTE ZEE : loi douanière + liste désignée.
+    Jamais un nom de port — seulement le souverain et des termes génériques."""
+    sov = (zone.get("sovereign") or zone.get("name") or zone.get("geoname") or "").strip()
+    if not sov:
+        return []
+    return [f"{sov} customs act designated ports of entry official legislation gazette"]
+
+
 def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]:
-    """Requêtes supplémentaires (pas des noms de ports) épinglées par pays."""
+    """Requêtes supplémentaires pour chaque ZEE (défauts + exceptions pays)."""
     exc = exceptions or load_exceptions()
     seen, out = set(), []
+    for q in default_search_hints(zone):
+        if q not in seen:
+            seen.add(q)
+            out.append(q)
     for cc in (zone.get("iso2"), zone.get("sov_iso2")):
         for q in (exc.get("search_hints") or {}).get((cc or "").upper(), []) or []:
             q = (q or "").strip()
@@ -212,6 +232,46 @@ def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]
                 seen.add(q)
                 out.append(q)
     return out[:3]
+
+
+def list_url_bonus(url: str) -> float:
+    """Priorise les pages qui ressemblent à une liste officielle (leçon SCT)."""
+    u = (url or "").lower()
+    return sum(0.15 for tok in _LIST_URL_TOKENS if tok in u) + (0.1 if u.endswith(".pdf") else 0.0)
+
+
+def remember_seed_urls(zone: dict, urls: list[str], exceptions: dict | None = None,
+                       persist: bool = True, max_per_country: int = 4) -> list[str]:
+    """Mémorise les URL officielles qui ont produit un catalogue — la prochaine
+    ZEE du même pays n'attend plus le SERP (leçon Mexique / Niue généralisée)."""
+    cc = (zone.get("iso2") or zone.get("sov_iso2") or "").upper()
+    if not cc or not urls:
+        return []
+    exc = exceptions if exceptions is not None else load_exceptions()
+    bucket = exc.setdefault("seed_urls", {}).setdefault(cc, [])
+    added = []
+    for u in urls:
+        if not u or not str(u).startswith("http") or u in bucket:
+            continue
+        if not url_allowed(u, build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exc)):
+            if not OFFICIAL_TOKENS.search(domain_of(u) or ""):
+                continue
+        if len(bucket) >= max_per_country:
+            break
+        bucket.append(u)
+        added.append(u)
+    if added and persist:
+        save_exceptions(exc)
+    return added
+
+
+def urls_with_catalog(texts: list[str]) -> list[str]:
+    out = []
+    for block in texts or []:
+        m = re.match(r"\[SOURCE: ([^\]]+)\]", (block or "").lstrip())
+        if m and extract_structured_ports(block):
+            out.append(m.group(1).strip())
+    return out
 
 
 def save_exceptions(exc: dict):
@@ -276,6 +336,19 @@ def domain_of(url: str) -> str:
         return ".".join(p for p in [ext.domain, ext.suffix] if p)
     except Exception:
         return ""
+
+
+def is_foreign_gov_domain(domain: str, cc_ok: set[str]) -> bool:
+    """Écarte un site régalien qui n'appartient pas à la ZEE (leçon Samoa :
+    congress.gov / customs.gov.ph ne sont pas des sources samoanes)."""
+    if not domain or not OFFICIAL_TOKENS.search(domain):
+        return False
+    suffix = domain.rsplit(".", 1)[-1].lower()
+    if len(suffix) == 2 and suffix not in cc_ok:
+        return True
+    if suffix == "gov" and "us" not in cc_ok:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +749,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     name = zone.get("name") or zone.get("geoname")
 
     # Recherche parallèle : anglais ∥ langue locale (matrice multilingue)
-    query_en = f"official ports of entry customs clearance foreign yachts pleasure craft {name}"
+    query_en = (f"official designated ports of entry list customs gazette "
+                f"decree legislation {name}")
     loc_q = localized_query(zone)
     lang = LANG_BY_ISO2.get((zone.get("sov_iso2") or zone.get("iso2") or "").upper())
     searches = [search_searxng(query_en, log)]
@@ -728,7 +802,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     if not official:
         log("Level-2 retry: recherche ciblée sur l'organisation douanière nationale")
         q2 = (f"{zone.get('sovereign') or name} customs administration official website "
-              f"designated ports of entry clearance pleasure craft {name}")
+              f"designated ports of entry list gazette decree {name}")
         extra = await search_searxng(q2, log)
         await emit(rec, "search", engine="searxng", lang="en", query=q2, level2=True,
                    n=len(extra), results=extra)
@@ -737,7 +811,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             extra, syn2 = await search_grounded(zone, whitelist, log, query_override=(
                 f"Find the OFFICIAL national customs administration / border agency website of "
                 f"{zone.get('sovereign') or name} and the page listing designated ports of entry "
-                f"(clearance ports) for foreign pleasure craft in {name}. Cite the official URLs."
+                f"(clearance / designated / habilitados) in {name}. Cite the official URLs."
             ))
             await emit(rec, "search", engine="grounded", lang="en", query=q2, level2=True,
                        n=len(extra or []), results=extra or [],
@@ -770,8 +844,12 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     if seeds:
         # Les seeds d'un même domaine (page + PDF) ne doivent pas se déduire.
         seed_urls = {c["url"] for c in seeds}
-        official = seeds + [c for c in official if c["url"] not in seed_urls]
+        rest = [c for c in official if c["url"] not in seed_urls]
+        rest.sort(key=lambda c: -list_url_bonus(c.get("url") or ""))
+        official = seeds + rest
         log(f"sources épinglées: {[c['url'] for c in seeds]}")
+    else:
+        official.sort(key=lambda c: -list_url_bonus(c.get("url") or ""))
     strictly_official = bool(official)
     if not official:
         # dernier recours : domaines du pays même non gouvernementaux (statut
@@ -779,13 +857,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         # (un ccTLD étranger + token régalien = ports du mauvais pays).
         cc_ok = {c for c in (cc_low, (zone.get("sov_iso2") or "").lower()) if c}
 
-        def _foreign_gov(domain: str) -> bool:
-            suffix = domain.rsplit(".", 1)[-1].lower()
-            return (len(suffix) == 2 and suffix not in cc_ok
-                    and bool(OFFICIAL_TOKENS.search(domain)))
-
         national = [c for c in rejected if cc_low and c["domain"].endswith("." + cc_low)]
-        official = (national or [c for c in rejected if not _foreign_gov(c["domain"])])[:2]
+        official = (national or [c for c in rejected if not is_foreign_gov_domain(c["domain"], cc_ok)])[:2]
         log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) non officielles retenues (ia_sans_source)")
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
@@ -796,49 +869,63 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     return official, strictly_official, synthesis
 
 
-async def _collect_texts(official: list[dict], log, rec=None
+async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
                          ) -> tuple[list[str], dict, list[dict], dict]:
-    """Étape 3 — Collecte des textes sources : cascade double-parsing N1∥N2
-    + depth-2 sélectif + rendu Chromium local (N3-render, gratuit — a remplacé
-    TinyFish). Les pages de blocage anti-bot sont invalidées, jamais ingérées.
-    Retourne (texts, hashes MD5, sources utilisées, extraits)."""
+    """Étape 3 — Collecte : cascade N1∥N2, miroir anti-bot, PDF joints officiels
+    (même si la page est déjà longue), depth-2 si le texte est mince.
+    Jusqu'à max_fetch URL : une page bloquée n'épuise plus le budget de 3."""
     texts, hashes, used_sources, excerpts = [], {}, [], {}
-    for c in official[:3]:
+    queue = list(official)
+    seen_urls: set[str] = set()
+    fetched = 0
+    while queue and fetched < max_fetch:
+        c = queue.pop(0)
+        url = c.get("url") or ""
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        fetched += 1
         try:
-            res = await extract_cascade(c["url"], min_chars=200, log=log)
+            res = await extract_cascade(url, min_chars=200, log=log)
         except Exception as e:
-            log(f"fetch {c['domain']}: échec ({type(e).__name__})")
-            await emit(rec, "fetch", url=c["url"], domain=c["domain"],
+            log(f"fetch {c.get('domain') or domain_of(url)}: échec ({type(e).__name__})")
+            await emit(rec, "fetch", url=url, domain=c.get("domain"),
                        level="failed", error=type(e).__name__)
             continue
-        await emit(rec, "fetch", url=c["url"], domain=c["domain"], level=res["level"],
+        await emit(rec, "fetch", url=url, domain=c.get("domain"), level=res["level"],
                    chars=len(res["text"]), md5=res["md5"], blocked=res.get("blocked", False),
                    render_used=res.get("render_used", False), parse=res.get("parse"))
         if res.get("blocked"):
-            log(f"fetch {c['domain']}: page de blocage anti-bot — source écartée")
+            log(f"fetch {c.get('domain')}: page de blocage anti-bot — source écartée")
             continue
         if res["md5"]:
-            hashes[c["url"]] = res["md5"]
+            hashes[url] = res["md5"]
         text = res["text"]
-        log(f"fetch {c['domain']}: {len(text)} chars via {res['level']}")
-        # Depth=2 sélectif : liens internes réglementaires (/annuaire, /contacts, /clearance…)
+        log(f"fetch {c.get('domain') or domain_of(url)}: {len(text)} chars via {res['level']}")
+        blob = (res.get("html") or "") + "\n" + (text or "")
+        if should_follow_attachments(text or "", url):
+            for att in official_attachments(blob, url, limit=2):
+                if att not in seen_urls:
+                    log(f"pièce jointe officielle: {att[:90]}")
+                    await emit(rec, "attachment", parent=url, url=att)
+                    queue.append({"url": att, "domain": domain_of(att)})
         if len(text) < 400 and res.get("html"):
-            for fu in internal_followups(res["html"], c["url"], limit=2):
+            for fu in internal_followups(res["html"], url, limit=2):
                 try:
                     sub = await extract_cascade(fu, min_chars=200, log=log)
                 except Exception:
                     continue
                 if sub["text"] and not sub.get("blocked"):
                     log(f"depth-2: {fu[:80]} → {len(sub['text'])} chars")
-                    await emit(rec, "depth2", parent=c["url"], url=fu,
+                    await emit(rec, "depth2", parent=url, url=fu,
                                chars=len(sub["text"]), level=sub["level"])
                     text = (text + "\n" + sub["text"]).strip()
         if text and len(text) > 200:
-            texts.append(f"[SOURCE: {c['url']}]\n{text[:60000]}")  # pas de tronquage court : le RAG condense
-            excerpts[c["url"]] = text[:2500]
-            used_sources.append({"url": c["url"], "domain": c["domain"],
-                                 "md5": hashes.get(c["url"]), "collected_at": now_iso()})
-            await emit(rec, "source_used", url=c["url"], domain=c["domain"], chars=len(text))
+            texts.append(f"[SOURCE: {url}]\n{text[:60000]}")
+            excerpts[url] = text[:2500]
+            used_sources.append({"url": url, "domain": c.get("domain") or domain_of(url),
+                                 "md5": hashes.get(url), "collected_at": now_iso()})
+            await emit(rec, "source_used", url=url, domain=c.get("domain"), chars=len(text))
     return texts, hashes, used_sources, excerpts
 
 
@@ -1142,7 +1229,12 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
         raw = "\n\n".join(context_parts)
         raw_chars = len(raw)
         raw_catalog = extract_structured_ports(raw)
-        rag_q = (f"official ports of entry customs clearance foreign yachts "
+        if raw_catalog:
+            remembered = remember_seed_urls(zone, urls_with_catalog(texts), exceptions)
+            if remembered:
+                log(f"sources productives mémorisées pour {zone.get('iso2')}: {remembered}")
+                await emit(rec, "seed_remembered", iso2=zone.get("iso2"), urls=remembered)
+        rag_q = (f"official designated ports of entry customs gazette decree "
                  f"puertos habilitados puertos de entrada port of entry {name}")
         if looks_like_port_catalog(raw) or raw_catalog:
             context = raw[:40000]

@@ -416,6 +416,65 @@ class TestStructuredDiscovery:
         assert "Alofi" in names
         assert not any("Entry" in n or "Hanan" in n for n in names)
 
+    def test_legal_phrasing_is_multilingual(self):
+        from app.core.extract import extract_structured_ports
+        fr = extract_structured_ports("L'entrée s'effectue uniquement par le port de Papeete, ou le port d'Alofi.")
+        es = extract_structured_ports("Despacho únicamente por el puerto de Ensenada, no por el puerto de entrada aéreo.")
+        names_fr = {p["name"] for p in fr}
+        names_es = {p["name"] for p in es}
+        assert "Papeete" in names_fr and "Alofi" in names_fr
+        assert "Ensenada" in names_es
+        assert "entrada" not in {n.lower() for n in names_es}
+
+    def test_english_latitude_numbered_catalog(self):
+        from app.core.extract import extract_structured_ports, looks_like_port_catalog
+        text = "\n".join(
+            f"{i}. Port{i}\nLatitude: -{i}.5\nLongitude: -17{i}.2"
+            for i in range(1, 12)
+        )
+        ports = extract_structured_ports(text)
+        assert len(ports) >= 8
+        assert ports[0]["name"] == "Port1"
+        assert abs(ports[0]["lat"] - (-1.5)) < 1e-6
+        assert looks_like_port_catalog(text)
+
+    def test_hints_and_seeds_apply_to_every_eez(self):
+        for zone in (
+            {"iso2": "FR", "sovereign": "France", "name": "France"},
+            {"iso2": "FJ", "sovereign": "Fiji", "name": "Fiji"},
+            {"iso2": "JP", "sovereign": "Japan", "name": "Japan"},
+            {"iso2": "CL", "sovereign": "Chile", "name": "Chile"},
+        ):
+            hints = poe.search_hint_queries(zone)
+            assert hints, zone
+            blob = " ".join(hints)
+            assert "customs act" in blob.lower() or "legislation" in blob.lower()
+            assert "Papeete" not in blob and "Ensenada" not in blob and "Alofi" not in blob
+        loc = poe.localized_query({"iso2": "ES", "name": "Spain"})
+        assert loc and "habilitados" in loc
+        assert "yates" not in (poe.localized_query({"iso2": "MX", "name": "Mexico"}) or "")
+
+    def test_remember_seed_urls_without_port_names(self):
+        exc = {"seed_urls": {}}
+        added = poe.remember_seed_urls(
+            {"iso2": "FJ"},
+            ["https://www.customs.gov.fj/ports-of-entry", "https://evil.example/Alofi"],
+            exceptions=exc, persist=False)
+        assert added == ["https://www.customs.gov.fj/ports-of-entry"]
+        assert "Alofi" not in json.dumps(exc)
+        assert exc["seed_urls"]["FJ"][0].endswith("ports-of-entry")
+
+    def test_official_attachments_prefer_list_pdf(self):
+        from app.core.extract import official_attachments, should_follow_attachments
+        md = (
+            "### Puertos habilitados\n"
+            "[Descarga](https://www.gob.mx/cms/uploads/attachment/file/1/PuertosYTerminalesHabilitados.pdf)\n"
+            "[Autre](https://www.gob.mx/cms/uploads/attachment/file/2/logo.pdf)\n"
+        )
+        atts = official_attachments(md, "https://www.gob.mx/page")
+        assert atts and "Habilitados" in atts[0]
+        assert should_follow_attachments(md, "https://www.gob.mx/page")
+
     def test_seed_urls_point_to_official_pages_not_names(self):
         mx = poe.seed_url_candidates({"iso2": "MX"})
         nu = poe.seed_url_candidates({"iso2": "NU"})
@@ -426,6 +485,17 @@ class TestStructuredDiscovery:
         assert poe.search_hint_queries({"iso2": "MX"})
         assert poe.search_hint_queries({"iso2": "NU"})
         assert not any("Alofi" in q for q in poe.search_hint_queries({"iso2": "NU"}))
+
+    def test_numbered_law_is_not_a_port_catalog(self):
+        from app.core.extract import looks_like_port_catalog
+        law = "\n".join(f"{i}. Article transitoire sans coordonnées." for i in range(1, 20))
+        assert looks_like_port_catalog(law) is False
+
+    def test_foreign_gov_domains_rejected_for_other_eez(self):
+        assert poe.is_foreign_gov_domain("congress.gov", {"ws"})
+        assert poe.is_foreign_gov_domain("customs.gov.ph", {"ws"})
+        assert not poe.is_foreign_gov_domain("revenue.gov.ws", {"ws"})
+        assert not poe.is_foreign_gov_domain("customs.gov", {"us"})
 
     def test_challenge_page_is_blocked(self):
         from app.core.extract import looks_blocked, looks_hard_challenge, UA_READER, UA_BROWSER

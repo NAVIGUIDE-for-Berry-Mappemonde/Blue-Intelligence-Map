@@ -252,9 +252,9 @@ Réponds UNIQUEMENT avec un JSON strict de la forme:
 
 Règles absolues:
 - Prendre tout port / terminal / harbour que la source officielle désigne comme point d'entrée :
-  ports d'entrée, clearance, puertos habilitados (décret), ports of entry, « port of X »,
-  capitanías, designated ports. La mention « plaisance » n'est PAS exigée si l'État
-  publie une liste de ports habilitados / designated ports.
+  ports d'entrée, clearance, puertos habilitados (décret), ports of entry,
+  « port of / port de / puerto de X », capitanías, designated ports, gazette, décret.
+  La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
 - Ignorer les aéroports (sauf s'ils sont le seul point d'entrée maritime nommé — ne pas les extraire).
 - "name" = nom du port tel qu'écrit. "note" en français, max 120 caractères.
