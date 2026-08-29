@@ -501,7 +501,8 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 # 4. Extraction PARALLÈLE comparée : LLM (OpenRouter) ∥ NER local (spaCy)
 # ---------------------------------------------------------------------------
-async def extract_ports_llm(context: str, zone: dict, log, rec=None) -> list[dict]:
+async def extract_ports_llm(context: str, zone: dict, log, rec=None,
+                            catalog_text: str | None = None) -> list[dict]:
     """LLM et NER local tournent EN PARALLÈLE sur le même contexte et leurs
     listes sont comparées port par port (plus de simple fallback) :
       - port vu par les deux  → extraction_agreement=True (signal de confiance) ;
@@ -525,7 +526,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None) -> list[dic
 
     (llm_ports, llm_err), ner_names = await asyncio.gather(_llm(), _ner())
     ner_names = list(dict.fromkeys(ner_names)) if ner_names is not None else None
-    catalog = extract_structured_ports(context)
+    catalog = extract_structured_ports(catalog_text if catalog_text is not None else context)
 
     if llm_ports is None:
         log(f"LLM: échec OpenRouter ({type(llm_err).__name__}: {str(llm_err)[:100]})")
@@ -842,14 +843,14 @@ async def _collect_texts(official: list[dict], log, rec=None
 
 
 async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
-                               rec=None, run=None) -> list[dict]:
+                               rec=None, run=None, catalog_text: str | None = None) -> list[dict]:
     """Étape 4 — Extraction parallèle comparée (LLM ∥ NER) puis GÉOCODAGE DOUBLE
     (Nominatim ∥ GeoNames, données indépendantes) : l'accord < 2 km devient un
     signal de confiance, le désaccord est arbitré par la validation point-in-EEZ.
     Chaque candidat des deux fournisseurs est journalisé."""
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
-    ports = await extract_ports_llm(context, zone, log, rec=rec)
+    ports = await extract_ports_llm(context, zone, log, rec=rec, catalog_text=catalog_text)
 
     geom = None
     try:
@@ -1136,22 +1137,29 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
             }})
             return await db.eez_zones.find_one({"mrgid": int(mrgid)})
 
-        # RAG local : sur les contextes longs, seuls les chunks pertinents partent au LLM
-        context = "\n\n".join(context_parts)
-        raw_chars = len(context)
+        # RAG local : le LLM reçoit un extrait ; le parseur de catalogue lit
+        # TOUJOURS le texte officiel brut (sinon Alofi / fin de liste SCT disparaissent).
+        raw = "\n\n".join(context_parts)
+        raw_chars = len(raw)
+        raw_catalog = extract_structured_ports(raw)
         rag_q = (f"official ports of entry customs clearance foreign yachts "
                  f"puertos habilitados puertos de entrada port of entry {name}")
-        if looks_like_port_catalog(context):
-            context = context[:40000]
-            log(f"catalogue de ports détecté — contexte conservé ({len(context)} chars, pas de coupe RAG)")
-        elif len(context) > 15000:
-            context = select_context(rag_q, context, max_chars=20000)
+        if looks_like_port_catalog(raw) or raw_catalog:
+            context = raw[:40000]
+            log(f"catalogue / tournure légale ({len(raw_catalog)} nom(s)) — "
+                f"texte brut conservé pour le parseur, LLM sur {len(context)} chars")
+        elif len(raw) > 15000:
+            context = select_context(rag_q, raw, max_chars=20000)
             log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
+        else:
+            context = raw
         await emit(rec, "context", sources=len(texts), synthesis=bool(synthesis),
-                   raw_chars=raw_chars, final_chars=len(context))
+                   raw_chars=raw_chars, final_chars=len(context),
+                   catalog_n=len(raw_catalog))
 
         # 4. Extraction + géocodage + validation spatiale
-        docs = await _extract_and_geocode(zone, context, used_sources, log, rec, run)
+        docs = await _extract_and_geocode(zone, context, used_sources, log, rec, run,
+                                          catalog_text=raw)
 
         # Filet de sécurité : 0 port extrait des pages collectées ET aucune
         # synthèse groundée encore tentée → un (seul) recours à la recherche
@@ -1166,7 +1174,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                        n=0, synthesis_chars=len(syn_retry or ""))
             if syn_retry:
                 context_retry = f"{context}\n\n[SYNTHÈSE DE RECHERCHE (à recouper)]\n{syn_retry[:6000]}"
-                docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run)
+                docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run,
+                                                  catalog_text=context_retry)
                 if docs:
                     strictly_official = False  # ports issus de la synthèse, pas des pages officielles
 

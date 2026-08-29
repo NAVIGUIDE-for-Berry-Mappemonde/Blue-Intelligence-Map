@@ -385,6 +385,18 @@ class TestStructuredDiscovery:
             for i in range(10, 20))
         assert looks_like_port_catalog(long)
 
+    def test_catalog_reads_full_text_not_llm_slice(self, monkeypatch):
+        async def _no_llm(context, zone, log=None):
+            return []
+        monkeypatch.setattr(poe, "extract_ports", _no_llm)
+        async def _run():
+            return await poe.extract_ports_llm(
+                self._MX_JINA[:80], {"name": "Mexico"}, lambda m: None,
+                catalog_text=self._MX_JINA)
+        ports = asyncio.run(_run())
+        names = {p["name"] for p in ports}
+        assert "Bahía Colonet" in names and "Ensenada" in names
+
     def test_legal_port_of_phrasing(self):
         from app.core.extract import extract_structured_ports
         text = ("No plant material may be imported into Niue except through "
