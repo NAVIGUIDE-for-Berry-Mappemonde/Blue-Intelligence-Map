@@ -27,6 +27,16 @@ from bs4 import BeautifulSoup
 _pdf_lock = threading.Lock()
 
 UA_BROWSER = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+# r.jina.ai renvoie 403 (Cloudflare) si on se présente comme Chrome ; un UA lecteur suffit.
+UA_READER = {
+    "User-Agent": "Mozilla/5.0 (compatible; BlueIntelligence-Reader/1.0)",
+    "Accept": "text/plain, */*;q=0.8",
+}
+
+HARD_CHALLENGE_RE = re.compile(
+    r"challenge validation|sec-cpt-if|sec-container|akamai",
+    re.I,
+)
 
 # --- Filtrage SERP : exclusion regex avant tout parsing -----------------------
 SERP_EXCLUDE_RE = re.compile(
@@ -57,7 +67,8 @@ BLOCKED_MARKERS_RE = re.compile(
     r"|please complete the security check|request has been blocked"
     r"|automated access to this (?:site|page)|ddos protection by"
     r"|complete the captcha|prove (?:that )?you are human|browser verification"
-    r"|unblock request|access from your area has been temporarily limited",
+    r"|unblock request|access from your area has been temporarily limited"
+    r"|challenge validation|sec-cpt-if|sec-container",
     re.I,
 )
 
@@ -96,7 +107,7 @@ def looks_blocked(text: str, html: str = "", title: str = "") -> bool:
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
-def parse_pdf_text(content: bytes, max_pages: int = 60) -> str:
+def parse_pdf_text(content: bytes, max_pages: int = 180) -> str:
     import fitz
     with _pdf_lock:
         with fitz.open(stream=content, filetype="pdf") as pdf:
@@ -225,6 +236,152 @@ async def fetch_raw(url: str, timeout: int = 25):
         return r.content, (r.headers.get("content-type") or "").lower()
 
 
+def _is_mirror_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host.endswith("jina.ai") or host.endswith("web.archive.org") or host.endswith("archive.org")
+
+
+# « 4.- Ensenada » ou premier item Jina « [1.-](url)Bahía Colonet »
+_HEAD = r"(?:\[\d+\.-\]\([^)]+\)|\d+\.-\s+)"
+_CATALOG_HEAD = re.compile(
+    rf"(?:^|\n)(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
+    rf"((?:.*\n){{0,16}}?)(?=(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
+    re.M,
+)
+# Jina : **Latitud:**31.89  — tables markdown : | Latitud: | 31.89 |
+_CATALOG_SEP = r"[\s|*]*"
+_CATALOG_LAT = re.compile(rf"Latitud:{_CATALOG_SEP}([-0-9.]+)", re.I)
+_CATALOG_LON = re.compile(rf"Longitud:{_CATALOG_SEP}([-0-9.]+)", re.I)
+_CATALOG_STATE = re.compile(rf"Entidad federativa:{_CATALOG_SEP}([^\n|*]+)", re.I)
+_PORT_OF_RE = re.compile(
+    r"\bport of ([A-Z][A-Za-z][\w' -]{0,40}?)(?=,|;|\.| the | or |\n)",
+)
+_PORT_OF_SKIP = frozenset({
+    "entry", "entries", "call", "departure", "the", "a", "an", "any",
+    "registry", "register", "destination",
+})
+
+
+def looks_hard_challenge(text: str = "", html: str = "", title: str = "") -> bool:
+    """Challenge Akamai / « Challenge Validation » : Chromium n'y peut rien."""
+    probe = " ".join(p for p in (title or "", (text or "")[:2000], (html or "")[:4000]) if p)
+    return bool(probe and HARD_CHALLENGE_RE.search(probe))
+
+
+def looks_like_port_catalog(text: str) -> bool:
+    if not text:
+        return False
+    return (len(_CATALOG_HEAD.findall(text)) >= 8
+            or text.lower().count("latitud:") >= 8
+            or text.lower().count("puertos habilitados") >= 1 and text.count(".-") >= 8)
+
+
+def extract_structured_ports(text: str) -> list[dict]:
+    """Lit une liste officielle dans le texte source (pas une liste figée) :
+    titres « N.- Nom » + lat/lon, ou tournure légale « port of X ».
+    Les coordonnées du décret sont conservées pour éviter un géocodage de masse."""
+    out, seen = [], set()
+    for m in _CATALOG_HEAD.finditer(text or ""):
+        name = " ".join(m.group(1).split()).strip()
+        block = m.group(2) or ""
+        lat_m, lon_m = _CATALOG_LAT.search(block), _CATALOG_LON.search(block)
+        if not name or not lat_m or not lon_m:
+            continue
+        st = _CATALOG_STATE.search(block)
+        state = st.group(1).strip() if st else None
+        key = name.casefold()
+        if key in seen and state:
+            name = f"{name} ({state})"
+            key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name[:120], "city": state,
+            "lat": float(lat_m.group(1)), "lon": float(lon_m.group(1)),
+            "note": "catalogue officiel (nom + coordonnées dans la source)",
+            "extraction_engine": "catalog",
+        })
+    for m in _PORT_OF_RE.finditer(text or ""):
+        name = m.group(1).strip().rstrip(".")
+        first = name.split()[0].casefold() if name else ""
+        if not name or first in _PORT_OF_SKIP or name.casefold() in seen:
+            continue
+        if len(name) < 3 or len(name) > 60:
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "« port of … » dans un texte légal",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+async def _fetch_bytes(url: str, headers: dict, timeout: float):
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.content, (r.headers.get("content-type") or "").lower()
+
+
+async def _wayback_snapshot_url(url: str) -> str | None:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=UA_BROWSER) as client:
+        r = await client.get("https://web.archive.org/cdx/search/cdx", params={
+            "url": url, "output": "json", "filter": "statuscode:200",
+            "fl": "timestamp,original", "limit": 1,
+        })
+        r.raise_for_status()
+        rows = r.json()
+        if not isinstance(rows, list) or len(rows) < 2:
+            return None
+        ts, orig = rows[1][0], rows[1][1]
+        return f"https://web.archive.org/web/{ts}id_/{orig}"
+
+
+def _mirror_http_err(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
+
+async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
+    """Miroir générique quand la page officielle est derrière un challenge.
+    Jina d'abord (markdown structuré, meilleur pour les catalogues), Wayback
+    ensuite. L'URL d'origine reste la source ; le miroir n'est qu'un lecteur."""
+    log = log or (lambda m: None)
+    if _is_mirror_url(url):
+        return None
+
+    for attempt in range(2):
+        try:
+            content, _ = await _fetch_bytes(f"https://r.jina.ai/{url}", UA_READER, 90)
+            text = content.decode("utf-8", errors="replace")
+            if text and len(text) >= 400 and not looks_blocked(text):
+                log(f"miroir Jina: {len(text)} chars")
+                return text, "N3-mirror-jina"
+        except Exception as e:
+            log(f"miroir Jina: indisponible ({_mirror_http_err(e)})")
+            if attempt == 0:
+                await asyncio.sleep(1.2)
+
+    try:
+        snap = await _wayback_snapshot_url(url)
+        if snap:
+            content, ctype = await _fetch_bytes(snap, UA_BROWSER, 45)
+            if content[:5] == b"%PDF-" or "pdf" in ctype:
+                text = await asyncio.to_thread(parse_pdf_text, content)
+            else:
+                parsed = await dual_parse_html(content.decode("utf-8", errors="replace"))
+                text = parsed.get("text") or ""
+            if text and len(text) >= 400 and not looks_blocked(text):
+                log(f"miroir Wayback: {len(text)} chars")
+                return text, "N3-mirror-wayback"
+    except Exception as e:
+        log(f"miroir Wayback: indisponible ({_mirror_http_err(e)})")
+    return None
+
+
 async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = True,
                           log=None) -> dict:
     """
@@ -280,8 +437,12 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
                 out["text"] = parsed["text"]
 
     # N3 — rendu navigateur local (gratuit) : pages JS et challenges « soft ».
+    # Un challenge Akamai dur n'est jamais résolu par Chromium : on passe au miroir.
+    hard = looks_hard_challenge(out.get("text") or "", out.get("html") or "", out.get("title") or "")
     needs_render = (not out["is_pdf"]) and (out["blocked"] or len(out["text"]) < min_chars)
-    if needs_render and allow_render:
+    if needs_render and allow_render and hard:
+        log("challenge anti-bot dur — rendu Chromium sauté, tentative de miroir")
+    if needs_render and allow_render and not hard:
         from app.core.render import render_html
         rendered = await render_html(url, log=log)
         if rendered:
@@ -304,6 +465,16 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
                 log(f"N3-render: {len(out['text'])} chars via Chromium local")
             elif r_blocked:
                 out["blocked"] = True
+
+    # Miroir générique : page officielle bloquée ou trop courte (challenge Akamai…).
+    if (out["blocked"] or len(out["text"]) < min_chars) and not _is_mirror_url(url):
+        mirrored = await fetch_mirror_text(url, log=log)
+        if mirrored:
+            text, level = mirrored
+            out["text"] = text
+            out["level"] = level
+            out["blocked"] = False
+            out["html"] = text if text.lstrip().startswith(("#", "Title:")) else out.get("html")
 
     if out["blocked"]:
         out["text"] = ""

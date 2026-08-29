@@ -245,15 +245,19 @@ Return JSON:
 # ---------------------------------------------------------------------------
 # Extraction stricte des Ports d'Entrée
 # ---------------------------------------------------------------------------
-POE_EXTRACT_PROMPT = """Tu extrais les PORTS D'ENTRÉE OFFICIELS (ports de clearance douanière) pour les navires de PLAISANCE étrangers dans : {name} ({sovereign}).
+POE_EXTRACT_PROMPT = """Tu extrais les ports officiellement désignés pour l'entrée des navires étrangers dans : {name} ({sovereign}).
 
 Réponds UNIQUEMENT avec un JSON strict de la forme:
 {{"ports": [{{"name": "...", "city": "... ou null", "note": "précision courte ou null"}}]}}
 
 Règles absolues:
-- Uniquement les ports d'entrée / de clearance OFFICIELS pour la plaisance mentionnés dans les extraits.
-- Ne JAMAIS inventer. Si les extraits ne désignent aucun port d'entrée: {{"ports": []}}.
-- "name" = nom du port/marina/quai tel qu'écrit. "note" en français, max 120 caractères.
+- Prendre tout port / terminal / harbour que la source officielle désigne comme point d'entrée :
+  ports d'entrée, clearance, puertos habilitados (décret), ports of entry, « port of X »,
+  capitanías, designated ports. La mention « plaisance » n'est PAS exigée si l'État
+  publie une liste de ports habilitados / designated ports.
+- Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
+- Ignorer les aéroports (sauf s'ils sont le seul point d'entrée maritime nommé — ne pas les extraire).
+- "name" = nom du port tel qu'écrit. "note" en français, max 120 caractères.
 
 EXTRAITS DES SOURCES OFFICIELLES:
 {context}"""

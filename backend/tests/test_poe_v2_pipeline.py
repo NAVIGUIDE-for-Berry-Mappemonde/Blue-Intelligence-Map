@@ -342,40 +342,77 @@ class TestRunReport:
         assert "Géocodage double" in md
 
 
-# --- Filet known_ports (Mexique SCT, Niue Alofi) -----------------------------
-class TestKnownPorts:
-    def test_mexico_sct_list_loaded(self):
-        entry = poe.known_entry_for({"iso2": "MX"})
-        assert entry and "puertos-y-terminales" in (entry.get("source_url") or "")
-        names = {p["name"] for p in entry["ports"]}
-        assert len(entry["ports"]) >= 100
-        assert "Ensenada" in names and "Manzanillo" in names
-        assert "Veracruz" in names and "Cabo San Lucas" in names
+# --- Découverte automatique (catalogue source + seeds, pas une liste figée) --
+class TestStructuredDiscovery:
+    # Format réel r.jina.ai (gras), pas une table markdown de test.
+    _MX_JINA = """
+### **Puertos habilitados**
+#### [1.-](https://www.gob.mx/puertosymarinamercante/acciones-y-programas/puertos-y-terminales#)Bahía Colonet
+**Entidad federativa:**Baja California
+**Latitud:**30.96571843
+**Longitud:**-116.2804389
+#### 4.- Ensenada
+**Entidad federativa:**Baja California
+**Latitud:**31.8522146
+**Longitud:**-116.625788
+**Tipo de actividad:**Comercial Pesquera Turística
+#### 34.- Manzanillo
+**Entidad federativa:**Colima
+**Latitud:**19.057546
+**Longitud:**-104.313762
+**Tipo de actividad:**Comercial Turística
+"""
+    _MX_TABLE = """
+#### 4.- Ensenada
+| Entidad federativa: | Baja California |
+| Latitud: | 31.8522146 |
+| Longitud: | -116.625788 |
+"""
 
-    def test_niue_alofi(self):
-        entry = poe.known_entry_for({"iso2": "NU"})
-        assert entry and entry["ports"][0]["name"] == "Alofi"
-        assert entry.get("source_url") in (None, "")
+    def test_catalog_reads_jina_bold_and_markdown_table(self):
+        from app.core.extract import extract_structured_ports, looks_like_port_catalog
+        ports = extract_structured_ports(self._MX_JINA)
+        by = {p["name"]: p for p in ports}
+        assert "Bahía Colonet" in by and "Ensenada" in by and "Manzanillo" in by
+        assert abs(by["Ensenada"]["lat"] - 31.8522146) < 1e-6
+        assert abs(by["Bahía Colonet"]["lat"] - 30.96571843) < 1e-6
+        assert by["Ensenada"]["city"] == "Baja California"
+        assert by["Ensenada"]["extraction_engine"] == "catalog"
+        table = extract_structured_ports(self._MX_TABLE)
+        assert table and abs(table[0]["lat"] - 31.8522146) < 1e-6
+        long = self._MX_JINA + "\n".join(
+            f"#### {i}.- Puerto{i}\n**Latitud:**1.0\n**Longitud:**1.0"
+            for i in range(10, 20))
+        assert looks_like_port_catalog(long)
 
-    def test_seed_url_mexico_pinned(self):
-        cands = poe.seed_url_candidates({"iso2": "MX"})
-        assert any("puertos-y-terminales" in c["url"] for c in cands)
-        assert all(c.get("domain") for c in cands)
+    def test_legal_port_of_phrasing(self):
+        from app.core.extract import extract_structured_ports
+        text = ("No plant material may be imported into Niue except through "
+                "the port of Alofi, the Hanan International Airport, or the Post Office.")
+        ports = extract_structured_ports(text)
+        names = {p["name"] for p in ports}
+        assert "Alofi" in names
+        assert not any("Entry" in n or "Hanan" in n for n in names)
 
-    def test_docs_from_known_use_official_coords(self):
-        zone = {
-            "mrgid": 8429, "iso2": "MX", "name": "Mexico",
-            "geometry": {"type": "Polygon", "coordinates": [[
-                [-118, 14], [-86, 14], [-86, 33], [-118, 33], [-118, 14],
-            ]]},
-        }
-        docs, meta = asyncio.run(poe._docs_from_known_ports(zone, lambda m: None))
-        assert len(docs) >= 100
-        assert meta.get("strict") is True
-        ens = next(d for d in docs if d["name"] == "Ensenada")
-        assert ens["geocode_source"] == "official_list"
-        assert ens["lat"] and ens["lon"]
-        assert ens["extraction_engine"] == "known"
+    def test_seed_urls_point_to_official_pages_not_names(self):
+        mx = poe.seed_url_candidates({"iso2": "MX"})
+        nu = poe.seed_url_candidates({"iso2": "NU"})
+        blob = " ".join(c["url"] for c in mx + nu)
+        assert any("puertos-y-terminales" in c["url"] for c in mx)
+        assert any(c["url"].endswith(".pdf") and "gov.nu" in c["url"] for c in nu)
+        assert "Ensenada" not in blob and "Alofi" not in blob
+        assert poe.search_hint_queries({"iso2": "MX"})
+        assert poe.search_hint_queries({"iso2": "NU"})
+        assert not any("Alofi" in q for q in poe.search_hint_queries({"iso2": "NU"}))
+
+    def test_challenge_page_is_blocked(self):
+        from app.core.extract import looks_blocked, looks_hard_challenge, UA_READER, UA_BROWSER
+        assert looks_blocked("Challenge Validation", html="<div class='sec-container'>",
+                             title="Challenge Validation") is True
+        assert looks_hard_challenge(html="<div class='sec-container'>",
+                                    title="Challenge Validation") is True
+        assert "Chrome/" not in UA_READER["User-Agent"]
+        assert UA_READER["User-Agent"] != UA_BROWSER["User-Agent"]
 
 
 # --- UNCLOS : îles vides du run ----------------------------------------------
