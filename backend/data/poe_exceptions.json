@@ -111,7 +111,9 @@
       "aduana.cl"
     ],
     "MX": [
-      "gob.mx"
+      "gob.mx",
+      "semar.gob.mx",
+      "anam.gob.mx"
     ],
     "ES": [
       "gob.es",
@@ -206,7 +208,8 @@
       "gouv.mc"
     ],
     "NU": [
-      "gov.nu"
+      "gov.nu",
+      "mof.gov.nu"
     ],
     "PW": [
       "palaugov.pw"
@@ -244,6 +247,24 @@
     ],
     "NL": [
       "douane.nl"
+    ]
+  },
+  "seed_urls": {
+    "MX": [
+      "https://www.gob.mx/puertosymarinamercante/acciones-y-programas/puertos-y-terminales",
+      "https://www.gob.mx/cms/uploads/attachment/file/873395/PuertosYTerminalesHabilitados.pdf"
+    ],
+    "NU": [
+      "https://www.gov.nu/media/pages/information/39290dbbd4-1764012801/niue_laws_vol4_part1_ul2022.pdf",
+      "https://mof.gov.nu/customs/"
+    ]
+  },
+  "search_hints": {
+    "MX": [
+      "México puertos habilitados decreto Coordinación General de Puertos y Marina Mercante"
+    ],
+    "NU": [
+      "Niue Customs Act Port of Entry Order official legislation"
     ]
   }
 }

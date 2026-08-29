@@ -340,3 +340,210 @@ class TestRunReport:
         assert "# Rapport de run PoE" in md
         assert "Comparaison port par port" in md
         assert "Géocodage double" in md
+
+
+# --- Découverte automatique (catalogue source + seeds, pas une liste figée) --
+class TestStructuredDiscovery:
+    # Format réel r.jina.ai (gras), pas une table markdown de test.
+    _MX_JINA = """
+### **Puertos habilitados**
+#### [1.-](https://www.gob.mx/puertosymarinamercante/acciones-y-programas/puertos-y-terminales#)Bahía Colonet
+**Entidad federativa:**Baja California
+**Latitud:**30.96571843
+**Longitud:**-116.2804389
+#### 4.- Ensenada
+**Entidad federativa:**Baja California
+**Latitud:**31.8522146
+**Longitud:**-116.625788
+**Tipo de actividad:**Comercial Pesquera Turística
+#### 34.- Manzanillo
+**Entidad federativa:**Colima
+**Latitud:**19.057546
+**Longitud:**-104.313762
+**Tipo de actividad:**Comercial Turística
+"""
+    _MX_TABLE = """
+#### 4.- Ensenada
+| Entidad federativa: | Baja California |
+| Latitud: | 31.8522146 |
+| Longitud: | -116.625788 |
+"""
+
+    def test_catalog_reads_jina_bold_and_markdown_table(self):
+        from app.core.extract import extract_structured_ports, looks_like_port_catalog
+        ports = extract_structured_ports(self._MX_JINA)
+        by = {p["name"]: p for p in ports}
+        assert "Bahía Colonet" in by and "Ensenada" in by and "Manzanillo" in by
+        assert abs(by["Ensenada"]["lat"] - 31.8522146) < 1e-6
+        assert abs(by["Bahía Colonet"]["lat"] - 30.96571843) < 1e-6
+        assert by["Ensenada"]["city"] == "Baja California"
+        assert by["Ensenada"]["extraction_engine"] == "catalog"
+        table = extract_structured_ports(self._MX_TABLE)
+        assert table and abs(table[0]["lat"] - 31.8522146) < 1e-6
+        long = self._MX_JINA + "\n".join(
+            f"#### {i}.- Puerto{i}\n**Latitud:**1.0\n**Longitud:**1.0"
+            for i in range(10, 20))
+        assert looks_like_port_catalog(long)
+
+    def test_catalog_reads_full_text_not_llm_slice(self, monkeypatch):
+        async def _no_llm(context, zone, log=None):
+            return []
+        monkeypatch.setattr(poe, "extract_ports", _no_llm)
+        async def _run():
+            return await poe.extract_ports_llm(
+                self._MX_JINA[:80], {"name": "Mexico"}, lambda m: None,
+                catalog_text=self._MX_JINA)
+        ports = asyncio.run(_run())
+        names = {p["name"] for p in ports}
+        assert "Bahía Colonet" in names and "Ensenada" in names
+
+    def test_catalog_per_source_keeps_last_port(self):
+        from app.core.extract import extract_structured_ports
+        joined = (
+            f"[SOURCE: https://gob.mx/page]\n{self._MX_JINA}\n"
+            "[SOURCE: https://example.gob.mx/ley.pdf]\n"
+            "1.- Disposiciones generales\nTexte de loi sans coordonnées.\n"
+        )
+        names = {p["name"] for p in extract_structured_ports(joined)}
+        assert {"Bahía Colonet", "Ensenada", "Manzanillo"} <= names
+
+    def test_legal_port_of_phrasing(self):
+        from app.core.extract import extract_structured_ports
+        text = ("No plant material may be imported into Niue except through "
+                "the port of Alofi, the Hanan International Airport, or the Post Office.")
+        ports = extract_structured_ports(text)
+        names = {p["name"] for p in ports}
+        assert "Alofi" in names
+        assert not any("Entry" in n or "Hanan" in n for n in names)
+
+    def test_legal_phrasing_is_multilingual(self):
+        from app.core.extract import extract_structured_ports
+        fr = extract_structured_ports("L'entrée s'effectue uniquement par le port de Papeete, ou le port d'Alofi.")
+        es = extract_structured_ports("Despacho únicamente por el puerto de Ensenada, no por el puerto de entrada aéreo.")
+        names_fr = {p["name"] for p in fr}
+        names_es = {p["name"] for p in es}
+        assert "Papeete" in names_fr and "Alofi" in names_fr
+        assert "Ensenada" in names_es
+        assert "entrada" not in {n.lower() for n in names_es}
+
+    def test_english_latitude_numbered_catalog(self):
+        from app.core.extract import extract_structured_ports, looks_like_port_catalog
+        text = "\n".join(
+            f"{i}. Port{i}\nLatitude: -{i}.5\nLongitude: -17{i}.2"
+            for i in range(1, 12)
+        )
+        ports = extract_structured_ports(text)
+        assert len(ports) >= 8
+        assert ports[0]["name"] == "Port1"
+        assert abs(ports[0]["lat"] - (-1.5)) < 1e-6
+        assert looks_like_port_catalog(text)
+
+    def test_hints_and_seeds_apply_to_every_eez(self):
+        for zone in (
+            {"iso2": "FR", "sovereign": "France", "name": "France"},
+            {"iso2": "FJ", "sovereign": "Fiji", "name": "Fiji"},
+            {"iso2": "JP", "sovereign": "Japan", "name": "Japan"},
+            {"iso2": "CL", "sovereign": "Chile", "name": "Chile"},
+        ):
+            hints = poe.search_hint_queries(zone)
+            assert hints, zone
+            blob = " ".join(hints)
+            assert "customs act" in blob.lower() or "legislation" in blob.lower()
+            assert "Papeete" not in blob and "Ensenada" not in blob and "Alofi" not in blob
+        loc = poe.localized_query({"iso2": "ES", "name": "Spain"})
+        assert loc and "habilitados" in loc
+        assert "yates" not in (poe.localized_query({"iso2": "MX", "name": "Mexico"}) or "")
+
+    def test_remember_seed_urls_without_port_names(self):
+        exc = {"seed_urls": {}}
+        added = poe.remember_seed_urls(
+            {"iso2": "FJ"},
+            ["https://www.customs.gov.fj/ports-of-entry", "https://evil.example/Alofi"],
+            exceptions=exc, persist=False)
+        assert added == ["https://www.customs.gov.fj/ports-of-entry"]
+        assert "Alofi" not in json.dumps(exc)
+        assert exc["seed_urls"]["FJ"][0].endswith("ports-of-entry")
+
+    def test_official_attachments_prefer_list_pdf(self):
+        from app.core.extract import official_attachments, should_follow_attachments
+        md = (
+            "### Puertos habilitados\n"
+            "[Descarga](https://www.gob.mx/cms/uploads/attachment/file/1/PuertosYTerminalesHabilitados.pdf)\n"
+            "[Autre](https://www.gob.mx/cms/uploads/attachment/file/2/logo.pdf)\n"
+        )
+        atts = official_attachments(md, "https://www.gob.mx/page")
+        assert atts and "Habilitados" in atts[0]
+        assert should_follow_attachments(md, "https://www.gob.mx/page")
+
+    def test_seed_urls_point_to_official_pages_not_names(self):
+        mx = poe.seed_url_candidates({"iso2": "MX"})
+        nu = poe.seed_url_candidates({"iso2": "NU"})
+        blob = " ".join(c["url"] for c in mx + nu)
+        assert any("puertos-y-terminales" in c["url"] for c in mx)
+        assert any(c["url"].endswith(".pdf") and "gov.nu" in c["url"] for c in nu)
+        assert "Ensenada" not in blob and "Alofi" not in blob
+        assert poe.search_hint_queries({"iso2": "MX"})
+        assert poe.search_hint_queries({"iso2": "NU"})
+        assert not any("Alofi" in q for q in poe.search_hint_queries({"iso2": "NU"}))
+
+    def test_numbered_law_is_not_a_port_catalog(self):
+        from app.core.extract import looks_like_port_catalog
+        law = "\n".join(f"{i}. Article transitoire sans coordonnées." for i in range(1, 20))
+        assert looks_like_port_catalog(law) is False
+
+    def test_foreign_gov_domains_rejected_for_other_eez(self):
+        assert poe.is_foreign_gov_domain("congress.gov", {"ws"})
+        assert poe.is_foreign_gov_domain("customs.gov.ph", {"ws"})
+        assert not poe.is_foreign_gov_domain("revenue.gov.ws", {"ws"})
+        assert not poe.is_foreign_gov_domain("customs.gov", {"us"})
+
+    def test_challenge_page_is_blocked(self):
+        from app.core.extract import looks_blocked, looks_hard_challenge, UA_READER, UA_BROWSER
+        assert looks_blocked("Challenge Validation", html="<div class='sec-container'>",
+                             title="Challenge Validation") is True
+        assert looks_hard_challenge(html="<div class='sec-container'>",
+                                    title="Challenge Validation") is True
+        assert "Chrome/" not in UA_READER["User-Agent"]
+        assert UA_READER["User-Agent"] != UA_BROWSER["User-Agent"]
+
+
+# --- UNCLOS : îles vides du run ----------------------------------------------
+class TestUnclosEmptyIslands:
+    def test_uninhabited_run_islands(self):
+        for name in (
+            "Macquarie Island", "Clipperton Island", "Jarvis Island",
+            "Palmyra Atoll", "Howland and Baker Islands", "Juan de Nova Island",
+            "Bassas da India",
+        ):
+            q = poe.qualify_unclos({"poe_count": 0, "pol_type": "200NM",
+                                    "anchor": [0, 10], "name": name})
+            assert q and q["code"] == "uninhabited", (name, q)
+
+    def test_overlapping_uninhabited_stays_claim(self):
+        for name in (
+            "Wake Island / Enenkio", "Glorioso Islands", "Ile Tromelin",
+            "Abu musa, Greater and Lesser Tunb", "Navassa Island",
+        ):
+            q = poe.qualify_unclos({"poe_count": 0, "pol_type": "Overlapping claim",
+                                    "anchor": [0, 10], "name": name})
+            assert q and q["code"] == "overlapping_claim", (name, q)
+
+    def test_abu_musa_uninhabited_when_not_overlapping(self):
+        q = poe.qualify_unclos({"poe_count": 0, "pol_type": "200NM",
+                                "anchor": [0, 10], "name": "Abu musa, Greater and Lesser Tunb"})
+        assert q and q["code"] == "uninhabited", q
+
+
+# --- NER réentraîné : texte réglementaire, plus seulement « Nom, ville (zone) »
+class TestNerRegulatory:
+    def test_extracts_ports_from_prose(self):
+        from app.core.ml import extract_entities, has_ner_model
+        assert has_ner_model()
+        samples = {
+            "The designated ports of entry for foreign pleasure craft include Ensenada.": "Ensenada",
+            "Foreign yachts must clear customs at Alofi in Niue.": "Alofi",
+            "Port de Papeete, Tahiti (French Polynesia). Clearance douanière au quai.": "Papeete",
+        }
+        for text, needle in samples.items():
+            ports = [e["text"] for e in extract_entities(text) if e["label"] == "PORT_NAME"]
+            assert any(needle in p for p in ports), (text, ports)
