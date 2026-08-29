@@ -1030,6 +1030,19 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                 strictly_official = False
                 log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
         if not context_parts:
+            # Aucun texte exploitable : dernier recours groundé AVANT de déclarer
+            # l'erreur (même filet que le retry post-extraction, ici en amont).
+            log("aucun texte exploitable — recours à la synthèse groundée")
+            _, syn_rescue = await search_grounded(zone, whitelist, log)
+            await emit(rec, "search", engine="grounded", lang="en",
+                       query="(rescue: aucun texte exploitable)", retry=True,
+                       n=0, synthesis_chars=len(syn_rescue or ""))
+            if syn_rescue:
+                synthesis = syn_rescue
+                context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{syn_rescue[:6000]}")
+                strictly_official = False
+                log("synthèse groundée obtenue — extraction depuis la synthèse (ia_sans_source)")
+        if not context_parts:
             log("ERREUR: aucun contenu exploitable")
             await emit(rec, "zone_error", error="aucun contenu source exploitable",
                        duration_s=round(time.time() - t0, 1))
