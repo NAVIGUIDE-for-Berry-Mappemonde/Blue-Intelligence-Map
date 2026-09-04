@@ -649,3 +649,49 @@ class TestFindSourcesTinyfish:
     def test_both_empty_grounded_once(self, monkeypatch):
         _official, _strict, _syn, grounded = self._run(monkeypatch, [], [])
         assert len(grounded) == 1
+
+
+def _catalog_text(n=10):
+    blocks = [f"{i}.- Puerto {i}\nLatitud:{10 + i}.123\nLongitud:{-20 - i}.456\n"
+              for i in range(1, n + 1)]
+    return "".join(blocks) + (" Puerto habilitado oficial. " * 25)
+
+
+class TestFetchMirrorArbitration:
+    def test_catalog_beats_challenge(self):
+        from app.core.extract import _arbitrate_mirror_texts
+        catalog = _catalog_text()
+        picked = _arbitrate_mirror_texts("Just a moment... Enable JavaScript", catalog)
+        assert picked is not None
+        text, level, cmp_ = picked
+        assert level == "N3-mirror-tinyfish"
+        assert cmp_["winner"] == "tinyfish"
+        assert "Puerto" in text
+
+    def test_jina_only_when_tf_blocked(self):
+        from app.core.extract import _arbitrate_mirror_texts
+        jina = _catalog_text()
+        picked = _arbitrate_mirror_texts(jina, None)
+        assert picked[1] == "N3-mirror-jina"
+        assert picked[2]["winner"] == "jina"
+
+    def test_fetch_mirror_tf_wins_when_jina_challenge(self, monkeypatch):
+        from app.core import extract as ext
+        catalog = _catalog_text()
+
+        async def fake_jina(url, log):
+            return "Just a moment... checking your browser"
+
+        async def fake_tf(url, log):
+            return catalog, []
+
+        monkeypatch.setattr(ext, "_jina_mirror_text", fake_jina)
+        monkeypatch.setattr(ext, "_tinyfish_mirror_text", fake_tf)
+        monkeypatch.setattr("app.core.tinyfish.tf_api_key", lambda settings=None: "k")
+        # fetch_mirror_text imports tf_api_key inside the function
+        import app.core.tinyfish as tfmod
+        monkeypatch.setattr(tfmod, "tf_api_key", lambda settings=None: "k")
+
+        text, level, *rest = asyncio.run(ext.fetch_mirror_text("https://aduana.gob.mx/list"))
+        assert level == "N3-mirror-tinyfish"
+        assert "Puerto" in text

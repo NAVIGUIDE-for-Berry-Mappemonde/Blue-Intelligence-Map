@@ -432,26 +432,94 @@ def _mirror_http_err(exc: Exception) -> str:
     return type(exc).__name__
 
 
-async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
-    """Miroir générique quand la page officielle est derrière un challenge.
-    Jina d'abord (markdown structuré, meilleur pour les catalogues), Wayback
-    ensuite. L'URL d'origine reste la source ; le miroir n'est qu'un lecteur."""
-    log = log or (lambda m: None)
-    if _is_mirror_url(url):
-        return None
+def _mirror_usable(text: str | None) -> bool:
+    return bool(text and len(text) >= 400 and not looks_blocked(text))
 
+
+def _append_fetch_links(text: str, links: list | None) -> str:
+    extra = [u for u in (links or []) if isinstance(u, str) and u.startswith("http")]
+    if not extra:
+        return text
+    return (text or "") + "\n" + "\n".join(extra[:20])
+
+
+def _arbitrate_mirror_texts(jina_text: str | None, tf_text: str | None) -> tuple[str, str, dict] | None:
+    """Jina ∥ TinyFish Fetch : challenge écarté, catalogue gagne, sinon le plus long."""
+    j_ok = _mirror_usable(jina_text)
+    t_ok = _mirror_usable(tf_text)
+    sim = _parse_similarity(jina_text or "", tf_text or "") if (j_ok and t_ok) else None
+    compare = {
+        "jina_chars": len(jina_text or ""),
+        "tf_chars": len(tf_text or ""),
+        "similarity": sim,
+        "winner": None,
+        "catalog": None,
+    }
+    if j_ok and t_ok:
+        j_cat = looks_like_port_catalog(jina_text or "")
+        t_cat = looks_like_port_catalog(tf_text or "")
+        compare["catalog"] = {"jina": j_cat, "tinyfish": t_cat}
+        if j_cat != t_cat:
+            winner, text = ("tinyfish", tf_text) if t_cat else ("jina", jina_text)
+        elif sim is not None and sim < 0.55 and (j_cat or t_cat):
+            winner, text = ("tinyfish", tf_text) if t_cat else ("jina", jina_text)
+        else:
+            winner, text = (("tinyfish", tf_text)
+                            if len(tf_text or "") >= len(jina_text or "")
+                            else ("jina", jina_text))
+        compare["winner"] = winner
+        level = "N3-mirror-tinyfish" if winner == "tinyfish" else "N3-mirror-jina"
+        return text, level, compare
+    if t_ok:
+        compare["winner"] = "tinyfish"
+        return tf_text, "N3-mirror-tinyfish", compare
+    if j_ok:
+        compare["winner"] = "jina"
+        return jina_text, "N3-mirror-jina", compare
+    return None
+
+
+async def _jina_mirror_text(url: str, log) -> str | None:
     for attempt in range(2):
         try:
             content, _ = await _fetch_bytes(f"https://r.jina.ai/{url}", UA_READER, 90)
             text = content.decode("utf-8", errors="replace")
-            if text and len(text) >= 400 and not looks_blocked(text):
+            if _mirror_usable(text):
                 log(f"miroir Jina: {len(text)} chars")
-                return text, "N3-mirror-jina"
+                return text
+            if text:
+                log(f"miroir Jina: texte inutilisable ({len(text)} chars)")
         except Exception as e:
             log(f"miroir Jina: indisponible ({_mirror_http_err(e)})")
             if attempt == 0:
                 await asyncio.sleep(1.2)
+    return None
 
+
+async def _tinyfish_mirror_text(url: str, log) -> tuple[str | None, list]:
+    from app.core.tinyfish import tf_api_key, tf_fetch
+    key = tf_api_key()
+    if not key:
+        return None, []
+    try:
+        recs = await tf_fetch([url], key, ttl=0, links=True, log=log)
+    except Exception as e:
+        log(f"miroir TinyFish: échec ({type(e).__name__})")
+        return None, []
+    rec = recs.get(url) or {}
+    if rec.get("blocked"):
+        log("miroir TinyFish: bot_blocked — contenu invalidé")
+        return None, []
+    text = rec.get("text") or ""
+    links = rec.get("links") or []
+    text = _append_fetch_links(text, links)
+    if not _mirror_usable(text):
+        return None, links
+    log(f"miroir TinyFish: {len(text)} chars")
+    return text, links
+
+
+async def _wayback_mirror_text(url: str, log) -> str | None:
     try:
         snap = await _wayback_snapshot_url(url)
         if snap:
@@ -461,11 +529,42 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
             else:
                 parsed = await dual_parse_html(content.decode("utf-8", errors="replace"))
                 text = parsed.get("text") or ""
-            if text and len(text) >= 400 and not looks_blocked(text):
+            if _mirror_usable(text):
                 log(f"miroir Wayback: {len(text)} chars")
-                return text, "N3-mirror-wayback"
+                return text
     except Exception as e:
         log(f"miroir Wayback: indisponible ({_mirror_http_err(e)})")
+    return None
+
+
+async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
+    """Miroir générique quand la page officielle est derrière un challenge.
+    Jina ∥ TinyFish Fetch (si clé), Wayback ensuite. L'URL d'origine reste
+    la source ; le miroir n'est qu'un lecteur.
+
+    Retourne (texte, level) — compare optionnelle en 3e élément si arbitrage."""
+    log = log or (lambda m: None)
+    if _is_mirror_url(url):
+        return None
+
+    from app.core.tinyfish import tf_api_key
+    if tf_api_key():
+        jina_text, tf_pair = await asyncio.gather(
+            _jina_mirror_text(url, log),
+            _tinyfish_mirror_text(url, log),
+        )
+        tf_text, _links = tf_pair if isinstance(tf_pair, tuple) else (None, [])
+        picked = _arbitrate_mirror_texts(jina_text, tf_text)
+        if picked:
+            return picked
+    else:
+        jina_text = await _jina_mirror_text(url, log)
+        if _mirror_usable(jina_text):
+            return jina_text, "N3-mirror-jina"
+
+    wb = await _wayback_mirror_text(url, log)
+    if wb:
+        return wb, "N3-mirror-wayback"
     return None
 
 
@@ -482,7 +581,8 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
     log = log or (lambda m: None)
     out = {"url": url, "text": "", "md5": None, "level": "failed", "title": "",
            "meta_desc": "", "image": None, "ext_links": [], "is_pdf": False,
-           "html": None, "blocked": False, "render_used": False, "parse": None}
+           "html": None, "blocked": False, "render_used": False, "parse": None,
+           "fetch_compare": None}
 
     content = None
     ctype = ""
@@ -557,11 +657,13 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
     if (out["blocked"] or len(out["text"]) < min_chars) and not _is_mirror_url(url):
         mirrored = await fetch_mirror_text(url, log=log)
         if mirrored:
-            text, level = mirrored
+            text, level = mirrored[0], mirrored[1]
             out["text"] = text
             out["level"] = level
             out["blocked"] = False
             out["html"] = text if text.lstrip().startswith(("#", "Title:")) else out.get("html")
+            if len(mirrored) > 2 and isinstance(mirrored[2], dict):
+                out["fetch_compare"] = mirrored[2]
 
     if out["blocked"]:
         out["text"] = ""
