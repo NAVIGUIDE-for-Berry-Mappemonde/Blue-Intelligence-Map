@@ -6,6 +6,7 @@ extract_core.py — Extraction hybride en cascade, 100 % locale et gratuite.
                            la similarité entre les deux est un signal de qualité)
   N3 (gratuit, local)    : rendu navigateur Playwright/Chromium (render_core)
                            pour les pages JavaScript et les challenges « soft ».
+  Miroir                 : Jina ∥ TinyFish Fetch (si clé), puis Wayback.
 
 Fournit aussi : filtrage SERP par regex (agrégateurs, réseaux sociaux, pages
 interstitielles anti-bot), détection des pages de blocage (un challenge n'est

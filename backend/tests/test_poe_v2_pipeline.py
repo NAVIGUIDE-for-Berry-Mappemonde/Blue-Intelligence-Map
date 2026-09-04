@@ -291,6 +291,10 @@ def seeded_db():
         await tdb.poe_run_events.insert_many([
             {"run_id": "r1", "seq": 1, "step": "search", "mrgid": 100, "zone": "TestZone",
              "payload": {"engine": "searxng", "lang": "en", "n": 5, "results": []}},
+            {"run_id": "r1", "seq": 1.1, "step": "search", "mrgid": 100, "zone": "TestZone",
+             "payload": {"engine": "tinyfish", "lang": "en", "n": 3, "results": []}},
+            {"run_id": "r1", "seq": 1.2, "step": "search_compare", "mrgid": 100, "zone": "TestZone",
+             "payload": {"n_a": 5, "n_b": 3, "jaccard_domains": 0.5, "discordant": False}},
             {"run_id": "r1", "seq": 2, "step": "gatekeeper", "mrgid": 100, "zone": "TestZone",
              "payload": {"official": ["gov.tl"], "rejected": ["blog.tl"], "strictly_official": True}},
             {"run_id": "r1", "seq": 3, "step": "fetch", "mrgid": 100, "zone": "TestZone",
@@ -323,6 +327,10 @@ class TestRunReport:
         rep = loop.run_until_complete(build_run_report(tdb, "r1"))
         assert rep["run"]["run_id"] == "r1"
         assert rep["search"]["by_engine"]["searxng"] == 1
+        assert rep["search"]["by_engine"]["tinyfish"] == 1
+        assert rep["search"]["by_engine"]["tinyfish_scoped"] == 0
+        assert rep["search"]["zones_with_tinyfish_results"] == 1
+        assert rep["search"]["zones_search_discordant"] == 0
         assert rep["gatekeeper"]["strictly_official"] == 1
         assert rep["fetch"]["by_level"] == {"N1-trafilatura": 1}
         assert rep["extraction"]["confirmed_llm_and_ner"] == 1
@@ -340,6 +348,7 @@ class TestRunReport:
         assert "# Rapport de run PoE" in md
         assert "Comparaison port par port" in md
         assert "Géocodage double" in md
+        assert "TinyFish" in md
 
 
 # --- Découverte automatique (catalogue source + seeds, pas une liste figée) --
