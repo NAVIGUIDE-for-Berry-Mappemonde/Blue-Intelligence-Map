@@ -602,3 +602,50 @@ class TestSearchMergeAgreement:
         a = [{"url": f"https://gov.tl/p{i}", "domain": "gov.tl"} for i in range(4)]
         assert poe._search_agreement(a, [])["discordant"] is False
         assert poe._search_agreement([], [])["discordant"] is False
+
+
+class TestFindSourcesTinyfish:
+    zone = {
+        "name": "France", "geoname": "France", "iso2": "FR", "sov_iso2": "FR",
+        "sovereign": "France",
+    }
+
+    def _run(self, monkeypatch, searx_hits, tf_hits, grounded_return=None):
+        grounded_calls = []
+
+        async def fake_searx(query, log):
+            return list(searx_hits)
+
+        async def fake_tf(query, key, log, location=None, language=None,
+                          include_domains=None):
+            if include_domains:
+                return []
+            return list(tf_hits)
+
+        async def fake_grounded(zone, whitelist, log, query_override=None):
+            grounded_calls.append(query_override or "default")
+            return grounded_return if grounded_return is not None else ([], None)
+
+        monkeypatch.setattr(poe, "search_searxng", fake_searx)
+        monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "search_grounded", fake_grounded)
+        monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
+        official, strict, syn = asyncio.run(poe._find_sources(
+            self.zone, poe.build_whitelist("FR", "FR"), {}, lambda m: None,
+            tf_key="test"))
+        return official, strict, syn, grounded_calls
+
+    def test_tinyfish_gov_skips_grounded(self, monkeypatch):
+        tf_hits = [{
+            "url": "https://www.douane.gouv.fr/demarche/ports-entree",
+            "domain": "douane.gouv.fr", "engine": "tinyfish",
+        }]
+        official, strict, _syn, grounded = self._run(monkeypatch, [], tf_hits)
+        assert grounded == []
+        assert strict is True
+        assert official
+        assert "gouv.fr" in (official[0]["domain"] or "")
+
+    def test_both_empty_grounded_once(self, monkeypatch):
+        _official, _strict, _syn, grounded = self._run(monkeypatch, [], [])
+        assert len(grounded) == 1
