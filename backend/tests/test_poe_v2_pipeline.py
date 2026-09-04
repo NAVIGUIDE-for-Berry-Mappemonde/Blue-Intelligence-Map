@@ -291,6 +291,10 @@ def seeded_db():
         await tdb.poe_run_events.insert_many([
             {"run_id": "r1", "seq": 1, "step": "search", "mrgid": 100, "zone": "TestZone",
              "payload": {"engine": "searxng", "lang": "en", "n": 5, "results": []}},
+            {"run_id": "r1", "seq": 1.1, "step": "search", "mrgid": 100, "zone": "TestZone",
+             "payload": {"engine": "tinyfish", "lang": "en", "n": 3, "results": []}},
+            {"run_id": "r1", "seq": 1.2, "step": "search_compare", "mrgid": 100, "zone": "TestZone",
+             "payload": {"n_a": 5, "n_b": 3, "jaccard_domains": 0.5, "discordant": False}},
             {"run_id": "r1", "seq": 2, "step": "gatekeeper", "mrgid": 100, "zone": "TestZone",
              "payload": {"official": ["gov.tl"], "rejected": ["blog.tl"], "strictly_official": True}},
             {"run_id": "r1", "seq": 3, "step": "fetch", "mrgid": 100, "zone": "TestZone",
@@ -323,6 +327,10 @@ class TestRunReport:
         rep = loop.run_until_complete(build_run_report(tdb, "r1"))
         assert rep["run"]["run_id"] == "r1"
         assert rep["search"]["by_engine"]["searxng"] == 1
+        assert rep["search"]["by_engine"]["tinyfish"] == 1
+        assert rep["search"]["by_engine"]["tinyfish_scoped"] == 0
+        assert rep["search"]["zones_with_tinyfish_results"] == 1
+        assert rep["search"]["zones_search_discordant"] == 0
         assert rep["gatekeeper"]["strictly_official"] == 1
         assert rep["fetch"]["by_level"] == {"N1-trafilatura": 1}
         assert rep["extraction"]["confirmed_llm_and_ner"] == 1
@@ -340,6 +348,7 @@ class TestRunReport:
         assert "# Rapport de run PoE" in md
         assert "Comparaison port par port" in md
         assert "Géocodage double" in md
+        assert "TinyFish" in md
 
 
 # --- Découverte automatique (catalogue source + seeds, pas une liste figée) --
@@ -547,3 +556,151 @@ class TestNerRegulatory:
         for text, needle in samples.items():
             ports = [e["text"] for e in extract_entities(text) if e["label"] == "PORT_NAME"]
             assert any(needle in p for p in ports), (text, ports)
+
+
+# --- Union SERP multi-moteurs + accord Jaccard --------------------------------
+class TestSearchMergeAgreement:
+    def test_normalize_www_and_slash(self):
+        a = poe._normalize_url("https://www.Douane.gouv.fr/ports/")
+        b = poe._normalize_url("https://douane.gouv.fr/ports")
+        assert a == b
+
+    def test_merge_keeps_two_paths_same_domain(self):
+        a = [{"url": "https://aduana.gob.mx/noticias", "domain": "aduana.gob.mx",
+              "engine": "searxng"}]
+        b = [{"url": "https://www.aduana.gob.mx/decreto.pdf", "domain": "aduana.gob.mx",
+              "engine": "tinyfish"}]
+        merged = poe._merge_candidates(a, b)
+        assert len(merged) == 2
+
+    def test_merge_www_is_one_url(self):
+        merged = poe._merge_candidates(
+            [{"url": "https://www.douane.gouv.fr/x", "engine": "searxng"}],
+            [{"url": "https://douane.gouv.fr/x", "engine": "tinyfish"}],
+        )
+        assert len(merged) == 1
+        assert set(merged[0]["engine"]) == {"searxng", "tinyfish"}
+
+    def test_best_per_domain_prefers_decree_pdf(self):
+        cands = [
+            {"url": "https://aduana.gob.mx/noticias", "domain": "aduana.gob.mx",
+             "score_serp": 0.4},
+            {"url": "https://aduana.gob.mx/decreto.pdf", "domain": "aduana.gob.mx",
+             "score_serp": 0.4},
+        ]
+        best = poe._best_per_domain(cands)
+        assert len(best) == 1
+        assert best[0]["url"].endswith("decreto.pdf")
+
+    def test_agreement_high_overlap_not_discordant(self):
+        shared = [
+            {"url": f"https://gov.tl/p{i}", "domain": "gov.tl"} for i in range(3)
+        ]
+        cmp_ = poe._search_agreement(shared, shared)
+        assert cmp_["discordant"] is False
+        assert cmp_["jaccard_domains"] == 1.0
+
+    def test_agreement_disjoint_is_discordant(self):
+        a = [{"url": f"https://a{i}.gov/x", "domain": f"a{i}.gov"} for i in range(5)]
+        b = [{"url": f"https://b{i}.gob.mx/y", "domain": f"b{i}.gob.mx"} for i in range(5)]
+        cmp_ = poe._search_agreement(a, b)
+        assert cmp_["discordant"] is True
+        assert cmp_["jaccard_domains"] < 0.3
+
+    def test_empty_engine_is_not_discordant(self):
+        a = [{"url": f"https://gov.tl/p{i}", "domain": "gov.tl"} for i in range(4)]
+        assert poe._search_agreement(a, [])["discordant"] is False
+        assert poe._search_agreement([], [])["discordant"] is False
+
+
+class TestFindSourcesTinyfish:
+    zone = {
+        "name": "France", "geoname": "France", "iso2": "FR", "sov_iso2": "FR",
+        "sovereign": "France",
+    }
+
+    def _run(self, monkeypatch, searx_hits, tf_hits, grounded_return=None):
+        grounded_calls = []
+
+        async def fake_searx(query, log):
+            return list(searx_hits)
+
+        async def fake_tf(query, key, log, location=None, language=None,
+                          include_domains=None):
+            if include_domains:
+                return []
+            return list(tf_hits)
+
+        async def fake_grounded(zone, whitelist, log, query_override=None):
+            grounded_calls.append(query_override or "default")
+            return grounded_return if grounded_return is not None else ([], None)
+
+        monkeypatch.setattr(poe, "search_searxng", fake_searx)
+        monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "search_grounded", fake_grounded)
+        monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
+        official, strict, syn = asyncio.run(poe._find_sources(
+            self.zone, poe.build_whitelist("FR", "FR"), {}, lambda m: None,
+            tf_key="test"))
+        return official, strict, syn, grounded_calls
+
+    def test_tinyfish_gov_skips_grounded(self, monkeypatch):
+        tf_hits = [{
+            "url": "https://www.douane.gouv.fr/demarche/ports-entree",
+            "domain": "douane.gouv.fr", "engine": "tinyfish",
+        }]
+        official, strict, _syn, grounded = self._run(monkeypatch, [], tf_hits)
+        assert grounded == []
+        assert strict is True
+        assert official
+        assert "gouv.fr" in (official[0]["domain"] or "")
+
+    def test_both_empty_grounded_once(self, monkeypatch):
+        _official, _strict, _syn, grounded = self._run(monkeypatch, [], [])
+        assert len(grounded) == 1
+
+
+def _catalog_text(n=10):
+    blocks = [f"{i}.- Puerto {i}\nLatitud:{10 + i}.123\nLongitud:{-20 - i}.456\n"
+              for i in range(1, n + 1)]
+    return "".join(blocks) + (" Puerto habilitado oficial. " * 25)
+
+
+class TestFetchMirrorArbitration:
+    def test_catalog_beats_challenge(self):
+        from app.core.extract import _arbitrate_mirror_texts
+        catalog = _catalog_text()
+        picked = _arbitrate_mirror_texts("Just a moment... Enable JavaScript", catalog)
+        assert picked is not None
+        text, level, cmp_ = picked
+        assert level == "N3-mirror-tinyfish"
+        assert cmp_["winner"] == "tinyfish"
+        assert "Puerto" in text
+
+    def test_jina_only_when_tf_blocked(self):
+        from app.core.extract import _arbitrate_mirror_texts
+        jina = _catalog_text()
+        picked = _arbitrate_mirror_texts(jina, None)
+        assert picked[1] == "N3-mirror-jina"
+        assert picked[2]["winner"] == "jina"
+
+    def test_fetch_mirror_tf_wins_when_jina_challenge(self, monkeypatch):
+        from app.core import extract as ext
+        catalog = _catalog_text()
+
+        async def fake_jina(url, log):
+            return "Just a moment... checking your browser"
+
+        async def fake_tf(url, log):
+            return catalog, []
+
+        monkeypatch.setattr(ext, "_jina_mirror_text", fake_jina)
+        monkeypatch.setattr(ext, "_tinyfish_mirror_text", fake_tf)
+        monkeypatch.setattr("app.core.tinyfish.tf_api_key", lambda settings=None: "k")
+        # fetch_mirror_text imports tf_api_key inside the function
+        import app.core.tinyfish as tfmod
+        monkeypatch.setattr(tfmod, "tf_api_key", lambda settings=None: "k")
+
+        text, level, *rest = asyncio.run(ext.fetch_mirror_text("https://aduana.gob.mx/list"))
+        assert level == "N3-mirror-tinyfish"
+        assert "Puerto" in text

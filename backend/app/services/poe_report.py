@@ -50,7 +50,11 @@ async def build_run_report(db, run_id: str, include_diff: bool = True) -> dict:
     searches = by_step.get("search", [])
     zones_with_searx = {e["mrgid"] for e in searches
                         if e["payload"].get("engine") == "searxng" and e["payload"].get("n")}
+    zones_with_tf = {e["mrgid"] for e in searches
+                     if e["payload"].get("engine") == "tinyfish" and e["payload"].get("n")}
     zones_grounded = {e["mrgid"] for e in searches if e["payload"].get("engine") == "grounded"}
+    compares = by_step.get("search_compare", [])
+    zones_discordant = {e["mrgid"] for e in compares if e["payload"].get("discordant")}
     lang_counter: dict[str, int] = {}
     for e in searches:
         lang_counter[e["payload"].get("lang") or "?"] = lang_counter.get(e["payload"].get("lang") or "?", 0) + 1
@@ -58,10 +62,18 @@ async def build_run_report(db, run_id: str, include_diff: bool = True) -> dict:
         "queries_total": len(searches),
         "by_engine": {
             "searxng": sum(1 for e in searches if e["payload"].get("engine") == "searxng"),
+            "tinyfish": sum(1 for e in searches
+                            if e["payload"].get("engine") == "tinyfish"
+                            and not e["payload"].get("scoped")),
+            "tinyfish_scoped": sum(1 for e in searches
+                                   if e["payload"].get("engine") == "tinyfish"
+                                   and e["payload"].get("scoped")),
             "grounded": sum(1 for e in searches if e["payload"].get("engine") == "grounded"),
         },
         "by_lang": lang_counter,
         "zones_with_searxng_results": len(zones_with_searx),
+        "zones_with_tinyfish_results": len(zones_with_tf),
+        "zones_search_discordant": len(zones_discordant),
         "zones_needing_grounded": len(zones_grounded),
         "level2_retries": sum(1 for e in searches if e["payload"].get("level2")),
     }
@@ -262,9 +274,13 @@ def report_to_markdown(rep: dict) -> str:
 
     add("## Recherche de sources")
     add("")
-    add(f"- {s['queries_total']} requêtes émises ({s['by_engine']['searxng']} SearXNG, "
-        f"{s['by_engine']['grounded']} recherches groundées) ; langues : {s['by_lang']}")
-    add(f"- Zones servies par SearXNG : {s['zones_with_searxng_results']} ; "
+    eng = s.get("by_engine") or {}
+    add(f"- {s['queries_total']} requêtes émises ({eng.get('searxng', 0)} SearXNG, "
+        f"{eng.get('tinyfish', 0)} TinyFish, {eng.get('tinyfish_scoped', 0)} TinyFish scoped, "
+        f"{eng.get('grounded', 0)} recherches groundées) ; langues : {s['by_lang']}")
+    add(f"- Zones servies par SearXNG : {s.get('zones_with_searxng_results', 0)} ; "
+        f"par TinyFish : {s.get('zones_with_tinyfish_results', 0)} ; "
+        f"discordance SERP : {s.get('zones_search_discordant', 0)} ; "
         f"zones ayant nécessité la recherche groundée : {s['zones_needing_grounded']} ; "
         f"Level-2 retries : {s['level2_retries']}")
     add("")

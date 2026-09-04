@@ -1,8 +1,23 @@
+import asyncio
 import json
+import os
+import time
+from urllib.parse import urlparse
 
 import httpx
 
 BASE = "https://agent.tinyfish.ai/v1"
+SEARCH_URL = "https://api.search.tinyfish.ai"
+FETCH_URL = "https://api.fetch.tinyfish.ai"
+
+POE_PURPOSE = (
+    "Official designated ports of entry / puertos habilitados / ports désignés "
+    "for foreign pleasure craft; prefer customs gazette, decree or official list."
+)
+
+# Une retry 429 ; monkeypatchable dans les tests.
+SEARCH_RETRY_SLEEP_S = 2.0
+FETCH_LEVEL = "N3-mirror-tinyfish"
 
 DISCOVERY_SCHEMA = {
     "type": "object",
@@ -131,3 +146,206 @@ def find_live_url(body: dict):
             if isinstance(v, str) and v.startswith("http"):
                 return v
     return None
+
+
+# ---------------------------------------------------------------------------
+# Search / Fetch (gratuits) — client httpx, no-op sans clé
+# ---------------------------------------------------------------------------
+class _TokenBucket:
+    """Quota in-process (Search ~25 req/min, Fetch ~120 URL/min)."""
+
+    def __init__(self, rate_per_min: float):
+        self.rate = rate_per_min / 60.0
+        self.cap = float(rate_per_min)
+        self.tokens = float(rate_per_min)
+        self.updated = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, n: int = 1):
+        n = max(1, int(n))
+        async with self._lock:
+            now = time.monotonic()
+            self.tokens = min(self.cap, self.tokens + (now - self.updated) * self.rate)
+            self.updated = now
+            if self.tokens < n:
+                wait = (n - self.tokens) / self.rate
+                await asyncio.sleep(wait)
+                self.tokens = 0.0
+                self.updated = time.monotonic()
+            else:
+                self.tokens -= n
+
+
+_search_bucket = _TokenBucket(25)
+_fetch_bucket = _TokenBucket(120)
+
+
+def reset_rate_limits():
+    """Réinitialise les buckets (tests)."""
+    global _search_bucket, _fetch_bucket
+    _search_bucket = _TokenBucket(25)
+    _fetch_bucket = _TokenBucket(120)
+
+
+def tf_api_key(settings=None) -> str:
+    """Même résolution que Swarm._tf_key : settings persistés puis env."""
+    if settings:
+        k = (settings.get("tinyfish_api_key") or "").strip()
+        if k:
+            return k
+    return (os.environ.get("TINYFISH_API_KEY") or "").strip()
+
+
+def _tf_domain(url: str) -> str:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
+def _search_params(query: str, location=None, language=None,
+                   include_domains=None, purpose=None) -> dict:
+    params = {"query": query}
+    if location:
+        params["location"] = str(location).upper()
+    if language:
+        params["language"] = str(language)
+    if include_domains:
+        if isinstance(include_domains, (list, tuple, set)):
+            params["include_domains"] = ",".join(str(d).strip() for d in include_domains if d)
+        else:
+            params["include_domains"] = str(include_domains)
+        if not params.get("include_domains"):
+            params.pop("include_domains", None)
+    if purpose:
+        params["purpose"] = purpose
+    return params
+
+
+def _map_search_hits(payload: dict) -> list[dict]:
+    out = []
+    for r in payload.get("results") or []:
+        u = (r.get("url") or "").strip()
+        if not u.startswith("http"):
+            continue
+        out.append({
+            "url": u,
+            "domain": _tf_domain(u),
+            "title": r.get("title") or "",
+            "snippet": r.get("snippet") or "",
+            "engine": "tinyfish",
+        })
+    return out
+
+
+async def tf_search(query: str, key: str, *, location: str | None = None,
+                    language: str | None = None, include_domains=None,
+                    purpose: str | None = POE_PURPOSE, log=None) -> list[dict]:
+    """GET Search API. 401/402/429/timeout → [] (jamais d'exception)."""
+    log = log or (lambda m: None)
+    if not (key or "").strip() or not (query or "").strip():
+        return []
+    params = _search_params(query, location, language, include_domains, purpose)
+    await _search_bucket.acquire()
+    last_status = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(SEARCH_URL, headers=_headers(key), params=params)
+            last_status = r.status_code
+            if r.status_code == 429 and attempt == 0:
+                log("TinyFish Search: 429 — retry")
+                await asyncio.sleep(SEARCH_RETRY_SLEEP_S)
+                continue
+            if r.status_code in (401, 402, 403, 404, 429, 500, 503):
+                log(f"TinyFish Search: HTTP {r.status_code} — ignoré")
+                return []
+            r.raise_for_status()
+            return _map_search_hits(r.json() if r.content else {})
+        except Exception as e:
+            log(f"TinyFish Search: échec ({type(e).__name__}: {str(e)[:80]})")
+            if last_status == 429 and attempt == 0:
+                await asyncio.sleep(SEARCH_RETRY_SLEEP_S)
+                continue
+            return []
+    return []
+
+
+def _fetch_record(url: str, *, text="", title="", blocked=False, links=None,
+                  error=None, final_url=None) -> dict:
+    if isinstance(text, dict):
+        text = json.dumps(text, ensure_ascii=False)
+    return {
+        "text": text or "",
+        "title": title or "",
+        "blocked": bool(blocked),
+        "links": list(links or []),
+        "level": FETCH_LEVEL,
+        "error": error,
+        "final_url": final_url,
+    }
+
+
+def _map_fetch_payload(payload: dict, requested: list[str]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for item in payload.get("results") or []:
+        u = (item.get("url") or "").strip()
+        if not u:
+            continue
+        links = item.get("links") or []
+        rec = _fetch_record(
+            u, text=item.get("text") or "", title=item.get("title") or "",
+            links=links, final_url=item.get("final_url"))
+        out[u] = rec
+        final = item.get("final_url")
+        if final and final not in out:
+            out[final] = rec
+    for err in payload.get("errors") or []:
+        u = (err.get("url") or "").strip()
+        if not u:
+            continue
+        code = err.get("error") or "error"
+        out[u] = _fetch_record(u, blocked=(code == "bot_blocked"), error=code)
+    for u in requested:
+        out.setdefault(u, _fetch_record(u, error="missing"))
+    return out
+
+
+async def tf_fetch(urls: list[str], key: str, *, ttl: int = 0, links: bool = True,
+                   purpose: str | None = POE_PURPOSE, log=None) -> dict[str, dict]:
+    """POST Fetch API (lots de 10). bot_blocked → blocked=True, texte vide."""
+    log = log or (lambda m: None)
+    if not (key or "").strip():
+        return {}
+    clean = [u for u in (urls or []) if isinstance(u, str) and u.startswith("http")]
+    if not clean:
+        return {}
+    out: dict[str, dict] = {}
+    for i in range(0, len(clean), 10):
+        batch = clean[i:i + 10]
+        await _fetch_bucket.acquire(len(batch))
+        body = {
+            "urls": batch,
+            "format": "markdown",
+            "ttl": int(ttl),
+            "links": bool(links),
+        }
+        if purpose:
+            body["purpose"] = purpose
+        try:
+            async with httpx.AsyncClient(timeout=150) as client:
+                r = await client.post(FETCH_URL, headers=_headers(key), json=body)
+            if r.status_code in (401, 402, 403, 429, 500):
+                log(f"TinyFish Fetch: HTTP {r.status_code} — ignoré")
+                for u in batch:
+                    out.setdefault(u, _fetch_record(u, error=f"http_{r.status_code}"))
+                continue
+            r.raise_for_status()
+            mapped = _map_fetch_payload(r.json() if r.content else {}, batch)
+            out.update(mapped)
+        except Exception as e:
+            log(f"TinyFish Fetch: échec ({type(e).__name__}: {str(e)[:80]})")
+            for u in batch:
+                out.setdefault(u, _fetch_record(u, error=type(e).__name__))
+    return out
