@@ -30,6 +30,7 @@ import pycountry
 import tldextract
 from shapely.geometry import shape, mapping
 from shapely.prepared import prep
+from urllib.parse import urlparse, urlunparse
 
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
@@ -504,7 +505,8 @@ async def search_searxng(query: str, log) -> list[dict]:
                 results = (r.json().get("results") or [])[:10]
                 if results:
                     log(f"SearXNG {inst}: {len(results)} résultats")
-                    return [{"url": x.get("url"), "domain": domain_of(x.get("url") or "")} for x in results if x.get("url")]
+                    return [{"url": x.get("url"), "domain": domain_of(x.get("url") or ""),
+                             "engine": "searxng"} for x in results if x.get("url")]
         except Exception:
             continue
     log("SearXNG: aucune instance exploitable — bascule sur recherche groundée")
@@ -533,7 +535,11 @@ def rank_candidates_ml(candidates: list[dict], log, scores_out: list | None = No
         return candidates
     try:
         from app.core.ml import predict_serp
-        scored = [((predict_serp(c.get("url") or "") or {}).get("score"), c) for c in candidates]
+        scored = []
+        for c in candidates:
+            s = (predict_serp(c.get("url") or "") or {}).get("score")
+            c["score_serp"] = s
+            scored.append((s, c))
     except Exception:
         return candidates
     if scores_out is not None:
@@ -722,21 +728,118 @@ async def _skip_if_unchanged(db, zone: dict, force: bool, log, rec=None) -> dict
     return None
 
 
+def _normalize_url(url: str) -> str:
+    """Host lower, sans www., sans fragment, slash final retiré (query conservée)."""
+    if not url or not isinstance(url, str):
+        return ""
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return url.strip().rstrip("/").lower()
+    host = (p.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if p.port and p.port not in (80, 443):
+        host = f"{host}:{p.port}"
+    path = (p.path or "").rstrip("/")
+    scheme = (p.scheme or "https").lower() or "https"
+    return urlunparse((scheme, host, path, "", p.query or "", ""))
+
+
+def _engine_set(c: dict) -> set[str]:
+    e = c.get("engine")
+    if isinstance(e, list):
+        return {str(x) for x in e if x}
+    if e:
+        return {str(e)}
+    return set()
+
+
+def _merge_engines(*candidates: dict) -> str | list[str]:
+    engines: set[str] = set()
+    for c in candidates:
+        engines |= _engine_set(c)
+    if not engines:
+        return "searxng"
+    if len(engines) == 1:
+        return next(iter(engines))
+    return sorted(engines)
+
+
 def _merge_candidates(*groups: list[dict]) -> list[dict]:
-    """Union de listes de candidats, dédupliquée par URL puis domaine."""
-    seen_urls, seen_domains, out = set(), set(), []
+    """Union dédupliquée par URL normalisée (plusieurs chemins d'un domaine survivent)."""
+    seen: dict[str, dict] = {}
+    out: list[dict] = []
     for group in groups:
         for c in group or []:
-            u, d = c.get("url"), c.get("domain")
-            if not u or u in seen_urls:
+            u = c.get("url")
+            if not u:
                 continue
-            if d and d in seen_domains:
+            key = _normalize_url(u)
+            if not key:
                 continue
-            seen_urls.add(u)
-            if d:
-                seen_domains.add(d)
-            out.append(c)
+            if key in seen:
+                prev = seen[key]
+                prev["engine"] = _merge_engines(prev, c)
+                for field in ("title", "snippet", "score_serp"):
+                    if prev.get(field) in (None, "") and c.get(field) not in (None, ""):
+                        prev[field] = c[field]
+                continue
+            item = dict(c)
+            item["url"] = u
+            item["domain"] = item.get("domain") or domain_of(u)
+            seen[key] = item
+            out.append(item)
     return out
+
+
+def _best_per_domain(candidates: list[dict]) -> list[dict]:
+    """Un URL par domaine après scoring (list_url_bonus + score SERP)."""
+    best: dict[str, tuple[float, dict]] = {}
+    order: list[str] = []
+    for c in candidates or []:
+        d = c.get("domain") or domain_of(c.get("url") or "")
+        if not d:
+            continue
+        serp = c.get("score_serp")
+        score = list_url_bonus(c.get("url") or "") + (serp if serp is not None else 0.5)
+        prev = best.get(d)
+        if prev is None:
+            order.append(d)
+            best[d] = (score, c)
+        elif score > prev[0]:
+            best[d] = (score, c)
+    return [best[d][1] for d in order if d in best]
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _search_agreement(a: list[dict], b: list[dict]) -> dict:
+    """Accord SearXNG ∥ TinyFish. Un moteur vide = panne, pas une discordance."""
+    urls_a = {_normalize_url(c.get("url")) for c in (a or []) if c.get("url")}
+    urls_b = {_normalize_url(c.get("url")) for c in (b or []) if c.get("url")}
+    urls_a.discard("")
+    urls_b.discard("")
+    doms_a = {(c.get("domain") or domain_of(c.get("url") or "")) for c in (a or [])}
+    doms_b = {(c.get("domain") or domain_of(c.get("url") or "")) for c in (b or [])}
+    doms_a.discard("")
+    doms_b.discard("")
+    n_a, n_b = len(urls_a), len(urls_b)
+    j_urls = round(_jaccard(urls_a, urls_b), 3)
+    j_doms = round(_jaccard(doms_a, doms_b), 3)
+    return {
+        "n_a": n_a,
+        "n_b": n_b,
+        "jaccard_urls": j_urls,
+        "jaccard_domains": j_doms,
+        "discordant": bool(n_a >= 3 and n_b >= 3 and j_doms < 0.3),
+    }
 
 
 async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log, rec=None

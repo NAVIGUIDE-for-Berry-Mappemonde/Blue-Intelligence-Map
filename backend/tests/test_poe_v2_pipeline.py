@@ -547,3 +547,58 @@ class TestNerRegulatory:
         for text, needle in samples.items():
             ports = [e["text"] for e in extract_entities(text) if e["label"] == "PORT_NAME"]
             assert any(needle in p for p in ports), (text, ports)
+
+
+# --- Union SERP multi-moteurs + accord Jaccard --------------------------------
+class TestSearchMergeAgreement:
+    def test_normalize_www_and_slash(self):
+        a = poe._normalize_url("https://www.Douane.gouv.fr/ports/")
+        b = poe._normalize_url("https://douane.gouv.fr/ports")
+        assert a == b
+
+    def test_merge_keeps_two_paths_same_domain(self):
+        a = [{"url": "https://aduana.gob.mx/noticias", "domain": "aduana.gob.mx",
+              "engine": "searxng"}]
+        b = [{"url": "https://www.aduana.gob.mx/decreto.pdf", "domain": "aduana.gob.mx",
+              "engine": "tinyfish"}]
+        merged = poe._merge_candidates(a, b)
+        assert len(merged) == 2
+
+    def test_merge_www_is_one_url(self):
+        merged = poe._merge_candidates(
+            [{"url": "https://www.douane.gouv.fr/x", "engine": "searxng"}],
+            [{"url": "https://douane.gouv.fr/x", "engine": "tinyfish"}],
+        )
+        assert len(merged) == 1
+        assert set(merged[0]["engine"]) == {"searxng", "tinyfish"}
+
+    def test_best_per_domain_prefers_decree_pdf(self):
+        cands = [
+            {"url": "https://aduana.gob.mx/noticias", "domain": "aduana.gob.mx",
+             "score_serp": 0.4},
+            {"url": "https://aduana.gob.mx/decreto.pdf", "domain": "aduana.gob.mx",
+             "score_serp": 0.4},
+        ]
+        best = poe._best_per_domain(cands)
+        assert len(best) == 1
+        assert best[0]["url"].endswith("decreto.pdf")
+
+    def test_agreement_high_overlap_not_discordant(self):
+        shared = [
+            {"url": f"https://gov.tl/p{i}", "domain": "gov.tl"} for i in range(3)
+        ]
+        cmp_ = poe._search_agreement(shared, shared)
+        assert cmp_["discordant"] is False
+        assert cmp_["jaccard_domains"] == 1.0
+
+    def test_agreement_disjoint_is_discordant(self):
+        a = [{"url": f"https://a{i}.gov/x", "domain": f"a{i}.gov"} for i in range(5)]
+        b = [{"url": f"https://b{i}.gob.mx/y", "domain": f"b{i}.gob.mx"} for i in range(5)]
+        cmp_ = poe._search_agreement(a, b)
+        assert cmp_["discordant"] is True
+        assert cmp_["jaccard_domains"] < 0.3
+
+    def test_empty_engine_is_not_discordant(self):
+        a = [{"url": f"https://gov.tl/p{i}", "domain": "gov.tl"} for i in range(4)]
+        assert poe._search_agreement(a, [])["discordant"] is False
+        assert poe._search_agreement([], [])["discordant"] is False
