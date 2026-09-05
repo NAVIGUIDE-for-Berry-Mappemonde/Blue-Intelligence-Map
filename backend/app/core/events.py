@@ -118,3 +118,4 @@ class RunContext:
     ports_coll: str = "poe_run_ports"
     zones_coll: str = "poe_run_zones"
     started_at: float = field(default_factory=time.time)
+    variant: str = "tinyfish"

@@ -19,6 +19,7 @@ import uuid
 
 from app.core.events import RunContext, RunRecorder
 from app.services import poe_pipeline as poe
+from app.services.poe_pipeline import normalize_variant
 
 ZONE_TIMEOUT_S = 900  # le pipeline v2 fait plus de travail (rendu, double géocodage)
 
@@ -50,12 +51,15 @@ async def _select_zones(db, limit: int, only_zones: list[int] | None) -> list[di
 
 async def execute_run(db, state, run_id: str, label: str = "",
                       limit: int = 0, only_zones: list[int] | None = None,
-                      concurrency: int = 2, resume: bool = False) -> dict:
+                      concurrency: int = 2, resume: bool = False,
+                      variant: str = "tinyfish") -> dict:
     """Exécute (ou reprend) un run complet. `state` est un TaskState (logs live,
-    progression, annulation) ; l'état durable vit dans db.poe_runs."""
+    progression, annulation) ; l'état durable vit dans db.poe_runs.
+    variant : v1 | v2 | tinyfish — n'écrit jamais dans poe_ports."""
     await ensure_run_indexes(db)
+    variant = normalize_variant(variant)
     recorder = RunRecorder(run_id, db=db)
-    run_ctx = RunContext(run_id=run_id, recorder=recorder)
+    run_ctx = RunContext(run_id=run_id, recorder=recorder, variant=variant)
     log = state.log
 
     zones = await _select_zones(db, limit, only_zones)
@@ -73,7 +77,7 @@ async def execute_run(db, state, run_id: str, label: str = "",
     state.total = len(zones)
     state.progress = len(done_mrgids)
     params = {"label": label, "limit": limit, "concurrency": concurrency,
-              "only_zones": only_zones, "force": True}
+              "only_zones": only_zones, "force": True, "variant": variant}
     await db.poe_runs.update_one({"_id": run_id}, {"$set": {
         "label": label, "params": params, "state": "running",
         "started_at": poe.now_iso() if not resume else None,
@@ -85,7 +89,7 @@ async def execute_run(db, state, run_id: str, label: str = "",
     else:
         await recorder.event("run_resume", params=params, zones_total=len(zones),
                              already_done=len(done_mrgids))
-    log(f"run {run_id}: {len(todo)} zone(s) à générer from scratch "
+    log(f"run {run_id}: variant={variant} — {len(todo)} zone(s) à générer from scratch "
         f"(concurrency={concurrency}, timeout {ZONE_TIMEOUT_S}s/zone)")
 
     sem = asyncio.Semaphore(max(1, concurrency))

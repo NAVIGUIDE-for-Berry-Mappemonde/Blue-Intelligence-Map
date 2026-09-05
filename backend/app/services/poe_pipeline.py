@@ -72,7 +72,25 @@ SEARX_PUBLIC_INSTANCES = [
     "https://searx.be",
     "https://search.inetol.net",
     "https://priv.au",
+    "https://searx.tiekoetter.com",
+    "https://paulgo.io",
+    "https://search.sapti.me",
 ]
+
+PIPELINE_VARIANTS = ("v1", "v2", "tinyfish")
+_VARIANT_ALIASES = {
+    "searx_only": "v2", "searx": "v2", "tf": "tinyfish", "v3": "tinyfish",
+}
+
+
+def normalize_variant(value: str | None) -> str:
+    """v1 = SearXNG séquentiel ; v2 = SearXNG parallèle ; tinyfish = union."""
+    raw = (value or "tinyfish").strip().lower()
+    v = _VARIANT_ALIASES.get(raw, raw)
+    if v not in PIPELINE_VARIANTS:
+        raise ValueError(
+            f"variant inconnue {value!r} — attendu {PIPELINE_VARIANTS}")
+    return v
 
 
 def searx_instances() -> list[str]:
@@ -499,12 +517,22 @@ async def build_referential(db, state, force: bool = False):
 # ---------------------------------------------------------------------------
 async def search_searxng(query: str, log) -> list[dict]:
     for inst in searx_instances():
+        local = inst.startswith("http://127.0.0.1") or inst.startswith("http://localhost")
+        timeout = 20 if local else 8
         try:
-            async with httpx.AsyncClient(timeout=8, headers={"User-Agent": UA}) as client:
+            async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": UA}) as client:
                 r = await client.get(f"{inst}/search", params={"q": query, "format": "json"})
-                if r.status_code != 200 or "json" not in (r.headers.get("content-type") or ""):
+                if r.status_code != 200:
                     continue
-                results = (r.json().get("results") or [])[:10]
+                ctype = (r.headers.get("content-type") or "").lower()
+                if "json" not in ctype:
+                    try:
+                        payload = r.json()
+                    except Exception:
+                        continue
+                else:
+                    payload = r.json()
+                results = (payload.get("results") or [])[:10]
                 if results:
                     log(f"SearXNG {inst}: {len(results)} résultats")
                     return [{"url": x.get("url"), "domain": domain_of(x.get("url") or ""),
@@ -873,13 +901,17 @@ async def _tf_search_safe(query: str, key: str, log, *, location=None, language=
 
 
 async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log, rec=None,
-                        tf_key: str | None = None
+                        tf_key: str | None = None, variant: str = "tinyfish",
                         ) -> tuple[list[dict], bool, str | None]:
-    """Étape 2 — SearXNG ∥ TinyFish Search (EN + local), hints SearXNG,
-    filet include_domains si 0 officiel ou discordance, :online en dernier.
-    Retourne (sources retenues, strictement officielles ?, synthèse groundée)."""
+    """Étape 2 — recherche selon le variant du run :
+    v1 = SearXNG séquentiel (EN puis localisé si vide) ;
+    v2 = SearXNG parallèle EN ∥ local, sans TinyFish ;
+    tinyfish = SearXNG ∥ TinyFish + filet include_domains.
+    :online en dernier dans tous les cas. Ne touche jamais poe_ports."""
     name = zone.get("name") or zone.get("geoname")
-    key = await _resolve_tf_key(tf_key)
+    variant = normalize_variant(variant)
+    use_tf = variant == "tinyfish"
+    key = (await _resolve_tf_key(tf_key)) if use_tf else ""
     iso = ((zone.get("sov_iso2") or zone.get("iso2") or "") or "").upper() or None
     lang = LANG_BY_ISO2.get(iso or "")
 
@@ -887,28 +919,40 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
                 f"decree legislation {name}")
     loc_q = localized_query(zone)
 
-    jobs = [search_searxng(query_en, log)]
-    labels = [("searxng", "en", query_en)]
-    if key:
-        jobs.append(_tf_search_safe(query_en, key, log, location=iso, language="en"))
-        labels.append(("tinyfish", "en", query_en))
-    if loc_q:
-        log(f"recherche parallèle EN ∥ localisée ({lang}): {loc_q[:80]}")
-        jobs.append(search_searxng(loc_q, log))
-        labels.append(("searxng", lang, loc_q))
-        if key:
-            jobs.append(_tf_search_safe(loc_q, key, log, location=iso, language=lang))
-            labels.append(("tinyfish", lang, loc_q))
-
-    results = await asyncio.gather(*jobs)
     searx_groups, tf_groups = [], []
-    for res, (engine, qlang, query) in zip(results, labels):
-        await emit(rec, "search", engine=engine, lang=qlang, query=query,
-                   n=len(res or []), results=res or [])
-        if engine == "tinyfish":
-            tf_groups.append(res or [])
-        else:
-            searx_groups.append(res or [])
+    if variant == "v1":
+        res_en = await search_searxng(query_en, log)
+        await emit(rec, "search", engine="searxng", lang="en", query=query_en,
+                   n=len(res_en or []), results=res_en or [], variant=variant)
+        searx_groups.append(res_en or [])
+        if not res_en and loc_q:
+            log(f"v1: SearXNG EN vide — bascule localisée ({lang}): {loc_q[:80]}")
+            res_loc = await search_searxng(loc_q, log)
+            await emit(rec, "search", engine="searxng", lang=lang, query=loc_q,
+                       n=len(res_loc or []), results=res_loc or [], variant=variant)
+            searx_groups.append(res_loc or [])
+    else:
+        jobs = [search_searxng(query_en, log)]
+        labels = [("searxng", "en", query_en)]
+        if key:
+            jobs.append(_tf_search_safe(query_en, key, log, location=iso, language="en"))
+            labels.append(("tinyfish", "en", query_en))
+        if loc_q:
+            log(f"recherche parallèle EN ∥ localisée ({lang}): {loc_q[:80]}")
+            jobs.append(search_searxng(loc_q, log))
+            labels.append(("searxng", lang, loc_q))
+            if key:
+                jobs.append(_tf_search_safe(loc_q, key, log, location=iso, language=lang))
+                labels.append(("tinyfish", lang, loc_q))
+
+        results = await asyncio.gather(*jobs)
+        for res, (engine, qlang, query) in zip(results, labels):
+            await emit(rec, "search", engine=engine, lang=qlang, query=query,
+                       n=len(res or []), results=res or [], variant=variant)
+            if engine == "tinyfish":
+                tf_groups.append(res or [])
+            else:
+                searx_groups.append(res or [])
 
     searx_set = _merge_candidates(*searx_groups)
     tf_set = _merge_candidates(*tf_groups)
@@ -1220,6 +1264,7 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         }
         if run is not None:
             doc["run_id"] = run.run_id
+            doc["pipeline_variant"] = getattr(run, "variant", None)
         docs.append(doc)
         agree_note = ""
         if geo.get("agree") is True:
@@ -1262,6 +1307,7 @@ async def _persist_zone_run(db, zone: dict, docs: list[dict], status: str,
         "source_hashes": hashes,
         "generated_at": now_iso(),
         "last_error": None if docs else "aucun port d'entrée extrait des sources",
+        "pipeline_variant": getattr(run, "variant", None),
     }
     await db[run.zones_coll].update_one(
         {"run_id": run.run_id, "mrgid": mrgid}, {"$set": zone_doc}, upsert=True)
@@ -1347,10 +1393,13 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
     t0 = time.time()
     exceptions = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
-    log(f"=== {name} (mrgid {mrgid}) — whitelist: {', '.join(whitelist[:8]) or 'vide'}")
+    variant = normalize_variant(getattr(run, "variant", None) if run is not None else "tinyfish")
+    from app.core.extract import allow_tinyfish_fetch
+    _tf_token = allow_tinyfish_fetch.set(variant == "tinyfish")
+    log(f"=== {name} (mrgid {mrgid}) — variant={variant} whitelist: {', '.join(whitelist[:8]) or 'vide'}")
     await emit(rec, "zone_start", iso2=zone.get("iso2"), sov_iso2=zone.get("sov_iso2"),
                sovereign=zone.get("sovereign"), pol_type=zone.get("pol_type"),
-               whitelist=whitelist)
+               whitelist=whitelist, variant=variant)
 
     try:
         # 1. Monitoring prioritaire des sources connues (jamais en mode run :
@@ -1361,7 +1410,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                 return unchanged
 
         # 2. Recherche + gatekeeper
-        official, strictly_official, synthesis = await _find_sources(zone, whitelist, exceptions, log, rec)
+        official, strictly_official, synthesis = await _find_sources(
+            zone, whitelist, exceptions, log, rec, variant=variant)
 
         # 3. Collecte des textes
         texts, hashes, used_sources, excerpts = await _collect_texts(official, log, rec)
@@ -1466,12 +1516,15 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
             result = await _persist_zone(db, zone, docs, status, used_sources, hashes, excerpts, log)
         await emit(rec, "zone_done", status=(result or {}).get("status"),
                    poe_count=(result or {}).get("poe_count", 0),
-                   duration_s=round(time.time() - t0, 1))
+                   duration_s=round(time.time() - t0, 1),
+                   variant=variant)
         return result
     except Exception as e:
         await emit(rec, "zone_error", error=f"{type(e).__name__}: {str(e)[:200]}",
                    duration_s=round(time.time() - t0, 1))
         raise
+    finally:
+        allow_tinyfish_fetch.reset(_tf_token)
 
 
 # ---------------------------------------------------------------------------
