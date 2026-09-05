@@ -32,6 +32,7 @@ Niue et Saba étaient déjà débloqués sur le compte (2/3 du mois).
 cd tools/noonsite
 python3 -m pip install -r requirements.txt
 python3 harvest.py niue saba
+python3 harvest.py --all          # toutes les pages pays (HTTP public)
 ```
 
 **Pas besoin de compte** pour les listes PoE / non-PoE : le panneau
