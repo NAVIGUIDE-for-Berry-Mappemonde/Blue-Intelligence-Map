@@ -74,6 +74,11 @@ async def _startup():
     except Exception as e:
         print(f"[startup] poe index creation failed (non-fatal): {e}")
     try:
+        from app.core.geo import ensure_geo_indexes
+        await ensure_geo_indexes(db)
+    except Exception as e:
+        print(f"[startup] geocode cache index creation failed (non-fatal): {e}")
+    try:
         existing = await db.list_collection_names()
         for legacy in ("formalities", "mpa_cache"):
             if legacy in existing:

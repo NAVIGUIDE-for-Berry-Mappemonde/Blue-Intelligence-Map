@@ -12,6 +12,7 @@ import math
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from global_land_mask import globe
@@ -21,6 +22,16 @@ UA = "BerryMappemonde-BlueIntelligence/1.0 (+https://berrymappemonde.org; contac
 _geo_cache: dict = {}
 _nominatim_lock = asyncio.Lock()
 _last_nominatim = 0.0
+
+# Cache L2 Mongo (partagé entre workers) + L1 process. Les hits ne consomment
+# pas le quota Nominatim/GeoNames — condition pour tenir un run mondial.
+NOMINATIM_INTERVAL_S = 1.1
+GEONAMES_INTERVAL_S = 1.0
+GEOCODE_TTL_HIT_S = 180 * 86400
+GEOCODE_TTL_MISS_S = 14 * 86400
+_ROW_MEM_MAX = 4096
+_row_mem: dict[str, tuple[float, list]] = {}
+_THROTTLE_ATTEMPTS = 40
 
 
 # ---------------------------------------------------------------------------
@@ -97,24 +108,185 @@ def ocean_fallback_coords(title: str):
 
 
 # ---------------------------------------------------------------------------
+# Cache géocode + rate limiter partagé (Mongo)
+# ---------------------------------------------------------------------------
+def _geodb():
+    """Hookable depuis les tests (base dédiée). Défaut : app.db.db."""
+    from app.db import db
+    return db
+
+
+def geocode_cache_id(provider: str, query: str, country_code: str | None, limit: int) -> str:
+    raw = f"{provider}\0{(query or '').strip().lower()}\0{(country_code or '').lower()}\0{limit}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _mem_get(cid: str) -> list | None:
+    item = _row_mem.get(cid)
+    if not item:
+        return None
+    exp, rows = item
+    if exp < time.time():
+        _row_mem.pop(cid, None)
+        return None
+    return rows
+
+
+def _mem_set(cid: str, rows: list, ttl_s: float) -> None:
+    if len(_row_mem) >= _ROW_MEM_MAX:
+        now = time.time()
+        for k, (exp, _) in list(_row_mem.items()):
+            if exp < now:
+                _row_mem.pop(k, None)
+        while len(_row_mem) >= _ROW_MEM_MAX:
+            _row_mem.pop(next(iter(_row_mem)))
+    _row_mem[cid] = (time.time() + ttl_s, rows)
+
+
+def _ttl_s(rows: list) -> float:
+    return GEOCODE_TTL_HIT_S if rows else GEOCODE_TTL_MISS_S
+
+
+def _expires_at(ttl_s: float) -> datetime:
+    return datetime.now(timezone.utc) + timedelta(seconds=ttl_s)
+
+
+def _is_expired(exp) -> bool:
+    if exp is None:
+        return False
+    if isinstance(exp, datetime):
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return exp < datetime.now(timezone.utc)
+    try:
+        return float(exp) < time.time()
+    except (TypeError, ValueError):
+        return False
+
+
+async def _geocode_cache_get(provider: str, query: str, country_code: str | None,
+                             limit: int) -> list | None:
+    cid = geocode_cache_id(provider, query, country_code, limit)
+    hit = _mem_get(cid)
+    if hit is not None:
+        return hit
+    try:
+        doc = await _geodb().geocode_cache.find_one({"_id": cid})
+    except Exception:
+        return None
+    if not doc or _is_expired(doc.get("expires_at")):
+        return None
+    rows = list(doc.get("rows") or [])
+    _mem_set(cid, rows, _ttl_s(rows))
+    return rows
+
+
+async def _geocode_cache_set(provider: str, query: str, country_code: str | None,
+                             limit: int, rows: list) -> None:
+    cid = geocode_cache_id(provider, query, country_code, limit)
+    ttl = _ttl_s(rows)
+    _mem_set(cid, list(rows), ttl)
+    try:
+        await _geodb().geocode_cache.update_one(
+            {"_id": cid},
+            {"$set": {
+                "provider": provider,
+                "query": query,
+                "country_code": country_code,
+                "limit": limit,
+                "rows": rows,
+                "fetched_at": datetime.now(timezone.utc),
+                "expires_at": _expires_at(ttl),
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+async def _mongo_claim_slot(provider: str, interval: float) -> None:
+    """Réserve un créneau global (1 req / interval) via Mongo.
+
+    Dégradation silencieuse si Mongo est injoignable : le lock process-local
+    reste le filet. Après trop de collisions on cède (mieux un 429 qu'un hang).
+    """
+    if interval <= 0:
+        return
+    try:
+        coll = _geodb().geo_rate_limit
+    except Exception:
+        return
+    for _ in range(_THROTTLE_ATTEMPTS):
+        now = time.time()
+        try:
+            doc = await coll.find_one({"_id": provider})
+        except Exception:
+            return
+        if doc is None:
+            try:
+                await coll.insert_one({"_id": provider, "last_ts": now})
+                return
+            except Exception:
+                continue
+        last = float(doc.get("last_ts") or 0)
+        wait = interval - (now - last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+            continue
+        try:
+            claimed = await coll.find_one_and_update(
+                {"_id": provider, "last_ts": {"$lte": now - interval}},
+                {"$set": {"last_ts": time.time()}},
+            )
+        except Exception:
+            return
+        if claimed is not None:
+            return
+    return
+
+
+async def _throttle(provider: str, interval: float, last_attr: str) -> None:
+    """Filet local (même process) puis créneau Mongo (tous les workers)."""
+    last = float(globals()[last_attr])
+    wait = interval - (time.time() - last)
+    if wait > 0:
+        await asyncio.sleep(wait)
+    await _mongo_claim_slot(provider, interval)
+    globals()[last_attr] = time.time()
+
+
+async def ensure_geo_indexes(db=None) -> None:
+    target = db if db is not None else _geodb()
+    await target.geocode_cache.create_index("expires_at", expireAfterSeconds=0)
+    await target.geo_rate_limit.create_index("last_ts")
+
+
+# ---------------------------------------------------------------------------
 # Géocodage multi-source : Nominatim (rate-limité) → GeoNames
 # ---------------------------------------------------------------------------
 async def _nominatim_rows(query: str, country_code: str | None = None, limit: int = 1) -> list[dict]:
-    global _last_nominatim
+    cached = await _geocode_cache_get("nominatim", query, country_code, limit)
+    if cached is not None:
+        return cached
     async with _nominatim_lock:
-        wait = 1.1 - (time.time() - _last_nominatim)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_nominatim = time.time()
-    params = {"q": query, "format": "json", "limit": limit}
-    if country_code:
-        params["countrycodes"] = country_code.lower()
-    try:
-        async with httpx.AsyncClient(timeout=15, headers={"User-Agent": UA}) as client:
-            r = await client.get("https://nominatim.openstreetmap.org/search", params=params)
-            return r.json() if r.status_code == 200 else []
-    except Exception:
-        return []
+        cached = await _geocode_cache_get("nominatim", query, country_code, limit)
+        if cached is not None:
+            return cached
+        await _throttle("nominatim", NOMINATIM_INTERVAL_S, "_last_nominatim")
+        params = {"q": query, "format": "json", "limit": limit}
+        if country_code:
+            params["countrycodes"] = country_code.lower()
+        try:
+            async with httpx.AsyncClient(timeout=15, headers={"User-Agent": UA}) as client:
+                r = await client.get("https://nominatim.openstreetmap.org/search", params=params)
+                if r.status_code != 200:
+                    return []
+                payload = r.json()
+                rows = payload if isinstance(payload, list) else []
+        except Exception:
+            return []
+        await _geocode_cache_set("nominatim", query, country_code, limit, rows)
+        return rows
 
 
 _geonames_lock = asyncio.Lock()
@@ -130,33 +302,40 @@ def geonames_status() -> str:
 
 
 async def _geonames_rows(query: str, country_code: str | None = None, limit: int = 1) -> list[dict]:
-    global _last_geonames, _geonames_disabled_reason
+    global _geonames_disabled_reason
     gn_user = (os.environ.get("GEONAMES_USERNAME") or "").strip()
     if not gn_user or _geonames_disabled_reason:
         return []
+    cached = await _geocode_cache_get("geonames", query, country_code, limit)
+    if cached is not None:
+        return cached
     async with _geonames_lock:  # politesse ~1 req/s (quota gratuit 1000/h)
-        wait = 1.0 - (time.time() - _last_geonames)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_geonames = time.time()
-    params = {"q": query, "maxRows": limit, "username": gn_user}
-    if country_code:
-        params["country"] = country_code.upper()
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get("http://api.geonames.org/searchJSON", params=params)
-            body = r.json() if "json" in (r.headers.get("content-type") or "") else {}
-            status = (body or {}).get("status") or {}
-            # 10 = authorization exception (compte absent / webservice non activé),
-            # 18/19/20 = quotas — on désactive pour la suite du process (évite
-            # des centaines d'appels voués à l'échec).
-            if r.status_code in (401, 403) or status.get("value") in (10, 18, 19, 20):
-                _geonames_disabled_reason = (status.get("message")
-                                             or f"http {r.status_code}")[:120]
-                return []
-            return (body.get("geonames") or []) if r.status_code == 200 else []
-    except Exception:
-        return []
+        cached = await _geocode_cache_get("geonames", query, country_code, limit)
+        if cached is not None:
+            return cached
+        await _throttle("geonames", GEONAMES_INTERVAL_S, "_last_geonames")
+        params = {"q": query, "maxRows": limit, "username": gn_user}
+        if country_code:
+            params["country"] = country_code.upper()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get("http://api.geonames.org/searchJSON", params=params)
+                body = r.json() if "json" in (r.headers.get("content-type") or "") else {}
+                status = (body or {}).get("status") or {}
+                # 10 = authorization exception (compte absent / webservice non activé),
+                # 18/19/20 = quotas — on désactive pour la suite du process (évite
+                # des centaines d'appels voués à l'échec).
+                if r.status_code in (401, 403) or status.get("value") in (10, 18, 19, 20):
+                    _geonames_disabled_reason = (status.get("message")
+                                                 or f"http {r.status_code}")[:120]
+                    return []
+                if r.status_code != 200:
+                    return []
+                rows = body.get("geonames") or []
+        except Exception:
+            return []
+        await _geocode_cache_set("geonames", query, country_code, limit, rows)
+        return rows
 
 
 async def geocode(query: str, country_code: str | None = None):
