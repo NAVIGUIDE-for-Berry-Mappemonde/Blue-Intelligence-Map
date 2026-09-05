@@ -9,9 +9,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.core.tasks import TaskState, new_task
+from app.core.tinyfish import tf_api_key
 from app.db import db as _db
-from app.services import poe_pipeline as poe
+from app.db import get_settings as _get_settings
+from app.services import noonsite as _noonsite
 from app.services import osm_validate
+from app.services import poe_pipeline as poe
 
 router = APIRouter(prefix="/api")
 
@@ -130,6 +133,11 @@ async def _auto_refresh_loop():
             finally:
                 AUTO_STATE["cycle_running"] = False
                 AUTO_STATE["last_cycle_at"] = time.time()
+        try:
+            if AUTO_STATE["enabled"] and not busy and not _noonsite.HARVEST_STATE.running:
+                await _noonsite.maybe_monthly_harvest(_db, _auto_log)
+        except Exception as e:
+            _auto_log(f"noonsite auto: {type(e).__name__}: {e}")
         AUTO_STATE["next_check_at"] = time.time() + 1800
         await asyncio.sleep(1800)
 
@@ -510,3 +518,89 @@ async def export_poe_geojson():
         poe.ports_to_geojson(docs),
         headers={"Content-Disposition": "attachment; filename=ports_of_entry.geojson"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Corroboration Noonsite (quota 3 pays / mois — signal, pas Gold Dataset)
+# ---------------------------------------------------------------------------
+class NoonsiteWatchBody(BaseModel):
+    places: list[dict] = []
+    enabled: bool | None = None
+
+
+class NoonsiteHarvestBody(BaseModel):
+    slugs: list[str] | None = None
+
+
+class NoonsiteImportBody(BaseModel):
+    payload: dict
+    slug: str | None = None
+    name: str | None = None
+    mrgid: int | None = None
+
+
+@router.get("/poe/noonsite/status")
+async def noonsite_status():
+    return await _noonsite.status_payload(_db, await _get_settings())
+
+
+@router.put("/poe/noonsite/watchlist")
+async def noonsite_watchlist(body: NoonsiteWatchBody):
+    updates: dict = {"noonsite_watchlist": _noonsite.sanitize_watchlist(body.places)}
+    if body.enabled is not None:
+        updates["noonsite_enabled"] = bool(body.enabled)
+    await _db.settings.update_one({"_id": "global"}, {"$set": updates}, upsert=True)
+    return await _noonsite.status_payload(_db, await _get_settings())
+
+
+@router.post("/poe/noonsite/harvest", status_code=202)
+async def noonsite_harvest(body: NoonsiteHarvestBody | None = None):
+    if _noonsite.HARVEST_STATE.running:
+        raise HTTPException(409, "Noonsite harvest already running")
+    settings = await _get_settings()
+    if not tf_api_key(settings):
+        raise HTTPException(400, "TinyFish API key required for authenticated harvest")
+    watch = _noonsite.sanitize_watchlist(settings.get("noonsite_watchlist"))
+    if not watch:
+        raise HTTPException(400, "Watchlist Noonsite vide — ajoutez jusqu'à 3 pays d'intérêt")
+    body = body or NoonsiteHarvestBody()
+    try:
+        return await _noonsite.start_harvest(_db, settings, body.slugs)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/poe/noonsite/cancel")
+async def noonsite_cancel():
+    if not _noonsite.HARVEST_STATE.running:
+        raise HTTPException(409, "No Noonsite harvest running")
+    _noonsite.HARVEST_STATE.cancel = True
+    _noonsite.HARVEST_STATE.log("Annulation demandée")
+    return {"cancelling": True}
+
+
+@router.post("/poe/noonsite/import")
+async def noonsite_import(body: NoonsiteImportBody):
+    settings = await _get_settings()
+    try:
+        return await _noonsite.import_payload(
+            _db, settings, body.payload,
+            slug=body.slug, name=body.name, mrgid=body.mrgid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/poe/noonsite/signals")
+async def noonsite_signals(month: str | None = None, slug: str | None = None,
+                           kind: str | None = None):
+    q: dict = {}
+    if month:
+        q["month"] = month
+    if slug:
+        q["slug"] = _noonsite.normalize_slug(slug)
+    if kind:
+        q["match_kind"] = kind
+    docs = await _db.noonsite_signals.find(q).sort("created_at", -1).to_list(200)
+    for d in docs:
+        d["id"] = d.pop("_id", None)
+    return {"items": docs, "total": len(docs)}

@@ -44,6 +44,14 @@ class SettingsBody(BaseModel):
     marina_batch_concurrency: int | None = None
     openrouter_min_credits_usd: float | None = None
     enrich_stale_days: int | None = None
+    noonsite_enabled: bool | None = None
+    noonsite_watchlist: list[dict] | None = None
+    noonsite_profile_id: str | None = None
+    noonsite_credential_item_ids: list[str] | None = None
+    noonsite_use_vault: bool | None = None
+    noonsite_use_profile: bool | None = None
+    noonsite_browser_profile: str | None = None
+    noonsite_use_proxy: bool | None = None
 
 @router.get("/settings")
 async def read_settings():
@@ -72,6 +80,15 @@ async def write_settings(body: SettingsBody):
     for k in ("openrouter_api_key", "tinyfish_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
+    if "noonsite_watchlist" in updates:
+        from app.services.noonsite import sanitize_watchlist
+        updates["noonsite_watchlist"] = sanitize_watchlist(updates["noonsite_watchlist"])
+    if "noonsite_credential_item_ids" in updates:
+        updates["noonsite_credential_item_ids"] = [
+            str(x).strip() for x in (updates["noonsite_credential_item_ids"] or []) if str(x).strip()]
+    if "noonsite_browser_profile" in updates:
+        bp = (updates["noonsite_browser_profile"] or "stealth").strip()
+        updates["noonsite_browser_profile"] = bp if bp in ("lite", "stealth") else "stealth"
     if updates:
         await db.settings.update_one({"_id": "global"}, {"$set": updates}, upsert=True)
     return await read_settings()
@@ -112,7 +129,8 @@ The header pill lets you switch between three modes. Each mode paints the app wi
   - `AI · official sources` — amber, the sources passed the auto-generated government-domain whitelist.
   - `AI · no official source` — amber dashed, content extracted but no whitelisted official domain could be captured.
   - `error` — red, no port of entry could be extracted (typical for disputed rocks or landlocked claims).
-- **Port of Entry popup**: name, town, note, geocoding source, and a spatial-validation badge (inside the EEZ / outside with distance).
+- **Port of Entry popup**: name, town, note, geocoding source, a spatial-validation badge (inside the EEZ / outside with distance), and an optional teal Noonsite badge when that port is *named* as a Port of Entry on a Noonsite country page you unlocked (corroboration only — not a gold dataset; absence on Noonsite never removes a port).
+- **Noonsite corroboration** (Audit → Formalities): optional monthly harvest of at most 3 free-tier countries via TinyFish Vault + Browser Context Profile, or a DevTools console snippet that copies structured JSON from a page you already opened. Listings that do not match an existing PoE stay in a review list and are never auto-inserted.
 - **Stale flag**: any zone older than 180 days shows a clock badge inviting a refresh. Re-extraction only happens when the source content changed (MD5 monitoring).
 - *Export GeoJSON* button — exports all extracted Ports of Entry.
 
@@ -173,7 +191,8 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
   - `IA · sources officielles` — ambre, les sources passent la whitelist auto-générée de domaines gouvernementaux.
   - `IA · sans source officielle` — ambre pointillé, contenu extrait mais aucun domaine officiel whitelisté n'a pu être capté.
   - `erreur` — rouge, aucun port d'entrée n'a pu être extrait (typique des rochers disputés ou zones sans port).
-- **Popup Port d'Entrée** : nom, ville, note, source de géocodage, et un badge de validation spatiale (dans la ZEE / hors ZEE avec distance).
+- **Popup Port d'Entrée** : nom, ville, note, source de géocodage, badge de validation spatiale (dans la ZEE / hors ZEE avec distance), et un badge sarcelle optionnel lorsqu'un port est *nommé* Port of Entry sur une page pays Noonsite que vous avez débloquée (corroboration uniquement — pas un gold dataset ; l'absence sur Noonsite ne retire jamais un port).
+- **Corroboration Noonsite** (Console → Formalités) : récolte mensuelle d'au plus 3 pays du compte gratuit via TinyFish Vault + Browser Context Profile, ou snippet console DevTools qui copie un JSON structuré depuis une page déjà ouverte. Les listings sans correspondance restent en revue humaine et ne sont jamais insérés automatiquement.
 - **Flag stale** : toute zone datant de plus de 180 jours affiche un badge horloge invitant au rafraîchissement. La ré-extraction n'a lieu que si le contenu source a changé (monitoring MD5).
 - Bouton *Export GeoJSON* — exporte tous les Ports d'Entrée extraits.
 

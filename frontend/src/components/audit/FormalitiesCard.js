@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Radar, ScrollText, Sparkles, Square } from "lucide-react";
+import { ClipboardCopy, Loader2, Radar, ScrollText, Sparkles, Square } from "lucide-react";
 import api from "../../api";
 import CardShell from "./CardShell";
 
@@ -16,6 +16,12 @@ export default function FormalitiesCard({ t, onPoeRefresh }) {
   const [poeBatchCount, setPoeBatchCount] = useState(10);
   const [poeOnlyMissing, setPoeOnlyMissing] = useState(true);
   const [autoStatus, setAutoStatus] = useState(null);
+  const [nsStatus, setNsStatus] = useState(null);
+  const [nsSlug, setNsSlug] = useState("");
+  const [nsName, setNsName] = useState("");
+  const [nsMrgid, setNsMrgid] = useState("");
+  const [nsJson, setNsJson] = useState("");
+  const [nsBusy, setNsBusy] = useState(false);
   const pollRefs = useRef({});
 
   useEffect(() => {
@@ -62,6 +68,22 @@ export default function FormalitiesCard({ t, onPoeRefresh }) {
     pollRefs.current.poeAuto = setInterval(check, 20000);
     return () => { alive = false; clearInterval(pollRefs.current.poeAuto); };
   }, []);
+  useEffect(() => {
+    let alive = true;
+    let wasRunning = false;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/poe/noonsite/status");
+        if (!alive) return;
+        setNsStatus(data);
+        if (wasRunning && !data.harvest?.running && onPoeRefresh) onPoeRefresh();
+        wasRunning = !!data.harvest?.running;
+      } catch (_) { /* transient */ }
+    };
+    check();
+    pollRefs.current.noonsite = setInterval(check, 4000);
+    return () => { alive = false; clearInterval(pollRefs.current.noonsite); };
+  }, [onPoeRefresh]);
 
   const startPoeReferential = async () => {
     if (refStarting || refStatus?.running) return;
@@ -86,6 +108,65 @@ export default function FormalitiesCard({ t, onPoeRefresh }) {
   const stopPoeBatch = async () => {
     try { await api.post("/poe/generate-batch/cancel"); }
     catch (e) { console.warn("poe batch cancel failed", e); }
+  };
+  const saveWatchlist = async (places, enabled) => {
+    try {
+      const { data } = await api.put("/poe/noonsite/watchlist", {
+        places,
+        enabled: enabled ?? nsStatus?.enabled,
+      });
+      setNsStatus(data);
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    }
+  };
+  const addNsPlace = async () => {
+    const slug = nsSlug.trim();
+    if (!slug) return;
+    const places = [...(nsStatus?.watchlist || []), {
+      slug,
+      name: nsName.trim() || undefined,
+      mrgid: nsMrgid.trim() ? parseInt(nsMrgid, 10) : undefined,
+    }];
+    await saveWatchlist(places);
+    setNsSlug(""); setNsName(""); setNsMrgid("");
+  };
+  const removeNsPlace = async (slug) => {
+    await saveWatchlist((nsStatus?.watchlist || []).filter((p) => p.slug !== slug));
+  };
+  const toggleNsEnabled = async () => {
+    await saveWatchlist(nsStatus?.watchlist || [], !nsStatus?.enabled);
+  };
+  const startNsHarvest = async () => {
+    if (nsBusy || nsStatus?.harvest?.running) return;
+    if (!window.confirm(t("noonsiteHarvestConfirm"))) return;
+    setNsBusy(true);
+    try { await api.post("/poe/noonsite/harvest", {}); }
+    catch (e) { alert(e.response?.data?.detail || e.message); }
+    finally { setTimeout(() => setNsBusy(false), 600); }
+  };
+  const importNsJson = async () => {
+    let payload;
+    try { payload = JSON.parse(nsJson); }
+    catch (_) { alert("JSON invalide"); return; }
+    setNsBusy(true);
+    try {
+      await api.post("/poe/noonsite/import", { payload });
+      setNsJson("");
+      const { data } = await api.get("/poe/noonsite/status");
+      setNsStatus(data);
+      if (onPoeRefresh) onPoeRefresh();
+    } catch (e) { alert(e.response?.data?.detail || e.message); }
+    finally { setNsBusy(false); }
+  };
+  const copyNsSnippet = async () => {
+    const snip = nsStatus?.console_snippet || "";
+    try {
+      await navigator.clipboard.writeText(snip);
+      alert(t("noonsiteSnippetCopied"));
+    } catch (_) {
+      window.prompt(t("noonsiteCopySnippet"), snip);
+    }
   };
 
   return (
@@ -213,6 +294,114 @@ export default function FormalitiesCard({ t, onPoeRefresh }) {
               {autoStatus.last_summary.updated} {t("poeAutoUpdated")}
               {autoStatus.last_summary.errors_retried > 0 ? ` · ${autoStatus.last_summary.errors_retried} ${t("poeAutoErrRetried")}` : ""}
             </p>
+          )}
+        </div>
+
+        {/* --- Noonsite corroboration (not a Gold Dataset) --- */}
+        <div className="pt-3 border-t border-line" data-testid="poe-noonsite-section">
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${nsStatus?.harvest?.running ? "bg-amberx animate-pulse" : "bg-teal-400"}`} />
+            <span className="font-mono text-[9px] uppercase tracking-widest text-slate-400">
+              {t("noonsiteTitle")}
+            </span>
+            <span className="ml-auto font-mono text-[9px] text-teal-300" data-testid="poe-noonsite-quota">
+              {t("noonsiteQuota")} {nsStatus?.quota?.used ?? 0}/{nsStatus?.quota?.cap ?? 3}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-500 leading-relaxed mb-2">{t("noonsiteDesc")}</p>
+          <label className="flex items-center gap-2 mb-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input
+              data-testid="noonsite-enabled-toggle"
+              type="checkbox"
+              checked={!!nsStatus?.enabled}
+              onChange={toggleNsEnabled}
+              className="accent-teal-400"
+            />
+            {t("noonsiteEnabled")}
+          </label>
+          <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
+            {t("noonsiteWatchlist")}
+          </label>
+          <div className="space-y-1 mb-2">
+            {(nsStatus?.watchlist || []).map((p) => (
+              <div key={p.slug} className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
+                <span className="text-teal-300">{p.slug}</span>
+                <span className="truncate text-slate-500">{p.name}</span>
+                {p.mrgid != null && <span className="text-slate-600">{p.mrgid}</span>}
+                <button type="button" onClick={() => removeNsPlace(p.slug)} className="ml-auto text-alert/80 hover:text-alert">×</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1 mb-2">
+            <input data-testid="noonsite-slug-input" value={nsSlug} onChange={(e) => setNsSlug(e.target.value)}
+              placeholder={t("noonsiteSlug")} className="flex-1 px-2 py-1 bg-raised border border-line rounded-sm text-[10px] text-slate-100" />
+            <input data-testid="noonsite-name-input" value={nsName} onChange={(e) => setNsName(e.target.value)}
+              placeholder={t("noonsiteName")} className="w-24 px-2 py-1 bg-raised border border-line rounded-sm text-[10px] text-slate-100" />
+            <input data-testid="noonsite-mrgid-input" value={nsMrgid} onChange={(e) => setNsMrgid(e.target.value)}
+              placeholder={t("noonsiteMrgid")} className="w-16 px-2 py-1 bg-raised border border-line rounded-sm text-[10px] text-slate-100" />
+            <button type="button" data-testid="noonsite-add-btn" onClick={addNsPlace}
+              className="px-2 py-1 border border-line text-[10px] text-slate-300 hover:text-teal-300 rounded-sm">{t("noonsiteAddPlace")}</button>
+          </div>
+          <div className="flex gap-2 mb-2">
+            <button
+              data-testid="noonsite-harvest-btn"
+              onClick={startNsHarvest}
+              disabled={nsBusy || nsStatus?.harvest?.running || !(nsStatus?.watchlist || []).length}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 border border-teal-500/50 bg-teal-500/10 hover:bg-teal-500/20 disabled:opacity-70 disabled:cursor-not-allowed text-teal-200 font-semibold text-xs rounded-sm"
+            >
+              {nsStatus?.harvest?.running ? (
+                <><Loader2 size={13} className="animate-spin" /> {t("noonsiteHarvest")}</>
+              ) : (
+                <>{t("noonsiteHarvest")}</>
+              )}
+            </button>
+            <button
+              data-testid="noonsite-snippet-btn"
+              type="button"
+              onClick={copyNsSnippet}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-line text-slate-300 hover:text-teal-200 text-[10px] rounded-sm"
+            >
+              <ClipboardCopy size={11} /> {t("noonsiteCopySnippet")}
+            </button>
+          </div>
+          {nsStatus?.harvest?.logs_tail?.length > 0 && nsStatus.harvest.running && (
+            <div className="mb-2 text-[9px] font-mono text-slate-500 max-h-20 overflow-y-auto bg-abyss/60 border border-line rounded-sm px-2 py-1">
+              {nsStatus.harvest.logs_tail.slice(-6).map((l, i) => <div key={i} className="truncate">{l}</div>)}
+            </div>
+          )}
+          <p className="font-mono text-[9px] text-slate-500 mb-1">{t("noonsiteImportHint")}</p>
+          <textarea
+            data-testid="noonsite-import-json"
+            value={nsJson}
+            onChange={(e) => setNsJson(e.target.value)}
+            rows={3}
+            className="w-full mb-1 px-2 py-1 bg-raised border border-line rounded-sm text-[10px] font-mono text-slate-200"
+          />
+          <button
+            data-testid="noonsite-import-btn"
+            type="button"
+            onClick={importNsJson}
+            disabled={nsBusy || !nsJson.trim()}
+            className="w-full mb-2 px-3 py-1.5 border border-line text-[10px] text-slate-300 hover:text-teal-200 rounded-sm disabled:opacity-50"
+          >
+            {t("noonsiteImport")}
+          </button>
+          {(nsStatus?.last_harvests || []).length === 0 && (
+            <p className="font-mono text-[9px] text-slate-600">{t("noonsiteNone")}</p>
+          )}
+          {(nsStatus?.last_harvests || []).slice(0, 4).map((h) => (
+            <div key={h.harvest_id || h.slug} className="font-mono text-[9px] text-slate-400 truncate">
+              <span className={h.status === "ok" ? "text-bio" : "text-amberx"}>●</span>{" "}
+              {h.slug} · {h.status} · {h.confirmed ?? 0} ✓ · {h.unmatched ?? 0} ?
+            </div>
+          ))}
+          {(nsStatus?.unmatched || []).length > 0 && (
+            <div className="mt-2" data-testid="noonsite-unmatched">
+              <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1">{t("noonsiteUnmatched")}</p>
+              {nsStatus.unmatched.slice(0, 6).map((u) => (
+                <div key={u.id} className="font-mono text-[9px] text-amberx truncate">? {u.name} · {u.slug}</div>
+              ))}
+            </div>
           )}
         </div>
       </CardShell>

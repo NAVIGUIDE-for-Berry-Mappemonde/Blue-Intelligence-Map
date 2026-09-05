@@ -41,4 +41,13 @@ DEFAULT_SETTINGS = {
     "marina_batch_concurrency": 2,
     "openrouter_min_credits_usd": 0.5,
     "enrich_stale_days": 365,
+    # Corroboration Noonsite (compte gratuit 3 pays/mois — pas un Gold Dataset)
+    "noonsite_enabled": False,
+    "noonsite_watchlist": [],
+    "noonsite_profile_id": "",
+    "noonsite_credential_item_ids": [],
+    "noonsite_use_vault": True,
+    "noonsite_use_profile": True,
+    "noonsite_browser_profile": "stealth",
+    "noonsite_use_proxy": False,
 }

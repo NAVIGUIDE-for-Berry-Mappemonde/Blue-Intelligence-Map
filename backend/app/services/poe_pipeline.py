@@ -1520,6 +1520,9 @@ def ports_to_geojson(docs: list[dict]) -> dict:
                 "osm_confidence": d.get("osm_confidence"),
                 "osm_tags": d.get("osm_tags"),
                 "spatial_anomaly": d.get("spatial_anomaly"),
+                "noonsite_confirmed": bool(d.get("noonsite_confirmed")),
+                "noonsite_url": d.get("noonsite_url"),
+                "noonsite_checked_at": d.get("noonsite_checked_at"),
             },
         })
     return {

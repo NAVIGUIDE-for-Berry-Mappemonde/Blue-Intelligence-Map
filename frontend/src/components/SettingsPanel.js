@@ -48,7 +48,12 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "" });
+    if (settings) setForm({
+      ...settings,
+      openrouter_api_key: "",
+      tinyfish_api_key: "",
+      noonsite_cred_ids: (settings.noonsite_credential_item_ids || []).join(", "),
+    });
   }, [settings]);
 
   if (!form) return null;
@@ -59,9 +64,12 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     const body = { ...form };
     delete body.openrouter_api_key_set;
     delete body.tinyfish_api_key_set;
+    delete body.noonsite_cred_ids;
     ["min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
+    body.noonsite_credential_item_ids = String(form.noonsite_cred_ids || "")
+      .split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     await api.put("/settings", body);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -211,6 +219,61 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
             <input data-testid="tinyfish-key-input" type="password" value={form.tinyfish_api_key}
               placeholder={t("leavePlaceholder")}
               onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <Field label={t("noonsiteProfileId")}>
+            <input data-testid="noonsite-profile-id-input" type="text"
+              value={form.noonsite_profile_id || ""}
+              onChange={(e) => set("noonsite_profile_id", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <Field label={t("noonsiteCredIds")}>
+            <input data-testid="noonsite-cred-ids-input" type="text"
+              value={form.noonsite_cred_ids || ""}
+              onChange={(e) => set("noonsite_cred_ids", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" data-testid="noonsite-use-vault"
+              checked={form.noonsite_use_vault !== false}
+              onChange={async (e) => {
+                const v = e.target.checked;
+                set("noonsite_use_vault", v);
+                await api.put("/settings", { noonsite_use_vault: v });
+                onSaved();
+              }}
+              className="accent-teal-400" />
+            {t("noonsiteUseVault")}
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" data-testid="noonsite-use-profile"
+              checked={form.noonsite_use_profile !== false}
+              onChange={async (e) => {
+                const v = e.target.checked;
+                set("noonsite_use_profile", v);
+                await api.put("/settings", { noonsite_use_profile: v });
+                onSaved();
+              }}
+              className="accent-teal-400" />
+            {t("noonsiteUseProfile")}
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" data-testid="noonsite-use-proxy"
+              checked={!!form.noonsite_use_proxy}
+              onChange={async (e) => {
+                const v = e.target.checked;
+                set("noonsite_use_proxy", v);
+                await api.put("/settings", { noonsite_use_proxy: v });
+                onSaved();
+              }}
+              className="accent-teal-400" />
+            {t("noonsiteUseProxy")}
+          </label>
+          <Field label={t("noonsiteStealth")}>
+            <select data-testid="noonsite-browser-profile"
+              value={form.noonsite_browser_profile || "stealth"}
+              onChange={(e) => set("noonsite_browser_profile", e.target.value)}
+              onBlur={save} className={inputCls}>
+              <option value="stealth">stealth</option>
+              <option value="lite">lite</option>
+            </select>
           </Field>
         </section>
 

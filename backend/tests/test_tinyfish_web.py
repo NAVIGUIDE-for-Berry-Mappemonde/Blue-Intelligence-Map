@@ -62,6 +62,34 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class TestAutomationPayload:
+    def test_vault_and_profile_fields(self):
+        p = tf.automation_payload(
+            "https://www.noonsite.com/place/saba/",
+            "stay on Saba",
+            {"type": "object", "properties": {}},
+            max_duration_s=300,
+            browser_profile="stealth",
+            use_vault=True,
+            use_profile=True,
+            profile_id="prof_abc",
+            credential_item_ids=["cred:conn:item-1", ""],
+            proxy_config={"enabled": True},
+        )
+        assert p["use_vault"] is True
+        assert p["use_profile"] is True
+        assert p["profile_id"] == "prof_abc"
+        assert p["credential_item_ids"] == ["cred:conn:item-1"]
+        assert p["browser_profile"] == "stealth"
+        assert p["proxy_config"] == {"enabled": True}
+        assert p["agent_config"]["max_duration_seconds"] == 300
+
+    def test_defaults_omit_auth(self):
+        p = tf.automation_payload("https://x.test", "g", {"type": "object"})
+        assert "use_vault" not in p
+        assert "credential_item_ids" not in p
+
+
 class TestTfApiKey:
     def test_empty_without_env(self, monkeypatch):
         monkeypatch.delenv("TINYFISH_API_KEY", raising=False)

@@ -58,7 +58,7 @@ export default function useFormalitiesLayers({
     const cluster = poeClusterRef.current;
     if (!cluster) return;
     const feats = poePorts?.features || [];
-    const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}|${f.properties.osm_confidence ?? ""}|${f.properties.spatial_anomaly ? 1 : 0}`).join(",");
+    const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}|${f.properties.osm_confidence ?? ""}|${f.properties.spatial_anomaly ? 1 : 0}|${f.properties.noonsite_confirmed ? 1 : 0}`).join(",");
     if (sig === poeSigRef.current && cluster.getLayers().length) return;
     poeSigRef.current = sig;
     cluster.clearLayers();
@@ -95,12 +95,16 @@ export default function useFormalitiesLayers({
         const anomBadge = p.spatial_anomaly
           ? `<span data-testid="poe-anomaly-badge" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid rgba(255,74,74,0.5);background:rgba(255,74,74,0.08);padding:2px 6px;border-radius:2px;">⚠ ${escH(t("poeAnomaly"))}</span>`
           : "";
+        const nsUrl = p.noonsite_url ? escH(p.noonsite_url) : "";
+        const nsBadge = p.noonsite_confirmed
+          ? `<span data-testid="poe-noonsite-badge" title="${escH(t("noonsiteConfirmedTitle"))}" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5eead4;border:1px solid rgba(94,234,212,0.45);padding:2px 6px;border-radius:2px;">${nsUrl ? `<a href="${nsUrl}" target="_blank" rel="noreferrer" style="color:#5eead4;text-decoration:none;">` : ""}⚑ ${escH(t("noonsiteConfirmed"))}${nsUrl ? "</a>" : ""}</span>`
+          : "";
         return `<div style="min-width:230px;max-width:300px;font-family:Manrope,sans-serif;">
           <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">⚓ ${escH(p.name)}</div>
           <div style="font-size:11px;color:#94a3b8;margin:3px 0 5px;">${escH(p.city || "")}${p.city ? " · " : ""}${flagEmoji(p.country_iso2)} ${escH(p.zone_name || "")}</div>
           <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:5px;">${valid}
             <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${escH(p.geocode_source || t("poeNotGeocoded"))}</span>
-            ${osmBadge}${anomBadge}
+            ${osmBadge}${anomBadge}${nsBadge}
           </div>
           ${p.note ? `<div style="font-size:11px;color:#e2e8f0;line-height:1.4;margin-bottom:5px;">${escH(p.note)}</div>` : ""}
           ${srcs ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px;">${escH(t("poeSourcesTitle"))}</div>${srcs}` : ""}

@@ -26,6 +26,7 @@ effectué, (3) la proposition de rangement et de découpage cible.
 | `ml_core.py` | ML local (weak supervision) : gatekeeper TF-IDF+LogReg, classifieur SERP, NER spaCy, anomalies IsolationForest/DBSCAN | `predict_relevance`, `predict_serp`, `extract_entities`, `train_*` |
 | `ml_routes.py` | Endpoints `/api/ml/*` (entraînements, prédictions, anomalies, NER) | états `TRAIN_STATE`… |
 | `osm_validate.py` | Validation Bottom-Up des PoE via Overpass (`osm_confidence`) | `validate_ports` |
+| `noonsite.py` | Corroboration Noonsite (3 pays/mois, signal positif seulement) | `harvest_place`, `import_payload` |
 | `zee.py` | Traversées ZEE de la route officielle (intersection shapely, 4 niveaux de fallback) | `build_zee_crossings`, `crossings_to_summary`, `filter_french_territories` |
 | `tinyfish_client.py` | Client HTTP TinyFish (run sync/async + polling) | `tf_run_sync`, `tf_run_async`, `tf_get_run`, schémas JSON |
 | `seeds.py` / `categories.py` | Données statiques : MasterSeeds des fondations, taxonomie des catégories | `MASTER_SEEDS`, `CATEGORY_GROUPS`, `normalize_category` |
@@ -100,7 +101,8 @@ backend/
 │   │   ├── anchorage_build.py  #   ex anchorages.py
 │   │   ├── marina_enrich.py    #   ex enrichment.py
 │   │   ├── zee_crossings.py    #   ex zee.py
-│   │   └── osm_validate.py
+│   │   ├── osm_validate.py
+│   │   └── noonsite.py         #   corroboration PoE (quota 3 pays/mois, pas Gold Dataset)
 │   ├── core/                   # briques transverses réutilisables
 │   │   ├── llm.py              #   ex llm_core.py (OpenRouter)
 │   │   ├── geo.py              #   ex geo_core.py

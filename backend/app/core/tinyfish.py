@@ -79,10 +79,51 @@ def _headers(key: str) -> dict:
     return {"X-API-Key": key, "Content-Type": "application/json"}
 
 
-async def tf_run_async(url: str, goal: str, schema: dict, key: str, max_duration_s: int | None = None) -> dict:
-    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+def automation_payload(
+    url: str,
+    goal: str,
+    schema: dict,
+    *,
+    max_duration_s: int | None = None,
+    browser_profile: str = "lite",
+    use_vault: bool = False,
+    use_profile: bool = False,
+    profile_id: str | None = None,
+    credential_item_ids: list[str] | None = None,
+    proxy_config: dict | None = None,
+) -> dict:
+    """Corps Agent API (run / run-async / run-sse).
+
+    Vault + Browser Context Profiles : l'agent ne voit jamais les mots de passe.
+    Doc : https://docs.tinyfish.ai/key-concepts/credentials
+          https://docs.tinyfish.ai/key-concepts/browser-context-profiles
+    """
+    payload = {
+        "url": url,
+        "goal": goal,
+        "output_schema": schema,
+        "browser_profile": browser_profile or "lite",
+    }
     if max_duration_s:
         payload["agent_config"] = {"max_duration_seconds": int(max_duration_s)}
+    if use_vault:
+        payload["use_vault"] = True
+        ids = [str(x).strip() for x in (credential_item_ids or []) if str(x).strip()]
+        if ids:
+            payload["credential_item_ids"] = ids
+    if use_profile:
+        payload["use_profile"] = True
+        pid = (profile_id or "").strip()
+        if pid:
+            payload["profile_id"] = pid
+    if proxy_config:
+        payload["proxy_config"] = proxy_config
+    return payload
+
+
+async def tf_run_async(url: str, goal: str, schema: dict, key: str,
+                       max_duration_s: int | None = None, **auth) -> dict:
+    payload = automation_payload(url, goal, schema, max_duration_s=max_duration_s, **auth)
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{BASE}/automation/run-async", headers=_headers(key), json=payload)
         r.raise_for_status()
@@ -96,18 +137,45 @@ async def tf_get_run(run_id: str, key: str) -> dict:
         return r.json()
 
 
-async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int = 360) -> dict:
-    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite",
-               "agent_config": {"max_duration_seconds": 300}}
+async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int = 360, **auth) -> dict:
+    payload = automation_payload(
+        url, goal, schema, max_duration_s=auth.pop("max_duration_s", 300), **auth)
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(f"{BASE}/automation/run", headers=_headers(key), json=payload)
         r.raise_for_status()
         return r.json()
 
 
-async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None, timeout: int = 420) -> dict:
+async def tf_run_and_wait(url: str, goal: str, schema: dict, key: str, *,
+                          timeout_s: int = 360, poll_s: float = 4.0,
+                          max_duration_s: int | None = None, log=None, **auth) -> dict:
+    """run-async + polling. Retourne le dict `result` (ou le run entier)."""
+    log = log or (lambda m: None)
+    started = await tf_run_async(
+        url, goal, schema, key,
+        max_duration_s=max_duration_s or min(300, int(timeout_s)),
+        **auth)
+    run_id = started.get("run_id") or started.get("id")
+    if not run_id:
+        raise ValueError(f"TinyFish: pas de run_id ({str(started)[:160]})")
+    deadline = time.monotonic() + timeout_s
+    last = started
+    while time.monotonic() < deadline:
+        rec = await tf_get_run(run_id, key)
+        last = rec
+        st = (rec.get("status") or "").upper()
+        log(f"TinyFish run {str(run_id)[:8]}… {st or 'PENDING'}")
+        if st in ("COMPLETED", "SUCCESS"):
+            return rec.get("result") if rec.get("result") is not None else rec
+        if st in ("FAILED", "ERROR", "CANCELLED"):
+            raise ValueError(str(rec.get("error") or rec.get("message") or st)[:200])
+        await asyncio.sleep(poll_s)
+    raise TimeoutError(f"TinyFish run timed out ({timeout_s}s, last={last.get('status')})")
+
+
+async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None, timeout: int = 420, **auth) -> dict:
     """Stream a TinyFish run via SSE; returns final result dict, raises on failure."""
-    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+    payload = automation_payload(url, goal, schema, **auth)
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=30)) as client:
         async with client.stream("POST", f"{BASE}/automation/run-sse", headers=_headers(key), json=payload) as r:
             r.raise_for_status()
