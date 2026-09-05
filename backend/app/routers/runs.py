@@ -1,48 +1,101 @@
 """
-app.routers.runs — Endpoints des runs versionnés du pipeline PoE.
+app.routers.runs — Runs versionnés du pipeline PoE (plusieurs en parallèle).
 
-POST /api/poe/runs                     démarre (ou reprend) un run from scratch
+POST /api/poe/runs                     démarre (ou reprend) un run
+POST /api/poe/runs/multi               lance v1 + v2 + tinyfish en parallèle
 GET  /api/poe/runs                     liste des runs
-GET  /api/poe/runs/{id}/status         méta + logs live
-POST /api/poe/runs/{id}/cancel         annulation propre
-GET  /api/poe/runs/{id}/ports          GeoJSON des ports du run
-GET  /api/poe/runs/{id}/events         journal structuré (filtrable)
-GET  /api/poe/runs/{id}/diff           comparaison port par port vs base v1
-GET  /api/poe/runs/{id}/report         rapport quantitatif (json | markdown)
+GET  /api/poe/runs/searxng             santé du moteur de recherche
+GET  /api/poe/runs/compare             comparaison à N runs (+ v1)
+POST /api/poe/runs/best-of             synthèse dans un nouveau run (jamais v1)
+GET  /api/poe/runs/{id}/status
+POST /api/poe/runs/{id}/cancel
+GET  /api/poe/runs/{id}/ports
+GET  /api/poe/runs/{id}/events
+GET  /api/poe/runs/{id}/diff
+GET  /api/poe/runs/{id}/report
 """
 import asyncio
+import os
 import time
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.tasks import TaskState
 from app.db import db as _db
 from app.services import poe_pipeline as poe
 from app.services import poe_runs
+from app.services.poe_bestof import compare_runs, synthesize_best_of
 from app.services.poe_diff import diff_run_vs_baseline
+from app.services.poe_pipeline import normalize_variant
 from app.services.poe_report import build_run_report, report_to_markdown
 
 router = APIRouter(prefix="/api")
 
-RUN_STATE = TaskState(max_logs=2000)
-ACTIVE_RUN_ID: str | None = None
+MAX_PARALLEL_RUNS = 4
+RUN_STATES: dict[str, TaskState] = {}
+
+
+def _active_ids() -> list[str]:
+    return [rid for rid, st in RUN_STATES.items() if st.running]
 
 
 class RunBody(BaseModel):
     label: str = ""
-    limit: int = 0                      # 0 = toutes les zones
+    limit: int = 0
     concurrency: int = 2
-    zones: list[int] | None = None      # restreindre à certains mrgids
-    resume_run_id: str | None = None    # reprendre un run interrompu
+    zones: list[int] | None = None
+    resume_run_id: str | None = None
+    variant: str = "tinyfish"           # v1 | v2 | tinyfish
+
+
+class MultiRunBody(BaseModel):
+    variants: list[str] = Field(default_factory=lambda: ["v1", "v2", "tinyfish"])
+    limit: int = 0
+    concurrency: int = 2
+    zones: list[int] | None = None
+    label_prefix: str = "bestof"
+
+
+class BestOfBody(BaseModel):
+    run_ids: list[str]
+    include_v1: bool = True
+    label: str = ""
+
+
+async def _launch_run(*, resume: bool, run_id: str, label: str, limit: int,
+                      zones, concurrency: int, variant: str) -> str:
+    if len(_active_ids()) >= MAX_PARALLEL_RUNS:
+        raise HTTPException(409, f"déjà {MAX_PARALLEL_RUNS} runs actifs")
+    if run_id in RUN_STATES and RUN_STATES[run_id].running:
+        raise HTTPException(409, f"Run {run_id} already running")
+    state = TaskState(max_logs=2000)
+    state.start()
+    RUN_STATES[run_id] = state
+
+    async def _runner():
+        try:
+            state.summary = await poe_runs.execute_run(
+                _db, state, run_id, label=label, limit=limit,
+                only_zones=zones, concurrency=concurrency, resume=resume,
+                variant=variant)
+        except Exception as e:
+            state.error = f"{type(e).__name__}: {e}"
+            state.log(f"FATAL: {state.error}")
+            await _db.poe_runs.update_one({"_id": run_id}, {"$set": {
+                "state": "failed", "error": state.error,
+                "finished_at": poe.now_iso()}})
+        finally:
+            state.finish()
+
+    asyncio.create_task(_runner())
+    return run_id
 
 
 @router.post("/poe/runs", status_code=202)
 async def poe_run_start(body: RunBody | None = None):
-    global ACTIVE_RUN_ID
-    if RUN_STATE.running:
-        raise HTTPException(409, f"Run {ACTIVE_RUN_ID} already running")
     body = body or RunBody()
     resume = bool(body.resume_run_id)
     if resume:
@@ -50,42 +103,113 @@ async def poe_run_start(body: RunBody | None = None):
         if not existing:
             raise HTTPException(404, f"Run {body.resume_run_id} unknown — cannot resume")
         run_id = body.resume_run_id
-        label = body.label or existing.get("label") or ""
         params = existing.get("params") or {}
+        label = body.label or existing.get("label") or ""
         limit = int(params.get("limit") or 0)
         zones = params.get("only_zones")
         concurrency = int(params.get("concurrency") or body.concurrency)
+        variant = params.get("variant") or body.variant
     else:
         run_id = poe_runs.new_run_id()
         label, limit, zones, concurrency = body.label, body.limit, body.zones, body.concurrency
+        variant = body.variant
+    try:
+        variant = normalize_variant(variant)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not label:
+        label = f"{variant}-full"
+    await _launch_run(resume=resume, run_id=run_id, label=label, limit=limit,
+                      zones=zones, concurrency=concurrency, variant=variant)
+    return {"status": "started", "run_id": run_id, "resume": resume, "variant": variant}
 
-    RUN_STATE.start()
-    ACTIVE_RUN_ID = run_id
 
-    async def _runner():
-        global ACTIVE_RUN_ID
+@router.post("/poe/runs/multi", status_code=202)
+async def poe_run_multi(body: MultiRunBody | None = None):
+    """Lance les variants demandés en parallèle. Chaque run a son run_id."""
+    body = body or MultiRunBody()
+    started = []
+    errors = []
+    for raw in body.variants:
         try:
-            RUN_STATE.summary = await poe_runs.execute_run(
-                _db, RUN_STATE, run_id, label=label, limit=limit,
-                only_zones=zones, concurrency=concurrency, resume=resume)
-        except Exception as e:
-            RUN_STATE.error = f"{type(e).__name__}: {e}"
-            RUN_STATE.log(f"FATAL: {RUN_STATE.error}")
-            await _db.poe_runs.update_one({"_id": run_id}, {"$set": {
-                "state": "failed", "error": RUN_STATE.error,
-                "finished_at": poe.now_iso()}})
-        finally:
-            RUN_STATE.finish()
-            ACTIVE_RUN_ID = None
+            variant = normalize_variant(raw)
+        except ValueError as e:
+            errors.append({"variant": raw, "error": str(e)})
+            continue
+        try:
+            run_id = poe_runs.new_run_id()
+            label = f"{body.label_prefix}-{variant}"
+            await _launch_run(
+                resume=False, run_id=run_id, label=label,
+                limit=body.limit, zones=body.zones,
+                concurrency=body.concurrency, variant=variant)
+            started.append({"run_id": run_id, "variant": variant, "label": label})
+            await asyncio.sleep(0.05)
+        except HTTPException as e:
+            errors.append({"variant": variant, "error": e.detail})
+    if not started:
+        raise HTTPException(409, {"detail": "aucun run démarré", "errors": errors})
+    return {"status": "started", "runs": started, "errors": errors,
+            "active_run_ids": _active_ids()}
 
-    asyncio.create_task(_runner())
-    return {"status": "started", "run_id": run_id, "resume": resume}
+
+@router.get("/poe/runs/searxng")
+async def poe_searxng_health():
+    instances = poe.searx_instances()
+    own = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/")
+    results = []
+    for inst in instances[:6]:
+        t0 = time.time()
+        ok = False
+        n = 0
+        err = None
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(f"{inst}/search",
+                                     params={"q": "ports of entry france customs",
+                                             "format": "json"})
+                if r.status_code == 200:
+                    n = len((r.json().get("results") or []))
+                    ok = n > 0
+                else:
+                    err = f"HTTP {r.status_code}"
+        except Exception as e:
+            err = f"{type(e).__name__}"
+        results.append({"instance": inst, "ok": ok, "n": n, "error": err,
+                        "ms": int((time.time() - t0) * 1000),
+                        "local": inst == own})
+    return {"searxng_url": own or None, "instances": results,
+            "ok": any(x["ok"] for x in results)}
 
 
 @router.get("/poe/runs")
 async def poe_runs_list():
     docs = await _db.poe_runs.find({}).sort("created_at", -1).to_list(100)
-    return {"count": len(docs), "active_run_id": ACTIVE_RUN_ID, "items": docs}
+    return {"count": len(docs), "active_run_ids": _active_ids(),
+            "active_run_id": (_active_ids() or [None])[0], "items": docs}
+
+
+@router.get("/poe/runs/compare")
+async def poe_runs_compare(run_ids: str, include_v1: bool = True):
+    ids = [x.strip() for x in run_ids.split(",") if x.strip()]
+    if not ids:
+        raise HTTPException(400, "run_ids requis (csv)")
+    for rid in ids:
+        if not await _db.poe_runs.find_one({"_id": rid}):
+            raise HTTPException(404, f"Run {rid} unknown")
+    return await compare_runs(_db, ids, include_v1=include_v1)
+
+
+@router.post("/poe/runs/best-of")
+async def poe_runs_best_of(body: BestOfBody):
+    if not body.run_ids:
+        raise HTTPException(400, "run_ids requis")
+    for rid in body.run_ids:
+        if not await _db.poe_runs.find_one({"_id": rid}):
+            raise HTTPException(404, f"Run {rid} unknown")
+    summary = await synthesize_best_of(
+        _db, body.run_ids, include_v1=body.include_v1, label=body.label)
+    return {"status": "done", **summary}
 
 
 @router.get("/poe/runs/{run_id}/status")
@@ -94,17 +218,19 @@ async def poe_run_status(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     out = {"run": doc}
-    if ACTIVE_RUN_ID == run_id:
-        out["live"] = RUN_STATE.status()
+    st = RUN_STATES.get(run_id)
+    if st is not None and st.running:
+        out["live"] = st.status()
     return out
 
 
 @router.post("/poe/runs/{run_id}/cancel")
 async def poe_run_cancel(run_id: str):
-    if not RUN_STATE.running or ACTIVE_RUN_ID != run_id:
+    st = RUN_STATES.get(run_id)
+    if st is None or not st.running:
         raise HTTPException(409, f"Run {run_id} is not running")
-    RUN_STATE.cancel = True
-    RUN_STATE.log("Annulation demandée — les zones restantes ne démarreront pas")
+    st.cancel = True
+    st.log("Annulation demandée — les zones restantes ne démarreront pas")
     return {"cancelling": True, "run_id": run_id}
 
 

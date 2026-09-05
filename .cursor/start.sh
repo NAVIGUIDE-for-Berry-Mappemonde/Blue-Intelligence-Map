@@ -14,6 +14,27 @@ else
     --logpath /var/log/mongodb/mongod.log --logappend --fork
 fi
 
+# SearXNG local (JSON) — requis par les runs PoE v1/v2/tinyfish
+if curl -sf -m 2 "http://127.0.0.1:8888/search?q=ping&format=json" >/dev/null 2>&1; then
+  echo "SearXNG already up on 127.0.0.1:8888"
+elif command -v docker >/dev/null 2>&1 && { docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1; }; then
+  echo "starting SearXNG container on 127.0.0.1:8888..."
+  DK=docker
+  docker info >/dev/null 2>&1 || DK="sudo docker"
+  $DK rm -f blue-intelligence-searxng >/dev/null 2>&1 || true
+  $DK run -d --name blue-intelligence-searxng \
+    -p 127.0.0.1:8888:8080 \
+    -v /workspace/infra/searxng/settings.yml:/etc/searxng/settings.yml:ro \
+    -e SEARXNG_BASE_URL=http://127.0.0.1:8888/ \
+    searxng/searxng:latest >/dev/null
+elif [ -x /opt/searxng/.venv/bin/python ]; then
+  echo "starting SearXNG (venv) on 127.0.0.1:8888..."
+  nohup bash /workspace/infra/searxng/run-local.sh >/tmp/searxng.log 2>&1 &
+  echo $! > /tmp/searxng.pid
+else
+  echo "WARNING: SearXNG not installed — PoE search will fall back to public instances" >&2
+fi
+
 # Wait for MongoDB to accept connections before returning.
 for _ in $(seq 1 30); do
   if mongosh --quiet --eval 'db.runCommand({ping:1})' >/dev/null 2>&1; then
