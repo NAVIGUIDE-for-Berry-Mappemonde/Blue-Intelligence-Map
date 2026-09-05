@@ -24,3 +24,13 @@ def test_niue_single_poe():
     assert rec["slug"] == "niue"
     assert [p["name"] for p in rec["ports_of_entry"]] == ["Alofi"]
     assert rec["other_ports"] == []
+
+
+def test_grouped_archipelago_menu_links():
+    html = (FIX / "french_polynesia_grouped.html").read_text(encoding="utf-8")
+    rec = parse_country_html(html, "french-polynesia")
+    assert [p["name"] for p in rec["ports_of_entry"]] == ["Mataura, Tubuai", "Papeete"]
+    assert [p["name"] for p in rec["other_ports"]] == ["Rapa"]
+    assert rec["ports_of_entry"][0]["group"] == "Australs"
+    assert rec["other_ports"][0]["group"] == "Australs"
+    assert rec["ports_of_entry"][1]["group"] == "Society Islands"

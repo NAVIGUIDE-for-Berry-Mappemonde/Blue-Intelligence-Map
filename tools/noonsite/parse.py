@@ -64,26 +64,46 @@ def _country_name(soup: BeautifulSoup, slug: str) -> str:
     return title or slug.replace("-", " ").title()
 
 
+def _item_from_anchor(a) -> dict | None:
+    """Une ligne Main Ports : lien plat (``.nsdd-link``) ou entrée d'archipel
+    (``.nsdd-menu-link``). Les libellés de groupe (Australs, Kadavu…) ne sont
+    pas des ports."""
+    name = _text(a.select_one(":scope > .nsdd-label")) or _text(a.select_one(".nsdd-label"))
+    if not name:
+        name = re.sub(r"\s*Port of Entry\s*$", "", _text(a), flags=re.I).strip()
+    if not name:
+        return None
+    href = (a.get("href") or "").strip()
+    if href and not href.startswith("http"):
+        href = urljoin(ORIGIN, href)
+    badge = _text(a.select_one(".nsdd-badge"))
+    group = None
+    row = a.find_parent(class_="nsdd-row")
+    if row is not None:
+        trig = row.select_one(".nsdd-trigger > .nsdd-label")
+        g = _text(trig)
+        if g and g.lower() != name.lower():
+            group = g
+    return {
+        "name": name,
+        "url": href,
+        "is_port_of_entry": "port of entry" in badge.lower(),
+        "group": group,
+    }
+
+
 def parse_country_html(html: str, slug: str) -> dict:
-    """Extrait les deux listes depuis une page pays Noonsite."""
+    """Extrait les deux listes depuis une page pays Noonsite (HTML public)."""
     soup = BeautifulSoup(html or "", "html.parser")
     slug = normalize_slug(slug)
     poe, other = [], []
     for nav in soup.select('nav[aria-label="Main ports navigation"]'):
-        for row in nav.select(".nsdd-row"):
-            a = row.select_one("a.nsdd-link")
-            if not a:
+        anchors = nav.select("a.nsdd-link, a.nsdd-menu-link")
+        for a in anchors:
+            item = _item_from_anchor(a)
+            if not item:
                 continue
-            name = _text(row.select_one(".nsdd-label")) or _text(a)
-            if not name:
-                continue
-            href = (a.get("href") or "").strip()
-            if href and not href.startswith("http"):
-                href = urljoin(ORIGIN, href)
-            badge = _text(row.select_one(".nsdd-badge"))
-            is_poe = "port of entry" in badge.lower()
-            item = {"name": name, "url": href, "is_port_of_entry": is_poe}
-            (poe if is_poe else other).append(item)
+            (poe if item["is_port_of_entry"] else other).append(item)
     return {
         "slug": slug,
         "name": _country_name(soup, slug),

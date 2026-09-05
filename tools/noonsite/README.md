@@ -34,8 +34,10 @@ python3 -m pip install -r requirements.txt
 python3 harvest.py niue saba
 ```
 
-Le HTML de la page pays contient déjà Main Ports. Le login n’est
-nécessaire que pour Formalities / Clearance :
+**Pas besoin de compte** pour les listes PoE / non-PoE : le panneau
+Main Ports (y compris les menus d’archipel) est dans le HTML public
+de chaque page pays. Le login n’ouvre que Formalities / Clearance
+(et consomme alors 1 des 3 pays / mois) :
 
 ```bash
 cp .env.example .env   # renseigner, ne jamais committer
