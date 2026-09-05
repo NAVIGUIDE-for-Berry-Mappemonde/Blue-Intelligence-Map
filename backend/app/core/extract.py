@@ -16,9 +16,14 @@ et suivi sélectif des liens internes (depth=2 : /annuaire, /contacts…).
 import asyncio
 import difflib
 import hashlib
+import os
 import re
+import subprocess
+import sys
+import tempfile
 import threading
 from contextvars import ContextVar
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 # Désactivé pour les variants v1/v2 (SearXNG only) — TinyFish Fetch reste
@@ -28,9 +33,16 @@ allow_tinyfish_fetch: ContextVar[bool] = ContextVar("allow_tinyfish_fetch", defa
 import httpx
 from bs4 import BeautifulSoup
 
-# PyMuPDF n'est pas sûr en usage concurrent multi-threads (crash natif
-# « double free or corruption » constaté en run complet) — parsing sérialisé.
-_pdf_lock = threading.Lock()
+# PyMuPDF n'est pas sûr dans le process API (crash natif « double free »).
+# Extraction dans un sous-processus + cache disque sha256 → texte.
+# Le sémaphore limite la RAM (gazettes jusqu'à 180 pages), ce n'est plus un
+# verrou de sûreté : plusieurs PDF peuvent avancer en parallèle.
+from app.config import BACKEND_DIR, DATA_DIR
+
+PDF_CACHE_DIR = DATA_DIR / "cached_pdfs"
+PDF_SUBPROCESS_TIMEOUT_S = 25
+PDF_MAX_CONCURRENT = 3
+_pdf_slots = threading.Semaphore(PDF_MAX_CONCURRENT)
 
 UA_BROWSER = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 # r.jina.ai renvoie 403 (Cloudflare) si on se présente comme Chrome ; un UA lecteur suffit.
@@ -114,11 +126,97 @@ def looks_blocked(text: str, html: str = "", title: str = "") -> bool:
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
+def pdf_cache_key(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _pdf_cache_path(digest: str) -> Path:
+    return Path(PDF_CACHE_DIR) / f"{digest}.txt"
+
+
+def _read_pdf_cache(digest: str) -> str | None:
+    path = _pdf_cache_path(digest)
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return None
+
+
+def _write_pdf_cache(digest: str, text: str) -> None:
+    cache_dir = Path(PDF_CACHE_DIR)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = _pdf_cache_path(digest)
+    tmp = cache_dir / f".{digest}.txt.partial"
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _pdf_worker_env() -> dict:
+    env = os.environ.copy()
+    backend = str(BACKEND_DIR)
+    current = env.get("PYTHONPATH", "")
+    parts = [p for p in current.split(os.pathsep) if p]
+    if backend not in parts:
+        env["PYTHONPATH"] = os.pathsep.join([backend, *parts]) if parts else backend
+    return env
+
+
+def _run_pdf_worker(inp: str, out: str, max_pages: int) -> None:
+    """Spawn ``app.core.pdf_worker`` — hookable depuis les tests."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "app.core.pdf_worker", inp, out, str(max_pages)],
+        timeout=PDF_SUBPROCESS_TIMEOUT_S,
+        capture_output=True,
+        env=_pdf_worker_env(),
+        cwd=str(BACKEND_DIR),
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"pdf_worker exit {proc.returncode}: {err}")
+
+
 def parse_pdf_text(content: bytes, max_pages: int = 180) -> str:
-    import fitz
-    with _pdf_lock:
-        with fitz.open(stream=content, filetype="pdf") as pdf:
-            return "\n".join(page.get_text() for page in pdf[:max_pages])
+    """Extrait le texte d'un PDF hors process, avec cache sha256 sur disque.
+
+    Le process API n'importe pas ``fitz`` : un crash natif reste confiné au
+    sous-processus. Un hit cache évite tout spawn (gazettes rejouées).
+    """
+    if not content:
+        return ""
+    digest = pdf_cache_key(content)
+    cached = _read_pdf_cache(digest)
+    if cached is not None:
+        return cached
+    with _pdf_slots:
+        cached = _read_pdf_cache(digest)
+        if cached is not None:
+            return cached
+        fd, inp = tempfile.mkstemp(suffix=".pdf")
+        out = inp + ".txt"
+        try:
+            os.write(fd, content)
+            os.close(fd)
+            fd = -1
+            _run_pdf_worker(inp, out, max_pages)
+            text = Path(out).read_text(encoding="utf-8")
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            for p in (inp, out):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+    try:
+        _write_pdf_cache(digest, text)
+    except OSError:
+        pass
+    return text
 
 
 def parse_html_n1(html: str) -> str:

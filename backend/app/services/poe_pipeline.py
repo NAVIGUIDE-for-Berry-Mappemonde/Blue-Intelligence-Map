@@ -21,9 +21,11 @@ Architecture :
                              Bottom-Up osm_confidence / anomalies sont préservés).
 """
 import asyncio
+import fcntl
 import json
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -205,11 +207,58 @@ def is_stale(doc: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Whitelist / Gatekeeper
 # ---------------------------------------------------------------------------
+_exceptions_thread_lock = threading.Lock()
+
+_EXCEPTION_BUCKETS = ("manual", "auto", "seed_urls", "search_hints")
+
+
+def _empty_exceptions() -> dict:
+    return {"manual": {}, "auto": {}}
+
+
+def _parse_exceptions_text(raw: str) -> dict:
+    if not (raw or "").strip():
+        return _empty_exceptions()
+    data = json.loads(raw)
+    return data if isinstance(data, dict) else _empty_exceptions()
+
+
+def _merge_bucket(base: dict | None, incoming: dict | None) -> dict:
+    out = {k: list(v) for k, v in (base or {}).items() if isinstance(v, list)}
+    for key, vals in (incoming or {}).items():
+        cur = out.setdefault(key, [])
+        for item in vals or []:
+            if item not in cur:
+                cur.append(item)
+    return out
+
+
+def merge_exceptions(disk: dict, incoming: dict) -> dict:
+    """Union des buckets (auto / seed_urls / …) pour ne pas perdre un
+    bootstrap concurrent. Les clés hors buckets sont reprises du disque
+    puis écrasées par l'entrant s'il les porte."""
+    merged = dict(disk or {})
+    merged.update({k: v for k, v in (incoming or {}).items()
+                   if k not in _EXCEPTION_BUCKETS})
+    for bucket in _EXCEPTION_BUCKETS:
+        merged[bucket] = _merge_bucket((disk or {}).get(bucket),
+                                       (incoming or {}).get(bucket))
+    return merged
+
+
 def load_exceptions() -> dict:
     try:
-        return json.loads(EXCEPTIONS_FILE.read_text(encoding="utf-8"))
+        with _exceptions_thread_lock:
+            if not EXCEPTIONS_FILE.is_file():
+                return _empty_exceptions()
+            with open(EXCEPTIONS_FILE, "r", encoding="utf-8") as fh:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_SH)
+                    return _parse_exceptions_text(fh.read())
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     except Exception:
-        return {"manual": {}, "auto": {}}
+        return _empty_exceptions()
 
 
 def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict]:
@@ -296,8 +345,28 @@ def urls_with_catalog(texts: list[str]) -> list[str]:
 
 
 def save_exceptions(exc: dict):
+    """Écriture flock + merge-on-write : deux zones concurrentes n'écrasent
+    plus leurs bootstraps respectifs (JSON corrompu ou domaines perdus)."""
     try:
-        EXCEPTIONS_FILE.write_text(json.dumps(exc, indent=2, ensure_ascii=False), encoding="utf-8")
+        EXCEPTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _exceptions_thread_lock:
+            with open(EXCEPTIONS_FILE, "a+", encoding="utf-8") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                try:
+                    fh.seek(0)
+                    disk = _parse_exceptions_text(fh.read())
+                    merged = merge_exceptions(disk, exc or {})
+                    fh.seek(0)
+                    fh.truncate()
+                    json.dump(merged, fh, indent=2, ensure_ascii=False)
+                    fh.write("\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                    if isinstance(exc, dict):
+                        exc.clear()
+                        exc.update(merged)
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
 
