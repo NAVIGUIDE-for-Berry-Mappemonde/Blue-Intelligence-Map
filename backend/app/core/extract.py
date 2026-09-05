@@ -18,7 +18,12 @@ import difflib
 import hashlib
 import re
 import threading
+from contextvars import ContextVar
 from urllib.parse import urljoin, urlparse
+
+# Désactivé pour les variants v1/v2 (SearXNG only) — TinyFish Fetch reste
+# réservé au variant « tinyfish ». Défaut True pour ne pas casser le Swarm.
+allow_tinyfish_fetch: ContextVar[bool] = ContextVar("allow_tinyfish_fetch", default=True)
 
 import httpx
 from bs4 import BeautifulSoup
@@ -549,7 +554,7 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
         return None
 
     from app.core.tinyfish import tf_api_key
-    if tf_api_key():
+    if allow_tinyfish_fetch.get() and tf_api_key():
         jina_text, tf_pair = await asyncio.gather(
             _jina_mirror_text(url, log),
             _tinyfish_mirror_text(url, log),
