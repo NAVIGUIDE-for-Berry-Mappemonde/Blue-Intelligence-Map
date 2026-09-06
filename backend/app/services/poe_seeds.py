@@ -139,8 +139,14 @@ def _merge_seed(existing: dict, incoming: dict) -> None:
 
 def union_extracted(batches: list[tuple[str, list[dict]]],
                     drop_legal: bool = True) -> list[dict]:
-    """Déduplique v1 + runs. `batches` = [(source, ports), ...]."""
+    """Déduplique v1 + runs. `batches` = [(source, ports), ...].
+
+    L'appariement se fait par ZEE (mrgid) : un scan mondial O(n²) timeout
+    au-delà de quelques milliers de ports.
+    """
     out: list[dict] = []
+    by_zone: dict[int | None, list[dict]] = {}
+    by_key: dict[str, dict] = {}
     for source, ports in batches:
         for raw in ports:
             if not (raw.get("name") or "").strip():
@@ -148,11 +154,21 @@ def union_extracted(batches: list[tuple[str, list[dict]]],
             if drop_legal and is_legal_fragment(raw):
                 continue
             seed = _slim(raw, source)
-            hit = _match_seed(seed, out)
+            key = seed.get("dedup_key")
+            if key and key in by_key:
+                _merge_seed(by_key[key], seed)
+                continue
+            pool = by_zone.setdefault(seed.get("mrgid"), [])
+            hit = _match_seed(seed, pool)
             if hit is None:
                 out.append(seed)
+                pool.append(seed)
+                if key:
+                    by_key[key] = seed
             else:
                 _merge_seed(hit, seed)
+                if key:
+                    by_key[key] = hit
     return out
 
 
@@ -196,10 +212,19 @@ def listing_name_seeds(listing_ports: list[dict]) -> list[dict]:
 def attach_listing_seeds(extracted: list[dict], listing_ports: list[dict]) -> dict:
     """Ajoute les noms listing sans match. Les matches annotent la graine extraite."""
     listing_seeds = listing_name_seeds(listing_ports)
+    by_zone: dict[int | None, list[dict]] = {}
+    for p in extracted:
+        by_zone.setdefault(p.get("mrgid"), []).append(p)
     attached = 0
     novel = []
     for ls in listing_seeds:
-        hit = _match_seed(ls, extracted)
+        pool = []
+        for mid in ls.get("mrgids") or ([ls["mrgid"]] if ls.get("mrgid") is not None else []):
+            pool.extend(by_zone.get(mid) or [])
+        if not pool:
+            novel.append(ls)
+            continue
+        hit = _match_seed(ls, pool)
         if hit is not None:
             _merge_seed(hit, ls)
             hit["listing_name"] = ls["name"]

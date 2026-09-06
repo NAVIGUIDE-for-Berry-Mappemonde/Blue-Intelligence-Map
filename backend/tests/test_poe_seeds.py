@@ -68,6 +68,13 @@ class TestUnionExtracted:
         out = union_extracted([("v1", a), ("run:y", b)])
         assert {p["name"] for p in out} == {"Fort Bay", "Alofi"}
 
+    def test_same_name_other_zone_is_kept(self):
+        a = [_port(26518, "Harbor", zone="Saba")]
+        b = [_port(8447, "Harbor", zone="Niue")]
+        out = union_extracted([("v1", a + b)])
+        assert len(out) == 2
+        assert {p["mrgid"] for p in out} == {26518, 8447}
+
 
 class TestListingSeeds:
     def test_listing_fills_hole_and_attaches_known(self):
