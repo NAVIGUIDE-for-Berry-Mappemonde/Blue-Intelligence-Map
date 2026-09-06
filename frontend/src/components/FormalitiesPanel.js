@@ -176,6 +176,11 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
                         {z.poe_count} {t("poePortsCount")}
                       </span>
                     )}
+                    {z.confidence_avg != null && (
+                      <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest border-line text-slate-300">
+                        {t("poeConfidence")} {z.confidence_avg}
+                      </span>
+                    )}
                     {z.stale && (
                       <span
                         className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest border-amberx/40 bg-amberx/10 text-amberx flex items-center gap-1"

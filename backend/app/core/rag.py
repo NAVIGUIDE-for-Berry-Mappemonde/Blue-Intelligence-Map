@@ -100,6 +100,47 @@ def select_context(query: str, text: str, max_chars: int = 8000, size: int = 500
     return "\n…\n".join(top_chunks(query, text, k=k, size=size))[:max_chars]
 
 
+_LIST_CHUNK_RE = re.compile(
+    r"port of entry|ports of entry|puertos habilitados|puerto de entrada|"
+    r"ports? d['’ ]?entr[eé]e|portos de entrada|designated port|"
+    r"harbour|harbor|capitan[ií]a|latitud|longitud|gazette|decreto|décret|"
+    r"customs|douane|aduana|\b1[.)]\s+\w+|\b\d+\.\-\s+\w+",
+    re.I,
+)
+
+
+def list_like_score(chunk: str) -> float:
+    """1.0 si le morceau ressemble à une liste / un décret de ports."""
+    if not chunk:
+        return 0.0
+    hits = len(_LIST_CHUNK_RE.findall(chunk))
+    digits = len(re.findall(r"\d+\.\d+", chunk))
+    return min(1.0, hits * 0.18 + min(digits, 6) * 0.06)
+
+
+def select_list_context(query: str, text: str, max_chars: int = 20000,
+                        size: int = 500) -> str:
+    """Comme select_context, mais les morceaux type liste passent devant
+    la seule similarité sémantique (un décret long cache souvent la liste
+    à la fin)."""
+    if len(text or "") <= max_chars:
+        return text or ""
+    chunks = chunk_text(text, size=size)
+    if not chunks:
+        return (text or "")[:max_chars]
+    k = max(4, max_chars // size)
+    try:
+        sem = _cosine_scores(query, chunks)
+    except Exception:
+        sem = [0.0] * len(chunks)
+    ranked = sorted(
+        range(len(chunks)),
+        key=lambda i: (list_like_score(chunks[i]) * 1.4 + (sem[i] if i < len(sem) else 0.0)),
+        reverse=True,
+    )[:k]
+    return "\n…\n".join(chunks[i] for i in sorted(ranked))[:max_chars]
+
+
 def rerank_candidates(query: str, candidates: list[str]) -> list[tuple[int, float]]:
     """Retourne [(index, score)] triés par pertinence décroissante.
     Cross-Encoder ms-marco si disponible, sinon bi-encoder/TF-IDF cosinus."""

@@ -114,12 +114,16 @@ class TestGeocodeDual:
 
     def test_agreement_under_2km(self, monkeypatch):
         res = self._run(monkeypatch,
-                        [{"lat": "10.0", "lon": "20.0", "display_name": "Port Alpha"}],
-                        [{"lat": "10.001", "lng": "20.001", "name": "Port Alpha"}])
+                        [{"lat": "10.0", "lon": "20.0", "display_name": "Port Alpha",
+                          "class": "harbour", "type": "harbour"}],
+                        [{"lat": "10.001", "lng": "20.001", "name": "Port Alpha",
+                          "fcode": "HBR"}])
         assert res["nominatim"] == [10.0, 20.0]
         assert res["geonames"] == [10.001, 20.001]
         assert res["agree"] is True
         assert res["agreement_km"] < 2.0
+        assert res["nominatim_meta"]["osm_type"] == "harbour"
+        assert res["geonames_meta"]["geonames_fcode"] == "HBR"
 
     def test_disagreement_flagged(self, monkeypatch):
         res = self._run(monkeypatch,
@@ -608,8 +612,9 @@ class TestSearchMergeAgreement:
              "score_serp": 0.4},
         ]
         best = poe._best_per_domain(cands)
-        assert len(best) == 1
-        assert best[0]["url"].endswith("decreto.pdf")
+        urls = [c["url"] for c in best]
+        assert any(u.endswith("decreto.pdf") for u in urls)
+        assert any("noticias" in u for u in urls)
 
     def test_agreement_high_overlap_not_discordant(self):
         shared = [

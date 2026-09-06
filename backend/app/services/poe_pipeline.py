@@ -39,14 +39,15 @@ from urllib.parse import urlparse, urlunparse
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
 from app.core.extract import (
-    catalog_is_sufficient, catalog_ports_with_coords, extract_cascade,
-    extract_structured_ports, internal_followups, is_geocodeable_name,
-    looks_like_port_catalog, official_attachments, serp_filter,
-    should_follow_attachments,
+    audit_serp_filter, catalog_is_sufficient, catalog_ports_with_coords,
+    extract_cascade, extract_structured_ports, internal_followups,
+    is_geocodeable_name, looks_like_port_catalog, official_attachments,
+    serp_filter, should_follow_attachments,
 )
-from app.core.geo import geocode_port_dual, point_in_eez
+from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception_flags
 from app.core.llm import extract_ports, grounded_search
-from app.core.rag import select_context, semantic_similarity
+from app.core.rag import select_list_context, semantic_similarity
+from app.services.poe_confidence import apply_score, listing_role, score_port, zone_confidence_avg
 
 from app.config import DATA_DIR as DATA
 
@@ -389,19 +390,60 @@ def _is_public_suffix(cand: str) -> bool:
         return False
 
 
+def eez_iso2_set() -> set[str]:
+    """Codes ISO des pays / territoires qui ont effectivement une ZEE."""
+    try:
+        from app.services.listing_ref import load_eez_index
+        out = set()
+        for z in load_eez_index():
+            cc = (z.get("iso2") or "").upper()
+            if cc:
+                out.add(cc)
+        return out
+    except Exception:
+        return set()
+
+
+def _preferred_gov_label(iso2: str) -> str:
+    lang = LANG_BY_ISO2.get((iso2 or "").upper())
+    if lang == "fr":
+        return "gouv"
+    if lang == "es":
+        return "gob"
+    return "gov"
+
+
 def build_whitelist(iso2: str | None, sov_iso2: str | None, exceptions: dict | None = None) -> list[str]:
-    """Croisement algorithmique code ISO x motifs d'État, validé par la PSL,
-    + exceptions manuelles/auto-découvertes (par territoire ET par souverain)."""
+    """Domaines d'État des pays qui ont une ZEE (indice, plus une porte).
+
+    Un suffixe PSL joker (Népal, Jamaïque…) ne produit plus les 7 motifs :
+    on garde le libellé usuel (gov / gouv / gob). Les pays sans mer sont
+    ignorés — même si on passe NP ou SK par erreur."""
     exc = exceptions or load_exceptions()
+    maritime = eez_iso2_set()
     out: set[str] = set()
     for cc in {c for c in (iso2, sov_iso2) if c}:
+        up = cc.upper()
+        if maritime and up not in maritime:
+            continue
         low = cc.lower()
+        hits = []
         for lbl in GOV_LABELS:
             cand = f"{lbl}.{low}"
             if _is_public_suffix(cand):
-                out.add(cand)
+                hits.append(cand)
+        if len(hits) >= 3:
+            pref = f"{_preferred_gov_label(up)}.{low}"
+            if pref in hits:
+                out.add(pref)
+            elif f"gov.{low}" in hits:
+                out.add(f"gov.{low}")
+            else:
+                out.add(hits[0])
+        else:
+            out.update(hits)
         for bucket in ("manual", "auto"):
-            for dom in (exc.get(bucket) or {}).get(cc.upper(), []):
+            for dom in (exc.get(bucket) or {}).get(up, []):
                 out.add(dom.lower())
     return sorted(out)
 
@@ -626,11 +668,17 @@ async def search_grounded(zone: dict, whitelist: list[str], log, query_override:
     return await grounded_search(prompt, log=log, domain_fn=domain_of)
 
 
-def rank_candidates_ml(candidates: list[dict], log, scores_out: list | None = None) -> list[dict]:
-    """Classifieur SERP (ml_core) : trie les candidats par probabilité de mener
-    à une liste officielle de ports AVANT tout téléchargement, et écarte les
-    scores très faibles quand des alternatives existent.
-    scores_out (optionnel) reçoit [{url, domain, score}] pour le journal."""
+def _looks_state_candidate(c: dict, whitelist: list[str] | None = None) -> bool:
+    u = c.get("url") or ""
+    if whitelist and url_allowed(u, whitelist):
+        return True
+    return bool(OFFICIAL_TOKENS.search(c.get("domain") or u))
+
+
+def rank_candidates_ml(candidates: list[dict], log, scores_out: list | None = None,
+                       whitelist: list[str] | None = None) -> list[dict]:
+    """Trie les URLs avant téléchargement. Un domaine d'État n'est jamais
+    écarté pour un score ML bas — seulement reculé. scores_out journalise."""
     if len(candidates) < 2:
         return candidates
     try:
@@ -648,7 +696,10 @@ def rank_candidates_ml(candidates: list[dict], log, scores_out: list | None = No
     if all(s is None for s, _ in scored):
         return candidates
     scored.sort(key=lambda x: x[0] if x[0] is not None else 0.5, reverse=True)
-    strong = [c for s, c in scored if s is None or s >= 0.1]
+    strong = []
+    for s, c in scored:
+        if s is None or s >= 0.1 or _looks_state_candidate(c, whitelist):
+            strong.append(c)
     ranked = strong if len(strong) >= 3 else [c for _, c in scored]
     dropped = len(scored) - len(ranked)
     top = ", ".join(f"{c.get('domain') or '?'}={s:.2f}" for s, c in scored[:3] if s is not None)
@@ -690,7 +741,8 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - noms vus par le NER seul → journalisés comme candidats à vérifier ;
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
     Une vraie table (noms + coords) court-circuite le LLM ; les fragments
-    « port de X » ne suffisent plus — Haiku lit ces pages.
+    « port de X » ne suffisent plus — Haiku et OpenRouter lisent ces pages.
+    Claude, s'il est allumé, est un second lecteur à côté d'OpenRouter.
     """
     raw_catalog = catalog_text if catalog_text is not None else context
     catalog = extract_structured_ports(raw_catalog)
@@ -701,11 +753,25 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                    catalog_n=len(kept), fallback="catalog", skipped_llm=True)
         return kept
 
-    async def _llm():
+    async def _openrouter():
         try:
             return await extract_ports(context, zone, settings=settings, log=log), None
         except Exception as e:
             return None, e
+
+    async def _claude():
+        try:
+            from app.core import claude
+            if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):
+                return None
+            ports = await claude.extract_ports_claude(context, zone, settings=settings, log=log)
+            if log:
+                log(f"LLM Claude Haiku (second lecteur): {len(ports)} port(s)")
+            return ports
+        except Exception as e:
+            if log:
+                log(f"Claude second lecteur: échec ({type(e).__name__})")
+            return None
 
     async def _ner():
         try:
@@ -715,9 +781,15 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         except Exception:
             return None  # NER indisponible (modèle absent) — signal neutre
 
-    (llm_ports, llm_err), ner_names = await asyncio.gather(_llm(), _ner())
+    (llm_ports, llm_err), claude_ports, ner_names = await asyncio.gather(
+        _openrouter(), _claude(), _ner())
     ner_names = list(dict.fromkeys(ner_names)) if ner_names is not None else None
+    claude_names = [p["name"] for p in (claude_ports or []) if p.get("name")]
 
+    if llm_ports is None and claude_ports:
+        log("OpenRouter indisponible — liste Claude retenue comme lecture principale")
+        llm_ports, llm_err = claude_ports, None
+        claude_names = []  # déjà la liste principale
     if llm_ports is None:
         log(f"LLM: échec ({type(llm_err).__name__}: {str(llm_err)[:100]})")
         coord_catalog = catalog_ports_with_coords(catalog)
@@ -745,8 +817,8 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                    fallback="none", llm_error=str(llm_err)[:120])
         return []
 
-    # NER muet (modèle absent OU zéro entité détectée) → signal NEUTRE, pas un désaccord
     has_ner_signal = bool(ner_names)
+    has_claude = bool(claude_names)
     for p in llm_ports:
         if p.get("extraction_engine") not in ("claude", "openrouter", "catalog", "ner"):
             p["extraction_engine"] = "llm"
@@ -754,19 +826,42 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
             any(text_similarity(p["name"], n) >= 0.6 for n in ner_names)
             if has_ner_signal else None
         )
+        p["claude_agreement"] = (
+            any(text_similarity(p["name"], n) >= 0.6 for n in claude_names)
+            if has_claude else None
+        )
     both = [p["name"] for p in llm_ports if p.get("extraction_agreement")]
     llm_only = [p["name"] for p in llm_ports if p.get("extraction_agreement") is False]
     ner_only = ([n for n in ner_names
                  if not any(text_similarity(n, p["name"]) >= 0.6 for p in llm_ports)]
                 if has_ner_signal else [])
+    claude_only = ([n for n in claude_names
+                    if not any(text_similarity(n, p["name"]) >= 0.6 for p in llm_ports)]
+                   if has_claude else [])
     if has_ner_signal:
         log(f"extraction comparée: {len(both)} port(s) confirmés LLM∩NER, "
             f"{len(llm_only)} LLM seul, {len(ner_only)} NER seul (candidats à vérifier)")
+    if has_claude:
+        log(f"second lecteur Claude: {sum(1 for p in llm_ports if p.get('claude_agreement'))} "
+            f"accord(s), {len(claude_only)} nom(s) Claude seul")
+    for n in claude_only:
+        llm_ports.append({
+            "name": n, "city": None,
+            "note": "vu par Claude seulement (à recouper)",
+            "extraction_engine": "claude",
+            "extraction_agreement": (
+                any(text_similarity(n, x) >= 0.6 for x in ner_names)
+                if has_ner_signal else None
+            ),
+            "claude_agreement": None,
+        })
     engines = sorted({p.get("extraction_engine") for p in llm_ports
                       if p.get("extraction_engine")})
     await emit(rec, "extraction_compare", llm_n=len(llm_ports),
                ner_n=(len(ner_names) if ner_names is not None else None),
                both=both, llm_only=llm_only, ner_only=ner_only,
+               claude_n=(len(claude_names) if has_claude else None),
+               claude_only=claude_only,
                llm_engine=(engines[0] if len(engines) == 1 else engines or None))
     if catalog:
         by_coord = {
@@ -924,23 +1019,44 @@ def _merge_candidates(*groups: list[dict]) -> list[dict]:
     return out
 
 
-def _best_per_domain(candidates: list[dict]) -> list[dict]:
-    """Un URL par domaine après scoring (list_url_bonus + score SERP)."""
-    best: dict[str, tuple[float, dict]] = {}
+def _url_score(c: dict) -> float:
+    serp = c.get("score_serp")
+    return list_url_bonus(c.get("url") or "") + (serp if serp is not None else 0.5)
+
+
+def _best_per_domain(candidates: list[dict], max_per_domain: int = 2) -> list[dict]:
+    """Jusqu'à 2 URLs par domaine : la meilleure page et le meilleur PDF/liste."""
+    groups: dict[str, list[dict]] = {}
     order: list[str] = []
     for c in candidates or []:
         d = c.get("domain") or domain_of(c.get("url") or "")
         if not d:
             continue
-        serp = c.get("score_serp")
-        score = list_url_bonus(c.get("url") or "") + (serp if serp is not None else 0.5)
-        prev = best.get(d)
-        if prev is None:
+        if d not in groups:
             order.append(d)
-            best[d] = (score, c)
-        elif score > prev[0]:
-            best[d] = (score, c)
-    return [best[d][1] for d in order if d in best]
+            groups[d] = []
+        groups[d].append(c)
+    out: list[dict] = []
+    for d in order:
+        items = sorted(groups[d], key=_url_score, reverse=True)
+        pdfs = [c for c in items if (c.get("url") or "").lower().endswith(".pdf")]
+        pages = [c for c in items if not (c.get("url") or "").lower().endswith(".pdf")]
+        picked: list[dict] = []
+        if pages:
+            picked.append(pages[0])
+        if pdfs:
+            picked.append(pdfs[0])
+        if not picked:
+            picked = items[:1]
+        seen: set[str] = set()
+        for c in picked:
+            u = c.get("url") or ""
+            if u and u not in seen:
+                seen.add(u)
+                out.append(c)
+            if len(seen) >= max_per_domain:
+                break
+    return out
 
 
 def _jaccard(a: set, b: set) -> float:
@@ -1086,20 +1202,25 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
                    n=len(candidates), results=candidates,
                    synthesis_chars=len(synthesis or ""))
 
+    protect = (lambda u: url_allowed(u, whitelist)
+               or bool(OFFICIAL_TOKENS.search(u or "")))
     before_filter = list(candidates)
-    candidates = serp_filter(candidates)
-    dropped_filter = [c.get("url") for c in before_filter if c not in candidates]
+    audit = audit_serp_filter(before_filter, protect_fn=protect)
+    candidates = serp_filter(candidates, protect_fn=protect)
+    dropped_filter = [a["url"] for a in audit if not a["kept"]]
     if dropped_filter:
-        await emit(rec, "serp_filter", kept=len(candidates), dropped=dropped_filter)
+        await emit(rec, "serp_filter", kept=len(candidates), dropped=dropped_filter,
+                   audit=audit)
     scores: list = []
-    candidates = rank_candidates_ml(candidates, log, scores_out=scores)
+    candidates = rank_candidates_ml(candidates, log, scores_out=scores,
+                                    whitelist=whitelist)
     if scores:
         await emit(rec, "serp_rank", scores=scores)
 
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
 
     scoped_added = False
-    if key and (not official or compare.get("discordant")):
+    if key and whitelist and (not official or compare.get("discordant")):
         scoped = await _tf_search_safe(
             query_en, key, log, location=iso, language="en",
             include_domains=whitelist[:8])
@@ -1110,16 +1231,20 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             log(f"TinyFish Search scoped: {len(scoped)} résultat(s) include_domains")
             candidates = _merge_candidates(candidates, scoped)
             before_s = list(candidates)
-            candidates = serp_filter(candidates)
-            dropped_s = [c.get("url") for c in before_s if c not in candidates]
+            audit_s = audit_serp_filter(before_s, protect_fn=protect)
+            candidates = serp_filter(candidates, protect_fn=protect)
+            dropped_s = [a["url"] for a in audit_s if not a["kept"]]
             if dropped_s:
                 await emit(rec, "serp_filter", kept=len(candidates), dropped=dropped_s,
-                           scoped=True)
+                           scoped=True, audit=audit_s)
             scores_s: list = []
-            candidates = rank_candidates_ml(candidates, log, scores_out=scores_s)
+            candidates = rank_candidates_ml(candidates, log, scores_out=scores_s,
+                                            whitelist=whitelist)
             if scores_s:
                 await emit(rec, "serp_rank", scores=scores_s, scoped=True)
             official = [c for c in candidates if url_allowed(c["url"], whitelist)]
+    elif key and not whitelist and (not official or compare.get("discordant")):
+        log("TinyFish scoped sauté : whitelist vide pour cette ZEE")
 
     if not official:
         log("Level-2 retry: recherche ciblée sur l'organisation douanière nationale")
@@ -1149,11 +1274,12 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             synthesis = syn2
         known_urls = {_normalize_url(c.get("url")) for c in candidates}
         extra = serp_filter([c for c in (extra or [])
-                             if _normalize_url(c.get("url") or "") not in known_urls])
+                             if _normalize_url(c.get("url") or "") not in known_urls],
+                            protect_fn=protect)
         if extra:
             log(f"Level-2 retry: {len(extra)} source(s) supplémentaires trouvées")
             candidates += extra
-            candidates = rank_candidates_ml(candidates, log)
+            candidates = rank_candidates_ml(candidates, log, whitelist=whitelist)
         official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
 
     # Bootstrapping des exceptions (domaines d'État non couverts par la PSL)
@@ -1180,16 +1306,20 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         official = _best_per_domain(official)
     strictly_official = bool(official)
     if not official:
-        # dernier recours : domaines du pays même non gouvernementaux (statut
-        # ia_sans_source). Les sites GOUVERNEMENTAUX D'AUTRES PAYS sont exclus
-        # (un ccTLD étranger + token régalien = ports du mauvais pays).
+        # Repli national : la whitelist est un indice, pas une porte.
+        # Les sites gouvernementaux d'autres pays restent exclus.
         cc_ok = {c for c in (cc_low, (zone.get("sov_iso2") or "").lower()) if c}
 
         national = [c for c in rejected if cc_low and c["domain"].endswith("." + cc_low)]
         official = (national or [c for c in rejected if not is_foreign_gov_domain(c["domain"], cc_ok)])[:2]
-        log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) non officielles retenues (ia_sans_source)")
+        official = _best_per_domain(official)
+        log(f"gatekeeper: 0 domaine whitelisté — {len(official)} source(s) nationales retenues "
+            f"(confiance plus basse, pas un tampon de zone)")
     else:
         log(f"gatekeeper: {len(official)} source(s) officielles retenues, {len(rejected)} rejetées")
+    for c in official:
+        c["official"] = url_allowed(c.get("url") or "", whitelist) or bool(
+            OFFICIAL_TOKENS.search(c.get("domain") or ""))
     await emit(rec, "gatekeeper", whitelist=whitelist[:12],
                official=[c["domain"] for c in official],
                rejected=[c["domain"] for c in rejected],
@@ -1255,21 +1385,25 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
             texts.append(f"[SOURCE: {url}]\n{text[:60000]}")
             excerpts[url] = text[:2500]
             used_sources.append({"url": url, "domain": c.get("domain") or domain_of(url),
-                                 "md5": hashes.get(url), "collected_at": now_iso()})
+                                 "md5": hashes.get(url), "collected_at": now_iso(),
+                                 "official": bool(c.get("official"))})
             await emit(rec, "source_used", url=url, domain=c.get("domain"), chars=len(text))
     return texts, hashes, used_sources, excerpts
 
 
-def _eez_cand(lat, lon, source, geom, prepared) -> dict:
+def _spatial_cand(lat, lon, source, geom, prepared, inland=None) -> dict:
+    """Candidat géocodé + classement ZEE / bord / rivière (pas de tampon 300 km)."""
     cand = {"source": source, "lat": float(lat), "lon": float(lon),
-            "validated": False, "dist_km": None}
-    if prepared is not None or geom is not None:
-        cand["validated"], cand["dist_km"] = point_in_eez(lat, lon, geom, prepared)
+            "validated": False, "dist_km": None, "kind": "unknown"}
+    if prepared is None and geom is None:
+        return cand
+    sp = classify_poe_point(float(lat), float(lon), geom, prepared, inland=inland)
+    cand.update(sp)
     return cand
 
 
 def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
-    """Choisit un candidat : table/source, accord dual, départage Haiku, EEZ."""
+    """Choisit un candidat : table/source, accord dual, départage Haiku, ZEE."""
     if row.get("hint") == "not_geocodeable":
         return None, "not_geocodeable"
     cands = row["cands"]
@@ -1295,18 +1429,25 @@ def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
     return cands[0], "first"
 
 
-def _apply_aberrant(chosen, arbitration, cands, port_name, log):
-    if chosen and chosen.get("dist_km") is not None and chosen["dist_km"] > 300:
-        other = next((c for c in cands if c is not chosen
-                      and (c.get("dist_km") is None or c["dist_km"] <= 300)), None)
-        if other:
-            log(f"  ⚠ {port_name}: {chosen['source']} aberrant ({chosen['dist_km']} km) "
-                f"— bascule sur {other['source']}")
-            return other, "eez_aberrant_switch"
-        log(f"  ⚠ {port_name}: géocodage aberrant ({chosen['dist_km']} km de la ZEE) "
-            f"— coordonnées rejetées")
-        return None, "aberrant_rejected"
-    return chosen, arbitration
+def _apply_spatial(chosen, arbitration, cands, port_name, log):
+    """Après le départage Haiku : garder seulement ZEE / bord / rivière.
+
+    Sans géométrie de zone (`kind=unknown`), on ne rejette pas — les tests
+    unitaires et les zones sans polygone gardent le point choisi.
+    """
+    if not chosen:
+        return chosen, arbitration
+    if chosen.get("validated") or chosen.get("kind") in (None, "unknown"):
+        return chosen, arbitration
+    other = next((c for c in cands if c is not chosen and c.get("validated")), None)
+    if other:
+        log(f"  ⚠ {port_name}: {chosen['source']} hors zone ({chosen.get('kind')}) "
+            f"— bascule sur {other['source']}")
+        return other, "spatial_switch"
+    log(f"  ⚠ {port_name}: hors ZEE, hors bord terrestre "
+        f"et hors exception rivière "
+        f"({chosen.get('kind')}, {chosen.get('dist_km')} km) — coordonnées rejetées")
+    return None, "spatial_rejected"
 
 
 async def _haiku_tiebreak_zone(zone, rows, settings, log, rec) -> dict:
@@ -1337,15 +1478,25 @@ async def _haiku_tiebreak_zone(zone, rows, settings, log, rec) -> dict:
 async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
                                rec=None, run=None, catalog_text: str | None = None,
                                settings: dict | None = None) -> list[dict]:
-    """Étape 4 — Extraction (LLM ∥ NER) puis géocodage.
+    """Étape 4 — Extraction parallèle (OpenRouter ∥ Claude ∥ NER) puis géocodage.
 
-    Coords déjà dans la source (table ou Haiku recopié) → pas de Nominatim.
+    Coords déjà dans la source (table ou LLM recopié) → pas de Nominatim.
     Nom non toponyme → pas de géocode. Désaccord dual → un Haiku / zone.
+    Un point n'est gardé que s'il est dans cette ZEE, sur son bord terrestre
+    (≤ 15 km), ou — exception rivière — un port de CE pays à ≤ 400 km.
+    Pas de tampon 300 km, pas de snap_to_ocean.
     """
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
     ports = await extract_ports_llm(context, zone, log, rec=rec,
                                    catalog_text=catalog_text, settings=settings)
+    listing_ports: list[dict] = []
+    try:
+        from app.services.listing_ref import listing_ports_for_mrgid, project_listing
+        listing_ports = listing_ports_for_mrgid(project_listing()["ports"], mrgid)
+    except Exception:
+        listing_ports = []
+    official_source = any(s.get("official") for s in used_sources)
 
     geom = None
     try:
@@ -1361,13 +1512,17 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         if not norm or norm in seen_names:
             continue
         seen_names.add(norm)
+        role = listing_role(p.get("name") or "", listing_ports)
+        port_ev = {**p, "listing_role": role}
         empty_geo = {"nominatim": None, "geonames": None, "agree": None,
-                     "agreement_km": None, "geonames_available": True}
+                     "agreement_km": None, "geonames_available": True,
+                     "nominatim_meta": {}, "geonames_meta": {}}
         if p.get("lat") is not None and p.get("lon") is not None:
             src = "official_list" if p.get("extraction_engine") == "catalog" else "source"
+            inland = inland_exception_flags(port_ev, zone, official_list=True)
             rows.append({
                 "port": p, "norm": norm, "geo": empty_geo, "hint": None,
-                "cands": [_eez_cand(p["lat"], p["lon"], src, geom, prepared)],
+                "cands": [_spatial_cand(p["lat"], p["lon"], src, geom, prepared, inland)],
             })
             continue
         if not is_geocodeable_name(p["name"], p.get("geocodeable")):
@@ -1381,8 +1536,12 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         cands = []
         for source in ("nominatim", "geonames"):
             coords = geo.get(source)
-            if coords:
-                cands.append(_eez_cand(coords[0], coords[1], source, geom, prepared))
+            if not coords:
+                continue
+            meta = geo.get(f"{source}_meta") or {}
+            inland = inland_exception_flags(port_ev, zone, meta)
+            cands.append(_spatial_cand(
+                coords[0], coords[1], source, geom, prepared, inland))
         rows.append({"port": p, "norm": norm, "geo": geo, "hint": None, "cands": cands})
 
     disagreements = [
@@ -1398,19 +1557,21 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     for row in rows:
         p, norm, geo, cands = row["port"], row["norm"], row["geo"], row["cands"]
         chosen, arbitration = _pick_from_cands(row, picks)
-        chosen, arbitration = _apply_aberrant(chosen, arbitration, cands, p["name"], log)
+        chosen, arbitration = _apply_spatial(chosen, arbitration, cands, p["name"], log)
 
         lat = chosen["lat"] if chosen else None
         lon = chosen["lon"] if chosen else None
         source = chosen["source"] if chosen else None
         validated = bool(chosen["validated"]) if chosen else False
         dist_km = chosen["dist_km"] if chosen else None
+        spatial_kind = chosen.get("kind") if chosen else "rejected"
 
         await emit(rec, "geocode", port=p["name"],
                    nominatim=geo.get("nominatim"), geonames=geo.get("geonames"),
                    geonames_available=geo.get("geonames_available"),
                    agreement_km=geo.get("agreement_km"), agree=geo.get("agree"),
-                   candidates=cands, chosen=source, arbitration=arbitration)
+                   candidates=cands, chosen=source, arbitration=arbitration,
+                   spatial_kind=spatial_kind)
 
         doc = {
             "_id": str(uuid.uuid4()),
@@ -1420,6 +1581,7 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             "name": p["name"], "city": p.get("city"), "note": p.get("note"),
             "lat": lat, "lon": lon, "geocode_source": source,
             "validated": validated, "distance_km": dist_km,
+            "spatial_kind": spatial_kind,
             "geocode_agree": geo.get("agree"),
             "geocode_agreement_km": geo.get("agreement_km"),
             "geocode_alternates": {"nominatim": geo.get("nominatim"),
@@ -1427,10 +1589,13 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             "geocode_arbitration": arbitration,
             "extraction_engine": p.get("extraction_engine"),
             "extraction_agreement": p.get("extraction_agreement"),
+            "claude_agreement": p.get("claude_agreement"),
             "source_urls": [s["url"] for s in used_sources],
             "extracted_at": now_iso(),
             "dedup_key": f"{mrgid}:{norm}",
         }
+        apply_score(doc, score_port(doc, official_source=official_source,
+                                    listing_ports=listing_ports))
         if run is not None:
             doc["run_id"] = run.run_id
             doc["pipeline_variant"] = getattr(run, "variant", None)
@@ -1440,11 +1605,21 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             agree_note = f" ✓ accord géocodeurs ({geo.get('agreement_km')} km)"
         elif geo.get("agree") is False:
             agree_note = f" ⚠ désaccord géocodeurs ({geo.get('agreement_km')} km, arbitrage {arbitration})"
+        kind_note = ""
+        if spatial_kind == "in_eez":
+            kind_note = " ✓ ZEE"
+        elif spatial_kind == "coastal_land":
+            kind_note = " ✓ bord terrestre"
+        elif spatial_kind == "inland_river":
+            kind_note = " ✓ exception rivière"
+        elif lat is not None:
+            kind_note = f" ⚠ {spatial_kind} ({dist_km} km)"
         log(f"  ⚓ {p['name']} → {'%.3f, %.3f' % (lat, lon) if lat is not None else 'non géocodé'}"
-            f"{' ✓ ZEE' if validated else (f' ⚠ hors ZEE ({dist_km} km)' if lat is not None else '')}"
+            f"{kind_note}  confiance {doc.get('confidence')}"
             + agree_note)
         await emit(rec, "port", name=p["name"], city=p.get("city"), lat=lat, lon=lon,
                    validated=validated, distance_km=dist_km,
+                   spatial_kind=spatial_kind, confidence=doc.get("confidence"),
                    extraction_agreement=p.get("extraction_agreement"),
                    geocode_agree=geo.get("agree"))
     return docs
@@ -1477,6 +1652,8 @@ async def _persist_zone_run(db, zone: dict, docs: list[dict], status: str,
         "generated_at": now_iso(),
         "last_error": None if docs else "aucun port d'entrée extrait des sources",
         "pipeline_variant": getattr(run, "variant", None),
+        "sources_official": bool(any(s.get("official") for s in used_sources)),
+        "confidence_avg": zone_confidence_avg(docs),
     }
     await db[run.zones_coll].update_one(
         {"run_id": run.run_id, "mrgid": mrgid}, {"$set": zone_doc}, upsert=True)
@@ -1508,6 +1685,14 @@ async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
                 updates["note"] = d.get("note") or match.get("note")
                 updates["source_urls"] = sorted(set((match.get("source_urls") or []) + (d.get("source_urls") or [])))
                 updates["extracted_at"] = d["extracted_at"]
+                if match.get("osm_confidence") is not None:
+                    d["osm_confidence"] = match["osm_confidence"]
+                    apply_score(d, score_port(
+                        {**d, "osm_confidence": match["osm_confidence"]},
+                        official_source=any(s.get("official") for s in used_sources)))
+                    updates["confidence"] = d.get("confidence")
+                    updates["confidence_parts"] = d.get("confidence_parts")
+                    updates["confidence_reasons"] = d.get("confidence_reasons")
                 await db.poe_ports.update_one({"_id": match["_id"]}, {"$set": updates})
                 merged += 1
             else:
@@ -1523,6 +1708,8 @@ async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
             "source_hashes": hashes,
             "source_excerpts": excerpts,
             "last_error": None,
+            "sources_official": bool(any(s.get("official") for s in used_sources)),
+            "confidence_avg": zone_confidence_avg(docs),
         }, "$unset": {"unclos": ""}})
         log(f"terminé: {inserted} nouveau(x) PoE, {merged} fusionné(s) — total zone {poe_count}, statut {status}")
     elif zone.get("poe_count", 0) > 0:
@@ -1546,13 +1733,15 @@ async def _persist_zone(db, zone: dict, docs: list[dict], status: str,
     return await db.eez_zones.find_one({"mrgid": mrgid})
 
 
-async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, run=None) -> dict:
-    """Orchestrateur : monitoring -> recherche -> collecte -> extraction -> écriture.
+async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False,
+                            run=None, refresh: bool = False) -> dict:
+    """Orchestrateur : recherche -> collecte -> extraction -> écriture.
 
-    run (RunContext, optionnel) : mode « run versionné from scratch » — le
-    monitoring est court-circuité (pipeline complet forcé), chaque micro-étape
-    émet un événement structuré, et l'écriture va dans l'espace du run
-    (poe_run_ports / poe_run_zones) sans toucher aux collections v1."""
+    refresh=True : rafraîchissement périodique uniquement — le monitoring
+    MD5/sémantique peut alors sauter la ré-extraction. Une génération
+    manuelle, un run, ou force=True refont toujours la recherche.
+
+    run (RunContext, optionnel) : mode « run versionné from scratch »."""
     log = logger or (lambda m: None)
     zone = await db.eez_zones.find_one({"mrgid": int(mrgid)})
     if not zone:
@@ -1577,9 +1766,9 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                whitelist=whitelist, variant=variant)
 
     try:
-        # 1. Monitoring prioritaire des sources connues (jamais en mode run :
-        #    un run from scratch refait TOUT le pipeline)
-        if run is None:
+        # 1. Monitoring : seulement un rafraîchissement périodique.
+        #    Génération / amélioration / run : on cherche toujours.
+        if run is None and refresh:
             unchanged = await _skip_if_unchanged(db, zone, force, log, rec)
             if unchanged is not None:
                 return unchanged
@@ -1593,7 +1782,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
 
         # Monitoring MD5 post-collecte : skip si contenu strictement identique
         old_hashes = zone.get("source_hashes") or {}
-        if (run is None and not force and hashes and old_hashes and hashes == old_hashes
+        if (run is None and refresh and not force and hashes and old_hashes
+                and hashes == old_hashes
                 and zone.get("status") in ("ia", "ia_sans_source") and zone.get("poe_count", 0) > 0):
             log("MD5 inchangés — ré-extraction sautée (contenu source identique)")
             await db.eez_zones.update_one({"mrgid": int(mrgid)}, {"$set": {"checked_at": now_iso()}})
@@ -1608,7 +1798,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
             context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{synthesis[:6000]}")
             if not texts:
                 strictly_official = False
-                log("aucun texte source exploitable — extraction depuis la seule synthèse (ia_sans_source)")
+                log("aucun texte source exploitable — extraction depuis la seule synthèse (confiance basse)")
         if not context_parts:
             # Aucun texte exploitable : dernier recours groundé AVANT de déclarer
             # l'erreur (même filet que le retry post-extraction, ici en amont).
@@ -1621,7 +1811,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                 synthesis = syn_rescue
                 context_parts.append(f"[SYNTHÈSE DE RECHERCHE (à recouper)]\n{syn_rescue[:6000]}")
                 strictly_official = False
-                log("synthèse groundée obtenue — extraction depuis la synthèse (ia_sans_source)")
+                log("synthèse groundée obtenue — extraction depuis la synthèse (confiance basse)")
         if not context_parts:
             log("ERREUR: aucun contenu exploitable")
             await emit(rec, "zone_error", error="aucun contenu source exploitable",
@@ -1652,8 +1842,8 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
             log(f"catalogue / tournure légale ({len(raw_catalog)} nom(s)) — "
                 f"texte brut conservé pour le parseur, LLM sur {len(context)} chars")
         elif len(raw) > 15000:
-            context = select_context(rag_q, raw, max_chars=20000)
-            log(f"RAG: contexte condensé à {len(context)} chars (chunks pertinents par similarité cosinus)")
+            context = select_list_context(rag_q, raw, max_chars=20000)
+            log(f"RAG: contexte condensé à {len(context)} chars (listes d'abord, puis similarité)")
         else:
             context = raw
         await emit(rec, "context", sources=len(texts), synthesis=bool(synthesis),
@@ -1680,10 +1870,15 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
                 docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run,
                                                   catalog_text=context_retry, settings=settings)
                 if docs:
-                    strictly_official = False  # ports issus de la synthèse, pas des pages officielles
+                    strictly_official = False
+                    for d in docs:
+                        d["from_synthesis"] = True
+                        apply_score(d, score_port(
+                            d, official_source=False,
+                            listing_ports=None))
 
-        # 5. Écriture : espace du run (versionné) ou collections v1 (non-destructif)
-        status = "ia" if strictly_official else "ia_sans_source"
+        # 5. Écriture : la confiance vit sur chaque port, plus de tampon de zone.
+        status = "ia" if docs else "erreur"
         if run is not None:
             result = await _persist_zone_run(db, zone, docs, status,
                                              used_sources, hashes, run, rec, log)
@@ -1723,7 +1918,10 @@ def zone_to_item(doc: dict) -> dict:
         "stale": is_stale(doc),
         "last_error": doc.get("last_error"),
         "unclos": doc.get("unclos"),
-        "sources": [{"url": s.get("url"), "domain": s.get("domain"), "collected_at": s.get("collected_at")}
+        "sources_official": doc.get("sources_official"),
+        "confidence_avg": doc.get("confidence_avg"),
+        "sources": [{"url": s.get("url"), "domain": s.get("domain"), "collected_at": s.get("collected_at"),
+                     "official": s.get("official")}
                     for s in (doc.get("sources") or [])],
         "whitelist": (doc.get("whitelist") or [])[:8],
     }
@@ -1748,6 +1946,9 @@ def ports_to_geojson(docs: list[dict]) -> dict:
                 "osm_confidence": d.get("osm_confidence"),
                 "osm_tags": d.get("osm_tags"),
                 "spatial_anomaly": d.get("spatial_anomaly"),
+                "confidence": d.get("confidence"),
+                "confidence_reasons": d.get("confidence_reasons"),
+                "spatial_kind": d.get("spatial_kind"),
             },
         })
     return {
