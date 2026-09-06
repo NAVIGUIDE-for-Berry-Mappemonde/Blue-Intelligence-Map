@@ -44,13 +44,15 @@ class SettingsBody(BaseModel):
     marina_batch_concurrency: int | None = None
     openrouter_min_credits_usd: float | None = None
     enrich_stale_days: int | None = None
+    anthropic_api_key: str | None = None
+    claude_budget_usd: float | None = None
 
 @router.get("/settings")
 async def read_settings():
     s = await get_settings()
     s.pop("_id", None)
     # Nettoyage des clés héritées d'anciennes versions (Gemini/Emergent/Cloudflare).
-    for legacy in ("gemini_api_key", "anthropic_api_key", "cloudflare_model",
+    for legacy in ("gemini_api_key", "cloudflare_model",
                    "gatekeeper_model", "extract_model", "extraction_engine"):
         s.pop(legacy, None)
     if s.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY"):
@@ -63,13 +65,24 @@ async def read_settings():
         s["tinyfish_api_key"] = ""
     else:
         s["tinyfish_api_key_set"] = False
+    try:
+        s["claude_budget_usd"] = float(s.get("claude_budget_usd") or 0)
+    except (TypeError, ValueError):
+        s["claude_budget_usd"] = 0.0
+    from app.core.claude import usage_public
+    s.update(usage_public(s))
+    if s.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY"):
+        s["anthropic_api_key_set"] = True
+        s["anthropic_api_key"] = ""
+    else:
+        s["anthropic_api_key_set"] = False
     return s
 
 
 @router.put("/settings")
 async def write_settings(body: SettingsBody):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("openrouter_api_key", "tinyfish_api_key"):
+    for k in ("openrouter_api_key", "tinyfish_api_key", "anthropic_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
     if updates:

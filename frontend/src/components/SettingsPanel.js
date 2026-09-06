@@ -48,7 +48,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "" });
+    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", anthropic_api_key: "" });
   }, [settings]);
 
   if (!form) return null;
@@ -59,9 +59,15 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     const body = { ...form };
     delete body.openrouter_api_key_set;
     delete body.tinyfish_api_key_set;
+    delete body.anthropic_api_key_set;
+    ["claude_enabled", "claude_spend_usd", "claude_calls", "claude_cache_read_tokens",
+     "claude_cache_write_tokens", "claude_stop_ratio", "claude_remaining_usd",
+     "claude_allows_call", "claude_model"].forEach((k) => { delete body[k]; });
     ["min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
     ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
+    const budget = parseFloat(body.claude_budget_usd);
+    body.claude_budget_usd = Number.isFinite(budget) && budget > 0 ? budget : 0;
     await api.put("/settings", body);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -212,6 +218,31 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
               placeholder={t("leavePlaceholder")}
               onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
+          <Field label={
+            <>
+              {t("anthropicKey")}{" "}
+              <span className={form.anthropic_api_key_set ? "text-bio" : "text-amberx"}>
+                ({form.anthropic_api_key_set ? t("keySet") : t("keyNotSet")})
+              </span>
+            </>
+          }>
+            <input data-testid="anthropic-key-input" type="password" value={form.anthropic_api_key || ""}
+              placeholder={t("leavePlaceholder")}
+              onChange={(e) => set("anthropic_api_key", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <Field label={t("claudeBudget")}>
+            <input data-testid="claude-budget-input" type="number" min="0" step="0.5"
+              value={form.claude_budget_usd ?? 0}
+              onChange={(e) => set("claude_budget_usd", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("claudeBudgetHint")}</p>
+          {form.anthropic_api_key_set && (
+            <p data-testid="claude-spend-hint" className="font-mono text-[9px] text-slate-400">
+              {t("claudeSpend")}: ${Number(form.claude_spend_usd || 0).toFixed(4)}
+              {form.claude_budget_usd > 0 ? ` / $${Number(form.claude_budget_usd).toFixed(2)}` : ""}
+              {form.claude_calls ? ` · ${form.claude_calls} appels` : ""}
+            </p>
+          )}
         </section>
 
         {/* Save button removed 2026-06 — settings now auto-save on field blur

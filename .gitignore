@@ -12,6 +12,8 @@ __pycache__/
 backend/data/.tld_cache/
 backend/data/cached_pdfs/
 backend/data/runs/
+backend/data/claude_usage.json
+backend/data/claude_usage.lock
 .env*
 !.env.example
 .env

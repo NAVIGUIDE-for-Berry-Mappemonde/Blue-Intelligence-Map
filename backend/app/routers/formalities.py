@@ -355,6 +355,13 @@ async def poe_generate_batch_status():
     return BATCH_STATE.status()
 
 
+@router.get("/poe/claude-usage")
+async def poe_claude_usage():
+    from app.core.claude import usage_public
+    from app.db import get_settings
+    return usage_public(await get_settings())
+
+
 @router.post("/poe/generate-batch/cancel")
 async def poe_generate_batch_cancel():
     if not BATCH_STATE.running:
