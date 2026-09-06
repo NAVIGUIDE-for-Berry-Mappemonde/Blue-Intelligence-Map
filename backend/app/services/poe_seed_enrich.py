@@ -429,6 +429,9 @@ async def execute_enrich(db, state, *, run_id: str = "",
             judge_pool = []
         else:
             judge_pool = judge_pool[:limit]
+    else:
+        # Run complet : géocoder d'abord, ne pas juger deux fois la même graine.
+        judge_pool = [p for p in judge_pool if not _needs_geocode(p)]
     mrgids = {int(p["mrgid"]) for p in geo_todo + judge_pool if p.get("mrgid") is not None}
     zones = await _zone_cache(db, mrgids)
     state.total = len(geo_todo) + len(judge_pool)

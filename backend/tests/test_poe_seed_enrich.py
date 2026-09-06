@@ -373,3 +373,39 @@ class TestExecuteEnrich:
         assert db.poe_ports.updates == []
         assert db.poe_run_ports.updates == []
         assert db.poe_seed_ports.updates
+
+    def test_limit_zero_geocodes_before_judge_without_duplicate(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "n1", "name": "OnlyName", "mrgid": 1,
+             "verify_verdict": "name_only", "seed_sources": ["listing"]},
+            {"_id": "u1", "name": "AlreadyXY", "mrgid": 1, "lat": 1, "lon": 2,
+             "has_coords": True, "verify_verdict": "unverified",
+             "seed_sources": ["v1"]},
+        ])
+        judged = []
+
+        async def fake_geo(doc, zone, log):
+            return {"lat": -22.27, "lon": 166.44, "has_coords": True,
+                    "geocoded_at": "t", "validated": True}
+
+        async def fake_judge(doc, *a, **k):
+            judged.append(doc["name"])
+            return {**enr.parse_judge({"is_poe": False, "confidence": 10, "reason": "x"}),
+                    "judge_engine": "claude-haiku", "judge_at": "t"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "geocode_one", fake_geo)
+        monkeypatch.setattr(enr, "judge_one", fake_judge)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.execute_enrich(
+            db, state, source="seeds", limit=0,
+            verdicts=["name_only", "unverified"], use_agent=False))
+        assert judged.count("OnlyName") == 1
+        assert judged.count("AlreadyXY") == 1
+        assert set(judged) == {"OnlyName", "AlreadyXY"}
