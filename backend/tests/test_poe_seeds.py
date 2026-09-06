@@ -6,8 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.listing_ref import project_listing  # noqa: E402
 from app.services.poe_seeds import (  # noqa: E402
-    attach_listing_seeds, build_seed_report, listing_name_seeds,
-    union_extracted, verdict_for_seed,
+    attach_listing_seeds, attach_osm_seeds, build_seed_report,
+    listing_name_seeds, union_extracted, verdict_for_seed,
 )
 
 ZONES = [
@@ -137,3 +137,106 @@ class TestVerdicts:
         seed["seed_sources"] = ["run:a", "run:b"]
         seed["has_coords"] = True
         assert verdict_for_seed(seed) == "probable"
+
+    def test_listing_and_osm_with_coords_is_confirmed(self):
+        seed = _port(26518, "Fort Bay", lat=17.6, lon=-63.2)
+        seed["seed_sources"] = ["osm", "listing"]
+        seed["has_coords"] = True
+        seed["osm_confidence"] = 0.7
+        assert verdict_for_seed(seed) == "confirmed"
+
+    def test_osm_only_high_confidence_is_probable(self):
+        seed = _port(26518, "Fort Bay", lat=17.6, lon=-63.2)
+        seed["seed_sources"] = ["osm"]
+        seed["has_coords"] = True
+        seed["osm_confidence"] = 0.7
+        assert verdict_for_seed(seed) == "probable"
+
+    def test_osm_only_low_confidence_is_unverified(self):
+        seed = _port(26518, "Fort Bay", lat=17.6, lon=-63.2)
+        seed["seed_sources"] = ["osm"]
+        seed["has_coords"] = True
+        seed["osm_confidence"] = 0.35
+        assert verdict_for_seed(seed) == "unverified"
+
+
+class TestOsmUnion:
+    def _osm(self, mrgid, name, lat, lon, osm_id, **kw):
+        return {
+            "osm_id": osm_id,
+            "name": name,
+            "lat": lat,
+            "lon": lon,
+            "tags": {"harbour": "yes"},
+            "mrgid": mrgid,
+            "iso": "BQ",
+            "zone_name": "Saba",
+            "in_eez": kw.get("in_eez", True),
+            "osm_confidence": 0.7,
+        }
+
+    def test_osm_merges_by_name_and_creates_orphan(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.62, lon=-63.25)]),
+        ])
+        stats = attach_osm_seeds(extracted, [
+            self._osm(26518, "Fort Bay", 17.621, -63.249, "node/1"),
+            self._osm(26518, "Ladder Bay", 17.65, -63.26, "way/2"),
+        ])
+        assert stats["osm_merged_by_name"] == 1
+        assert stats["osm_created"] == 1
+        names = {p["name"] for p in extracted}
+        assert names == {"Fort Bay", "Ladder Bay"}
+        fort = next(p for p in extracted if p["name"] == "Fort Bay")
+        assert "osm" in fort["seed_sources"]
+        assert "node/1" in fort["osm_ids"]
+
+    def test_osm_merges_by_proximity_without_name_match(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.620, lon=-63.250)]),
+        ])
+        stats = attach_osm_seeds(extracted, [
+            self._osm(26518, "West Quay", 17.6202, -63.2501, "node/9"),
+        ])
+        assert stats["osm_merged_by_proximity"] == 1
+        assert stats["osm_created"] == 0
+        assert len(extracted) == 1
+        assert "osm" in extracted[0]["seed_sources"]
+
+    def test_unnamed_osm_does_not_create_seed(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.62, lon=-63.25)]),
+        ])
+        stats = attach_osm_seeds(extracted, [
+            self._osm(26518, "", 17.80, -63.10, "node/3"),
+        ])
+        assert stats["osm_created"] == 0
+        assert stats["osm_skipped_unnamed_in_eez"] == 1
+        assert len(extracted) == 1
+
+    def test_marina_only_is_not_a_seed(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.62, lon=-63.25)]),
+        ])
+        marina = self._osm(26518, "Yacht Club", 17.80, -63.10, "node/8")
+        marina["tags"] = {
+            "leisure": "marina",
+            "seamark:type": "harbour",
+            "seamark:harbour:category": "marina",
+        }
+        stats = attach_osm_seeds(extracted, [marina])
+        assert stats["osm_created"] == 0
+        assert stats["osm_skipped_not_candidate"] == 1
+        assert len(extracted) == 1
+
+    def test_listing_intersects_new_osm_seed(self):
+        extracted = union_extracted([("v1", [])])
+        attach_osm_seeds(extracted, [
+            self._osm(26518, "Fort Bay", 17.62, -63.25, "node/1"),
+        ])
+        proj = project_listing(_listing(), zones=ZONES, overrides={})
+        packed = attach_listing_seeds(extracted, proj["ports"])
+        assert packed["listing_attached"] == 1
+        assert "listing" in extracted[0]["seed_sources"]
+        extracted[0]["has_coords"] = True
+        assert verdict_for_seed(extracted[0]) == "confirmed"

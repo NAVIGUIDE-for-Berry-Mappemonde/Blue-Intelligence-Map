@@ -1,21 +1,23 @@
 """
 poe_seeds — Union bottom-up des Port d'Entrée déjà connus.
 
-Ne crawl pas. Ne touche pas poe_ports. Les sources sont des graines :
+Ne crawl pas. Ne touche pas poe_ports. Les sources sont des graines
+(union dédupliquée, pas un croisement exclusif) :
 
   - carte v1 (poe_ports)
   - runs versionnés (poe_run_ports) — mondiaux ou canaris
+  - OSM (cache osm_port_seeds : port_of_entry, industrial=port, landuse=harbour,
+    CATHAF commercial — pas leisure=marina / seamark harbour marina)
   - listing communautaire (noms, souvent sans coordonnées)
-  - tags OSM déjà posés sur v1 (osm_confidence)
 
-VLIZ (mrgid) reste la clé d'appartenance. Le listing n'est plus un juge
-après-coup : c'est une graine. Le crawl SERP / Claude ne devrait viser
-que le résidu (listing sans match extrait, ou graine sans coordonnées).
+Une graine v1-only, OSM-only ou listing-only reste dans l'union.
+VLIZ (mrgid) reste la clé d'appartenance. Le crawl SERP / Claude ne
+devrait viser que le résidu (listing sans match, ou graine sans point).
 
 Verdicts de vérification (pas une extraction) :
 
-  confirmed  — listing ∩ (v1|run) + coordonnées : déjà un PoE recoupé
-  probable   — OSM ≥ 0.5 ou ≥ 2 runs extraits, ou listing ∩ extrait sans point
+  confirmed  — listing ∩ (v1|run|osm) + coordonnées : déjà un PoE recoupé
+  probable   — OSM ≥ 0.5 ou ≥ 2 sources extraites, ou listing ∩ extrait sans point
   unverified — une seule source extraite (souvent v1 seule) : à juger
   name_only  — listing sans point : file de géocode, pas de SERP mondial
 """
@@ -28,10 +30,13 @@ import re
 from app.core.dedup import (
     find_duplicate_in_list, merge_docs, normalize_name, text_similarity,
 )
+from app.core.geo import haversine_km
 from app.services.listing_control import compare_to_listing, load_run_ports
 from app.services.listing_ref import project_listing
 from app.services.poe_bestof import is_legal_fragment
 from app.services.poe_pipeline import now_iso
+
+OSM_PROXIMITY_KM = 0.8
 
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
 _PREFIX = (
@@ -98,6 +103,9 @@ def _slim(port: dict, source: str) -> dict:
         "validated": bool(port.get("validated")),
         "osm_confidence": port.get("osm_confidence"),
         "osm_tags": list(port.get("osm_tags") or []),
+        "osm_id": port.get("osm_id"),
+        "osm_ids": list(port.get("osm_ids") or (
+            [port["osm_id"]] if port.get("osm_id") else [])),
         "source_urls": urls,
         "extraction_engine": port.get("extraction_engine"),
         "confidence": port.get("confidence"),
@@ -128,6 +136,15 @@ def _merge_seed(existing: dict, incoming: dict) -> None:
         existing["osm_confidence"] = b
         if incoming.get("osm_tags"):
             existing["osm_tags"] = list(incoming["osm_tags"])
+    ids = list(existing.get("osm_ids") or [])
+    for oid in incoming.get("osm_ids") or []:
+        if oid and oid not in ids:
+            ids.append(oid)
+    if incoming.get("osm_id") and incoming["osm_id"] not in ids:
+        ids.append(incoming["osm_id"])
+    existing["osm_ids"] = ids
+    if not existing.get("osm_id") and incoming.get("osm_id"):
+        existing["osm_id"] = incoming["osm_id"]
     existing["has_coords"] = (
         existing.get("lat") is not None and existing.get("lon") is not None
     )
@@ -198,6 +215,8 @@ def listing_name_seeds(listing_ports: list[dict]) -> list[dict]:
             "validated": False,
             "osm_confidence": None,
             "osm_tags": [],
+            "osm_id": None,
+            "osm_ids": [],
             "source_urls": [],
             "extraction_engine": "listing",
             "dedup_key": lp.get("dedup_key") or (
@@ -240,6 +259,75 @@ def attach_listing_seeds(extracted: list[dict], listing_ports: list[dict]) -> di
     }
 
 
+def _nearest_seed(seed: dict, pool: list[dict], max_km: float) -> dict | None:
+    if seed.get("lat") is None or seed.get("lon") is None:
+        return None
+    best, best_d = None, max_km
+    for other in pool:
+        if other.get("lat") is None or other.get("lon") is None:
+            continue
+        try:
+            dist = haversine_km(
+                float(seed["lat"]), float(seed["lon"]),
+                float(other["lat"]), float(other["lon"]))
+        except (TypeError, ValueError):
+            continue
+        if dist < best_d:
+            best, best_d = other, dist
+    return best
+
+
+def attach_osm_seeds(extracted: list[dict], osm_docs: list[dict]) -> dict:
+    """Union OSM : fusion nom / proximité, création des havres nommés orphelins."""
+    from app.services.osm_seeds import cache_doc_to_seed, is_seed_candidate
+
+    by_zone: dict[int | None, list[dict]] = {}
+    for p in extracted:
+        by_zone.setdefault(p.get("mrgid"), []).append(p)
+
+    merged_name = merged_near = created = 0
+    skipped_unnamed = skipped_no_eez = skipped_bad = skipped_not_candidate = 0
+    for raw in osm_docs:
+        if not raw.get("in_eez") or raw.get("mrgid") is None:
+            skipped_no_eez += 1
+            continue
+        tags = {str(k): str(v) for k, v in (raw.get("tags") or {}).items()}
+        if tags and not is_seed_candidate(tags):
+            skipped_not_candidate += 1
+            continue
+        seed = cache_doc_to_seed(raw)
+        if seed is None:
+            skipped_bad += 1
+            continue
+        pool = by_zone.setdefault(seed.get("mrgid"), [])
+        hit = _match_seed(seed, pool) if seed.get("name") else None
+        if hit is not None:
+            _merge_seed(hit, seed)
+            merged_name += 1
+            continue
+        near = _nearest_seed(seed, pool, OSM_PROXIMITY_KM)
+        if near is not None:
+            _merge_seed(near, seed)
+            merged_near += 1
+            continue
+        if not seed.get("name"):
+            skipped_unnamed += 1
+            continue
+        extracted.append(seed)
+        pool.append(seed)
+        created += 1
+    return {
+        "osm_candidates_in_eez": len(osm_docs),
+        "osm_merged_by_name": merged_name,
+        "osm_merged_by_proximity": merged_near,
+        "osm_created": created,
+        "osm_skipped_unnamed_in_eez": skipped_unnamed,
+        "osm_skipped_outside_eez": skipped_no_eez,
+        "osm_skipped_not_candidate": skipped_not_candidate,
+        "osm_skipped_bad": skipped_bad,
+    }
+
+
 def _source_counts(ports: list[dict]) -> dict[str, int]:
     c: Counter[str] = Counter()
     for p in ports:
@@ -251,18 +339,16 @@ def _source_counts(ports: list[dict]) -> dict[str, int]:
 VERDICTS = ("confirmed", "probable", "unverified", "name_only")
 
 
+def _is_extracted_source(source: str) -> bool:
+    return source == "v1" or source == "osm" or str(source).startswith("run:")
+
+
 def _has_extracted_source(seed: dict) -> bool:
-    return any(
-        s == "v1" or str(s).startswith("run:")
-        for s in (seed.get("seed_sources") or [])
-    )
+    return any(_is_extracted_source(s) for s in (seed.get("seed_sources") or []))
 
 
 def _extracted_source_count(seed: dict) -> int:
-    return sum(
-        1 for s in (seed.get("seed_sources") or [])
-        if s == "v1" or str(s).startswith("run:")
-    )
+    return sum(1 for s in (seed.get("seed_sources") or []) if _is_extracted_source(s))
 
 
 def verdict_for_seed(seed: dict) -> str:
@@ -335,6 +421,7 @@ def build_seed_report(extracted: list[dict], listing_ports: list[dict],
         "seed_ports": len(seeds),
         "residual": len(residual),
         "by_source": _source_counts(extracted),
+        "by_source_seeds": _source_counts(seeds),
         "by_verdict": by_verdict,
     }
     return {
@@ -375,6 +462,8 @@ async def persist_verify_run(db, report: dict, *, label: str = "seed-verify") ->
             "validated": bool(seed.get("validated")),
             "osm_confidence": seed.get("osm_confidence"),
             "osm_tags": list(seed.get("osm_tags") or []),
+            "osm_id": seed.get("osm_id"),
+            "osm_ids": list(seed.get("osm_ids") or []),
             "source_urls": list(seed.get("source_urls") or []),
             "extraction_engine": "seed",
             "seed_sources": list(seed.get("seed_sources") or []),
@@ -441,8 +530,11 @@ async def persist_verify_run(db, report: dict, *, label: str = "seed-verify") ->
 async def collect_seed_report(db, run_ids: list[str] | None = None,
                               include_v1: bool = True,
                               include_listing: bool = True,
+                              include_osm: bool = True,
                               use_default_mondials: bool = False) -> dict:
     """Charge Atlas, unionne, classe. Retourne le rapport interne (avec seeds)."""
+    from app.services.osm_seeds import cache_stats, load_cached_osm
+
     ids = list(run_ids or [])
     if use_default_mondials and not ids:
         ids = list(DEFAULT_MONDIAL_RUN_IDS)
@@ -462,6 +554,15 @@ async def collect_seed_report(db, run_ids: list[str] | None = None,
         batches.append((f"run:{rid}", ports))
         loaded.append(meta)
     extracted = union_extracted(batches)
+    osm_info: dict = {"included": include_osm}
+    if include_osm:
+        osm_info.update(await cache_stats(db))
+        osm_docs = await load_cached_osm(db, in_eez_only=True)
+        osm_info.update(attach_osm_seeds(extracted, osm_docs))
+        loaded.append({
+            "run_id": "osm", "label": "osm", "variant": "osm",
+            "state": "cache", "ports": osm_info.get("cached_named_in_eez") or 0,
+        })
     proj = project_listing()
     listing_ports = proj["ports"] if include_listing else []
     report = build_seed_report(extracted, listing_ports)
@@ -469,6 +570,13 @@ async def collect_seed_report(db, run_ids: list[str] | None = None,
     report["listing_stats"] = proj["stats"]
     report["sources"] = loaded
     report["missing_run_ids"] = missing
+    report["osm"] = osm_info
+    summary = report.get("summary") or {}
+    summary["osm"] = {k: osm_info.get(k) for k in (
+        "included", "cached_total", "cached_named_in_eez",
+        "osm_merged_by_name", "osm_merged_by_proximity", "osm_created",
+        "refreshed_at",
+    )}
     return report
 
 
@@ -482,6 +590,7 @@ def public_seed_view(report: dict, *, mode: str = "seed-union") -> dict:
         "listing_stats": report.get("listing_stats"),
         "sources": report.get("sources") or [],
         "missing_run_ids": report.get("missing_run_ids") or [],
+        "osm": report.get("osm") or {},
         "summary": report.get("summary"),
         "residual_preview": (report.get("residual") or [])[:80],
         "residual_total": len(report.get("residual") or []),
@@ -492,9 +601,10 @@ def public_seed_view(report: dict, *, mode: str = "seed-union") -> dict:
 async def build_seed_union(db, run_ids: list[str] | None = None,
                            include_v1: bool = True,
                            include_listing: bool = True,
+                           include_osm: bool = True,
                            use_default_mondials: bool = False) -> dict:
     """Charge Atlas, unionne, compare au listing. Lecture seule."""
     report = await collect_seed_report(
         db, run_ids, include_v1=include_v1, include_listing=include_listing,
-        use_default_mondials=use_default_mondials)
+        include_osm=include_osm, use_default_mondials=use_default_mondials)
     return public_seed_view(report)

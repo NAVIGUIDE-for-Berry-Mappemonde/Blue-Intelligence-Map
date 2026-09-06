@@ -27,14 +27,18 @@ def _build_query(lat: float, lon: float, radius_m: int) -> str:
     return f"""[out:json][timeout:25];
 (
   nwr({around})["harbour"];
+  nwr({around})["port_of_entry"];
   nwr({around})["leisure"="marina"];
   nwr({around})["seamark:type"="harbour"];
+  nwr({around})["seamark:type"="harbour_basin"];
   nwr({around})["seamark:harbour:category"];
   nwr({around})["customs"];
   nwr({around})["barrier"="border_control"];
   nwr({around})["government"~"customs|border_control|immigration"];
   nwr({around})["amenity"="ferry_terminal"];
+  nwr({around})["landuse"="harbour"];
   nwr({around})["landuse"="port"];
+  nwr({around})["water"="harbour"];
   nwr({around})["industrial"="port"];
 );
 out tags 80;"""
@@ -72,9 +76,15 @@ def score_confidence(elements: list[dict]) -> tuple[float, list[str], int]:
         if t.get("harbour") or t.get("seamark:type") == "harbour" or t.get("seamark:harbour:category"):
             infra = max(infra, 0.5)
             tags_found.add("harbour" if t.get("harbour") else "seamark:harbour")
+        if t.get("seamark:type") == "harbour_basin" or t.get("water") == "harbour":
+            infra = max(infra, 0.45)
+            tags_found.add("harbour_basin")
         if t.get("leisure") == "marina":
             infra = max(infra, 0.45)
             tags_found.add("leisure=marina")
+        if (t.get("port_of_entry") or "") in ("yes", "all"):
+            customs = max(customs, 0.5)
+            tags_found.add("port_of_entry=yes")
         if t.get("customs") or (t.get("government") or "") in ("customs",) or "customs" in (t.get("government") or ""):
             customs = max(customs, 0.4)
             tags_found.add("customs")
@@ -87,7 +97,7 @@ def score_confidence(elements: list[dict]) -> tuple[float, list[str], int]:
         if t.get("amenity") == "ferry_terminal":
             extra = max(extra, 0.1)
             tags_found.add("amenity=ferry_terminal")
-        if t.get("landuse") == "port" or t.get("industrial") == "port":
+        if t.get("landuse") in ("port", "harbour") or t.get("industrial") == "port":
             extra = max(extra, 0.1)
             tags_found.add("port_area")
     return round(min(1.0, infra + customs + extra), 3), sorted(tags_found), len(elements)
