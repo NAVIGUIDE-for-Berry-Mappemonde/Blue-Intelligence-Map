@@ -1,0 +1,2285 @@
+{
+  "count": 285,
+  "zones": [
+    {
+      "mrgid": 3293,
+      "name": "Belgium",
+      "geoname": "Belgian Exclusive Economic Zone",
+      "iso2": "BE",
+      "sovereign": "Belgium",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5668,
+      "name": "Netherlands",
+      "geoname": "Dutch Exclusive Economic Zone",
+      "iso2": "NL",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5669,
+      "name": "Germany",
+      "geoname": "German Exclusive Economic Zone",
+      "iso2": "DE",
+      "sovereign": "Germany",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5670,
+      "name": "Albania",
+      "geoname": "Albanian Exclusive Economic Zone",
+      "iso2": "AL",
+      "sovereign": "Albania",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5672,
+      "name": "Bulgaria",
+      "geoname": "Bulgarian Exclusive Economic Zone",
+      "iso2": "BG",
+      "sovereign": "Bulgaria",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5673,
+      "name": "Croatia",
+      "geoname": "Croatian Exclusive Economic Zone",
+      "iso2": "HR",
+      "sovereign": "Croatia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5674,
+      "name": "Denmark",
+      "geoname": "Danish Exclusive Economic Zone",
+      "iso2": "DK",
+      "sovereign": "Denmark",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5675,
+      "name": "Estonia",
+      "geoname": "Estonian Exclusive Economic Zone",
+      "iso2": "EE",
+      "sovereign": "Estonia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5676,
+      "name": "Finland",
+      "geoname": "Finnish Exclusive Economic Zone",
+      "iso2": "FI",
+      "sovereign": "Finland",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5677,
+      "name": "France",
+      "geoname": "French Exclusive Economic Zone",
+      "iso2": "FR",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5678,
+      "name": "Georgia",
+      "geoname": "Georgian Exclusive Economic Zone",
+      "iso2": "GE",
+      "sovereign": "Georgia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5679,
+      "name": "Greece",
+      "geoname": "Greek Exclusive Economic Zone",
+      "iso2": "GR",
+      "sovereign": "Greece",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5680,
+      "name": "Iceland",
+      "geoname": "Icelandic Exclusive Economic Zone",
+      "iso2": "IS",
+      "sovereign": "Iceland",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5681,
+      "name": "Ireland",
+      "geoname": "Irish Exclusive Economic Zone",
+      "iso2": "IE",
+      "sovereign": "Ireland",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5682,
+      "name": "Italy",
+      "geoname": "Italian Exclusive Economic Zone",
+      "iso2": "IT",
+      "sovereign": "Italy",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5683,
+      "name": "Latvia",
+      "geoname": "Latvian Exclusive Economic Zone",
+      "iso2": "LV",
+      "sovereign": "Latvia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5684,
+      "name": "Lithuania",
+      "geoname": "Lithuanian Exclusive Economic Zone",
+      "iso2": "LT",
+      "sovereign": "Lithuania",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5685,
+      "name": "Malta",
+      "geoname": "Maltese Exclusive Economic Zone",
+      "iso2": "MT",
+      "sovereign": "Malta",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5686,
+      "name": "Norway",
+      "geoname": "Norwegian Exclusive Economic Zone",
+      "iso2": "NO",
+      "sovereign": "Norway",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5687,
+      "name": "Poland",
+      "geoname": "Polish Exclusive Economic Zone",
+      "iso2": "PL",
+      "sovereign": "Poland",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5688,
+      "name": "Portugal",
+      "geoname": "Portuguese Exclusive Economic Zone",
+      "iso2": "PT",
+      "sovereign": "Portugal",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5689,
+      "name": "Romania",
+      "geoname": "Romanian Exclusive Economic Zone",
+      "iso2": "RO",
+      "sovereign": "Romania",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5690,
+      "name": "Russia",
+      "geoname": "Russian Exclusive Economic Zone",
+      "iso2": "RU",
+      "sovereign": "Russia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5691,
+      "name": "Montenegro",
+      "geoname": "Montenegrin Exclusive Economic Zone",
+      "iso2": "ME",
+      "sovereign": "Montenegro",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5692,
+      "name": "Slovenia",
+      "geoname": "Slovenian Exclusive Economic Zone",
+      "iso2": "SI",
+      "sovereign": "Slovenia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5693,
+      "name": "Spain",
+      "geoname": "Spanish Exclusive Economic Zone",
+      "iso2": "ES",
+      "sovereign": "Spain",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5694,
+      "name": "Sweden",
+      "geoname": "Swedish Exclusive Economic Zone",
+      "iso2": "SE",
+      "sovereign": "Sweden",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5695,
+      "name": "Ukraine",
+      "geoname": "Overlapping claim Ukraine: Ukraine / Russia",
+      "iso2": "UA",
+      "sovereign": "Ukraine",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 5696,
+      "name": "United Kingdom",
+      "geoname": "British Exclusive Economic Zone",
+      "iso2": "GB",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 5697,
+      "name": "Turkey",
+      "geoname": "Turkish Exclusive Economic Zone",
+      "iso2": "TR",
+      "sovereign": "Turkey",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8308,
+      "name": "Cocos Islands",
+      "geoname": "Australian Exclusive Economic Zone (Cocos Islands)",
+      "iso2": "CC",
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8309,
+      "name": "Christmas Island",
+      "geoname": "Australian Exclusive Economic Zone (Christmas Island)",
+      "iso2": "CX",
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8310,
+      "name": "Norfolk Island",
+      "geoname": "Australian Exclusive Economic Zone (Norfolk Island)",
+      "iso2": "NF",
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8311,
+      "name": "Macquarie Island",
+      "geoname": "Australian Exclusive Economic Zone (Macquarie Island)",
+      "iso2": null,
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8312,
+      "name": "New Caledonia",
+      "geoname": "French Exclusive Economic Zone (New Caledonia)",
+      "iso2": "NC",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8313,
+      "name": "Vanuatu",
+      "geoname": "Vanuatuan Exclusive Economic Zone",
+      "iso2": "VU",
+      "sovereign": "Vanuatu",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8314,
+      "name": "Solomon Islands",
+      "geoname": "Solomon Islands Exclusive Economic Zone",
+      "iso2": "SB",
+      "sovereign": "Solomon Islands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8315,
+      "name": "Palau",
+      "geoname": "Palauan Exclusive Economic Zone",
+      "iso2": "PW",
+      "sovereign": "Palau",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8316,
+      "name": "Micronesia",
+      "geoname": "Micronesian Exclusive Economic Zone",
+      "iso2": "FM",
+      "sovereign": "Micronesia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8317,
+      "name": "Nauru",
+      "geoname": "Nauruan Exclusive Economic Zone",
+      "iso2": "NR",
+      "sovereign": "Nauru",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8318,
+      "name": "Marshall Islands",
+      "geoname": "Marshallese Exclusive Economic Zone",
+      "iso2": "MH",
+      "sovereign": "Marshall Islands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8319,
+      "name": "Wake Island / Enenkio",
+      "geoname": "Overlapping claim Wake Island / Enenkio: United States / Marshall Islands",
+      "iso2": "UM",
+      "sovereign": "United States",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8321,
+      "name": "Taiwan",
+      "geoname": "Overlapping claim Taiwan: Taiwan / China",
+      "iso2": "TW",
+      "sovereign": "Taiwan",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8322,
+      "name": "Philippines",
+      "geoname": "Philippine Exclusive Economic Zone",
+      "iso2": "PH",
+      "sovereign": "Philippines",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8323,
+      "name": "Australia",
+      "geoname": "Australian Exclusive Economic Zone",
+      "iso2": "AU",
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8324,
+      "name": "Papua New Guinea",
+      "geoname": "Papua New Guinean Exclusive Economic Zone",
+      "iso2": "PG",
+      "sovereign": "Papua New Guinea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8325,
+      "name": "Fiji",
+      "geoname": "Fijian Exclusive Economic Zone",
+      "iso2": "FJ",
+      "sovereign": "Fiji",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8326,
+      "name": "Tuvalu",
+      "geoname": "Tuvaluan Exclusive Economic Zone",
+      "iso2": "TV",
+      "sovereign": "Tuvalu",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8327,
+      "name": "South Korea",
+      "geoname": "South Korean Exclusive Economic Zone",
+      "iso2": "KR",
+      "sovereign": "South Korea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8328,
+      "name": "North Korea",
+      "geoname": "North Korean Exclusive Economic Zone",
+      "iso2": "KP",
+      "sovereign": "North Korea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8331,
+      "name": "Cambodia",
+      "geoname": "Cambodian Exclusive Economic Zone",
+      "iso2": "KH",
+      "sovereign": "Cambodia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8332,
+      "name": "Thailand",
+      "geoname": "Thailand Exclusive Economic Zone",
+      "iso2": "TH",
+      "sovereign": "Thailand",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8333,
+      "name": "Andaman and Nicobar",
+      "geoname": "Indian Exclusive Economic Zone (Andaman and Nicobar Islands)",
+      "iso2": null,
+      "sovereign": "India",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8334,
+      "name": "Comores",
+      "geoname": "Comoran Exclusive Economic Zone",
+      "iso2": "KM",
+      "sovereign": "Comores",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8337,
+      "name": "Seychelles",
+      "geoname": "Seychellois Exclusive Economic Zone",
+      "iso2": "SC",
+      "sovereign": "Seychelles",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8338,
+      "name": "Réunion",
+      "geoname": "French Exclusive Economic Zone (Réunion)",
+      "iso2": "RE",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8339,
+      "name": "Juan de Nova Island",
+      "geoname": "French Exclusive Economic Zone (Juan de Nova Island)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8340,
+      "name": "Bassas da India",
+      "geoname": "French Exclusive Economic Zone (Bassas da India)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8341,
+      "name": "Europa Island",
+      "geoname": "French Exclusive Economic Zone (Europa Island)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8343,
+      "name": "Republic of Mauritius",
+      "geoname": "Mauritian Exclusive Economic Zone",
+      "iso2": "MU",
+      "sovereign": "Republic of Mauritius",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8345,
+      "name": "Maldives",
+      "geoname": "Maldivian Exclusive Economic Zone",
+      "iso2": "MV",
+      "sovereign": "Maldives",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8346,
+      "name": "Sri Lanka",
+      "geoname": "Sri Lankan Exclusive Economic Zone",
+      "iso2": "LK",
+      "sovereign": "Sri Lanka",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8347,
+      "name": "Mozambique",
+      "geoname": "Mozambican Exclusive Economic Zone",
+      "iso2": "MZ",
+      "sovereign": "Mozambique",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8348,
+      "name": "Madagascar",
+      "geoname": "Madagascan Exclusive Economic Zone",
+      "iso2": "MG",
+      "sovereign": "Madagascar",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8349,
+      "name": "Kenya",
+      "geoname": "Kenyan Exclusive Economic Zone",
+      "iso2": "KE",
+      "sovereign": "Kenya",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8350,
+      "name": "Federal Republic of Somalia",
+      "geoname": "Somali Exclusive Economic Zone",
+      "iso2": "SO",
+      "sovereign": "Federal Republic of Somalia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8351,
+      "name": "Eritrea",
+      "geoname": "Eritrean Exclusive Economic Zone",
+      "iso2": "ER",
+      "sovereign": "Eritrea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8352,
+      "name": "Djibouti",
+      "geoname": "Djiboutian Exclusive Economic Zone",
+      "iso2": "DJ",
+      "sovereign": "Djibouti",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8353,
+      "name": "Yemen",
+      "geoname": "Yemeni Exclusive Economic Zone",
+      "iso2": "YE",
+      "sovereign": "Yemen",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8354,
+      "name": "Oman",
+      "geoname": "Omani Exclusive Economic Zone",
+      "iso2": "OM",
+      "sovereign": "Oman",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8355,
+      "name": "Sudan",
+      "geoname": "Sudanese Exclusive Economic Zone",
+      "iso2": "SD",
+      "sovereign": "Sudan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8356,
+      "name": "Saudi Arabia",
+      "geoname": "Saudi Arabian Exclusive Economic Zone",
+      "iso2": "SA",
+      "sovereign": "Saudi Arabia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8357,
+      "name": "Kuwait",
+      "geoname": "Kuwaiti Exclusive Economic Zone",
+      "iso2": "KW",
+      "sovereign": "Kuwait",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8358,
+      "name": "Bahrain",
+      "geoname": "Bahraini Exclusive Economic Zone",
+      "iso2": "BH",
+      "sovereign": "Bahrain",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8359,
+      "name": "Pakistan",
+      "geoname": "Pakistani Exclusive Economic Zone",
+      "iso2": "PK",
+      "sovereign": "Pakistan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8360,
+      "name": "United Arab Emirates",
+      "geoname": "Emirati Exclusive Economic Zone",
+      "iso2": "AE",
+      "sovereign": "United Arab Emirates",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8361,
+      "name": "Azores",
+      "geoname": "Portuguese Exclusive Economic Zone (Azores)",
+      "iso2": null,
+      "sovereign": "Portugal",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8362,
+      "name": "Cape Verde",
+      "geoname": "Cape Verdean Exclusive Economic Zone",
+      "iso2": "CV",
+      "sovereign": "Cape Verde",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8363,
+      "name": "Madeira",
+      "geoname": "Portuguese Exclusive Economic Zone (Madeira)",
+      "iso2": null,
+      "sovereign": "Portugal",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8364,
+      "name": "Canary Islands",
+      "geoname": "Spanish Exclusive Economic Zone (Canary Islands)",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8365,
+      "name": "Gibraltar",
+      "geoname": "Overlapping claim Gibraltar: United Kingdom / Spain",
+      "iso2": "GI",
+      "sovereign": "United Kingdom",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8366,
+      "name": "Tunisia",
+      "geoname": "Tunisian Exclusive Economic Zone",
+      "iso2": "TN",
+      "sovereign": "Tunisia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8367,
+      "name": "Morocco",
+      "geoname": "Moroccan Exclusive Economic Zone",
+      "iso2": "MA",
+      "sovereign": "Morocco",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8368,
+      "name": "Western Sahara",
+      "geoname": "Overlapping claim Western Sahara: Western Sahara / Morocco",
+      "iso2": "EH",
+      "sovereign": "Western Sahara",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8369,
+      "name": "Mauritania",
+      "geoname": "Mauritanian Exclusive Economic Zone",
+      "iso2": "MR",
+      "sovereign": "Mauritania",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8370,
+      "name": "Gambia",
+      "geoname": "Gambian Exclusive Economic Zone",
+      "iso2": "GM",
+      "sovereign": "Gambia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8371,
+      "name": "Senegal",
+      "geoname": "Senegalese Exclusive Economic Zone",
+      "iso2": "SN",
+      "sovereign": "Senegal",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8372,
+      "name": "Libya",
+      "geoname": "Libyan Exclusive Economic Zone",
+      "iso2": "LY",
+      "sovereign": "Libya",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8373,
+      "name": "Syria",
+      "geoname": "Syrian Exclusive Economic Zone",
+      "iso2": "SY",
+      "sovereign": "Syria",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8374,
+      "name": "Lebanon",
+      "geoname": "Lebanese Exclusive Economic Zone",
+      "iso2": "LB",
+      "sovereign": "Lebanon",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8375,
+      "name": "Israel",
+      "geoname": "Israeli Exclusive Economic Zone",
+      "iso2": "IL",
+      "sovereign": "Israel",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8376,
+      "name": "Cyprus",
+      "geoname": "Cypriote Exclusive Economic Zone",
+      "iso2": "CY",
+      "sovereign": "Cyprus",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8378,
+      "name": "Algeria",
+      "geoname": "Algerian Exclusive Economic Zone",
+      "iso2": "DZ",
+      "sovereign": "Algeria",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8379,
+      "name": "Ascension",
+      "geoname": "British Exclusive Economic Zone (Ascension)",
+      "iso2": "SH",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8380,
+      "name": "Saint Helena",
+      "geoname": "British Exclusive Economic Zone (Saint Helena)",
+      "iso2": "SH",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8381,
+      "name": "Trindade",
+      "geoname": "Brazilian Exclusive Economic Zone (Trindade)",
+      "iso2": null,
+      "sovereign": "Brazil",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8382,
+      "name": "Tristan da Cunha",
+      "geoname": "British Exclusive Economic Zone (Tristan da Cunha)",
+      "iso2": "SH",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8383,
+      "name": "South Georgia and the South Sandwich Islands",
+      "geoname": "Overlapping claim South Georgia and the South Sandwich Islands: United Kingdom / Argentina",
+      "iso2": "GS",
+      "sovereign": "United Kingdom",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8384,
+      "name": "Prince Edward Islands",
+      "geoname": "South African Exclusive Economic Zone (Prince Edward Islands)",
+      "iso2": null,
+      "sovereign": "South Africa",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8385,
+      "name": "Crozet Islands",
+      "geoname": "French Exclusive Economic Zone (Crozet Islands)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8386,
+      "name": "Amsterdam and Saint Paul Islands",
+      "geoname": "French Exclusive Economic Zone (Amsterdam and Saint Paul Islands)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8387,
+      "name": "Kerguélen",
+      "geoname": "French Exclusive Economic Zone (Kerguélen)",
+      "iso2": "TF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8388,
+      "name": "Heard and McDonald Islands",
+      "geoname": "Australian Exclusive Economic Zone (Heard and McDonald Islands)",
+      "iso2": "HM",
+      "sovereign": "Australia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8389,
+      "name": "Falkland / Malvinas Islands",
+      "geoname": "Overlapping claim Falkland / Malvinas Islands: United Kingdom / Argentina",
+      "iso2": "FK",
+      "sovereign": "United Kingdom",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 8390,
+      "name": "Sierra Leone",
+      "geoname": "Sierra Leonean Exclusive Economic Zone",
+      "iso2": "SL",
+      "sovereign": "Sierra Leone",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8391,
+      "name": "Liberia",
+      "geoname": "Liberian Exclusive Economic Zone",
+      "iso2": "LR",
+      "sovereign": "Liberia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8392,
+      "name": "Togo",
+      "geoname": "Togolese Exclusive Economic Zone",
+      "iso2": "TG",
+      "sovereign": "Togo",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8393,
+      "name": "Benin",
+      "geoname": "Beninese Exclusive Economic Zone",
+      "iso2": "BJ",
+      "sovereign": "Benin",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8394,
+      "name": "Republic of the Congo",
+      "geoname": "Congolese (Republic of) Exclusive Economic Zone",
+      "iso2": "CG",
+      "sovereign": "Republic of the Congo",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8395,
+      "name": "Namibia",
+      "geoname": "Namibian Exclusive Economic Zone",
+      "iso2": "NA",
+      "sovereign": "Namibia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8396,
+      "name": "South Africa",
+      "geoname": "South African Exclusive Economic Zone",
+      "iso2": "ZA",
+      "sovereign": "South Africa",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8397,
+      "name": "Sao Tome and Principe",
+      "geoname": "São Toméan Exclusive Economic Zone",
+      "iso2": "ST",
+      "sovereign": "Sao Tome and Principe",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8398,
+      "name": "Equatorial Guinea",
+      "geoname": "Equatorial Guinean Exclusive Economic Zone",
+      "iso2": "GQ",
+      "sovereign": "Equatorial Guinea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8400,
+      "name": "Ghana",
+      "geoname": "Ghanaian Exclusive Economic Zone",
+      "iso2": "GH",
+      "sovereign": "Ghana",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8401,
+      "name": "Clipperton Island",
+      "geoname": "French Exclusive Economic Zone (Clipperton Island)",
+      "iso2": null,
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8402,
+      "name": "Bermuda",
+      "geoname": "British Exclusive Economic Zone (Bermuda)",
+      "iso2": "BM",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8403,
+      "name": "Galapagos",
+      "geoname": "Ecuadorian Exclusive Economic Zone (Galapagos)",
+      "iso2": null,
+      "sovereign": "Ecuador",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8404,
+      "name": "Bahamas",
+      "geoname": "Bahamian Exclusive Economic Zone",
+      "iso2": "BS",
+      "sovereign": "Bahamas",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8405,
+      "name": "Turks and Caicos Islands",
+      "geoname": "British Exclusive Economic Zone (Turks and Caicos Islands)",
+      "iso2": "TC",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8406,
+      "name": "Cuba",
+      "geoname": "Cuban Exclusive Economic Zone",
+      "iso2": "CU",
+      "sovereign": "Cuba",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8407,
+      "name": "Cayman Islands",
+      "geoname": "British Exclusive Economic Zone (Cayman Islands)",
+      "iso2": "KY",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8408,
+      "name": "Haiti",
+      "geoname": "Haitian Exclusive Economic Zone",
+      "iso2": "HT",
+      "sovereign": "Haiti",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8409,
+      "name": "Dominican Republic",
+      "geoname": "Dominican (Republic) Exclusive Economic Zone",
+      "iso2": "DO",
+      "sovereign": "Dominican Republic",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8411,
+      "name": "British Virgin Islands",
+      "geoname": "British Exclusive Economic Zone (British Virgin Islands)",
+      "iso2": "VG",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8412,
+      "name": "Anguilla",
+      "geoname": "British Exclusive Economic Zone (Anguilla)",
+      "iso2": "AI",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8413,
+      "name": "Saint Kitts and Nevis",
+      "geoname": "Kittitian and Nevisian Exclusive Economic Zone",
+      "iso2": "KN",
+      "sovereign": "Saint Kitts and Nevis",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8414,
+      "name": "Antigua and Barbuda",
+      "geoname": "Antiguan and Barbudan Exclusive Economic Zone",
+      "iso2": "AG",
+      "sovereign": "Antigua and Barbuda",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8415,
+      "name": "Montserrat",
+      "geoname": "British Exclusive Economic Zone (Montserrat)",
+      "iso2": "MS",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8416,
+      "name": "Saint Lucia",
+      "geoname": "Saint Lucian Exclusive Economic Zone",
+      "iso2": "LC",
+      "sovereign": "Saint Lucia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8417,
+      "name": "Dominica",
+      "geoname": "Dominican Exclusive Economic Zone",
+      "iso2": "DM",
+      "sovereign": "Dominica",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8418,
+      "name": "Barbados",
+      "geoname": "Barbadian Exclusive Economic Zone",
+      "iso2": "BB",
+      "sovereign": "Barbados",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8419,
+      "name": "Grenada",
+      "geoname": "Grenadian Exclusive Economic Zone",
+      "iso2": "GD",
+      "sovereign": "Grenada",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8420,
+      "name": "Trinidad and Tobago",
+      "geoname": "Trinidadian and Tobagonian Exclusive Economic Zone",
+      "iso2": "TT",
+      "sovereign": "Trinidad and Tobago",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8421,
+      "name": "Saint Vincent and the Grenadines",
+      "geoname": "Saint Vincentian Exclusive Economic Zone",
+      "iso2": "VC",
+      "sovereign": "Saint Vincent and the Grenadines",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8423,
+      "name": "Panama",
+      "geoname": "Panamanian Exclusive Economic Zone",
+      "iso2": "PA",
+      "sovereign": "Panama",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8424,
+      "name": "Costa Rica",
+      "geoname": "Costa Rican Exclusive Economic Zone",
+      "iso2": "CR",
+      "sovereign": "Costa Rica",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8425,
+      "name": "Nicaragua",
+      "geoname": "Nicaraguan Exclusive Economic Zone",
+      "iso2": "NI",
+      "sovereign": "Nicaragua",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8426,
+      "name": "Colombia",
+      "geoname": "Colombian Exclusive Economic Zone",
+      "iso2": "CO",
+      "sovereign": "Colombia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8427,
+      "name": "Honduras",
+      "geoname": "Honduran Exclusive Economic Zone",
+      "iso2": "HN",
+      "sovereign": "Honduras",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8428,
+      "name": "El Salvador",
+      "geoname": "Salvadoran Exclusive Economic Zone",
+      "iso2": "SV",
+      "sovereign": "El Salvador",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8429,
+      "name": "Mexico",
+      "geoname": "Mexican Exclusive Economic Zone",
+      "iso2": "MX",
+      "sovereign": "Mexico",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8430,
+      "name": "Guatemala",
+      "geoname": "Guatemalan Exclusive Economic Zone",
+      "iso2": "GT",
+      "sovereign": "Guatemala",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8431,
+      "name": "Ecuador",
+      "geoname": "Ecuadorian Exclusive Economic Zone",
+      "iso2": "EC",
+      "sovereign": "Ecuador",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8432,
+      "name": "Peru",
+      "geoname": "Peruvian Exclusive Economic Zone",
+      "iso2": "PE",
+      "sovereign": "Peru",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8433,
+      "name": "Venezuela",
+      "geoname": "Venezuelan Exclusive Economic Zone",
+      "iso2": "VE",
+      "sovereign": "Venezuela",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8435,
+      "name": "Faeroe",
+      "geoname": "Danish Exclusive Economic Zone (Faeroe)",
+      "iso2": "FO",
+      "sovereign": "Denmark",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8437,
+      "name": "Jan Mayen",
+      "geoname": "Norwegian Exclusive Economic Zone (Jan Mayen)",
+      "iso2": "SJ",
+      "sovereign": "Norway",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8438,
+      "name": "Greenland",
+      "geoname": "Danish Exclusive Economic Zone (Greenland)",
+      "iso2": "GL",
+      "sovereign": "Denmark",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8439,
+      "name": "Pitcairn",
+      "geoname": "British Exclusive Economic Zone (Pitcairn)",
+      "iso2": "PN",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8440,
+      "name": "French Polynesia",
+      "geoname": "French Exclusive Economic Zone (French Polynesia)",
+      "iso2": "PF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8441,
+      "name": "Line Group",
+      "geoname": "Kiribati Exclusive Economic Zone (Line Group)",
+      "iso2": "KI",
+      "sovereign": "Kiribati",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8442,
+      "name": "Jarvis Island",
+      "geoname": "United States Exclusive Economic Zone (Jarvis Islands)",
+      "iso2": "UM",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8443,
+      "name": "Palmyra Atoll",
+      "geoname": "United States Exclusive Economic Zone (Palmyra Atoll)",
+      "iso2": "UM",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8444,
+      "name": "American Samoa",
+      "geoname": "United States Exclusive Economic Zone (American Samoa)",
+      "iso2": "AS",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8445,
+      "name": "Samoa",
+      "geoname": "Samoan Exclusive Economic Zone",
+      "iso2": "WS",
+      "sovereign": "Samoa",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8446,
+      "name": "Cook Islands",
+      "geoname": "New Zealand Exclusive Economic Zone (Cook Islands)",
+      "iso2": "CK",
+      "sovereign": "New Zealand",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8447,
+      "name": "Niue",
+      "geoname": "New Zealand Exclusive Economic Zone (Niue)",
+      "iso2": "NU",
+      "sovereign": "New Zealand",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8448,
+      "name": "Tonga",
+      "geoname": "Tongan Exclusive Economic Zone",
+      "iso2": "TO",
+      "sovereign": "Tonga",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8449,
+      "name": "Tokelau",
+      "geoname": "New Zealand Exclusive Economic Zone (Tokelau)",
+      "iso2": "TK",
+      "sovereign": "New Zealand",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8450,
+      "name": "Phoenix Group",
+      "geoname": "Kiribati Exclusive Economic Zone (Phoenix Group)",
+      "iso2": "KI",
+      "sovereign": "Kiribati",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8451,
+      "name": "Howland and Baker Islands",
+      "geoname": "United States Exclusive Economic Zone (Howland and Baker Islands)",
+      "iso2": "UM",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8452,
+      "name": "Johnston Atoll",
+      "geoname": "United States Exclusive Economic Zone (Johnston Atoll)",
+      "iso2": "UM",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8453,
+      "name": "Hawaii",
+      "geoname": "United States Exclusive Economic Zone (Hawaii)",
+      "iso2": null,
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8454,
+      "name": "Wallis and Futuna",
+      "geoname": "French Exclusive Economic Zone (Wallis and Futuna)",
+      "iso2": "WF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8455,
+      "name": "New Zealand",
+      "geoname": "New Zealand Exclusive Economic Zone",
+      "iso2": "NZ",
+      "sovereign": "New Zealand",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8456,
+      "name": "United States",
+      "geoname": "United States Exclusive Economic Zone",
+      "iso2": "US",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8457,
+      "name": "Belize",
+      "geoname": "Belizean Exclusive Economic Zone",
+      "iso2": "BZ",
+      "sovereign": "Belize",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8459,
+      "name": "Jamaica",
+      "geoname": "Jamaican Exclusive Economic Zone",
+      "iso2": "JM",
+      "sovereign": "Jamaica",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8460,
+      "name": "Guyana",
+      "geoname": "Guyanese Exclusive Economic Zone",
+      "iso2": "GY",
+      "sovereign": "Guyana",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8461,
+      "name": "Suriname",
+      "geoname": "Surinamese Exclusive Economic Zone",
+      "iso2": "SR",
+      "sovereign": "Suriname",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8462,
+      "name": "French Guiana",
+      "geoname": "French Exclusive Economic Zone (French Guiana)",
+      "iso2": "GF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8463,
+      "name": "Alaska",
+      "geoname": "United States Exclusive Economic Zone (Alaska)",
+      "iso2": null,
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8464,
+      "name": "Brazil",
+      "geoname": "Brazilian Exclusive Economic Zone",
+      "iso2": "BR",
+      "sovereign": "Brazil",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8465,
+      "name": "Chile",
+      "geoname": "Chilean Exclusive Economic Zone",
+      "iso2": "CL",
+      "sovereign": "Chile",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8466,
+      "name": "Argentina",
+      "geoname": "Argentinian Exclusive Economic Zone",
+      "iso2": "AR",
+      "sovereign": "Argentina",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8467,
+      "name": "Uruguay",
+      "geoname": "Uruguayan Exclusive Economic Zone",
+      "iso2": "UY",
+      "sovereign": "Uruguay",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8468,
+      "name": "Qatar",
+      "geoname": "Qatari Exclusive Economic Zone",
+      "iso2": "QA",
+      "sovereign": "Qatar",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8469,
+      "name": "Iran",
+      "geoname": "Iranian Exclusive Economic Zone",
+      "iso2": "IR",
+      "sovereign": "Iran",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8470,
+      "name": "Iraq",
+      "geoname": "Iraqi Exclusive Economic Zone",
+      "iso2": "IQ",
+      "sovereign": "Iraq",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8471,
+      "name": "Guinea-Bissau",
+      "geoname": "Bissau-Guinean Exclusive Economic Zone",
+      "iso2": "GW",
+      "sovereign": "Guinea-Bissau",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8472,
+      "name": "Guinea",
+      "geoname": "Guinean Exclusive Economic Zone",
+      "iso2": "GN",
+      "sovereign": "Guinea",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8473,
+      "name": "Ivory Coast",
+      "geoname": "Ivorian Exclusive Economic Zone",
+      "iso2": "CI",
+      "sovereign": "Ivory Coast",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8474,
+      "name": "Nigeria",
+      "geoname": "Nigerian Exclusive Economic Zone",
+      "iso2": "NG",
+      "sovereign": "Nigeria",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8475,
+      "name": "Cameroon",
+      "geoname": "Cameroonian Exclusive Economic Zone",
+      "iso2": "CM",
+      "sovereign": "Cameroon",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8476,
+      "name": "Gabon",
+      "geoname": "Gabonese Exclusive Economic Zone",
+      "iso2": "GA",
+      "sovereign": "Gabon",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8477,
+      "name": "Democratic Republic of the Congo",
+      "geoname": "Congolese (Democratic Republic of) Exclusive Economic Zone",
+      "iso2": "CD",
+      "sovereign": "Democratic Republic of the Congo",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8478,
+      "name": "Angola",
+      "geoname": "Angolan Exclusive Economic Zone",
+      "iso2": "AO",
+      "sovereign": "Angola",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8479,
+      "name": "Tanzania",
+      "geoname": "Tanzanian Exclusive Economic Zone",
+      "iso2": "TZ",
+      "sovereign": "Tanzania",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8480,
+      "name": "India",
+      "geoname": "Indian Exclusive Economic Zone",
+      "iso2": "IN",
+      "sovereign": "India",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8481,
+      "name": "Bangladesh",
+      "geoname": "Bangladeshi Exclusive Economic Zone",
+      "iso2": "BD",
+      "sovereign": "Bangladesh",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8482,
+      "name": "Myanmar",
+      "geoname": "Myanma Exclusive Economic Zone",
+      "iso2": "MM",
+      "sovereign": "Myanmar",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8483,
+      "name": "Malaysia",
+      "geoname": "Malaysian Exclusive Economic Zone",
+      "iso2": "MY",
+      "sovereign": "Malaysia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8484,
+      "name": "Vietnam",
+      "geoname": "Vietnamese Exclusive Economic Zone",
+      "iso2": "VN",
+      "sovereign": "Vietnam",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8485,
+      "name": "Singapore",
+      "geoname": "Singaporean Exclusive Economic Zone",
+      "iso2": "SG",
+      "sovereign": "Singapore",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8486,
+      "name": "China",
+      "geoname": "Chinese Exclusive Economic Zone",
+      "iso2": "CN",
+      "sovereign": "China",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8487,
+      "name": "Japan",
+      "geoname": "Japanese Exclusive Economic Zone",
+      "iso2": "JP",
+      "sovereign": "Japan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8488,
+      "name": "Gilbert Islands",
+      "geoname": "Kiribati Exclusive Economic Zone (Gilbert Islands)",
+      "iso2": "KI",
+      "sovereign": "Kiribati",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8490,
+      "name": "Egypt",
+      "geoname": "Egyptian Exclusive Economic Zone",
+      "iso2": "EG",
+      "sovereign": "Egypt",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8491,
+      "name": "Jordan",
+      "geoname": "Jordanian Exclusive Economic Zone",
+      "iso2": "JO",
+      "sovereign": "Jordan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8492,
+      "name": "Indonesia",
+      "geoname": "Indonesian Exclusive Economic Zone",
+      "iso2": "ID",
+      "sovereign": "Indonesia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8493,
+      "name": "Canada",
+      "geoname": "Canadian Exclusive Economic Zone",
+      "iso2": "CA",
+      "sovereign": "Canada",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8494,
+      "name": "Saint-Pierre and Miquelon",
+      "geoname": "French Exclusive Economic Zone (Saint-Pierre and Miquelon)",
+      "iso2": "PM",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8495,
+      "name": "Collectivity of Saint Martin",
+      "geoname": "French Exclusive Economic Zone (Collectivity of Saint Martin)",
+      "iso2": "MF",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 8758,
+      "name": "East Timor",
+      "geoname": "Timorese Exclusive Economic Zone",
+      "iso2": "TL",
+      "sovereign": "East Timor",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21787,
+      "name": "Easter Island",
+      "geoname": "Chilean Exclusive Economic Zone (Easter Island)",
+      "iso2": null,
+      "sovereign": "Chile",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21788,
+      "name": "Guernsey",
+      "geoname": "British Exclusive Economic Zone (Guernsey)",
+      "iso2": "GG",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21789,
+      "name": "Jersey",
+      "geoname": "British Exclusive Economic Zone (Jersey)",
+      "iso2": "JE",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21790,
+      "name": "Monaco",
+      "geoname": "Monégasque Exclusive Economic Zone",
+      "iso2": "MC",
+      "sovereign": "Monaco",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21791,
+      "name": "Oecusse",
+      "geoname": "Timorese Exclusive Economic Zone (Oecusse)",
+      "iso2": null,
+      "sovereign": "East Timor",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 21792,
+      "name": "Jamaica",
+      "geoname": "Joint regime area: Jamaica / Colombia",
+      "iso2": "JM",
+      "sovereign": "Jamaica",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 21796,
+      "name": "South Korea",
+      "geoname": "Joint regime area: South Korea / Japan",
+      "iso2": "KR",
+      "sovereign": "South Korea",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 21797,
+      "name": "São Tomé and Principe",
+      "geoname": "Joint regime area: São Tomé and Principe / Nigeria",
+      "iso2": "ST",
+      "sovereign": "São Tomé and Principe",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 21798,
+      "name": "Papua New Guinea",
+      "geoname": "Joint regime area Torres Strait Treaty: Papua New Guinea / Australia",
+      "iso2": "PG",
+      "sovereign": "Papua New Guinea",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 21803,
+      "name": "Sint-Maarten",
+      "geoname": "Dutch Exclusive Economic Zone (Sint-Maarten)",
+      "iso2": "SX",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 22491,
+      "name": "Bosnia and Herzegovina",
+      "geoname": "Bosnian and Herzegovinian Exclusive Economic Zone",
+      "iso2": "BA",
+      "sovereign": "Bosnia and Herzegovina",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 22756,
+      "name": "Islas San Félix and San Ambrosio",
+      "geoname": "Chilean Exclusive Economic Zone (Islas San Félix and San Ambrosio)",
+      "iso2": "CL",
+      "sovereign": "Chile",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26517,
+      "name": "Curaçao",
+      "geoname": "Dutch Exclusive Economic Zone (Curaçao)",
+      "iso2": "CW",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26518,
+      "name": "Saba",
+      "geoname": "Dutch Exclusive Economic Zone (Saba)",
+      "iso2": "BQ",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26519,
+      "name": "Aruba",
+      "geoname": "Dutch Exclusive Economic Zone (Aruba)",
+      "iso2": "AW",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26520,
+      "name": "Bonaire",
+      "geoname": "Dutch Exclusive Economic Zone (Bonaire)",
+      "iso2": "BQ",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26521,
+      "name": "Brunei",
+      "geoname": "Bruneian Exclusive Economic Zone",
+      "iso2": "BN",
+      "sovereign": "Brunei",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26522,
+      "name": "Kazakhstan",
+      "geoname": "Kazakh Exclusive Economic Zone",
+      "iso2": "KZ",
+      "sovereign": "Kazakhstan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26523,
+      "name": "Turkmenistan",
+      "geoname": "Turkmen Exclusive Economic Zone",
+      "iso2": "TM",
+      "sovereign": "Turkmenistan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26524,
+      "name": "Azerbaijan",
+      "geoname": "Azerbaijani Exclusive Economic Zone",
+      "iso2": "AZ",
+      "sovereign": "Azerbaijan",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26526,
+      "name": "Sint-Eustatius",
+      "geoname": "Dutch Exclusive Economic Zone (Sint-Eustatius)",
+      "iso2": "BQ",
+      "sovereign": "Netherlands",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 26582,
+      "name": "Halaib Triangle",
+      "geoname": "Overlapping claim Halaib Triangle: Sudan / Egypt",
+      "iso2": null,
+      "sovereign": "Sudan",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 33177,
+      "name": "Guadeloupe",
+      "geoname": "French Exclusive Economic Zone (Guadeloupe)",
+      "iso2": "GP",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 33178,
+      "name": "Martinique",
+      "geoname": "French Exclusive Economic Zone (Martinique)",
+      "iso2": "MQ",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 33179,
+      "name": "Puerto Rico",
+      "geoname": "United States Exclusive Economic Zone (Puerto Rico)",
+      "iso2": "PR",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 33180,
+      "name": "United States Virgin Islands",
+      "geoname": "United States Exclusive Economic Zone (United States Virgin Islands)",
+      "iso2": "VI",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 33181,
+      "name": "Svalbard",
+      "geoname": "Norwegian Exclusive Economic Zone (Svalbard)",
+      "iso2": "SJ",
+      "sovereign": "Norway",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 33185,
+      "name": "Guyana",
+      "geoname": "Overlapping claim: Guyana / Trinidad and Tobago / Venezuela",
+      "iso2": "GY",
+      "sovereign": "Guyana",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48943,
+      "name": "Canada",
+      "geoname": "Overlapping claim: Canada / United States",
+      "iso2": "CA",
+      "sovereign": "Canada",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48944,
+      "name": "Mayotte",
+      "geoname": "Overlapping claim Mayotte: France / Comores",
+      "iso2": "YT",
+      "sovereign": "France",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48945,
+      "name": "Glorioso Islands",
+      "geoname": "Overlapping claim Glorioso Islands: France / Madagascar",
+      "iso2": null,
+      "sovereign": "Madagascar",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48946,
+      "name": "Ile Tromelin",
+      "geoname": "Overlapping claim Ile Tromelin: France / Madagascar / Republic of Mauritius",
+      "iso2": null,
+      "sovereign": "France",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48947,
+      "name": "Abu musa, Greater and Lesser Tunb",
+      "geoname": "Overlapping claim Abu musa, Greater and Lesser Tunb: United Arab Emirates / Iran",
+      "iso2": null,
+      "sovereign": "United Arab Emirates",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48948,
+      "name": "Matthew and Hunter Islands",
+      "geoname": "Overlapping claim Matthew and Hunter Islands: France / Vanuatu",
+      "iso2": null,
+      "sovereign": "France",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48950,
+      "name": "Kuril Islands",
+      "geoname": "Overlapping claim Kuril Islands: Japan / Russia",
+      "iso2": null,
+      "sovereign": "Japan",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48951,
+      "name": "Navassa Island",
+      "geoname": "Overlapping claim Navassa Island: United States / Haiti / Jamaica",
+      "iso2": null,
+      "sovereign": "Haiti",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48952,
+      "name": "Saint-Barthélemy",
+      "geoname": "French Exclusive Economic Zone (Saint-Barthélemy)",
+      "iso2": "BL",
+      "sovereign": "France",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48953,
+      "name": "Palestine",
+      "geoname": "Palestinian Exclusive Economic Zone",
+      "iso2": "PS",
+      "sovereign": "Palestine",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48954,
+      "name": "Senkaku Islands",
+      "geoname": "Overlapping claim Senkaku Islands: Taiwan / Japan / China",
+      "iso2": null,
+      "sovereign": "Taiwan",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48955,
+      "name": "Liancourt Rocks",
+      "geoname": "Overlapping claim Liancourt Rocks: Japan / South Korea",
+      "iso2": null,
+      "sovereign": "Japan",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48956,
+      "name": "Doumeira Islands",
+      "geoname": "Overlapping claim Doumeira Islands: Eritrea / Djibouti",
+      "iso2": null,
+      "sovereign": "Eritrea",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48957,
+      "name": "Guam",
+      "geoname": "United States Exclusive Economic Zone (Guam)",
+      "iso2": "GU",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48961,
+      "name": "Uruguay",
+      "geoname": "Joint regime area: Uruguay / Argentina",
+      "iso2": "UY",
+      "sovereign": "Uruguay",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48962,
+      "name": "Peru",
+      "geoname": "Joint regime area: Peru / Ecuador",
+      "iso2": "PE",
+      "sovereign": "Peru",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48964,
+      "name": "Senegal",
+      "geoname": "Joint regime area: Senegal / Guinea-Bissau",
+      "iso2": "SN",
+      "sovereign": "Senegal",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48965,
+      "name": "Venezuela",
+      "geoname": "Overlapping claim: Venezuela / Netherlands (Aruba) / Dominican Republic",
+      "iso2": "VE",
+      "sovereign": "Venezuela",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48966,
+      "name": "France",
+      "geoname": "Joint regime area: Spain / France",
+      "iso2": "FR",
+      "sovereign": "France",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48967,
+      "name": "United Kingdom",
+      "geoname": "Joint regime area: United Kingdom / Denmark (Faeroe Islands)",
+      "iso2": "GB",
+      "sovereign": "United Kingdom",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48968,
+      "name": "Costa Rica",
+      "geoname": "Joint regime area: Costa Rica / Ecuador (Galapagos)",
+      "iso2": "CR",
+      "sovereign": "Costa Rica",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48969,
+      "name": "Barbados",
+      "geoname": "Joint regime area: Barbados / Guyana",
+      "iso2": "BB",
+      "sovereign": "Barbados",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48970,
+      "name": "Dominican Republic",
+      "geoname": "Joint regime area: Dominican Republic / Colombia",
+      "iso2": "DO",
+      "sovereign": "Dominican Republic",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48971,
+      "name": "Colombia",
+      "geoname": "Overlapping claim: Colombia / Dominican Republic / Venezuela",
+      "iso2": "CO",
+      "sovereign": "Colombia",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48972,
+      "name": "Honduras",
+      "geoname": "Joint regime area: Honduras / United Kingdom (Cayman Islands)",
+      "iso2": "HN",
+      "sovereign": "Honduras",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48973,
+      "name": "Faeroe",
+      "geoname": "Joint regime area: Iceland / Denmark (Faeroe Islands)",
+      "iso2": "FO",
+      "sovereign": "Denmark",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48974,
+      "name": "Ecuador",
+      "geoname": "Joint regime area: Ecuador / Colombia",
+      "iso2": "EC",
+      "sovereign": "Ecuador",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48975,
+      "name": "Iceland",
+      "geoname": "Joint regime area: Iceland / Norway (Jan Mayen)",
+      "iso2": "IS",
+      "sovereign": "Iceland",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48976,
+      "name": "France",
+      "geoname": "Joint regime area: France / Italy",
+      "iso2": "FR",
+      "sovereign": "France",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48977,
+      "name": "Norway",
+      "geoname": "Joint regime area: Sweden / Norway",
+      "iso2": "NO",
+      "sovereign": "Norway",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48978,
+      "name": "United States",
+      "geoname": "Joint regime area: United States / Russia",
+      "iso2": "US",
+      "sovereign": "United States",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 48980,
+      "name": "Northern Mariana Islands",
+      "geoname": "United States Exclusive Economic Zone (Northern Mariana Islands)",
+      "iso2": "MP",
+      "sovereign": "United States",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48982,
+      "name": "Puerto Rico",
+      "geoname": "Overlapping claim: United States (Puerto Rico) / Dominican Republic",
+      "iso2": "PR",
+      "sovereign": "United States",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48984,
+      "name": "Serranilla Bank",
+      "geoname": "Colombian Exclusive Economic Zone (Serranilla Bank)",
+      "iso2": null,
+      "sovereign": "Colombia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48985,
+      "name": "Bajo Nuevo Bank",
+      "geoname": "Colombian Exclusive Economic Zone (Bajo Nuevo Bank)",
+      "iso2": null,
+      "sovereign": "Colombia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 48997,
+      "name": "Chafarinas Islands",
+      "geoname": "Overlapping claim Chafarinas Islands: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48998,
+      "name": "Perejil Island",
+      "geoname": "Overlapping claim Perejil Island: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 48999,
+      "name": "Peñón de Vélez de la Gomera",
+      "geoname": "Overlapping claim Peñón de Vélez de la Gomera: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 49000,
+      "name": "Melilla",
+      "geoname": "Overlapping claim Melilla: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 49001,
+      "name": "Alhucemas Islands",
+      "geoname": "Overlapping claim Alhucemas Islands: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 49002,
+      "name": "Ceuta",
+      "geoname": "Overlapping claim Ceuta: Spain / Morocco",
+      "iso2": null,
+      "sovereign": "Spain",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 49003,
+      "name": "China",
+      "geoname": "Overlapping claim: South China Sea",
+      "iso2": "CN",
+      "sovereign": "China",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 50167,
+      "name": "Croatia",
+      "geoname": "Joint regime area: Croatia / Slovenia",
+      "iso2": "HR",
+      "sovereign": "Croatia",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 50170,
+      "name": "Qatar",
+      "geoname": "Overlapping claim: Qatar / Saudi Arabia / United Arab Emirates",
+      "iso2": "QA",
+      "sovereign": "Qatar",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 62589,
+      "name": "Chagos Archipelago",
+      "geoname": "Mauritian Exclusive Economic Zone (Chagos Archipelago)",
+      "iso2": null,
+      "sovereign": "Republic of Mauritius",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 62596,
+      "name": "Serrana Bank",
+      "geoname": "Colombian Exclusive Economic Zone (Serrana Bank)",
+      "iso2": null,
+      "sovereign": "Colombia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 62598,
+      "name": "Quitasueño Bank",
+      "geoname": "Colombian Exclusive Economic Zone (Quitasueño Bank)",
+      "iso2": null,
+      "sovereign": "Colombia",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 64430,
+      "name": "Egypt",
+      "geoname": "Overlapping claim: Egypt / Libya",
+      "iso2": "EG",
+      "sovereign": "Egypt",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 64431,
+      "name": "Belize",
+      "geoname": "Overlapping claim: Belize / Honduras",
+      "iso2": "BZ",
+      "sovereign": "Belize",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 64440,
+      "name": "Malaysia",
+      "geoname": "Overlapping claim: Malaysia / Singapore",
+      "iso2": "MY",
+      "sovereign": "Malaysia",
+      "pol_type": "Overlapping claim"
+    },
+    {
+      "mrgid": 64446,
+      "name": "Isle of Man",
+      "geoname": "British Exclusive Economic Zone (Isle of Man)",
+      "iso2": "IM",
+      "sovereign": "United Kingdom",
+      "pol_type": "200NM"
+    },
+    {
+      "mrgid": 64459,
+      "name": "Norway",
+      "geoname": "Joint regime area: Norway / Russia",
+      "iso2": "NO",
+      "sovereign": "Norway",
+      "pol_type": "Joint regime"
+    },
+    {
+      "mrgid": 64460,
+      "name": "Iraq",
+      "geoname": "Overlapping claim: Iraq / Iran",
+      "iso2": "IQ",
+      "sovereign": "Iraq",
+      "pol_type": "Overlapping claim"
+    }
+  ]
+}
