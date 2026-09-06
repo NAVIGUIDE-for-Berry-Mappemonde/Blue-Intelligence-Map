@@ -14,8 +14,10 @@ Une identité (mrgid + nom) porte toutes les observations. On n'aplatit
 pas listing / OSM / runs en un seul is_poe. VLIZ (mrgid) = clé de zone,
 pas un moteur de crawl.
 
-Collection persistée : poe_seed_ports (reconstruite). Claude juge une
-graine à la fois, via seed_line.
+Collection persistée : poe_seed_ports (reconstruite).
+La graine dit à TinyFish *quoi* chercher (`search_query`). Noonsite est
+exclu des recherches : le listing est déjà dans la base. Claude juge les
+extraits officiels (nom + zone), pas les jetons listing/OSM/runs.
 
 Verdicts de vérification (pas une extraction) :
 
@@ -44,6 +46,8 @@ from app.services.poe_pipeline import now_iso
 
 SEED_COLLECTION = "poe_seed_ports"
 OSM_PRIORS_FILE = DATA_DIR / "osm_port_priors.json"
+# Déjà extrait dans le listing — ne pas le redemander à TinyFish.
+SEARCH_EXCLUDE_DOMAINS = ("noonsite.com",)
 
 SEED_LEGEND = (
     "Ligne graine (prior, pas une preuve officielle). "
@@ -625,7 +629,7 @@ def seed_tokens(seed: dict) -> list[str]:
 
 
 def format_seed_line(seed: dict) -> str:
-    """Une ligne compacte pour le juge — uniquement les jetons présents."""
+    """Résumé humain de l'inventaire — pas envoyé à Claude."""
     name = (seed.get("name") or "").strip() or "unknown"
     parts = [name]
     if seed.get("lat") is not None and seed.get("lon") is not None:
@@ -637,6 +641,27 @@ def format_seed_line(seed: dict) -> str:
     if tokens:
         parts.append(" · ".join(tokens))
     return " | ".join(parts)
+
+
+def seed_search_query(seed: dict) -> str:
+    """Requête TinyFish pour CETTE graine. Pas de nom Noonsite, pas de jetons."""
+    name = (seed.get("name") or seed.get("listing_name") or "").strip()
+    zone = (seed.get("zone_name") or "").strip()
+    if not name:
+        return ""
+    q = f'{name} official port of entry OR clearance OR "puerto habilitado"'
+    if zone:
+        q = f"{q} {zone}"
+    return q
+
+
+def url_is_excluded_search(url: str, banned=SEARCH_EXCLUDE_DOMAINS) -> bool:
+    """True si l'URL est noonsite (ou autre domaine déjà extrait)."""
+    from app.core.tinyfish import _tf_domain
+    host = _tf_domain(url or "")
+    if not host:
+        return False
+    return any(host == b or host.endswith("." + b) for b in banned)
 
 
 def match_named_seed(seeds: list[dict], mrgid: int, name: str) -> dict | None:
@@ -746,6 +771,7 @@ def build_seed_report(extracted: list[dict], listing_ports: list[dict],
     by_verdict = annotate_verdicts(seeds)
     for seed in seeds:
         seed["seed_line"] = format_seed_line(seed)
+        seed["search_query"] = seed_search_query(seed)
     cmp = compare_to_listing(
         extracted, listing_ports, restrict_to_run_zones=False)
     residual = []
@@ -827,6 +853,7 @@ async def persist_verify_run(db, report: dict, *, label: str = "seed-verify") ->
             "osm_kinds": list(seed.get("osm_kinds") or []),
             "observations": list(seed.get("observations") or []),
             "seed_line": seed.get("seed_line") or format_seed_line(seed),
+            "search_query": seed.get("search_query") or seed_search_query(seed),
             "extracted_at": now,
             "dedup_key": seed.get("dedup_key"),
         }
@@ -896,6 +923,7 @@ async def ensure_seed_indexes(db) -> None:
 
 def seed_db_doc(seed: dict, built_at: str) -> dict:
     line = seed.get("seed_line") or format_seed_line(seed)
+    query = seed.get("search_query") or seed_search_query(seed)
     return {
         "dedup_key": seed.get("dedup_key"),
         "name": seed.get("name"),
@@ -921,6 +949,8 @@ def seed_db_doc(seed: dict, built_at: str) -> dict:
         "source_urls": list(seed.get("source_urls") or []),
         "observations": list(seed.get("observations") or []),
         "verify_verdict": seed.get("verify_verdict") or verdict_for_seed(seed),
+        "search_query": query,
+        "search_exclude_domains": list(SEARCH_EXCLUDE_DOMAINS),
         "seed_line": line,
         "confidence": seed.get("confidence"),
         "extraction_engine": "seed",

@@ -24,7 +24,7 @@ GET  /api/poe/listing-control/canary
 GET  /api/poe/seeds/union              union bottom-up v1+runs+OSM+listing (aucun crawl)
 POST /api/poe/seeds/build              reconstruit poe_seed_ports (pas poe_ports)
 GET  /api/poe/seeds                    lecture poe_seed_ports
-GET  /api/poe/seeds/line               une ligne juge pour un candidat
+GET  /api/poe/seeds/line               requête TinyFish + résumé inventaire
 POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
 POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
 GET  /api/poe/seeds/enrich/status
@@ -57,9 +57,9 @@ from app.services.poe_diff import diff_run_vs_baseline
 from app.services.poe_pipeline import normalize_variant
 from app.services.poe_report import build_run_report, report_to_markdown
 from app.services.poe_seeds import (
-    SEED_LEGEND, build_seed_union, collect_seed_report, format_seed_line,
-    match_named_seed, persist_seed_database, persist_verify_run,
-    public_seed_view, seed_from_files,
+    SEARCH_EXCLUDE_DOMAINS, SEED_LEGEND, build_seed_union, collect_seed_report,
+    format_seed_line, match_named_seed, persist_seed_database,
+    persist_verify_run, public_seed_view, seed_from_files, seed_search_query,
 )
 
 router = APIRouter(prefix="/api")
@@ -114,7 +114,8 @@ class SeedVerifyBody(BaseModel):
 
 
 class SeedEnrichBody(BaseModel):
-    run_id: str = "20260906-071347-6a9509"
+    source: str = "seeds"          # seeds = poe_seed_ports ; run = poe_run_ports
+    run_id: str = ""
     do_geocode: bool = True
     do_verify: bool = True
     verdicts: list[str] = Field(default_factory=lambda: ["name_only"])
@@ -370,6 +371,10 @@ async def poe_seeds_line(mrgid: int, name: str):
     if hit is None:
         raise HTTPException(404, "seed unknown")
     return {
+        "name": hit.get("name"),
+        "search_query": hit.get("search_query") or seed_search_query(hit),
+        "search_exclude_domains": list(
+            hit.get("search_exclude_domains") or SEARCH_EXCLUDE_DOMAINS),
         "line": hit.get("seed_line") or format_seed_line(hit),
         "legend": SEED_LEGEND,
         "source": source,
@@ -419,33 +424,43 @@ async def poe_seeds_verify(body: SeedVerifyBody | None = None):
 
 @router.post("/poe/seeds/enrich", status_code=202)
 async def poe_seeds_enrich(body: SeedEnrichBody | None = None):
-    """Géocode / juge un lot du run verify. N'écrit pas dans poe_ports.
+    """Géocode / juge un lot. N'écrit pas dans poe_ports.
 
-    Défaut : run mondial `20260906-071347-6a9509`, 200 `name_only`.
-    Relancer avec `verdicts: ["unverified"]` pour le lot suivant.
+    Défaut : collection `poe_seed_ports` (source=seeds). TinyFish cherche
+    le nom de la graine ; noonsite.com est exclu. Claude juge les extraits.
+    `source=run` + `run_id` relit un run verify versionné.
     """
     from app.services.poe_seed_enrich import execute_enrich
 
     body = body or SeedEnrichBody()
+    source = (body.source or "seeds").strip()
+    if source not in ("seeds", "run"):
+        raise HTTPException(400, "source doit être seeds ou run")
     run_id = (body.run_id or "").strip()
-    if not run_id:
-        raise HTTPException(400, "run_id requis")
-    existing = await _db.poe_runs.find_one({"_id": run_id})
-    if not existing:
-        raise HTTPException(404, f"Run {run_id} unknown — lancer POST /api/poe/seeds/verify")
+    task_id = "seed-enrich" if source == "seeds" else run_id
+    if source == "run":
+        if not run_id:
+            raise HTTPException(400, "run_id requis si source=run")
+        existing = await _db.poe_runs.find_one({"_id": run_id})
+        if not existing:
+            raise HTTPException(404, f"Run {run_id} unknown — lancer POST /api/poe/seeds/verify")
+    else:
+        n = await _db.poe_seed_ports.count_documents({})
+        if not n:
+            raise HTTPException(404, "poe_seed_ports vide — lancer POST /api/poe/seeds/build")
     if len(_active_ids()) >= MAX_PARALLEL_RUNS:
         raise HTTPException(409, f"déjà {MAX_PARALLEL_RUNS} runs actifs")
-    if run_id in RUN_STATES and RUN_STATES[run_id].running:
-        raise HTTPException(409, f"Run {run_id} already running")
+    if task_id in RUN_STATES and RUN_STATES[task_id].running:
+        raise HTTPException(409, f"Enrich {task_id} already running")
     verdicts = [v for v in (body.verdicts or ["name_only"]) if v]
     state = TaskState(max_logs=2000)
     state.start()
-    RUN_STATES[run_id] = state
+    RUN_STATES[task_id] = state
 
     async def _runner():
         try:
             state.summary = await execute_enrich(
-                _db, state, run_id=run_id,
+                _db, state, run_id=run_id, source=source,
                 do_geocode=body.do_geocode, do_verify=body.do_verify,
                 verdicts=verdicts, limit=int(body.limit or 0),
                 concurrency=max(1, min(2, int(body.concurrency or 2))),
@@ -453,16 +468,17 @@ async def poe_seeds_enrich(body: SeedEnrichBody | None = None):
         except Exception as e:
             state.error = f"{type(e).__name__}: {e}"
             state.log(f"FATAL: {state.error}")
-            await _db.poe_runs.update_one({"_id": run_id}, {"$set": {
+            await _db.poe_runs.update_one({"_id": task_id}, {"$set": {
                 "enrich_error": state.error,
-                "enrich_finished_at": poe.now_iso()}})
+                "enrich_finished_at": poe.now_iso()}}, upsert=True)
         finally:
             state.finish()
 
     asyncio.create_task(_runner())
     return {
         "status": "started",
-        "run_id": run_id,
+        "source": source,
+        "run_id": task_id,
         "limit": body.limit,
         "verdicts": verdicts,
         "do_geocode": body.do_geocode,
@@ -473,7 +489,7 @@ async def poe_seeds_enrich(body: SeedEnrichBody | None = None):
 
 
 @router.get("/poe/seeds/enrich/status")
-async def poe_seeds_enrich_status(run_id: str = "20260906-071347-6a9509"):
+async def poe_seeds_enrich_status(run_id: str = "seed-enrich"):
     doc = await _db.poe_runs.find_one({"_id": run_id})
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
@@ -487,7 +503,7 @@ async def poe_seeds_enrich_status(run_id: str = "20260906-071347-6a9509"):
 
 
 @router.post("/poe/seeds/enrich/cancel")
-async def poe_seeds_enrich_cancel(run_id: str = "20260906-071347-6a9509"):
+async def poe_seeds_enrich_cancel(run_id: str = "seed-enrich"):
     st = RUN_STATES.get(run_id)
     if st is None or not st.running:
         raise HTTPException(409, f"Enrich {run_id} is not running")

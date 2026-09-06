@@ -87,6 +87,21 @@ class TestTfSearch:
         assert hits[0]["domain"] == "douane.gouv.fr"
         assert hits[0]["title"] == "Ports"
 
+    def test_exclude_domains_param(self, monkeypatch):
+        seen = []
+
+        class _Client(_FakeClient):
+            async def get(self, url, **kwargs):
+                seen.append(kwargs.get("params") or {})
+                return _FakeClient.queue.pop(0)
+
+        monkeypatch.setattr(tf.httpx, "AsyncClient", _Client)
+        _FakeClient.queue = [_FakeResp(200, {"results": []})]
+        _run(tf.tf_search(
+            "Fort Bay", "k", exclude_domains=["noonsite.com"]))
+        assert seen[0]["exclude_domains"] == "noonsite.com"
+        assert seen[0]["query"] == "Fort Bay"
+
     def test_402_returns_empty(self):
         _FakeClient.queue = [_FakeResp(402, {"error": "payment"})]
         assert _run(tf.tf_search("ports", "k")) == []

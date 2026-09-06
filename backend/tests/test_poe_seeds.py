@@ -9,7 +9,8 @@ from app.services.poe_seeds import (  # noqa: E402
     attach_listing_other, attach_listing_seeds, attach_osm_priors,
     attach_osm_seeds, build_seed_report, build_seeds_offline,
     format_seed_line, listing_name_seeds, persist_seed_database,
-    seed_db_doc, union_extracted, verdict_for_seed,
+    seed_db_doc, seed_search_query, union_extracted, url_is_excluded_search,
+    verdict_for_seed,
 )
 
 ZONES = [
@@ -352,9 +353,20 @@ class TestSeedDatabase:
         })
         doc = seed_db_doc(seed, "t")
         assert doc["seed_line"].startswith("Fort Bay")
+        assert doc["search_query"].startswith("Fort Bay ")
+        assert "noonsite" not in doc["search_query"].lower()
+        assert doc["search_exclude_domains"] == ["noonsite.com"]
         assert doc["observations"]
         assert doc["osm_customs"] is True
         assert doc["verify_verdict"] == "confirmed"
+
+    def test_search_query_names_the_port(self):
+        q = seed_search_query({"name": "Alofi", "zone_name": "Niue"})
+        assert "Alofi" in q
+        assert "Niue" in q
+        assert "port of entry" in q
+        assert url_is_excluded_search("https://www.noonsite.com/pacific/niue")
+        assert not url_is_excluded_search("https://customs.gov.nu/ports")
 
     def test_persist_replaces_seed_collection_not_poe_ports(self):
         import asyncio
@@ -394,6 +406,7 @@ class TestSeedDatabase:
         assert db.poe_seed_ports.deleted == 1
         stored = db.poe_seed_ports.docs[0]
         assert stored["seed_line"]
+        assert stored["search_query"]
         assert stored["observations"]
 
     def test_offline_listing_and_priors_union(self):
