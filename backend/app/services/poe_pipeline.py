@@ -39,9 +39,10 @@ from urllib.parse import urlparse, urlunparse
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
 from app.core.extract import (
-    audit_serp_filter, catalog_is_sufficient, extract_cascade,
-    extract_structured_ports, internal_followups, looks_like_port_catalog,
-    official_attachments, serp_filter, should_follow_attachments,
+    audit_serp_filter, catalog_is_sufficient, catalog_ports_with_coords,
+    extract_cascade, extract_structured_ports, internal_followups,
+    is_geocodeable_name, looks_like_port_catalog, official_attachments,
+    serp_filter, should_follow_attachments,
 )
 from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception_flags
 from app.core.llm import extract_ports, grounded_search
@@ -739,16 +740,18 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - port vu par le LLM seul → extraction_agreement=False (à recouper) ;
       - noms vus par le NER seul → journalisés comme candidats à vérifier ;
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
-    Un catalogue officiel suffisant court-circuite le LLM (économie de crédits).
+    Une vraie table (noms + coords) court-circuite le LLM ; les fragments
+    « port de X » ne suffisent plus — Haiku et OpenRouter lisent ces pages.
     Claude, s'il est allumé, est un second lecteur à côté d'OpenRouter.
     """
     raw_catalog = catalog_text if catalog_text is not None else context
     catalog = extract_structured_ports(raw_catalog)
     if catalog_is_sufficient(catalog, raw_catalog):
-        log(f"catalogue structuré suffisant ({len(catalog)} port(s)) — LLM sauté")
+        kept = catalog_ports_with_coords(catalog)
+        log(f"catalogue table suffisant ({len(kept)} port(s) coordonnés) — LLM sauté")
         await emit(rec, "extraction_compare", llm_n=None, ner_n=None,
-                   catalog_n=len(catalog), fallback="catalog", skipped_llm=True)
-        return catalog
+                   catalog_n=len(kept), fallback="catalog", skipped_llm=True)
+        return kept
 
     async def _openrouter():
         try:
@@ -789,13 +792,18 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         claude_names = []  # déjà la liste principale
     if llm_ports is None:
         log(f"LLM: échec ({type(llm_err).__name__}: {str(llm_err)[:100]})")
-        if catalog:
-            log(f"catalogue structuré: {len(catalog)} port(s) lus dans la source (sans LLM)")
+        coord_catalog = catalog_ports_with_coords(catalog)
+        named = [c for c in (catalog or [])
+                 if c.get("lat") is None
+                 and is_geocodeable_name(c.get("name") or "")]
+        fallback = coord_catalog or named
+        if fallback:
+            log(f"catalogue structuré: {len(fallback)} port(s) retenus (sans LLM)")
             await emit(rec, "extraction_compare", llm_n=None,
                        ner_n=(len(ner_names) if ner_names else 0),
-                       catalog_n=len(catalog), fallback="catalog",
+                       catalog_n=len(fallback), fallback="catalog",
                        llm_error=str(llm_err)[:120])
-            return catalog
+            return fallback
         if ner_names:
             ports = [{"name": n, "city": None,
                       "note": "extraction NER locale (fallback sans LLM)",
@@ -856,16 +864,27 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                claude_only=claude_only,
                llm_engine=(engines[0] if len(engines) == 1 else engines or None))
     if catalog:
+        by_coord = {
+            normalize_name(c["name"]): c
+            for c in catalog_ports_with_coords(catalog)
+            if normalize_name(c.get("name") or "")
+        }
+        for p in llm_ports:
+            key = normalize_name(p["name"])
+            c = by_coord.get(key)
+            if c and p.get("lat") is None:
+                p["lat"] = c["lat"]
+                p["lon"] = c["lon"]
         have = {normalize_name(p["name"]) for p in llm_ports}
         extra = []
-        for c in catalog:
+        for c in catalog_ports_with_coords(catalog):
             key = normalize_name(c["name"])
             if not key or key in have:
                 continue
             extra.append({**c, "extraction_agreement": None})
             have.add(key)
         if extra:
-            log(f"catalogue structuré: {len(extra)} port(s) lus dans la source "
+            log(f"catalogue table: {len(extra)} port(s) coordonnés ajoutés "
                 f"(en plus des {len(llm_ports)} du LLM)")
             await emit(rec, "catalog_extract", n=len(extra),
                        names=[c["name"] for c in extra[:20]])
@@ -1372,13 +1391,101 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
     return texts, hashes, used_sources, excerpts
 
 
+def _spatial_cand(lat, lon, source, geom, prepared, inland=None) -> dict:
+    """Candidat géocodé + classement ZEE / bord / rivière (pas de tampon 300 km)."""
+    cand = {"source": source, "lat": float(lat), "lon": float(lon),
+            "validated": False, "dist_km": None, "kind": "unknown"}
+    if prepared is None and geom is None:
+        return cand
+    sp = classify_poe_point(float(lat), float(lon), geom, prepared, inland=inland)
+    cand.update(sp)
+    return cand
+
+
+def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
+    """Choisit un candidat : table/source, accord dual, départage Haiku, ZEE."""
+    if row.get("hint") == "not_geocodeable":
+        return None, "not_geocodeable"
+    cands = row["cands"]
+    geo = row["geo"]
+    if not cands:
+        return None, None
+    if len(cands) == 1:
+        return cands[0], "single"
+    if geo.get("agree"):
+        nom = next((c for c in cands if c["source"] == "nominatim"), cands[0])
+        return nom, "agree"
+    pname = row["port"]["name"]
+    choice = picks.get(pname) or picks.get(pname.casefold())
+    if choice in ("nominatim", "geonames"):
+        chosen = next((c for c in cands if c["source"] == choice), None)
+        if chosen:
+            return chosen, "haiku_tiebreak"
+    if choice == "none":
+        return None, "haiku_none"
+    valid = [c for c in cands if c["validated"]]
+    if valid:
+        return valid[0], "eez"
+    return cands[0], "first"
+
+
+def _apply_spatial(chosen, arbitration, cands, port_name, log):
+    """Après le départage Haiku : garder seulement ZEE / bord / rivière.
+
+    Sans géométrie de zone (`kind=unknown`), on ne rejette pas — les tests
+    unitaires et les zones sans polygone gardent le point choisi.
+    """
+    if not chosen:
+        return chosen, arbitration
+    if chosen.get("validated") or chosen.get("kind") in (None, "unknown"):
+        return chosen, arbitration
+    other = next((c for c in cands if c is not chosen and c.get("validated")), None)
+    if other:
+        log(f"  ⚠ {port_name}: {chosen['source']} hors zone ({chosen.get('kind')}) "
+            f"— bascule sur {other['source']}")
+        return other, "spatial_switch"
+    log(f"  ⚠ {port_name}: hors ZEE, hors bord terrestre "
+        f"et hors exception rivière "
+        f"({chosen.get('kind')}, {chosen.get('dist_km')} km) — coordonnées rejetées")
+    return None, "spatial_rejected"
+
+
+async def _haiku_tiebreak_zone(zone, rows, settings, log, rec) -> dict:
+    """Un appel Haiku pour tous les désaccords Nominatim ≠ GeoNames de la zone."""
+    items = []
+    for row in rows:
+        nom = next((c for c in row["cands"] if c["source"] == "nominatim"), None)
+        geon = next((c for c in row["cands"] if c["source"] == "geonames"), None)
+        if not nom or not geon:
+            continue
+        items.append({
+            "name": row["port"]["name"],
+            "nominatim": [nom["lat"], nom["lon"]],
+            "geonames": [geon["lat"], geon["lon"]],
+        })
+    if not items:
+        return {}
+    try:
+        from app.core.claude import arbitrate_geocode_claude
+        picks = await arbitrate_geocode_claude(zone, items, settings=settings, log=log)
+    except Exception as e:
+        log(f"départage Haiku: échec ({type(e).__name__}: {str(e)[:80]}) — repli EEZ")
+        return {}
+    await emit(rec, "geocode_tiebreak", n=len(items), picks=picks)
+    return picks or {}
+
+
 async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
                                rec=None, run=None, catalog_text: str | None = None,
                                settings: dict | None = None) -> list[dict]:
-    """Étape 4 — Extraction parallèle (OpenRouter ∥ Claude ∥ NER) puis
-    géocodage double. Un point n'est gardé que s'il est dans cette ZEE,
-    sur son bord terrestre (≤ 15 km), ou — exception rivière — un port
-    de CE pays à ≤ 400 km. Pas de tampon 300 km, pas de snap_to_ocean."""
+    """Étape 4 — Extraction parallèle (OpenRouter ∥ Claude ∥ NER) puis géocodage.
+
+    Coords déjà dans la source (table ou LLM recopié) → pas de Nominatim.
+    Nom non toponyme → pas de géocode. Désaccord dual → un Haiku / zone.
+    Un point n'est gardé que s'il est dans cette ZEE, sur son bord terrestre
+    (≤ 15 km), ou — exception rivière — un port de CE pays à ≤ 400 km.
+    Pas de tampon 300 km, pas de snap_to_ocean.
+    """
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
     ports = await extract_ports_llm(context, zone, log, rec=rec,
@@ -1398,69 +1505,59 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     except Exception:
         prepared = None
 
-    def _spatial(lat, lon, inland=None):
-        if geom is None and prepared is None:
-            return {"kind": "unknown", "validated": False, "dist_km": None}
-        return classify_poe_point(lat, lon, geom, prepared, inland=inland)
-
-    docs = []
+    rows = []
     seen_names = set()
-    for p in ports:  # pas de plafond par pays (grands États maritimes)
+    for p in ports:
         norm = normalize_name(p["name"])
         if not norm or norm in seen_names:
             continue
         seen_names.add(norm)
-
         role = listing_role(p.get("name") or "", listing_ports)
         port_ev = {**p, "listing_role": role}
-
+        empty_geo = {"nominatim": None, "geonames": None, "agree": None,
+                     "agreement_km": None, "geonames_available": True,
+                     "nominatim_meta": {}, "geonames_meta": {}}
         if p.get("lat") is not None and p.get("lon") is not None:
-            geo = {"nominatim": None, "geonames": None, "agree": None,
-                   "agreement_km": None, "geonames_available": True,
-                   "nominatim_meta": {}, "geonames_meta": {}}
-            # Décret de CETTE zone : le pays est implicite.
+            src = "official_list" if p.get("extraction_engine") == "catalog" else "source"
             inland = inland_exception_flags(port_ev, zone, official_list=True)
-            sp = _spatial(float(p["lat"]), float(p["lon"]), inland)
-            cands = [{"source": "official_list", "lat": float(p["lat"]),
-                      "lon": float(p["lon"]), "validated": sp["validated"],
-                      "dist_km": sp["dist_km"], "kind": sp["kind"]}]
-        else:
-            geo = await geocode_port_dual(p, zone, log)
-            cands = []
+            rows.append({
+                "port": p, "norm": norm, "geo": empty_geo, "hint": None,
+                "cands": [_spatial_cand(p["lat"], p["lon"], src, geom, prepared, inland)],
+            })
+            continue
+        if not is_geocodeable_name(p["name"], p.get("geocodeable")):
+            log(f"  ⚓ {p['name']} → géocode sauté (nom non toponyme)")
+            rows.append({
+                "port": p, "norm": norm, "geo": empty_geo, "hint": "not_geocodeable",
+                "cands": [],
+            })
+            continue
+        geo = await geocode_port_dual(p, zone, log)
+        cands = []
         for source in ("nominatim", "geonames"):
             coords = geo.get(source)
             if not coords:
                 continue
             meta = geo.get(f"{source}_meta") or {}
             inland = inland_exception_flags(port_ev, zone, meta)
-            sp = _spatial(coords[0], coords[1], inland)
-            cands.append({"source": source, "lat": coords[0], "lon": coords[1],
-                          "validated": sp["validated"], "dist_km": sp["dist_km"],
-                          "kind": sp["kind"]})
+            cands.append(_spatial_cand(
+                coords[0], coords[1], source, geom, prepared, inland))
+        rows.append({"port": p, "norm": norm, "geo": geo, "hint": None, "cands": cands})
 
-        chosen, arbitration = None, None
-        valid_cands = [c for c in cands if c["validated"]]
-        if len(cands) == 1:
-            chosen, arbitration = cands[0], "single"
-        elif len(cands) >= 2:
-            if geo.get("agree") and cands[0]["validated"]:
-                chosen, arbitration = cands[0], "agree"
-            elif valid_cands:
-                chosen, arbitration = valid_cands[0], "eez"
-            else:
-                chosen, arbitration = cands[0], "first"
+    disagreements = [
+        r for r in rows
+        if r["geo"].get("agree") is False
+        and sum(1 for c in r["cands"] if c["source"] in ("nominatim", "geonames")) >= 2
+    ]
+    picks = {}
+    if disagreements:
+        picks = await _haiku_tiebreak_zone(zone, disagreements, settings, log, rec)
 
-        if chosen and not chosen["validated"]:
-            other = next((c for c in cands if c is not chosen and c["validated"]), None)
-            if other:
-                log(f"  ⚠ {p['name']}: {chosen['source']} hors zone ({chosen.get('kind')}) "
-                    f"— bascule sur {other['source']}")
-                chosen, arbitration = other, "spatial_switch"
-            else:
-                log(f"  ⚠ {p['name']}: hors ZEE, hors bord terrestre "
-                    f"et hors exception rivière "
-                    f"({chosen.get('kind')}, {chosen.get('dist_km')} km) — coordonnées rejetées")
-                chosen, arbitration = None, "spatial_rejected"
+    docs = []
+    for row in rows:
+        p, norm, geo, cands = row["port"], row["norm"], row["geo"], row["cands"]
+        chosen, arbitration = _pick_from_cands(row, picks)
+        chosen, arbitration = _apply_spatial(chosen, arbitration, cands, p["name"], log)
 
         lat = chosen["lat"] if chosen else None
         lon = chosen["lon"] if chosen else None
