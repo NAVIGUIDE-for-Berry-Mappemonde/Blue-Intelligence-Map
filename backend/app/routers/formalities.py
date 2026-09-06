@@ -96,7 +96,7 @@ async def _auto_refresh_cycle():
             doc = await asyncio.wait_for(
                 poe.generate_zone_poe(_db, mrgid,
                                       logger=lambda m, n=z.get("name"): _auto_log(f"[{n}] {m}"),
-                                      force=force),
+                                      force=force, refresh=not force),
                 timeout=360,
             )
             summary["checked"] += 1

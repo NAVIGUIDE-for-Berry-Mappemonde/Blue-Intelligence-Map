@@ -464,7 +464,10 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
 # Validation spatiale point-in-EEZ (shapely)
 # ---------------------------------------------------------------------------
 def point_in_eez(lat: float, lon: float, geom, prepared=None, tol_deg: float = 0.5):
-    """Retourne (validated: bool, dist_km: float|None). tol_deg ≈ 55 km côtiers."""
+    """Retourne (validated: bool, dist_km: float|None). tol_deg ≈ 55 km côtiers.
+
+    Conservé pour les appels historiques. Le pipeline PoE utilise
+    classify_poe_point (ZEE stricte ou bord terrestre, pas de tampon 55 km)."""
     try:
         from shapely.geometry import Point
         pt = Point(lon, lat)
@@ -476,6 +479,59 @@ def point_in_eez(lat: float, lon: float, geom, prepared=None, tol_deg: float = 0
         return d <= tol_deg, round(d * 111.0, 1)
     except Exception:
         return False, None
+
+
+# Bord terrestre d'une ZEE : le quai est à terre, le polygone est en mer.
+# Quelques kilomètres, pas 300 — un port du pays voisin doit être rejeté.
+COASTAL_LAND_KM = 12.0
+
+
+def _dist_km_to_geom(lat: float, lon: float, geom) -> float | None:
+    """Distance haversine au bord du polygone (degrés shapely trop grossiers)."""
+    try:
+        from shapely.geometry import Point
+        from shapely.ops import nearest_points
+        pt = Point(lon, lat)
+        if geom.contains(pt):
+            return 0.0
+        nearest = nearest_points(geom, pt)[0]
+        return round(haversine_km(lat, lon, nearest.y, nearest.x), 1)
+    except Exception:
+        try:
+            from shapely.geometry import Point
+            return round(geom.distance(Point(lon, lat)) * 111.0, 1)
+        except Exception:
+            return None
+
+
+def classify_poe_point(lat: float, lon: float, geom, prepared=None,
+                       coastal_km: float = COASTAL_LAND_KM) -> dict:
+    """Classe un candidat PoE par rapport à CETTE ZEE (pas snap_to_ocean).
+
+    - in_eez        : dans le polygone (mer de la zone) → accepté
+    - coastal_land  : à terre, collé au trait de côte de cette ZEE → accepté
+    - other_water   : en mer hors de cette ZEE (souvent les eaux d'à côté) → rejeté
+    - inland        : trop loin dans les terres → rejeté
+    """
+    try:
+        from shapely.geometry import Point
+        pt = Point(lon, lat)
+        inside = False
+        if prepared is not None and prepared.contains(pt):
+            inside = True
+        elif prepared is None and geom.contains(pt):
+            inside = True
+        dist = _dist_km_to_geom(lat, lon, geom)
+        if inside:
+            return {"kind": "in_eez", "validated": True, "dist_km": 0.0}
+        on_land = not is_ocean(lat, lon)
+        if on_land and dist is not None and dist <= coastal_km:
+            return {"kind": "coastal_land", "validated": True, "dist_km": dist}
+        if on_land:
+            return {"kind": "inland", "validated": False, "dist_km": dist}
+        return {"kind": "other_water", "validated": False, "dist_km": dist}
+    except Exception:
+        return {"kind": "unknown", "validated": False, "dist_km": None}
 
 
 # ---------------------------------------------------------------------------

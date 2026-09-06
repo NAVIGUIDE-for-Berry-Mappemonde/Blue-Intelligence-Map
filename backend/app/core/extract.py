@@ -57,21 +57,38 @@ HARD_CHALLENGE_RE = re.compile(
 )
 
 # --- Filtrage SERP : exclusion regex avant tout parsing -----------------------
-SERP_EXCLUDE_RE = re.compile(
+# Couperet DUR : réseaux, OTA, dictionnaires, challenges — jamais une source PoE.
+SERP_HARD_RE = re.compile(
     r"(tripadvisor|booking\.com|expedia|airbnb|pinterest|facebook\.com|instagram\.com"
     r"|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
     r"|hotels?\.com|kayak\.|skyscanner|cruisemapper|vesselfinder"
-    r"|brochure|touris[mt]|baggage|luggage|duty.?free|/vts[-_/.]|vts.?manual"
-    # dictionnaires / encyclopédies / how-to / « ports TCP » : jamais des sources de PoE
     r"|merriam-webster|dictionary\.com|thefreedictionary|cambridge\.org/(?:\w+/)?dictionary"
     r"|wiktionary|britannica\.com|wikihow|howtogeek|investopedia|linguee|wordreference"
     r"|vocabulary\.com|twominenglish|askdifference|factsinstitute"
     r"|guiahardware|stationx\.net|common-ports-cheat|ip-tracker\.org"
     r"|doordash\.com"
-    # pages interstitielles / anti-bot : jamais des sources légitimes
     r"|//unblock\.|\.unblock\.|/cdn-cgi/|captcha|datadome|perimeterx"
     r"|queue-it\.net|incapsula|distilnetworks"
     r"|\.docx?($|\?)|\.xlsx?($|\?)|\.pptx?($|\?)|\.zip($|\?)|\.exe($|\?))",
+    re.I,
+)
+
+# Couperet SOUPLE : mots touristiques qui existent aussi sur des pages d'État
+# (…/tourism-yacht-clearance). Un domaine officiel n'est pas jeté pour ça.
+SERP_SOFT_RE = re.compile(
+    r"(brochure|touris[mt]|baggage|luggage|duty.?free|/vts[-_/.]|vts.?manual)",
+    re.I,
+)
+
+# Rétrocompat Swarm / tests : dur + souple (sans protection de domaine).
+SERP_EXCLUDE_RE = re.compile(
+    r"(?:%s)|(?:%s)" % (SERP_HARD_RE.pattern, SERP_SOFT_RE.pattern),
+    re.I,
+)
+
+_OFFICIAL_URL_RE = re.compile(
+    r"gov|gouv|gob|douane|customs|aduana|zoll|immigration|border|"
+    r"maritime|port.?authority|coast.?guard|admin",
     re.I,
 )
 
@@ -98,19 +115,47 @@ FOLLOWUP_PATTERNS = (
 )
 
 
-def serp_filter(results: list[dict], url_key: str = "url", extra_re=None) -> list[dict]:
-    """Rejette les URLs non pertinentes (agrégateurs, réseaux sociaux, binaires,
-    pages interstitielles anti-bot)."""
+def looks_official_url(url: str) -> bool:
+    """Domaine ou chemin qui sent l'État / la douane (pas une preuve, un filet)."""
+    return bool(url and _OFFICIAL_URL_RE.search(url))
+
+
+def serp_drop_reason(url: str, extra_re=None, protect: bool = False) -> str | None:
+    """Pourquoi jeter cette URL, ou None pour la garder. Auditable."""
+    if not (url or "").startswith("http"):
+        return "not_http"
+    if SERP_HARD_RE.search(url):
+        return "hard"
+    if extra_re and extra_re.search(url):
+        return "extra"
+    if SERP_SOFT_RE.search(url) and not (protect or looks_official_url(url)):
+        return "soft_tourism"
+    return None
+
+
+def audit_serp_filter(results: list[dict], url_key: str = "url", extra_re=None,
+                      protect_fn=None) -> list[dict]:
+    """Journal {url, kept, reason} — pour relire ce que le filtre a fait."""
     out = []
     for r in results:
         u = r.get(url_key) or ""
-        if not u.startswith("http"):
-            continue
-        if SERP_EXCLUDE_RE.search(u):
-            continue
-        if extra_re and extra_re.search(u):
-            continue
-        out.append(r)
+        protect = bool(protect_fn(u)) if protect_fn else looks_official_url(u)
+        reason = serp_drop_reason(u, extra_re=extra_re, protect=protect)
+        out.append({"url": u, "kept": reason is None, "reason": reason,
+                    "protected": protect})
+    return out
+
+
+def serp_filter(results: list[dict], url_key: str = "url", extra_re=None,
+                protect_fn=None) -> list[dict]:
+    """Rejette les URLs non pertinentes. Un domaine d'État n'est jamais
+    écarté pour un mot touristique dans le chemin."""
+    out = []
+    for r in results:
+        u = r.get(url_key) or ""
+        protect = bool(protect_fn(u)) if protect_fn else looks_official_url(u)
+        if serp_drop_reason(u, extra_re=extra_re, protect=protect) is None:
+            out.append(r)
     return out
 
 
@@ -323,7 +368,7 @@ def internal_followups(html: str, base_url: str, patterns=FOLLOWUP_PATTERNS, lim
         if urlparse(href).netloc != base_host or href.rstrip("/") == base_url.rstrip("/"):
             continue
         path = urlparse(href).path.lower()
-        if any(p in path for p in patterns) and href not in seen and not SERP_EXCLUDE_RE.search(href):
+        if any(p in path for p in patterns) and href not in seen and not SERP_HARD_RE.search(href):
             seen.add(href)
             out.append(href)
         if len(out) >= limit:
@@ -508,7 +553,7 @@ def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
         u = (u or "").split("#")[0]
         if not u.startswith("http") or u in seen or _is_mirror_url(u):
             continue
-        if SERP_EXCLUDE_RE.search(u):
+        if SERP_HARD_RE.search(u):
             continue
         host = (urlparse(u).hostname or "").lower()
         listish = bool(_LIST_PDF_RE.search(u))

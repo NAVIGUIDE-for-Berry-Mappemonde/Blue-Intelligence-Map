@@ -100,7 +100,7 @@ async def validate_ports(db, state, only_unchecked: bool = True, limit: int = 0,
     q: dict = {"lat": {"$ne": None}, "lon": {"$ne": None}}
     if only_unchecked:
         q["osm_checked_at"] = {"$exists": False}
-    ports = await db.poe_ports.find(q, {"name": 1, "lat": 1, "lon": 1, "zone_name": 1}).to_list(20000)
+    ports = await db.poe_ports.find(q).to_list(20000)
     if limit > 0:
         ports = ports[:limit]
     state.total = len(ports)
@@ -114,12 +114,26 @@ async def validate_ports(db, state, only_unchecked: bool = True, limit: int = 0,
         try:
             elements = await overpass_around(p["lat"], p["lon"], radius_m)
             conf, tags, n = score_confidence(elements)
-            await db.poe_ports.update_one({"_id": p["_id"]}, {"$set": {
+            fresh = {**p, "osm_confidence": conf, "osm_tags": tags}
+            updates = {
                 "osm_confidence": conf,
                 "osm_tags": tags,
                 "osm_matches": n,
                 "osm_checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }})
+            }
+            try:
+                from app.services.poe_confidence import apply_score, score_port
+                official = any(
+                    "gouv" in (u or "") or "gov" in (u or "") or "gob" in (u or "")
+                    for u in (p.get("source_urls") or [])
+                )
+                apply_score(fresh, score_port(fresh, official_source=official))
+                updates["confidence"] = fresh.get("confidence")
+                updates["confidence_parts"] = fresh.get("confidence_parts")
+                updates["confidence_reasons"] = fresh.get("confidence_reasons")
+            except Exception:
+                pass
+            await db.poe_ports.update_one({"_id": p["_id"]}, {"$set": updates})
             summary["checked"] += 1
             if conf >= 0.5:
                 summary["high_confidence"] += 1

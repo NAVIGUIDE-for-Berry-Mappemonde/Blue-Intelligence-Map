@@ -147,6 +147,76 @@
       "gov.fj",
       "frcs.org.fj",
       "baf.com.fj"
+    ],
+    "BE": [
+      "belgium.be",
+      "fgov.be"
+    ],
+    "BG": [
+      "government.bg"
+    ],
+    "RO": [
+      "gov.ro"
+    ],
+    "CV": [
+      "governo.cv",
+      "gov.cv"
+    ],
+    "GQ": [
+      "gov.gq"
+    ],
+    "GW": [
+      "gov.gw"
+    ],
+    "SR": [
+      "gov.sr"
+    ],
+    "MH": [
+      "rmi.gov"
+    ],
+    "TV": [
+      "gov.tv"
+    ],
+    "AI": [
+      "gov.ai"
+    ],
+    "FO": [
+      "tinganes.fo",
+      "government.fo"
+    ],
+    "GL": [
+      "naalakkersuisut.gl",
+      "gov.gl"
+    ],
+    "VI": [
+      "vi.gov"
+    ],
+    "MP": [
+      "gov.mp"
+    ],
+    "NF": [
+      "norfolkisland.gov.nf"
+    ],
+    "TK": [
+      "gov.tk"
+    ],
+    "TF": [
+      "taaf.fr"
+    ],
+    "GF": [
+      "guyane.gouv.fr"
+    ],
+    "GP": [
+      "guadeloupe.gouv.fr"
+    ],
+    "MQ": [
+      "martinique.gouv.fr"
+    ],
+    "RE": [
+      "reunion.gouv.fr"
+    ],
+    "YT": [
+      "mayotte.gouv.fr"
     ]
   },
   "auto": {

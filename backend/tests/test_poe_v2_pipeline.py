@@ -608,8 +608,9 @@ class TestSearchMergeAgreement:
              "score_serp": 0.4},
         ]
         best = poe._best_per_domain(cands)
-        assert len(best) == 1
-        assert best[0]["url"].endswith("decreto.pdf")
+        urls = [c["url"] for c in best]
+        assert any(u.endswith("decreto.pdf") for u in urls)
+        assert any("noticias" in u for u in urls)
 
     def test_agreement_high_overlap_not_discordant(self):
         shared = [
