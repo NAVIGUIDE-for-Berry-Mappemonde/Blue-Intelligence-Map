@@ -21,6 +21,8 @@ GET  /api/poe/listing-control/compare
 GET  /api/poe/listing-control/review
 GET  /api/poe/listing-control/ref
 GET  /api/poe/listing-control/canary
+GET  /api/poe/seeds/union              union bottom-up v1+runs+listing (aucun crawl)
+POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
 GET  /api/poe/runs/code-fingerprint
 """
 import asyncio
@@ -46,6 +48,9 @@ from app.services.poe_bestof import compare_runs, synthesize_best_of
 from app.services.poe_diff import diff_run_vs_baseline
 from app.services.poe_pipeline import normalize_variant
 from app.services.poe_report import build_run_report, report_to_markdown
+from app.services.poe_seeds import (
+    build_seed_union, collect_seed_report, persist_verify_run, public_seed_view,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -78,6 +83,15 @@ class BestOfBody(BaseModel):
     run_ids: list[str]
     include_v1: bool = True
     label: str = ""
+
+
+class SeedVerifyBody(BaseModel):
+    run_ids: list[str] = Field(default_factory=list)
+    include_v1: bool = True
+    include_listing: bool = True
+    use_default_mondials: bool = True
+    persist: bool = True
+    label: str = "seed-verify"
 
 
 async def _launch_run(*, resume: bool, run_id: str, label: str, limit: int,
@@ -263,6 +277,42 @@ async def listing_control_canary(run_ids: str = "", include_v1: bool = True,
     ids = [x.strip() for x in run_ids.split(",") if x.strip()]
     return await suggest_canary_zones(
         _db, ids, include_v1=include_v1, limit=limit)
+
+
+@router.get("/poe/seeds/union")
+async def poe_seeds_union(run_ids: str = "", include_v1: bool = True,
+                          include_listing: bool = True,
+                          use_default_mondials: bool = False):
+    """Union bottom-up des graines (v1, runs, listing). Aucun crawl, pas d'écriture poe_ports.
+
+    `use_default_mondials=true` ajoute les 5 runs 285 ZEE déjà en base si
+    `run_ids` est vide. Le résidu = noms listing à géocoder, pas à re-scraper.
+    """
+    ids = [x.strip() for x in run_ids.split(",") if x.strip()]
+    return await build_seed_union(
+        _db, ids, include_v1=include_v1, include_listing=include_listing,
+        use_default_mondials=use_default_mondials)
+
+
+@router.post("/poe/seeds/verify")
+async def poe_seeds_verify(body: SeedVerifyBody | None = None):
+    """Inventaire + verdict PoE. Optionnellement persisté en run `verify`.
+
+    Aucun crawl SERP. Aucune écriture dans poe_ports. Le crawl (géocode /
+    OSM / Claude juge) ne vise que `name_only` et `unverified`, plus tard.
+    """
+    body = body or SeedVerifyBody()
+    ids = [x.strip() for x in body.run_ids if str(x).strip()]
+    report = await collect_seed_report(
+        _db, ids, include_v1=body.include_v1,
+        include_listing=body.include_listing,
+        use_default_mondials=body.use_default_mondials)
+    out = public_seed_view(report, mode="seed-verify")
+    if body.persist:
+        persisted = await persist_verify_run(_db, report, label=body.label)
+        out["persisted"] = persisted
+        out["run_id"] = persisted["run_id"]
+    return out
 
 
 @router.get("/poe/listing-control/review")
