@@ -59,7 +59,9 @@ def estimate_tokens(text: str) -> int:
 
 def get_anthropic_key(settings: dict | None = None) -> str:
     s = settings or {}
-    return (str(s.get("anthropic_api_key") or "") or _env("ANTHROPIC_API_KEY")).strip()
+    return (str(s.get("anthropic_api_key") or "")
+            or _env("ANTHROPIC_API_KEY")
+            or _env("CLAUDE_API_KEY")).strip()
 
 
 def get_claude_budget_usd(settings: dict | None = None) -> float:
@@ -470,4 +472,7 @@ async def extract_ports_claude(context: str, zone: dict,
     parsed = parse_json_flexible(raw)
     if parsed is None:
         raise RuntimeError("claude: no JSON in output")
-    return coerce_ports(parsed)
+    ports = coerce_ports(parsed)
+    for p in ports:
+        p["extraction_engine"] = "claude"
+    return ports

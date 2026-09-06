@@ -290,6 +290,8 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
     if claude.claude_enabled(s) and claude.budget_allows_call(s):
         try:
             ports = await claude.extract_ports_claude(context, zone, settings=s, log=log)
+            for p in ports:
+                p.setdefault("extraction_engine", "claude")
             if log:
                 log(f"LLM Claude Haiku: {len(ports)} port(s) extraits")
             return ports
@@ -308,6 +310,8 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
     data = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
                           settings=s, max_tokens=2500, log=log)
     ports = coerce_ports(data)
+    for p in ports:
+        p["extraction_engine"] = "openrouter"
     if log:
         log(f"LLM OpenRouter: {len(ports)} port(s) extraits")
     return ports

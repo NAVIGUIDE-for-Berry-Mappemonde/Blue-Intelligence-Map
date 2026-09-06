@@ -740,7 +740,8 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
     # NER muet (modèle absent OU zéro entité détectée) → signal NEUTRE, pas un désaccord
     has_ner_signal = bool(ner_names)
     for p in llm_ports:
-        p["extraction_engine"] = "llm"
+        if p.get("extraction_engine") not in ("claude", "openrouter", "catalog", "ner"):
+            p["extraction_engine"] = "llm"
         p["extraction_agreement"] = (
             any(text_similarity(p["name"], n) >= 0.6 for n in ner_names)
             if has_ner_signal else None
@@ -753,9 +754,12 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
     if has_ner_signal:
         log(f"extraction comparée: {len(both)} port(s) confirmés LLM∩NER, "
             f"{len(llm_only)} LLM seul, {len(ner_only)} NER seul (candidats à vérifier)")
+    engines = sorted({p.get("extraction_engine") for p in llm_ports
+                      if p.get("extraction_engine")})
     await emit(rec, "extraction_compare", llm_n=len(llm_ports),
                ner_n=(len(ner_names) if ner_names is not None else None),
-               both=both, llm_only=llm_only, ner_only=ner_only)
+               both=both, llm_only=llm_only, ner_only=ner_only,
+               llm_engine=(engines[0] if len(engines) == 1 else engines or None))
     if catalog:
         have = {normalize_name(p["name"]) for p in llm_ports}
         extra = []

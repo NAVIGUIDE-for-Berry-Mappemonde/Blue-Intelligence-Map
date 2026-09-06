@@ -20,6 +20,9 @@ import uuid
 from app.core.events import RunContext, RunRecorder
 from app.services import poe_pipeline as poe
 from app.services.poe_pipeline import normalize_variant
+from app.services.run_fingerprint import (
+    build_code_fingerprint, merge_run_params, resume_params,
+)
 
 ZONE_TIMEOUT_S = 900  # le pipeline v2 fait plus de travail (rendu, double géocodage)
 
@@ -76,8 +79,22 @@ async def execute_run(db, state, run_id: str, label: str = "",
 
     state.total = len(zones)
     state.progress = len(done_mrgids)
-    params = {"label": label, "limit": limit, "concurrency": concurrency,
-              "only_zones": only_zones, "force": True, "variant": variant}
+    settings = {}
+    try:
+        from app.db import get_settings
+        settings = await get_settings()
+    except Exception:
+        pass
+    fingerprint = build_code_fingerprint(settings, zone_timeout_s=ZONE_TIMEOUT_S)
+    base = {"label": label, "limit": limit, "concurrency": concurrency,
+            "only_zones": only_zones, "force": True, "variant": variant}
+    if resume:
+        existing = await db.poe_runs.find_one({"_id": run_id}) or {}
+        params = resume_params(existing.get("params") or base, fingerprint)
+        params.update({"label": label, "limit": limit, "concurrency": concurrency,
+                       "only_zones": only_zones, "force": True, "variant": variant})
+    else:
+        params = merge_run_params(base, fingerprint)
     await db.poe_runs.update_one({"_id": run_id}, {"$set": {
         "label": label, "params": params, "state": "running",
         "started_at": poe.now_iso() if not resume else None,
@@ -140,6 +157,14 @@ async def execute_run(db, state, run_id: str, label: str = "",
         s = z.get("status") or "erreur"
         by_status[s] = by_status.get(s, 0) + 1
     ports_total = await db.poe_run_ports.count_documents({"run_id": run_id})
+    catalog_skipped = 0
+    try:
+        catalog_skipped = await db.poe_run_events.count_documents({
+            "run_id": run_id, "step": "extraction_compare",
+            "payload.skipped_llm": True,
+        })
+    except Exception:
+        pass
     summary = {
         "run_id": run_id,
         "zones_total": len(zones),
@@ -149,6 +174,8 @@ async def execute_run(db, state, run_id: str, label: str = "",
         "errors": counter["errors"],
         "cancelled": cancelled,
         "duration_s": round(time.time() - t0, 1),
+        "catalog_skipped_zones": catalog_skipped,
+        "git_sha": (params.get("code") or {}).get("git_sha"),
     }
     await db.poe_runs.update_one({"_id": run_id}, {"$set": {
         "state": "cancelled" if cancelled else "done",

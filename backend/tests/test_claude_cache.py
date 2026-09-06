@@ -43,13 +43,21 @@ class TestPayloadCache:
 
 
 class TestBudget:
-    def test_disabled_without_key_or_budget(self):
+    def test_accepts_claude_api_key_alias(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("CLAUDE_API_KEY", "sk-ant-alias")
+        assert claude.get_anthropic_key({}) == "sk-ant-alias"
+
+    def test_disabled_without_key_or_budget(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+        monkeypatch.delenv("CLAUDE_BUDGET_USD", raising=False)
         assert claude.claude_enabled({}) is False
         assert claude.claude_enabled({"anthropic_api_key": "sk-ant-x"}) is False
         assert claude.claude_enabled({"anthropic_api_key": "sk-ant-x",
-                                     "claude_budget_usd": 0}) is False
+                                      "claude_budget_usd": 0}) is False
         assert claude.claude_enabled({"anthropic_api_key": "sk-ant-x",
-                                     "claude_budget_usd": 10}) is True
+                                      "claude_budget_usd": 10}) is True
 
     def test_env_budget_when_settings_zero(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_BUDGET_USD", "12.5")
