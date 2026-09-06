@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.dedup import normalize_name  # noqa: E402
 from app.services.listing_control import (  # noqa: E402
-    compare_to_listing, persist_review, review_items,
+    _unclos_skip, compare_to_listing, persist_review, review_items,
+    suggest_canary_zones,
 )
 from app.services.listing_ref import (  # noqa: E402
     project_listing, resolve_slug,
@@ -196,3 +197,39 @@ class TestPersistReview:
         n = loop.run_until_complete(tdb.poe_listing_review.count_documents({"run_id": "r-saba"}))
         assert n == out["review_count"]
         assert loop.run_until_complete(tdb.poe_run_ports.count_documents({})) == 0
+
+
+class TestUnclosSkip:
+    def test_clipperton_skipped(self):
+        assert _unclos_skip("Clipperton Island") == "uninhabited"
+        assert _unclos_skip("Navassa Island") == "uninhabited"
+        assert _unclos_skip("Venezuela") is None
+        assert _unclos_skip("Mexico") is None
+
+
+class TestSuggestCanary:
+    def test_empty_db(self, review_db):
+        tdb, loop = review_db
+        out = loop.run_until_complete(suggest_canary_zones(tdb, []))
+        assert out["atlas_empty"] is True
+        assert out["mrgids"] == []
+        assert out["skipped_unclos"] == []
+
+    def test_unions_listing_only_and_errors(self, review_db):
+        tdb, loop = review_db
+        loop.run_until_complete(tdb.poe_ports.insert_one({
+            "mrgid": 8447, "zone_name": "Niue", "name": "Unknown Wharf",
+            "dedup_key": "8447:unknownwharf",
+        }))
+        loop.run_until_complete(tdb.eez_zones.insert_many(ZONES))
+        loop.run_until_complete(tdb.poe_runs.insert_one({"_id": "r-old"}))
+        loop.run_until_complete(tdb.poe_run_zones.insert_one({
+            "run_id": "r-old", "mrgid": 26518, "name": "Saba", "status": "erreur",
+        }))
+        out = loop.run_until_complete(suggest_canary_zones(
+            tdb, ["r-old"], include_v1=True, limit=10))
+        assert out["atlas_empty"] is False
+        assert 26518 in out["mrgids"]
+        saba = next(z for z in out["zones"] if z["mrgid"] == 26518)
+        assert any(r.startswith("error:") for r in saba["reasons"])
+        assert any("listing_only" in z["reasons"] for z in out["zones"])

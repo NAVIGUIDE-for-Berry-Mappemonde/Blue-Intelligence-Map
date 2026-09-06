@@ -295,3 +295,73 @@ async def compare_runs_to_listing(db, run_ids: list[str], include_v1: bool = Tru
         "unresolved_slugs": proj.get("unresolved") or [],
         "reports": reports,
     }
+
+
+def _add_reason(bucket: dict[int, list[str]], mrgid, reason: str) -> None:
+    if mrgid is None:
+        return
+    mid = int(mrgid)
+    bucket.setdefault(mid, [])
+    if reason not in bucket[mid]:
+        bucket[mid].append(reason)
+
+
+_SKIP_UNCLOS = {"uninhabited", "antarctic"}
+
+
+def _unclos_skip(name: str | None) -> str | None:
+    from app.services.poe_pipeline import qualify_unclos
+    q = qualify_unclos({"name": name or "", "geoname": "", "poe_count": 0})
+    code = (q or {}).get("code")
+    return code if code in _SKIP_UNCLOS else None
+
+
+async def suggest_canary_zones(db, run_ids: list[str] | None = None,
+                               include_v1: bool = True, limit: int = 25) -> dict:
+    """ZEE canari : trous listing (v1) ∪ zones en erreur des runs donnés.
+
+    Ne lance aucun crawl. Sans poe_ports / runs, la liste est vide.
+    Les ZEE uninhabited / antarctic (UNCLOS) sont écartées : Claude n'y sert à rien.
+    """
+    reasons: dict[int, list[str]] = {}
+    names: dict[int, str] = {}
+    skipped_unclos: list[dict] = []
+    v1_ports = await db.poe_ports.count_documents({})
+    stored_runs = await db.poe_runs.count_documents({})
+
+    if include_v1 and v1_ports:
+        report = await build_listing_control_report(db, "v1", restrict_to_run_zones=False)
+        for row in (report.get("review") or {}).get("listing_only") or []:
+            mid = row.get("mrgid")
+            _add_reason(reasons, mid, "listing_only")
+            if mid is not None:
+                names[int(mid)] = row.get("zone_name") or names.get(int(mid))
+
+    for rid in run_ids or []:
+        async for z in db.poe_run_zones.find(
+                {"run_id": rid, "status": "erreur"}, {"mrgid": 1, "name": 1}):
+            mid = z.get("mrgid")
+            _add_reason(reasons, mid, f"error:{rid}")
+            if mid is not None:
+                names[int(mid)] = z.get("name") or names.get(int(mid))
+
+    ranked = sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    zones = []
+    for mid, why in ranked:
+        code = _unclos_skip(names.get(mid))
+        if code:
+            skipped_unclos.append({"mrgid": mid, "name": names.get(mid),
+                                   "unclos": code})
+            continue
+        zones.append({"mrgid": mid, "name": names.get(mid), "reasons": why})
+        if len(zones) >= max(1, min(limit, 80)):
+            break
+    return {
+        "v1_ports": v1_ports,
+        "stored_runs": stored_runs,
+        "source_run_ids": list(run_ids or []),
+        "mrgids": [z["mrgid"] for z in zones],
+        "zones": zones,
+        "skipped_unclos": skipped_unclos[:20],
+        "atlas_empty": v1_ports == 0 and stored_runs == 0,
+    }

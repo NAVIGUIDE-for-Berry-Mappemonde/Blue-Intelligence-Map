@@ -470,4 +470,7 @@ async def extract_ports_claude(context: str, zone: dict,
     parsed = parse_json_flexible(raw)
     if parsed is None:
         raise RuntimeError("claude: no JSON in output")
-    return coerce_ports(parsed)
+    ports = coerce_ports(parsed)
+    for p in ports:
+        p["extraction_engine"] = "claude"
+    return ports

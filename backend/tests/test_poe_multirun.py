@@ -196,6 +196,7 @@ class TestBestOfPersist:
         assert "État" not in names
         run = loop.run_until_complete(tdb.poe_runs.find_one({"_id": "r-best"}))
         assert run["params"]["variant"] == "bestof"
+        assert run["params"]["code"]["git_sha"]
         assert run["synthetic"] is True
 
 

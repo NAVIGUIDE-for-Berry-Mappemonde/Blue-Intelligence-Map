@@ -315,9 +315,14 @@ async def synthesize_best_of(db, run_ids: list[str], include_v1: bool = True,
         "sources": run_ids,
         "include_v1": include_v1,
     }
+    from app.services.run_fingerprint import build_code_fingerprint, merge_run_params
+    bestof_params = merge_run_params(
+        {"variant": "bestof", "sources": run_ids, "include_v1": include_v1},
+        build_code_fingerprint({}, zone_timeout_s=0),
+    )
     await db.poe_runs.update_one({"_id": dest_run_id}, {"$set": {
         "label": label,
-        "params": {"variant": "bestof", "sources": run_ids, "include_v1": include_v1},
+        "params": bestof_params,
         "state": "done",
         "started_at": now_iso(),
         "finished_at": now_iso(),

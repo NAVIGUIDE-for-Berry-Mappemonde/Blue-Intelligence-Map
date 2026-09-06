@@ -20,6 +20,8 @@ POST /api/poe/listing-control/v1
 GET  /api/poe/listing-control/compare
 GET  /api/poe/listing-control/review
 GET  /api/poe/listing-control/ref
+GET  /api/poe/listing-control/canary
+GET  /api/poe/runs/code-fingerprint
 """
 import asyncio
 import os
@@ -36,7 +38,9 @@ from app.services import poe_pipeline as poe
 from app.services import poe_runs
 from app.services.listing_control import (
     build_listing_control_report, compare_runs_to_listing, persist_review,
+    suggest_canary_zones,
 )
+from app.services.run_fingerprint import build_code_fingerprint
 from app.services.listing_ref import project_listing
 from app.services.poe_bestof import compare_runs, synthesize_best_of
 from app.services.poe_diff import diff_run_vs_baseline
@@ -164,6 +168,14 @@ async def poe_run_multi(body: MultiRunBody | None = None):
             "active_run_ids": _active_ids()}
 
 
+@router.get("/poe/runs/code-fingerprint")
+async def poe_runs_code_fingerprint():
+    """Empreinte qui serait écrite dans params.code au prochain POST /runs."""
+    from app.db import get_settings
+    settings = await get_settings()
+    return build_code_fingerprint(settings, zone_timeout_s=poe_runs.ZONE_TIMEOUT_S)
+
+
 @router.get("/poe/runs/searxng")
 async def poe_searxng_health():
     instances = poe.searx_instances()
@@ -242,6 +254,15 @@ async def listing_control_compare(run_ids: str = "", include_v1: bool = True,
             raise HTTPException(404, f"Run {rid} unknown")
     return await compare_runs_to_listing(
         _db, ids, include_v1=include_v1, persist=persist)
+
+
+@router.get("/poe/listing-control/canary")
+async def listing_control_canary(run_ids: str = "", include_v1: bool = True,
+                                 limit: int = 25):
+    """ZEE à passer en canari (listing_only ∪ erreur) — aucun crawl."""
+    ids = [x.strip() for x in run_ids.split(",") if x.strip()]
+    return await suggest_canary_zones(
+        _db, ids, include_v1=include_v1, limit=limit)
 
 
 @router.get("/poe/listing-control/review")
