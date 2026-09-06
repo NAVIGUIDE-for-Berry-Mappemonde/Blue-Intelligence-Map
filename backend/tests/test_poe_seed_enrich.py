@@ -9,10 +9,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.tasks import TaskState  # noqa: E402
 from app.services import poe_seed_enrich as enr  # noqa: E402
+from app.services.poe_seeds import SEED_LEGEND  # noqa: E402
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+class TestJudgePrompt:
+    def test_one_seed_line_not_a_zone_list(self):
+        doc = {
+            "name": "Fort Bay", "lat": 17.62, "lon": -63.25,
+            "seed_sources": ["listing", "v1"], "listing_role": "poe",
+            "osm_customs": True, "has_coords": True,
+            "verify_verdict": "unverified",
+        }
+        prompt = enr._judge_prompt(doc, {"name": "Saba", "iso2": "BQ"}, "extrait")
+        assert "CANDIDAT (une ligne) :" in prompt
+        assert "Fort Bay" in prompt
+        assert "listing:poe" in prompt
+        assert "osm:customs" in prompt
+        assert "Juge uniquement CE lieu" in prompt
+        assert "Uturoa" not in prompt
+        assert SEED_LEGEND[:20] in enr.JUDGE_SYSTEM
 
 
 class TestParseAndVerdict:

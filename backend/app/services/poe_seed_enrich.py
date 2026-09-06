@@ -30,7 +30,9 @@ from app.core.tinyfish import (
 from app.services.poe_pipeline import (
     build_whitelist, load_exceptions, now_iso, url_allowed,
 )
-from app.services.poe_seeds import verdict_for_seed
+from app.services.poe_seeds import (
+    SEED_LEGEND, format_seed_line, listing_is_poe, verdict_for_seed,
+)
 
 JUDGE_SYSTEM = (
     "Tu es un juge Ports d'Entrée. Réponds uniquement en JSON strict : "
@@ -38,7 +40,8 @@ JUDGE_SYSTEM = (
     "is_poe=true seulement si une source officielle désigne CE lieu comme "
     "port d'entrée / clearance / puerto habilitado / designated port. "
     "false si les sources parlent d'autre chose (marina, ville, autre pays). "
-    "null si les extraits ne permettent pas de décider."
+    "null si les extraits ne permettent pas de décider. "
+    + SEED_LEGEND
 )
 
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
@@ -74,8 +77,7 @@ def apply_judge_verdict(seed: dict, judge: dict) -> str:
     if current == "confirmed":
         return "confirmed"
     status = judge.get("judge_status")
-    srcs = set(seed.get("seed_sources") or [])
-    has_listing = "listing" in srcs
+    has_listing = listing_is_poe(seed)
     has_coords = bool(seed.get("has_coords") or (
         seed.get("lat") is not None and seed.get("lon") is not None))
     if status == "accepted" and has_listing and has_coords:
@@ -228,11 +230,12 @@ async def geocode_one(doc: dict, zone: dict, log) -> dict:
 
 
 def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
+    line = doc.get("seed_line") or format_seed_line(doc)
     return (
-        f"Candidat : {doc.get('name')}\n"
+        f"CANDIDAT (une ligne) : {line}\n"
         f"Zone VLIZ : {zone.get('name') or zone.get('geoname')} "
         f"({zone.get('iso2') or ''})\n"
-        f"Sources graines : {', '.join(doc.get('seed_sources') or [])}\n\n"
+        f"Juge uniquement CE lieu. Ne liste aucun autre port.\n\n"
         f"EXTRAITS:\n{(context or '')[:8000]}"
     )
 

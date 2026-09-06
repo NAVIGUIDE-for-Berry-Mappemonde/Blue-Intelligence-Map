@@ -22,6 +22,9 @@ GET  /api/poe/listing-control/review
 GET  /api/poe/listing-control/ref
 GET  /api/poe/listing-control/canary
 GET  /api/poe/seeds/union              union bottom-up v1+runs+OSM+listing (aucun crawl)
+POST /api/poe/seeds/build              reconstruit poe_seed_ports (pas poe_ports)
+GET  /api/poe/seeds                    lecture poe_seed_ports
+GET  /api/poe/seeds/line               une ligne juge pour un candidat
 POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
 POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
 GET  /api/poe/seeds/enrich/status
@@ -54,7 +57,9 @@ from app.services.poe_diff import diff_run_vs_baseline
 from app.services.poe_pipeline import normalize_variant
 from app.services.poe_report import build_run_report, report_to_markdown
 from app.services.poe_seeds import (
-    build_seed_union, collect_seed_report, persist_verify_run, public_seed_view,
+    SEED_LEGEND, build_seed_union, collect_seed_report, format_seed_line,
+    match_named_seed, persist_seed_database, persist_verify_run,
+    public_seed_view, seed_from_files,
 )
 
 router = APIRouter(prefix="/api")
@@ -88,6 +93,14 @@ class BestOfBody(BaseModel):
     run_ids: list[str]
     include_v1: bool = True
     label: str = ""
+
+
+class SeedBuildBody(BaseModel):
+    run_ids: list[str] = Field(default_factory=list)
+    include_v1: bool = True
+    include_listing: bool = True
+    include_osm: bool = True
+    use_default_mondials: bool = True
 
 
 class SeedVerifyBody(BaseModel):
@@ -307,6 +320,62 @@ async def poe_seeds_osm_refresh():
     """Recharge Overpass (lent, 2–10 min). N'écrit pas dans poe_ports."""
     from app.services.osm_seeds import refresh_osm_cache
     return await refresh_osm_cache(_db)
+
+
+@router.post("/poe/seeds/build")
+async def poe_seeds_build(body: SeedBuildBody | None = None):
+    """Reconstruit poe_seed_ports (runs ∪ listing ∪ OSM). Aucun crawl, pas poe_ports."""
+    body = body or SeedBuildBody()
+    ids = [x.strip() for x in body.run_ids if str(x).strip()]
+    report = await collect_seed_report(
+        _db, ids, include_v1=body.include_v1,
+        include_listing=body.include_listing,
+        include_osm=body.include_osm,
+        use_default_mondials=body.use_default_mondials)
+    persisted = await persist_seed_database(_db, report)
+    out = public_seed_view(report, mode="seed-db")
+    out["persisted"] = persisted
+    return out
+
+
+@router.get("/poe/seeds")
+async def poe_seeds_list(mrgid: int | None = None, verdict: str | None = None,
+                         limit: int = 50):
+    """Lecture de poe_seed_ports. Pas d'écriture poe_ports."""
+    q: dict = {}
+    if mrgid is not None:
+        q["mrgid"] = int(mrgid)
+    if verdict:
+        q["verify_verdict"] = verdict
+    total = await _db.poe_seed_ports.count_documents(q)
+    cap = max(0, min(int(limit or 50), 200))
+    docs = await _db.poe_seed_ports.find(q).to_list(cap)
+    return {
+        "total": total,
+        "limit": cap,
+        "seeds": docs,
+        "wrote_poe_ports": False,
+    }
+
+
+@router.get("/poe/seeds/line")
+async def poe_seeds_line(mrgid: int, name: str):
+    """Une ligne juge pour un candidat (collection, sinon listing + priors)."""
+    docs = await _db.poe_seed_ports.find({"mrgid": int(mrgid)}).to_list(8000)
+    hit = match_named_seed(docs, mrgid, name)
+    source = "poe_seed_ports"
+    if hit is None:
+        hit = seed_from_files(int(mrgid), name)
+        source = "files"
+    if hit is None:
+        raise HTTPException(404, "seed unknown")
+    return {
+        "line": hit.get("seed_line") or format_seed_line(hit),
+        "legend": SEED_LEGEND,
+        "source": source,
+        "seed": hit,
+        "wrote_poe_ports": False,
+    }
 
 
 @router.get("/poe/seeds/union")
