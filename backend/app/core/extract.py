@@ -554,16 +554,41 @@ _GEOCODE_STOP = frozenset({
     "un", "une", "et", "ou", "el", "los", "las", "y",
 })
 
+# Raison sociale / autorité portuaire — pas « port of / port de » (Port of Spain).
+_CORPORATE_PORT_PREFIXES = (
+    "ports autonomes de ", "ports autonomes d'",
+    "port autonome de ", "port autonome d'",
+    "autorité portuaire de ", "autorite portuaire de ",
+    "autoridad portuaria de ", "port authority of ",
+    "office portuaire de ",
+)
+
+
+def geocode_query_name(name: str) -> str:
+    """Toponyme à géocoder : Nouméa, pas « Port autonome de Nouméa ».
+
+    Ne strippe pas « port of / port de / puerto de » — « Port of Spain »
+    resterait « Spain ».
+    """
+    n = (name or "").strip()
+    low = n.lower()
+    for p in _CORPORATE_PORT_PREFIXES:
+        if low.startswith(p):
+            rest = n[len(p):].strip(" \t-–,")
+            return rest or n
+    return n
+
 
 def is_geocodeable_name(name: str, geocodeable=None) -> bool:
     """False → ne pas appeler Nominatim/GeoNames (fragment, pas un toponyme).
 
     `geocodeable is False` (flag LLM) gagne toujours. Un filet local recale
     les phrases type canari NL/CI même si le flag est absent ou True.
+    La raison sociale « Port autonome de … » est jugée sur l'alias listing.
     """
     if geocodeable is False:
         return False
-    n = (name or "").strip()
+    n = geocode_query_name(name or "")
     if len(n) < 2 or len(n) > 80:
         return False
     if _JUNK_NAME_RE.search(n):

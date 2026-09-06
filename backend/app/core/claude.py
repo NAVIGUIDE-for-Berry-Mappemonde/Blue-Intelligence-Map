@@ -24,7 +24,9 @@ from app.config import DATA_DIR
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-CLAUDE_MODEL = "claude-haiku-4-5"
+CLAUDE_HAIKU_MODEL = "claude-haiku-4-5"
+CLAUDE_SONNET_MODEL = "claude-sonnet-4-5"
+CLAUDE_MODEL = CLAUDE_HAIKU_MODEL  # extraction catalogue (cache Haiku)
 CACHE_TTL = "1h"
 MIN_CACHE_TOKENS = 4096
 STOP_RATIO = 0.90
@@ -37,6 +39,13 @@ RATE_OUTPUT = 5.00
 RATE_CACHE_READ = 0.10
 RATE_CACHE_WRITE_5M = 1.25
 RATE_CACHE_WRITE_1H = 2.00
+
+# Sonnet 4.5 — ~3× Haiku (input/output/cache)
+SONNET_RATE_INPUT = 3.00
+SONNET_RATE_OUTPUT = 15.00
+SONNET_RATE_CACHE_READ = 0.30
+SONNET_RATE_CACHE_WRITE_5M = 3.75
+SONNET_RATE_CACHE_WRITE_1H = 6.00
 
 USAGE_FILE = DATA_DIR / "claude_usage.json"
 USAGE_LOCK = DATA_DIR / "claude_usage.lock"
@@ -89,9 +98,19 @@ def claude_enabled(settings: dict | None = None) -> bool:
     return bool(get_anthropic_key(settings)) and get_claude_budget_usd(settings) > 0
 
 
-def estimate_cost_usd(usage: dict | None) -> float:
-    """Coût Haiku 4.5 à partir du bloc usage de l'API Messages."""
+def _rates_for_model(model: str | None) -> tuple[float, float, float, float, float]:
+    """(input, output, cache_read, cache_write_5m, cache_write_1h) $/MTok."""
+    if model and "sonnet" in model:
+        return (SONNET_RATE_INPUT, SONNET_RATE_OUTPUT, SONNET_RATE_CACHE_READ,
+                SONNET_RATE_CACHE_WRITE_5M, SONNET_RATE_CACHE_WRITE_1H)
+    return (RATE_INPUT, RATE_OUTPUT, RATE_CACHE_READ,
+            RATE_CACHE_WRITE_5M, RATE_CACHE_WRITE_1H)
+
+
+def estimate_cost_usd(usage: dict | None, model: str | None = None) -> float:
+    """Coût à partir du bloc usage de l'API Messages (Haiku par défaut)."""
     u = usage or {}
+    inp_r, out_r, read_r, w5, w1h = _rates_for_model(model)
     read = int(u.get("cache_read_input_tokens") or 0)
     inp = int(u.get("input_tokens") or 0)
     out = int(u.get("output_tokens") or 0)
@@ -99,18 +118,10 @@ def estimate_cost_usd(usage: dict | None) -> float:
     write_1h = creation.get("ephemeral_1h_input_tokens")
     write_5m = creation.get("ephemeral_5m_input_tokens")
     if write_1h is not None or write_5m is not None:
-        write_cost = (
-            int(write_1h or 0) * RATE_CACHE_WRITE_1H
-            + int(write_5m or 0) * RATE_CACHE_WRITE_5M
-        )
+        write_cost = int(write_1h or 0) * w1h + int(write_5m or 0) * w5
     else:
-        write_cost = int(u.get("cache_creation_input_tokens") or 0) * RATE_CACHE_WRITE_1H
-    return (
-        read * RATE_CACHE_READ
-        + write_cost
-        + inp * RATE_INPUT
-        + out * RATE_OUTPUT
-    ) / 1_000_000
+        write_cost = int(u.get("cache_creation_input_tokens") or 0) * w1h
+    return (read * read_r + write_cost + inp * inp_r + out * out_r) / 1_000_000
 
 
 def _empty_usage() -> dict:
@@ -196,6 +207,8 @@ def usage_public(settings: dict | None = None) -> dict:
         "claude_remaining_usd": round(max(0.0, budget - spent), 6) if budget else 0.0,
         "claude_allows_call": budget_allows_call(settings),
         "claude_model": CLAUDE_MODEL,
+        "claude_haiku_model": CLAUDE_HAIKU_MODEL,
+        "claude_sonnet_model": CLAUDE_SONNET_MODEL,
     }
 
 
@@ -485,6 +498,54 @@ async def extract_ports_claude(context: str, zone: dict,
     for p in ports:
         p["extraction_engine"] = "claude"
     return ports
+
+
+async def complete_json_claude(system: str, user: str,
+                               settings: dict | None = None, *,
+                               model: str | None = None,
+                               max_tokens: int = 250, log=None) -> dict:
+    """Appel Messages JSON (juge). Haiku ou Sonnet. Lève si budget / HTTP."""
+    if not claude_enabled(settings):
+        raise RuntimeError("Claude disabled (missing key or budget is 0)")
+    if not budget_allows_call(settings):
+        raise ClaudeBudgetExhausted("local budget ≥ 90%")
+    model = model or CLAUDE_HAIKU_MODEL
+    key = get_anthropic_key(settings)
+    payload = {
+        "model": model,
+        "max_tokens": int(max_tokens),
+        "temperature": 0,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+    }
+    async with _call_lock:
+        if not budget_allows_call(settings):
+            raise ClaudeBudgetExhausted("local budget ≥ 90% (lock)")
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
+        body = r.text or ""
+        if _is_billing_error(r.status_code, body):
+            raise ClaudeBudgetExhausted(f"anthropic HTTP {r.status_code}")
+        if r.status_code >= 400:
+            raise RuntimeError(f"anthropic HTTP {r.status_code}: {body[:180]}")
+        data = r.json()
+        usage = data.get("usage") or {}
+        cost = estimate_cost_usd(usage, model=model)
+        record_usage(usage, cost)
+        if log:
+            log(f"Claude {model}: cost=${cost:.4f} "
+                f"spent=${load_usage()['spent_usd']:.4f}")
+    from app.core.llm import parse_json_flexible
+    raw = _content_text({"content": data.get("content") or []})
+    parsed = parse_json_flexible(raw)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("claude: no JSON in output")
+    return parsed
 
 
 _TIEBREAK_SYSTEM = (

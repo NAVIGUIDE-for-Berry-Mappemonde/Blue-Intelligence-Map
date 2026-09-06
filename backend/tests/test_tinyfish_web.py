@@ -133,3 +133,57 @@ class TestTfFetch:
         assert rec["blocked"] is False
         assert "Ensenada" in rec["text"]
         assert rec["links"] == ["https://www.gob.mx/file.pdf"]
+
+
+class TestPaygQuotas:
+    def test_buckets_match_payg_docs(self):
+        tf.reset_rate_limits()
+        assert tf.SEARCH_RPM == 30
+        assert tf.FETCH_RPM == 150
+        assert tf.AGENT_CONCURRENCY == 2
+        assert tf.AGENT_CREDIT_CAP == 40
+        assert tf.FETCH_URL_CAP == 10
+        assert tf._search_bucket.cap == 30
+        assert tf._fetch_bucket.cap == 150
+
+
+class TestTfSearchPages:
+    def test_page_param_on_later_pages(self, monkeypatch):
+        seen = []
+
+        class _Client(_FakeClient):
+            async def get(self, url, **kwargs):
+                seen.append((kwargs.get("params") or {}).get("page"))
+                return _FakeClient.queue.pop(0)
+
+        monkeypatch.setattr(tf.httpx, "AsyncClient", _Client)
+        _FakeClient.queue = [
+            _FakeResp(200, {"results": [
+                {"url": "https://douane.gouv.fr/a"},
+                {"url": "https://douane.gouv.fr/b"},
+            ]}),
+            _FakeResp(200, {"results": []}),
+        ]
+        hits = _run(tf.tf_search_pages("ports", "k", max_pages=2))
+        assert [h["url"] for h in hits] == [
+            "https://douane.gouv.fr/a", "https://douane.gouv.fr/b"]
+        assert seen[0] is None
+        assert seen[1] == 1
+
+
+class TestTfPoeAgent:
+    def test_lite_then_stealth(self, monkeypatch):
+        calls = []
+
+        async def fake_sse(url, goal, schema, key, **kw):
+            calls.append((kw.get("browser_profile"), (kw.get("agent_config") or {}).get("max_steps")))
+            if kw.get("browser_profile") == "lite":
+                raise ValueError("blocked")
+            return {"is_poe": True, "confidence": 80, "reason": "liste"}
+
+        monkeypatch.setattr(tf, "tf_run_sse", fake_sse)
+        out = _run(tf.tf_poe_agent("https://gov.nc/ports", "Nouméa", "NC", "k"))
+        assert calls == [("lite", 40), ("stealth", 40)]
+        assert out["is_poe"] is True
+        assert out["_agent_profile"] == "stealth"
+        assert tf.POE_JUDGE_SCHEMA["required"] == ["is_poe", "confidence", "reason"]

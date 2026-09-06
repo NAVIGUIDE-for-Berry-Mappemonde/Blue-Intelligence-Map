@@ -1,0 +1,992 @@
+"""Graines OSM pour l'union PoE — Overpass + cache Mongo + rattachement VLIZ.
+
+OSM n'a pas d'objet unique « port ». Deux couches distinctes :
+
+  1. Contrôle / PoE (wiki + Taginfo, pas Key:port_of_entry qui est 404) :
+     government=customs, amenity=customs (déprécié), barrier=border_control,
+     government=border_control|immigration, seamark:building:function=customs.
+     OpenSeaMap/Harbour : port_of_entry=* est un champ d'almanach (59 yes).
+
+  2. Infrastructure portuaire (Harbour / CATHAF) :
+     harbour=yes, industrial=port, landuse=harbour|port, water=harbour,
+     HBRFAC commerciaux / sans catégorie. PAS leisure=marina (31 792).
+
+L'ancienne requête (harbour=yes ∪ seamark:type=harbour ∪ industrial=port)
+inondait l'union de marinas : 21 344 seamark:type=harbour portent aussi
+leisure=marina. v2 excluait à tort douanes et border_control (bureaux ≠ havre).
+v3 les réintroduit comme graines PoE ; les aéroports sont filtrés ; le
+rattachement VLIZ (in_eez / coastal_land) écarte les postes terrestres inland.
+
+GET /seeds/union lit le cache. Le refresh Overpass est explicite
+(POST /seeds/osm/refresh ou scripts/refresh_osm_seeds.py).
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+from shapely.geometry import shape
+from shapely.prepared import prep
+
+from app.core.dedup import normalize_name
+from app.core.geo import classify_poe_point
+
+logger = logging.getLogger(__name__)
+
+TAGINFO_API = "https://taginfo.openstreetmap.org/api/4/tag/stats"
+OVERPASS_ENDPOINTS = (
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+USER_AGENT = "BlueIntelligence/1.0 (OSM port-seed cache)"
+
+CACHE_COLLECTION = "osm_port_seeds"
+CACHE_META = "osm_port_seeds_meta"
+CACHE_SCHEMA = "port-candidates-v3"
+OSM_SOURCE = "osm"
+
+# Snapshot Taginfo mesuré 2026-09-05 (data_until). Live overlay dans taginfo_snapshot.
+TAGINFO_DATA_UNTIL = "2026-09-05T00:59:10Z"
+
+WIKI = {
+    "harbour": "https://wiki.openstreetmap.org/wiki/Harbour",
+    "key_harbour": "https://wiki.openstreetmap.org/wiki/Key:harbour",
+    "landuse_port": "https://wiki.openstreetmap.org/wiki/Tag:landuse%3Dport",
+    "industrial_port": "https://wiki.openstreetmap.org/wiki/Tag:industrial%3Dport",
+    "landuse_harbour": "https://wiki.openstreetmap.org/wiki/Tag:landuse%3Dharbour",
+    "water_harbour": "https://wiki.openstreetmap.org/wiki/Tag:water%3Dharbour",
+    "marina": "https://wiki.openstreetmap.org/wiki/Tag:leisure%3Dmarina",
+    "ferry": "https://wiki.openstreetmap.org/wiki/Tag:amenity%3Dferry_terminal",
+    "harbours": "https://wiki.openstreetmap.org/wiki/Seamarks/Harbours",
+    "openseamap_harbours": "https://wiki.openstreetmap.org/wiki/OpenSeaMap/Harbours",
+    "cathaf": "https://wiki.openstreetmap.org/wiki/Key:seamark:harbour:category",
+    "seamark_objects": "https://wiki.openstreetmap.org/wiki/OpenSeaMap/Seamark_Objects",
+    "key_port": "https://wiki.openstreetmap.org/wiki/Key:port",
+    "government": "https://wiki.openstreetmap.org/wiki/Key:government",
+    "government_customs": "https://wiki.openstreetmap.org/wiki/Tag:government%3Dcustoms",
+    "amenity_customs": "https://wiki.openstreetmap.org/wiki/Tag:amenity%3Dcustoms",
+    "barrier_border": "https://wiki.openstreetmap.org/wiki/Tag:barrier%3Dborder_control",
+    "gov_border": "https://wiki.openstreetmap.org/wiki/Tag:government%3Dborder_control",
+    "seamark_buildings": "https://wiki.openstreetmap.org/wiki/Seamarks/Buildings",
+}
+
+# CATHAF commerciaux (IHO / OpenSeaMap). marina* est volontairement absent.
+COMMERCIAL_CATHAF = frozenset({
+    "roro", "ferry", "fishing", "naval", "container", "cargo", "passenger",
+    "tanker", "bulk", "shipyard", "service_repair", "offshore_support",
+    "port_support", "port_support_base", "quarantine", "timber", "seaplane",
+    "harbour", "commercial", "mixed", "lay_up",
+})
+MARINA_CATHAF = frozenset({"marina", "marina_no_facilities"})
+HARBOUR_COMMERCIAL_VALUES = frozenset({
+    "fishing", "passenger", "terminal", "customs", "tanker",
+})
+POE_YES = frozenset({"yes", "all"})
+
+# Regex Overpass POSIX : une catégorie commerciale dans une liste « a;b ».
+_CATHAF_ALT = "|".join(sorted(COMMERCIAL_CATHAF))
+COMMERCIAL_CATHAF_REGEX = rf"(^|;)({_CATHAF_ALT})(;|$)"
+HARBOUR_COMMERCIAL_REGEX = r"^(fishing|passenger|terminal|customs|tanker)$"
+# Listes « customs;migration » (Taginfo : government=customs;migration;military = 13).
+GOVERNMENT_CONTROL_REGEX = r"(^|;)(customs|border_control|immigration)(;|$)"
+CONTROL_GOVERNMENT = frozenset({"customs", "border_control", "immigration"})
+CONTROL_AMENITY = frozenset({"customs", "border_control"})
+CONTROL_BARRIER = frozenset({"border_control", "customs_control"})
+_AIRPORT_NAME_RE = re.compile(
+    r"\b(airport|a[ée]roport|aeropuerto|flughafen|aeroporto|"
+    r"aerodrome|a[ée]rodrome)\b",
+    re.I,
+)
+
+# Clauses Overpass : ports documentés + contrôles / douanes (PoE).
+OSM_SEED_CLAUSES: tuple[tuple, ...] = (
+    ("eq", "port_of_entry", "yes"),
+    ("eq", "port_of_entry", "all"),
+    ("eq", "harbour", "yes"),
+    ("eq", "industrial", "port"),
+    ("eq", "landuse", "harbour"),
+    ("eq", "landuse", "port"),
+    ("eq", "water", "harbour"),
+    ("eq", "seamark:type", "harbour_basin"),
+    ("eq", "port:type", "seaport"),
+    ("key", "port"),
+    ("regex", "harbour", HARBOUR_COMMERCIAL_REGEX),
+    ("regex", "seamark:harbour:category", COMMERCIAL_CATHAF_REGEX),
+    ("and", (
+        ("eq", "seamark:type", "harbour"),
+        ("not_key", "seamark:harbour:category"),
+    )),
+    ("regex", "government", GOVERNMENT_CONTROL_REGEX),
+    ("eq", "amenity", "customs"),
+    ("eq", "amenity", "border_control"),
+    ("eq", "office", "customs"),
+    ("eq", "seamark:building:function", "customs"),
+    ("eq", "barrier", "border_control"),
+    ("eq", "barrier", "customs_control"),
+    ("eq", "landuse", "border_control"),
+)
+
+# Égalités encore utiles pour osm_tag_list / tests. Ce n'est plus LA requête.
+OSM_POE_TAGS = (
+    ("port_of_entry", "yes"),
+    ("harbour", "yes"),
+    ("industrial", "port"),
+    ("landuse", "harbour"),
+    ("landuse", "port"),
+    ("water", "harbour"),
+    ("seamark:type", "harbour_basin"),
+    ("port:type", "seaport"),
+    ("government", "customs"),
+    ("government", "border_control"),
+    ("government", "immigration"),
+    ("amenity", "customs"),
+    ("amenity", "border_control"),
+    ("office", "customs"),
+    ("seamark:building:function", "customs"),
+    ("barrier", "border_control"),
+    ("barrier", "customs_control"),
+    ("landuse", "border_control"),
+    ("harbour", "customs"),
+)
+OSM_EXCLUDED_TAGS = (
+    ("leisure", "marina"),
+    ("amenity", "ferry_terminal"),
+    ("seamark:type", "berth"),
+    ("waterway", "dock"),
+)
+
+# Catalogue documenté : rôle + compte Taginfo du 2026-09-05.
+TAGINFO_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "tag": "port_of_entry=yes", "key": "port_of_entry", "value": "yes",
+        "role": "poe_explicit", "seed": True, "measured": 59,
+        "wiki": WIKI["harbours"],
+        "note": "Seul tag qui signifie PoE (douane). Key:port_of_entry = 404 wiki.",
+    },
+    {
+        "tag": "port_of_entry=no", "key": "port_of_entry", "value": "no",
+        "role": "poe_explicit", "seed": False, "measured": 411,
+        "wiki": WIKI["harbours"],
+        "note": "Havre explicitement hors clearance. 411 no vs 59 yes.",
+    },
+    {
+        "tag": "harbour=yes", "key": "harbour", "value": "yes",
+        "role": "harbour_facility", "seed": True, "measured": 5115,
+        "wiki": WIKI["harbour"],
+        "note": "Tag havre OSM. Souvent redondant avec leisure=marina (Key:harbour).",
+    },
+    {
+        "tag": "industrial=port", "key": "industrial", "value": "port",
+        "role": "commercial_harbour", "seed": True, "measured": 5295,
+        "wiki": WIKI["landuse_port"],
+        "note": "Tagging recommandé : landuse=industrial + industrial=port.",
+    },
+    {
+        "tag": "landuse=harbour", "key": "landuse", "value": "harbour",
+        "role": "harbour_facility", "seed": True, "measured": 2561,
+        "wiki": WIKI["harbour"],
+        "note": "Emprise du havre. Manquait de l'ancienne requête.",
+    },
+    {
+        "tag": "landuse=port", "key": "landuse", "value": "port",
+        "role": "commercial_harbour", "seed": True, "measured": 2,
+        "wiki": WIKI["landuse_port"],
+        "note": "Déprécié (2 objets). Préférer industrial=port.",
+    },
+    {
+        "tag": "water=harbour", "key": "water", "value": "harbour",
+        "role": "harbour_basin", "seed": True, "measured": 1425,
+        "wiki": WIKI["water_harbour"],
+        "note": "Plan d'eau du bassin, pas le terminal. Gardé si nommé.",
+    },
+    {
+        "tag": "seamark:type=harbour", "key": "seamark:type", "value": "harbour",
+        "role": "openseamap_harbour", "seed": False, "measured": 25070,
+        "wiki": WIKI["harbours"],
+        "note": "HBRFAC IHO. 21 344 aussi leisure=marina — ne plus tout prendre.",
+    },
+    {
+        "tag": "seamark:type=harbour_basin", "key": "seamark:type",
+        "value": "harbour_basin",
+        "role": "harbour_basin", "seed": True, "measured": 262,
+        "wiki": WIKI["harbours"],
+        "note": "hrbbsn : bassin à quai, pas un berth.",
+    },
+    {
+        "tag": "seamark:harbour:category=marina", "key": "seamark:harbour:category",
+        "value": "marina",
+        "role": "marina_only", "seed": False, "measured": 20770,
+        "wiki": WIKI["cathaf"],
+        "note": "86 % des CATHAF. Plaisance, pas un candidat port.",
+    },
+    {
+        "tag": "seamark:harbour:category=marina_no_facilities",
+        "key": "seamark:harbour:category", "value": "marina_no_facilities",
+        "role": "marina_only", "seed": False, "measured": 1084,
+        "wiki": WIKI["cathaf"],
+        "note": "Mouillage plaisance sans services.",
+    },
+    {
+        "tag": "seamark:harbour:category=fishing", "key": "seamark:harbour:category",
+        "value": "fishing",
+        "role": "commercial_harbour", "seed": True, "measured": 1145,
+        "wiki": WIKI["cathaf"], "note": "CATHAF fishing.",
+    },
+    {
+        "tag": "seamark:harbour:category=ferry", "key": "seamark:harbour:category",
+        "value": "ferry",
+        "role": "commercial_harbour", "seed": True, "measured": 159,
+        "wiki": WIKI["cathaf"], "note": "CATHAF ferry terminal.",
+    },
+    {
+        "tag": "seamark:harbour:category=container", "key": "seamark:harbour:category",
+        "value": "container",
+        "role": "commercial_harbour", "seed": True, "measured": 136,
+        "wiki": WIKI["cathaf"], "note": "CATHAF container.",
+    },
+    {
+        "tag": "seamark:harbour:category=cargo", "key": "seamark:harbour:category",
+        "value": "cargo",
+        "role": "commercial_harbour", "seed": True, "measured": 125,
+        "wiki": WIKI["cathaf"], "note": "CATHAF general cargo.",
+    },
+    {
+        "tag": "seamark:harbour:category=passenger", "key": "seamark:harbour:category",
+        "value": "passenger",
+        "role": "commercial_harbour", "seed": True, "measured": 112,
+        "wiki": WIKI["cathaf"], "note": "CATHAF passenger.",
+    },
+    {
+        "tag": "seamark:harbour:category=tanker", "key": "seamark:harbour:category",
+        "value": "tanker",
+        "role": "commercial_harbour", "seed": True, "measured": 87,
+        "wiki": WIKI["cathaf"], "note": "CATHAF tanker.",
+    },
+    {
+        "tag": "seamark:harbour:category=bulk", "key": "seamark:harbour:category",
+        "value": "bulk",
+        "role": "commercial_harbour", "seed": True, "measured": 82,
+        "wiki": WIKI["cathaf"], "note": "CATHAF bulk.",
+    },
+    {
+        "tag": "seamark:harbour:category=naval", "key": "seamark:harbour:category",
+        "value": "naval",
+        "role": "commercial_harbour", "seed": True, "measured": 57,
+        "wiki": WIKI["cathaf"], "note": "CATHAF naval base.",
+    },
+    {
+        "tag": "seamark:harbour:category=roro", "key": "seamark:harbour:category",
+        "value": "roro",
+        "role": "commercial_harbour", "seed": True, "measured": 32,
+        "wiki": WIKI["cathaf"], "note": "CATHAF RoRo.",
+    },
+    {
+        "tag": "seamark:harbour:category=shipyard", "key": "seamark:harbour:category",
+        "value": "shipyard",
+        "role": "commercial_harbour", "seed": True, "measured": 86,
+        "wiki": WIKI["cathaf"], "note": "CATHAF shipyard.",
+    },
+    {
+        "tag": "leisure=marina", "key": "leisure", "value": "marina",
+        "role": "marina_only", "seed": False, "measured": 31792,
+        "wiki": WIKI["marina"],
+        "note": "Wiki : plaisance. Un vrai port doit utiliser harbour=* / industrial=port.",
+    },
+    {
+        "tag": "amenity=ferry_terminal", "key": "amenity", "value": "ferry_terminal",
+        "role": "not_port", "seed": False, "measured": 37308,
+        "wiki": WIKI["ferry"],
+        "note": "Embarcadère, pas un port. Souvent transport public terrestre.",
+    },
+    {
+        "tag": "seamark:type=berth", "key": "seamark:type", "value": "berth",
+        "role": "too_granular", "seed": False, "measured": 7958,
+        "wiki": WIKI["harbours"],
+        "note": "Poste à quai nommé/numéroté — trop fin pour une graine PoE.",
+    },
+    {
+        "tag": "waterway=dock", "key": "waterway", "value": "dock",
+        "role": "too_granular", "seed": False, "measured": 7093,
+        "wiki": WIKI["harbour"],
+        "note": "Beaucoup de docks fluviaux inland. Pas une graine.",
+    },
+    {
+        "tag": "government=customs", "key": "government", "value": "customs",
+        "role": "not_port", "seed": False, "measured": 2475,
+        "wiki": "https://wiki.openstreetmap.org/wiki/Tag:government%3Dcustoms",
+        "note": "Bureau, pas un havre. Signal de validation autour d'un PoE.",
+    },
+    {
+        "tag": "barrier=border_control", "key": "barrier", "value": "border_control",
+        "role": "not_port", "seed": False, "measured": 9560,
+        "wiki": "https://wiki.openstreetmap.org/wiki/Tag:barrier%3Dborder_control",
+        "note": "Frontières terrestres + aéroports. Pas une graine port.",
+    },
+    {
+        "tag": "port=cargo", "key": "port", "value": "cargo",
+        "role": "commercial_harbour", "seed": True, "measured": 536,
+        "wiki": WIKI["key_port"], "note": "Qualificatif CATHAC sur une emprise port.",
+    },
+    {
+        "tag": "port=fishing", "key": "port", "value": "fishing",
+        "role": "commercial_harbour", "seed": True, "measured": 362,
+        "wiki": WIKI["key_port"], "note": "Qualificatif fishing.",
+    },
+    {
+        "tag": "port=roro", "key": "port", "value": "roro",
+        "role": "commercial_harbour", "seed": True, "measured": 121,
+        "wiki": WIKI["key_port"], "note": "Qualificatif RoRo.",
+    },
+    {
+        "tag": "port:type=seaport", "key": "port:type", "value": "seaport",
+        "role": "commercial_harbour", "seed": True, "measured": 160,
+        "wiki": WIKI["landuse_port"], "note": "Type seaport (vs inland_port / dryport).",
+    },
+)
+
+# (south, west, north, east) — assez petits pour Overpass public ; split auto sinon.
+WORLD_TILES: tuple[tuple[float, float, float, float], ...] = (
+    (-60.0, -180.0, -15.0, -90.0),
+    (-60.0, -90.0, -15.0, 0.0),
+    (-60.0, 0.0, -15.0, 90.0),
+    (-60.0, 90.0, -15.0, 180.0),
+    (-15.0, -180.0, 20.0, -90.0),
+    (-15.0, -90.0, 20.0, 0.0),
+    (-15.0, 0.0, 20.0, 90.0),
+    (-15.0, 90.0, 20.0, 180.0),
+    (20.0, -180.0, 50.0, -90.0),
+    (20.0, -90.0, 50.0, 0.0),
+    (20.0, 0.0, 50.0, 90.0),
+    (20.0, 90.0, 50.0, 180.0),
+    (50.0, -180.0, 85.0, -90.0),
+    (50.0, -90.0, 85.0, 0.0),
+    (50.0, 0.0, 85.0, 90.0),
+    (50.0, 90.0, 85.0, 180.0),
+)
+
+MIN_TILE_DEG = 8.0
+
+
+def split_categories(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {part.strip().lower() for part in raw.split(";") if part.strip()}
+
+
+def has_commercial_category(tags: dict[str, str]) -> bool:
+    return bool(split_categories(tags.get("seamark:harbour:category")) & COMMERCIAL_CATHAF)
+
+
+def is_marina_only(tags: dict[str, str]) -> bool:
+    """Plaisance sans signal port / PoE — à exclure des graines."""
+    if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
+        return False
+    if has_commercial_category(tags):
+        return False
+    if tags.get("industrial") == "port":
+        return False
+    if tags.get("landuse") in ("harbour", "port"):
+        return False
+    if tags.get("port") and tags.get("port") not in ("no", "marina"):
+        return False
+    if (tags.get("harbour") or "").strip().lower() in HARBOUR_COMMERCIAL_VALUES:
+        return False
+    if tags.get("port:type") == "seaport":
+        return False
+    cats = split_categories(tags.get("seamark:harbour:category"))
+    marina_cat = bool(cats) and cats <= MARINA_CATHAF
+    return (
+        tags.get("leisure") == "marina"
+        or (tags.get("harbour") or "").strip().lower() == "marina"
+        or marina_cat
+    )
+
+
+def is_seed_candidate(tags: dict[str, str]) -> bool:
+    """True si l'objet OSM est un candidat *port*, pas une marina / un quai."""
+    if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
+        return True
+    if is_marina_only(tags):
+        return False
+    if tags.get("industrial") == "port":
+        return True
+    if tags.get("landuse") in ("harbour", "port"):
+        return True
+    if tags.get("water") == "harbour":
+        return True
+    if tags.get("seamark:type") == "harbour_basin":
+        return True
+    if tags.get("port:type") == "seaport":
+        return True
+    if tags.get("port") and tags.get("port") not in ("no", "marina"):
+        return True
+    harbour = (tags.get("harbour") or "").strip().lower()
+    if harbour == "yes" or harbour in HARBOUR_COMMERCIAL_VALUES:
+        return True
+    if has_commercial_category(tags):
+        return True
+    if tags.get("seamark:type") == "harbour" and not tags.get("seamark:harbour:category"):
+        return True
+    return False
+
+
+def osm_role(tags: dict[str, str]) -> str:
+    if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
+        return "poe_explicit"
+    if is_marina_only(tags):
+        return "marina_only"
+    if (
+        tags.get("industrial") == "port"
+        or tags.get("landuse") == "port"
+        or tags.get("port:type") == "seaport"
+        or (tags.get("port") and tags.get("port") not in ("no", "marina"))
+        or has_commercial_category(tags)
+        or (tags.get("harbour") or "").strip().lower() in HARBOUR_COMMERCIAL_VALUES
+    ):
+        return "commercial_harbour"
+    if tags.get("seamark:type") == "harbour_basin" or tags.get("water") == "harbour":
+        return "harbour_basin"
+    if tags.get("harbour") == "yes" or tags.get("landuse") == "harbour":
+        return "harbour_facility"
+    if tags.get("seamark:type") == "harbour":
+        return "harbour_facility"
+    return "not_port"
+
+
+def taginfo_count(key: str, value: str) -> int | None:
+    try:
+        r = httpx.get(
+            TAGINFO_API,
+            params={"key": key, "value": value},
+            timeout=20.0,
+            headers={"User-Agent": USER_AGENT},
+        )
+        r.raise_for_status()
+        data = r.json().get("data") or []
+        all_row = next((row for row in data if row.get("type") == "all"), None)
+        if all_row:
+            return int(all_row.get("count") or 0)
+    except Exception as exc:
+        logger.warning("taginfo %s=%s: %s", key, value, exc)
+    return None
+
+
+def _catalog_row(entry: dict[str, Any], live: int | None) -> dict[str, Any]:
+    count = live if live is not None else entry.get("measured")
+    return {
+        **{k: entry[k] for k in (
+            "tag", "key", "value", "role", "seed", "measured", "wiki", "note",
+        ) if k in entry},
+        "count": count,
+        "live": live,
+    }
+
+
+def how_many_ports(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Il n'y a pas un nombre unique de « ports OSM » — réponses par couche."""
+    by_tag = {r["tag"]: r.get("count") for r in rows}
+
+    def n(tag: str) -> int | None:
+        return by_tag.get(tag)
+
+    commercial_sum = sum(
+        (n(f"seamark:harbour:category={v}") or 0)
+        for v in (
+            "fishing", "ferry", "container", "cargo", "passenger",
+            "tanker", "bulk", "naval", "roro", "shipyard",
+        )
+    )
+    harbour_facilities = n("seamark:type=harbour")
+    marina_cathaf = (n("seamark:harbour:category=marina") or 0) + (
+        n("seamark:harbour:category=marina_no_facilities") or 0)
+    uncategorized = None
+    if harbour_facilities is not None:
+        # 24 113 objets ont seamark:harbour:category (clé, pas une valeur).
+        uncategorized = max(0, harbour_facilities - 24113)
+    return {
+        "no_single_count": True,
+        "data_until": TAGINFO_DATA_UNTIL,
+        "poe_explicit_yes": n("port_of_entry=yes"),
+        "poe_explicit_no": n("port_of_entry=no"),
+        "openseamap_harbour_facilities": harbour_facilities,
+        "openseamap_marina_cathaf": marina_cathaf,
+        "openseamap_uncategorized_harbour_est": uncategorized,
+        "openseamap_commercial_cathaf_sum": commercial_sum,
+        "harbour_yes": n("harbour=yes"),
+        "industrial_port": n("industrial=port"),
+        "landuse_harbour": n("landuse=harbour"),
+        "water_harbour": n("water=harbour"),
+        "leisure_marina": n("leisure=marina"),
+        "ferry_terminal": n("amenity=ferry_terminal"),
+        "old_query_problem": (
+            "L'ancienne union harbour=yes ∪ seamark:type=harbour ∪ "
+            "industrial=port prenait les 25 070 HBRFAC, dont ~21 344 "
+            "leisure=marina (Taginfo combinations). Ce n'est pas une liste "
+            "de ports."
+        ),
+        "best_candidate_layers": {
+            "poe_or": n("port_of_entry=yes"),
+            "commercial_landuse": n("industrial=port"),
+            "harbour_yes_then_drop_marina": n("harbour=yes"),
+            "landuse_harbour": n("landuse=harbour"),
+            "commercial_cathaf_sum_with_dupes": commercial_sum,
+            "uncategorized_hbrfac_est": uncategorized,
+            "harbour_basin": n("seamark:type=harbour_basin"),
+        },
+        "unique_candidates_need_overpass": (
+            "Taginfo compte par tag, pas l'union dédupliquée. Un même "
+            "polygone porte souvent industrial=port + landuse=industrial "
+            "+ harbour=yes. L'union unique = cache osm_port_seeds après "
+            "refresh (filtre is_seed_candidate)."
+        ),
+    }
+
+
+def taginfo_snapshot(*, live: bool = True) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for entry in TAGINFO_CATALOG:
+        count = taginfo_count(entry["key"], entry["value"]) if live else None
+        rows.append(_catalog_row(entry, count))
+    included = {r["tag"]: r.get("count") for r in rows if r.get("seed")}
+    excluded = {r["tag"]: r.get("count") for r in rows if not r.get("seed")}
+    return {
+        "data_until": TAGINFO_DATA_UNTIL,
+        "wiki": WIKI,
+        "catalog": rows,
+        "included_tags": included,
+        "excluded_tags": excluded,
+        "how_many_ports": how_many_ports(rows),
+        "seed_clauses": [list(c) if c[0] != "and" else ["and", [list(p) for p in c[1]]]
+                         for c in OSM_SEED_CLAUSES],
+        "note": (
+            "Comptes Taginfo mondiaux (tous types OSM). Recouvrement : un "
+            "objet peut porter industrial=port ET harbour=yes. Le cache "
+            "déduplique par osm_id et écarte is_marina_only. "
+            "leisure=marina et amenity=ferry_terminal ne sont pas des graines."
+        ),
+    }
+
+
+def element_coords(el: dict[str, Any]) -> tuple[float, float] | None:
+    if "lat" in el and "lon" in el:
+        return float(el["lat"]), float(el["lon"])
+    center = el.get("center") or {}
+    if "lat" in center and "lon" in center:
+        return float(center["lat"]), float(center["lon"])
+    return None
+
+
+def element_name(tags: dict[str, str]) -> str:
+    for key in ("name:en", "name", "official_name", "alt_name", "loc_name",
+                "seamark:name", "seamark:harbour:name"):
+        raw = (tags.get(key) or "").strip()
+        if raw:
+            return raw[:200]
+    return ""
+
+
+def osm_tag_list(tags: dict[str, str]) -> list[str]:
+    """Tags pertinents présents — pas seulement les 3 anciens tags."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(item: str) -> None:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+
+    poe = (tags.get("port_of_entry") or "").strip()
+    if poe:
+        add(f"port_of_entry={poe}")
+    for key, value in OSM_POE_TAGS:
+        if key == "port_of_entry":
+            continue
+        if tags.get(key) == value:
+            add(f"{key}={value}")
+    if tags.get("seamark:type") == "harbour":
+        add("seamark:type=harbour")
+    cat = tags.get("seamark:harbour:category")
+    if cat:
+        add(f"seamark:harbour:category={cat}")
+    if tags.get("port"):
+        add(f"port={tags['port']}")
+    if tags.get("leisure") == "marina":
+        add("leisure=marina")
+    if tags.get("amenity") == "ferry_terminal":
+        add("amenity=ferry_terminal")
+    harbour = (tags.get("harbour") or "").strip()
+    if harbour and harbour != "yes":
+        add(f"harbour={harbour}")
+    return out
+
+
+def osm_confidence(name: str, tags: dict[str, str], in_eez: bool) -> float:
+    if is_marina_only(tags) and (tags.get("port_of_entry") or "") not in POE_YES:
+        return 0.35
+    conf = 0.55 if name else 0.35
+    if (
+        tags.get("harbour") == "yes"
+        or tags.get("industrial") == "port"
+        or tags.get("landuse") in ("harbour", "port")
+    ):
+        conf = max(conf, 0.6)
+    role = osm_role(tags)
+    if role == "commercial_harbour":
+        conf = max(conf, 0.75 if name else 0.5)
+    if role == "harbour_basin" and name:
+        conf = max(conf, 0.55)
+    if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
+        conf = max(conf, 0.95 if name else 0.85)
+    if in_eez and name:
+        conf = max(conf, 0.7)
+    return round(min(conf, 1.0), 2)
+
+
+def cache_doc_to_seed(doc: dict) -> dict | None:
+    """Convertit un doc du cache en graine union (même schéma que _slim)."""
+    try:
+        lat = float(doc["lat"])
+        lon = float(doc["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    name = (doc.get("name") or "").strip()
+    mid = doc.get("mrgid")
+    try:
+        mid = int(mid) if mid is not None else None
+    except (TypeError, ValueError):
+        mid = None
+    osm_id = str(doc.get("osm_id") or "")
+    tags = {str(k): str(v) for k, v in (doc.get("tags") or {}).items()}
+    if tags and not is_seed_candidate(tags):
+        return None
+    tag_list = list(doc.get("osm_tags") or osm_tag_list(tags))
+    urls = [f"https://www.openstreetmap.org/{osm_id}"] if osm_id else []
+    return {
+        "name": name,
+        "mrgid": mid,
+        "zone_name": doc.get("zone_name"),
+        "country_iso2": doc.get("iso") or doc.get("country_iso2") or "",
+        "lat": lat,
+        "lon": lon,
+        "validated": bool(doc.get("in_eez")),
+        "osm_confidence": doc.get("osm_confidence"),
+        "osm_tags": tag_list,
+        "osm_role": doc.get("osm_role") or (osm_role(tags) if tags else None),
+        "osm_id": osm_id or None,
+        "osm_ids": [osm_id] if osm_id else [],
+        "source_urls": urls,
+        "extraction_engine": OSM_SOURCE,
+        "confidence": doc.get("osm_confidence"),
+        "dedup_key": (
+            f"{mid}:{normalize_name(name)}" if mid is not None and name else None
+        ),
+        "seed_sources": [OSM_SOURCE],
+        "has_coords": True,
+    }
+
+
+def _filters_for_part(part: tuple) -> str:
+    kind = part[0]
+    if kind == "eq":
+        return f'["{part[1]}"="{part[2]}"]'
+    if kind == "regex":
+        return f'["{part[1]}"~"{part[2]}"]'
+    if kind == "key":
+        return f'["{part[1]}"]'
+    if kind == "not_key":
+        return f'[!"{part[1]}"]'
+    raise ValueError(f"clause Overpass inconnue: {part!r}")
+
+
+def _clause_to_overpass(clause: tuple, bbox: str) -> str:
+    if clause[0] == "and":
+        filters = "".join(_filters_for_part(p) for p in clause[1])
+        return f"  nwr{filters}({bbox});"
+    return f"  nwr{_filters_for_part(clause)}({bbox});"
+
+
+def _overpass_query(south: float, west: float, north: float, east: float,
+                    clauses: tuple[tuple, ...] = OSM_SEED_CLAUSES) -> str:
+    bbox = f"{south:.4f},{west:.4f},{north:.4f},{east:.4f}"
+    parts = [_clause_to_overpass(clause, bbox) for clause in clauses]
+    return (
+        "[out:json][timeout:90];\n(\n"
+        + "\n".join(parts)
+        + "\n);\nout center tags;"
+    )
+
+
+def _split_tile(south: float, west: float, north: float, east: float
+                ) -> list[tuple[float, float, float, float]]:
+    mid_lat = (south + north) / 2.0
+    mid_lon = (west + east) / 2.0
+    return [
+        (south, west, mid_lat, mid_lon),
+        (south, mid_lon, mid_lat, east),
+        (mid_lat, west, north, mid_lon),
+        (mid_lat, mid_lon, north, east),
+    ]
+
+
+async def _overpass_post(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
+    last_error = ""
+    for url in OVERPASS_ENDPOINTS:
+        try:
+            r = await client.post(
+                url,
+                data={"data": query},
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                timeout=httpx.Timeout(connect=15.0, read=130.0, write=20.0, pool=10.0),
+            )
+            if r.status_code == 429:
+                last_error = f"{url} HTTP 429"
+                await asyncio.sleep(20)
+                continue
+            if r.status_code != 200:
+                last_error = f"{url} HTTP {r.status_code}"
+                logger.warning("Overpass %s", last_error)
+                await asyncio.sleep(3)
+                continue
+            payload = r.json()
+            remark = str(payload.get("remark") or "")
+            if "timed out" in remark.lower():
+                last_error = f"{url} timeout: {remark}"
+                raise TimeoutError(last_error)
+            return list(payload.get("elements") or [])
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            last_error = f"{url}: {exc}"
+            logger.warning("Overpass %s", last_error)
+            await asyncio.sleep(2)
+    raise RuntimeError(f"Overpass indisponible: {last_error}")
+
+
+async def _fetch_tile(
+    client: httpx.AsyncClient,
+    tile: tuple[float, float, float, float],
+    clauses: tuple[tuple, ...] = OSM_SEED_CLAUSES,
+) -> list[dict[str, Any]]:
+    south, west, north, east = tile
+    query = _overpass_query(south, west, north, east, clauses)
+    try:
+        return await _overpass_post(client, query)
+    except (TimeoutError, RuntimeError) as exc:
+        span = max(north - south, east - west)
+        if span > MIN_TILE_DEG:
+            logger.warning("Overpass tuile trop lourde %s — split (%s)", tile, exc)
+            out: list[dict[str, Any]] = []
+            for sub in _split_tile(south, west, north, east):
+                await asyncio.sleep(1.2)
+                out.extend(await _fetch_tile(client, sub, clauses))
+            return out
+        if len(clauses) > 1:
+            logger.warning("Overpass tuile %s — clauses une par une", tile)
+            out = []
+            for clause in clauses:
+                await asyncio.sleep(1.2)
+                out.extend(await _fetch_tile(client, tile, (clause,)))
+            return out
+        raise
+
+
+async def fetch_osm_elements(
+    tiles: tuple[tuple[float, float, float, float], ...] = WORLD_TILES,
+    log=None,
+) -> list[dict[str, Any]]:
+    log = log or (lambda m: logger.info("%s", m))
+    by_id: dict[str, dict[str, Any]] = {}
+    async with httpx.AsyncClient() as client:
+        for i, tile in enumerate(tiles, start=1):
+            log(f"Overpass tuile {i}/{len(tiles)} {tile}")
+            elements = await _fetch_tile(client, tile)
+            for el in elements:
+                osm_id = f"{el.get('type')}/{el.get('id')}"
+                by_id[osm_id] = el
+            log(f"  → {len(elements)} éléments, {len(by_id)} uniques")
+            await asyncio.sleep(1.5)
+    return list(by_id.values())
+
+
+def _bbox_hit(bbox: list[float] | None, lon: float, lat: float) -> bool:
+    if not bbox or len(bbox) < 4:
+        return True
+    minx, miny, maxx, maxy = (float(bbox[0]), float(bbox[1]),
+                              float(bbox[2]), float(bbox[3]))
+    if not (miny <= lat <= maxy):
+        return False
+    if minx <= maxx:
+        return minx <= lon <= maxx
+    return lon >= minx or lon <= maxx
+
+
+def load_eez_index_sync(zone_docs: list[dict]) -> list[dict]:
+    zones: list[dict] = []
+    for z in zone_docs:
+        geom_raw = z.get("geometry")
+        if not geom_raw:
+            continue
+        try:
+            geom = shape(geom_raw)
+            prepared = prep(geom)
+        except Exception:
+            continue
+        bbox = z.get("bbox") or list(geom.bounds)
+        zones.append({
+            "mrgid": int(z["mrgid"]),
+            "name": z.get("name") or z.get("geoname"),
+            "iso2": z.get("iso2") or "",
+            "_geom": geom,
+            "_prep": prepared,
+            "_bbox": bbox,
+        })
+    return zones
+
+
+def assign_eez_point(lat: float, lon: float, zones: list[dict]) -> dict | None:
+    """Première ZEE VLIZ qui accepte le point (polygone, sliver, côte ≤ 15 km)."""
+    hits: list[tuple[float, dict]] = []
+    for z in zones:
+        if not _bbox_hit(z.get("_bbox"), lon, lat):
+            continue
+        cls = classify_poe_point(lat, lon, z["_geom"], z["_prep"], inland={})
+        if not cls.get("validated"):
+            continue
+        if cls.get("kind") not in ("in_eez", "coastal_land"):
+            continue
+        hits.append((float(cls.get("dist_km") or 0.0), z))
+    if not hits:
+        return None
+    hits.sort(key=lambda row: row[0])
+    return hits[0][1]
+
+
+def enrich_elements(elements: list[dict], zones: list[dict]) -> list[dict]:
+    docs: list[dict] = []
+    seen: set[str] = set()
+    now = datetime.now(timezone.utc).isoformat()
+    for el in elements:
+        coords = element_coords(el)
+        if coords is None:
+            continue
+        lat, lon = coords
+        tags = {str(k): str(v) for k, v in (el.get("tags") or {}).items()}
+        if not is_seed_candidate(tags):
+            continue
+        name = element_name(tags)
+        osm_id = f"{el.get('type')}/{el.get('id')}"
+        if osm_id in seen:
+            continue
+        seen.add(osm_id)
+        eez = assign_eez_point(lat, lon, zones)
+        in_eez = bool(eez)
+        mrgid = int(eez["mrgid"]) if eez else None
+        iso = str((eez or {}).get("iso2") or "")
+        zone_name = (eez or {}).get("name")
+        docs.append({
+            "osm_id": osm_id,
+            "name": name,
+            "lat": lat,
+            "lon": lon,
+            "tags": tags,
+            "osm_tags": osm_tag_list(tags),
+            "osm_role": osm_role(tags),
+            "mrgid": mrgid,
+            "iso": iso,
+            "zone_name": zone_name,
+            "in_eez": in_eez,
+            "osm_confidence": osm_confidence(name, tags, in_eez),
+            "schema": CACHE_SCHEMA,
+            "updated_at": now,
+        })
+    return docs
+
+
+async def load_eez_index(db) -> list[dict]:
+    raw = await db.eez_zones.find(
+        {},
+        {"mrgid": 1, "name": 1, "geoname": 1, "iso2": 1, "bbox": 1, "geometry": 1},
+    ).to_list(500)
+    return await asyncio.to_thread(load_eez_index_sync, raw)
+
+
+async def cache_stats(db) -> dict[str, Any]:
+    col = db[CACHE_COLLECTION]
+    total = await col.count_documents({})
+    named = await col.count_documents({"name": {"$nin": ["", None]}})
+    in_eez = await col.count_documents({"in_eez": True})
+    named_eez = await col.count_documents({"in_eez": True, "name": {"$nin": ["", None]}})
+    meta = await db[CACHE_META].find_one({"_id": "latest"}) or {}
+    schema = meta.get("schema")
+    return {
+        "cached_total": total,
+        "cached_named": named,
+        "cached_in_eez": in_eez,
+        "cached_named_in_eez": named_eez,
+        "refreshed_at": meta.get("refreshed_at"),
+        "tiles": meta.get("tiles"),
+        "overpass_elements": meta.get("overpass_elements"),
+        "schema": schema,
+        "expected_schema": CACHE_SCHEMA,
+        "stale_schema": bool(total) and schema != CACHE_SCHEMA,
+    }
+
+
+async def load_cached_osm(db, *, in_eez_only: bool = True) -> list[dict]:
+    query: dict[str, Any] = {}
+    if in_eez_only:
+        query = {"in_eez": True, "mrgid": {"$ne": None}}
+    return await db[CACHE_COLLECTION].find(query, {"_id": 0}).to_list(50000)
+
+
+async def refresh_osm_cache(db, log=None) -> dict[str, Any]:
+    """Télécharge Overpass, rattache VLIZ, réécrit osm_port_seeds. Lent."""
+    log = log or (lambda m: logger.info("%s", m))
+    log("Overpass : candidats port (pas seamark:type=harbour marina)…")
+    elements = await fetch_osm_elements(log=log)
+    log(f"{len(elements)} objets OSM uniques — filtre candidats + index VLIZ…")
+    zones = await load_eez_index(db)
+    log(f"{len(zones)} ZEE avec géométrie — rattachement…")
+    docs = await asyncio.to_thread(enrich_elements, elements, zones)
+    tmp = db[f"{CACHE_COLLECTION}_tmp"]
+    await tmp.drop()
+    if docs:
+        await tmp.insert_many(docs)
+        await tmp.create_index("osm_id", unique=True)
+        await tmp.create_index([("mrgid", 1), ("in_eez", 1)])
+    await db[CACHE_COLLECTION].drop()
+    if docs:
+        await tmp.rename(CACHE_COLLECTION)
+    stats = {
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "tiles": len(WORLD_TILES),
+        "overpass_elements": len(elements),
+        "cached_total": len(docs),
+        "schema": CACHE_SCHEMA,
+    }
+    await db[CACHE_META].replace_one({"_id": "latest"}, {"_id": "latest", **stats}, upsert=True)
+    out = await cache_stats(db)
+    log(f"cache OSM : {out}")
+    return out
+
+
+async def osm_inventory(db) -> dict[str, Any]:
+    """Taginfo (monde) + état du cache local. Pas d'Overpass."""
+    taginfo = await asyncio.to_thread(taginfo_snapshot)
+    stats = await cache_stats(db)
+    return {
+        "taginfo": taginfo,
+        "cache": stats,
+        "union_uses": (
+            "osm_port_seeds where in_eez and named and is_seed_candidate "
+            "(plus proximité unnamed)"
+        ),
+    }

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core import claude  # noqa: E402
 from app.core.extract import (  # noqa: E402
     catalog_is_sufficient, catalog_ports_with_coords, extract_structured_ports,
-    is_geocodeable_name,
+    geocode_query_name, is_geocodeable_name,
 )
 from app.core.llm import coerce_ports, coords_appear_in_text  # noqa: E402
 
@@ -144,6 +144,10 @@ class TestGeocodeableName:
         assert is_geocodeable_name("Saint-Laurent du Maroni") is True
         assert is_geocodeable_name("Bar") is True
         assert is_geocodeable_name("Port of Spain") is True
+        assert geocode_query_name("Port of Spain") == "Port of Spain"
+        assert geocode_query_name("Port autonome de Nouméa") == "Nouméa"
+        assert is_geocodeable_name("Port autonome de Nouméa") is True
+        assert is_geocodeable_name("port autonome de nouméa") is True
 
     def test_canary_junk_rejected(self):
         assert is_geocodeable_name("eerste binnenkomst") is False
