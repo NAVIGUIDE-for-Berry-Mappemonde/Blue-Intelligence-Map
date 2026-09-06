@@ -94,8 +94,10 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `MONGO_URL` | ✅ | Chaîne de connexion MongoDB |
 | `DB_NAME` | ✅ | Nom de la base MongoDB |
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
-| `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM unique de l'application |
+| `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM par défaut (swarm, marinas, recherche `:online`) |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
+| `ANTHROPIC_API_KEY` | optionnel | Claude Haiku 4.5 pour l'extraction PoE seulement — inerte si `CLAUDE_BUDGET_USD` (ou le plafond UI) est 0 |
+| `CLAUDE_BUDGET_USD` | optionnel | Plafond local Claude (USD). Stop à 90 %. Défaut 0 = Claude éteint |
 | `TINYFISH_API_KEY` | optionnel | Agent TinyFish (swarm projets & enrichissement marinas — le pipeline PoE utilise le rendu Playwright local) |
 | `GEONAMES_USERNAME` | optionnel | Compte GeoNames (géocodage parallèle Nominatim ∥ GeoNames). Sur [geonames.org/manageaccount](https://www.geonames.org/manageaccount) : **Click to enable** le webservice gratuit — sans ça l'API renvoie l'erreur 10 et le pipeline désactive GeoNames pour le process |
 | `SEARXNG_URL` | optionnel | Instance SearXNG auto-hébergée (voir `infra/searxng/`) — prioritaire sur les instances publiques pour la recherche PoE |

@@ -474,6 +474,27 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
     return out
 
 
+def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
+    """Skip LLM seulement si le parseur local a déjà une liste officielle solide.
+
+    - ≥ 3 ports avec lat/lon (catalogue type SCT) ;
+    - ou looks_like_port_catalog + ≥ 1 port coordonné ;
+    - ou ≥ 8 noms extraits.
+    Une ou deux tournures « port of X » sans coords ne suffisent pas.
+    """
+    if not ports:
+        return False
+    with_coords = sum(
+        1 for p in ports
+        if p.get("lat") is not None and p.get("lon") is not None
+    )
+    if with_coords >= 3:
+        return True
+    if looks_like_port_catalog(text or "") and with_coords >= 1:
+        return True
+    return len(ports) >= 8
+
+
 def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
     """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret)."""
     if not text or not base_url:

@@ -39,9 +39,9 @@ from urllib.parse import urlparse, urlunparse
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
 from app.core.extract import (
-    extract_cascade, extract_structured_ports, internal_followups,
-    looks_like_port_catalog, official_attachments, serp_filter,
-    should_follow_attachments,
+    catalog_is_sufficient, extract_cascade, extract_structured_ports,
+    internal_followups, looks_like_port_catalog, official_attachments,
+    serp_filter, should_follow_attachments,
 )
 from app.core.geo import geocode_port_dual, point_in_eez
 from app.core.llm import extract_ports, grounded_search
@@ -680,17 +680,27 @@ async def fetch_and_parse(url: str, log) -> tuple[str | None, str | None]:
 # 4. Extraction PARALLÈLE comparée : LLM (OpenRouter) ∥ NER local (spaCy)
 # ---------------------------------------------------------------------------
 async def extract_ports_llm(context: str, zone: dict, log, rec=None,
-                            catalog_text: str | None = None) -> list[dict]:
+                            catalog_text: str | None = None,
+                            settings: dict | None = None) -> list[dict]:
     """LLM et NER local tournent EN PARALLÈLE sur le même contexte et leurs
     listes sont comparées port par port (plus de simple fallback) :
       - port vu par les deux  → extraction_agreement=True (signal de confiance) ;
       - port vu par le LLM seul → extraction_agreement=False (à recouper) ;
       - noms vus par le NER seul → journalisés comme candidats à vérifier ;
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
+    Un catalogue officiel suffisant court-circuite le LLM (économie de crédits).
     """
+    raw_catalog = catalog_text if catalog_text is not None else context
+    catalog = extract_structured_ports(raw_catalog)
+    if catalog_is_sufficient(catalog, raw_catalog):
+        log(f"catalogue structuré suffisant ({len(catalog)} port(s)) — LLM sauté")
+        await emit(rec, "extraction_compare", llm_n=None, ner_n=None,
+                   catalog_n=len(catalog), fallback="catalog", skipped_llm=True)
+        return catalog
+
     async def _llm():
         try:
-            return await extract_ports(context, zone, log=log), None
+            return await extract_ports(context, zone, settings=settings, log=log), None
         except Exception as e:
             return None, e
 
@@ -704,10 +714,9 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
 
     (llm_ports, llm_err), ner_names = await asyncio.gather(_llm(), _ner())
     ner_names = list(dict.fromkeys(ner_names)) if ner_names is not None else None
-    catalog = extract_structured_ports(catalog_text if catalog_text is not None else context)
 
     if llm_ports is None:
-        log(f"LLM: échec OpenRouter ({type(llm_err).__name__}: {str(llm_err)[:100]})")
+        log(f"LLM: échec ({type(llm_err).__name__}: {str(llm_err)[:100]})")
         if catalog:
             log(f"catalogue structuré: {len(catalog)} port(s) lus dans la source (sans LLM)")
             await emit(rec, "extraction_compare", llm_n=None,
@@ -1229,14 +1238,16 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
 
 
 async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
-                               rec=None, run=None, catalog_text: str | None = None) -> list[dict]:
+                               rec=None, run=None, catalog_text: str | None = None,
+                               settings: dict | None = None) -> list[dict]:
     """Étape 4 — Extraction parallèle comparée (LLM ∥ NER) puis GÉOCODAGE DOUBLE
     (Nominatim ∥ GeoNames, données indépendantes) : l'accord < 2 km devient un
     signal de confiance, le désaccord est arbitré par la validation point-in-EEZ.
     Chaque candidat des deux fournisseurs est journalisé."""
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
-    ports = await extract_ports_llm(context, zone, log, rec=rec, catalog_text=catalog_text)
+    ports = await extract_ports_llm(context, zone, log, rec=rec,
+                                   catalog_text=catalog_text, settings=settings)
 
     geom = None
     try:
@@ -1460,6 +1471,12 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
     name = zone.get("name") or zone.get("geoname")
     rec = ZoneRecorder(run.recorder, int(mrgid), name) if run is not None else None
     t0 = time.time()
+    settings: dict = {}
+    try:
+        from app.db import get_settings
+        settings = await get_settings()
+    except Exception:
+        settings = {}
     exceptions = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exceptions)
     variant = normalize_variant(getattr(run, "variant", None) if run is not None else "tinyfish")
@@ -1556,7 +1573,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
 
         # 4. Extraction + géocodage + validation spatiale
         docs = await _extract_and_geocode(zone, context, used_sources, log, rec, run,
-                                          catalog_text=raw)
+                                          catalog_text=raw, settings=settings)
 
         # Filet de sécurité : 0 port extrait des pages collectées ET aucune
         # synthèse groundée encore tentée → un (seul) recours à la recherche
@@ -1572,7 +1589,7 @@ async def generate_zone_poe(db, mrgid: int, logger=None, force: bool = False, ru
             if syn_retry:
                 context_retry = f"{context}\n\n[SYNTHÈSE DE RECHERCHE (à recouper)]\n{syn_retry[:6000]}"
                 docs = await _extract_and_geocode(zone, context_retry, used_sources, log, rec, run,
-                                                  catalog_text=context_retry)
+                                                  catalog_text=context_retry, settings=settings)
                 if docs:
                     strictly_official = False  # ports issus de la synthèse, pas des pages officielles
 

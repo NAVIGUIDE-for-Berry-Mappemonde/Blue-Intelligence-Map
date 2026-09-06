@@ -41,4 +41,6 @@ DEFAULT_SETTINGS = {
     "marina_batch_concurrency": 2,
     "openrouter_min_credits_usd": 0.5,
     "enrich_stale_days": 365,
+    "anthropic_api_key": "",
+    "claude_budget_usd": 0.0,
 }

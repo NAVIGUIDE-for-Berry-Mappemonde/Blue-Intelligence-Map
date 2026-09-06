@@ -1,7 +1,8 @@
 """
-llm_core.py — Adaptateur LLM unique (OpenRouter).
+llm_core.py — Adaptateur LLM (OpenRouter par défaut).
 
-Tous les appels IA de l'application passent par OpenRouter :
+Tous les appels IA passent par OpenRouter, SAUF extract_ports qui peut
+emprunter Claude Haiku (clé + plafond $) avant de retomber ici :
   - ask_json / ask_text        : complétions (mode JSON strict ou texte libre)
   - gatekeeper_check           : filtre marin (pré-filtre ML local puis LLM)
   - extract_project            : extraction structurée d'un projet marin
@@ -277,13 +278,35 @@ def coerce_ports(data) -> list[dict]:
 
 
 async def extract_ports(context: str, zone: dict, settings: dict | None = None, log=None) -> list[dict]:
+    s = settings
+    if s is None:
+        try:
+            from app.db import get_settings
+            s = await get_settings()
+        except Exception:
+            s = {}
+
+    from app.core import claude
+    if claude.claude_enabled(s) and claude.budget_allows_call(s):
+        try:
+            ports = await claude.extract_ports_claude(context, zone, settings=s, log=log)
+            if log:
+                log(f"LLM Claude Haiku: {len(ports)} port(s) extraits")
+            return ports
+        except claude.ClaudeBudgetExhausted as e:
+            if log:
+                log(f"Claude: budget atteint ({e}) — bascule OpenRouter")
+        except Exception as e:
+            if log:
+                log(f"Claude: échec ({type(e).__name__}: {str(e)[:80]}) — bascule OpenRouter")
+
     prompt = POE_EXTRACT_PROMPT.format(
         name=zone.get("name") or zone.get("geoname"),
         sovereign=zone.get("sovereign") or "",
         context=context[:20000],
     )
     data = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
-                          settings=settings, max_tokens=2500, log=log)
+                          settings=s, max_tokens=2500, log=log)
     ports = coerce_ports(data)
     if log:
         log(f"LLM OpenRouter: {len(ports)} port(s) extraits")

@@ -394,6 +394,25 @@ class TestStructuredDiscovery:
             for i in range(10, 20))
         assert looks_like_port_catalog(long)
 
+    def test_sufficient_catalog_skips_llm(self, monkeypatch):
+        called = []
+
+        async def boom(context, zone, settings=None, log=None):
+            called.append(1)
+            return []
+
+        monkeypatch.setattr(poe, "extract_ports", boom)
+
+        async def _run():
+            return await poe.extract_ports_llm(
+                "slice trop court", {"name": "Mexico"}, lambda m: None,
+                catalog_text=self._MX_JINA)
+
+        ports = asyncio.run(_run())
+        assert called == []
+        names = {p["name"] for p in ports}
+        assert "Ensenada" in names and "Manzanillo" in names
+
     def test_catalog_reads_full_text_not_llm_slice(self, monkeypatch):
         async def _no_llm(context, zone, log=None):
             return []
