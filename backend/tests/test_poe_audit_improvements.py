@@ -5,7 +5,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.extract import audit_serp_filter, serp_filter
-from app.core.geo import classify_poe_point
+from app.core.geo import (
+    classify_poe_point, harbour_evidence, inland_exception_flags,
+)
 from app.core.rag import list_like_score, select_list_context
 from app.services import poe_pipeline as poe
 from app.services.poe_confidence import score_port
@@ -85,14 +87,91 @@ class TestSpatialCoastal:
         assert out["kind"] == "in_eez"
         assert out["validated"] is True
 
+    def test_sliver_two_km_is_still_eez(self):
+        from shapely.geometry import box
+        geom = box(-2, 48, 2, 51)
+        # ~2 km south of the southern edge (1° lat ≈ 111 km)
+        out = classify_poe_point(47.982, 0.0, geom)
+        assert out["kind"] == "in_eez"
+        assert out["validated"] is True
+        assert out["dist_km"] <= 2.2
+
+    def test_ten_km_land_is_coastal(self):
+        from shapely.geometry import box
+        # Mer du Nord allemande (approx.) ; Hambourg est à terre plus au sud-est.
+        geom = box(6.5, 53.9, 8.8, 55.2)
+        # Cuxhaven / Elbe ~10 km au sud du polygone, à terre
+        out = classify_poe_point(53.86, 8.70, geom)
+        assert out["kind"] == "coastal_land"
+        assert out["validated"] is True
+        assert 2.2 < out["dist_km"] <= 15.0
+
+    def test_hundred_km_city_rejected(self):
+        from shapely.geometry import box
+        geom = box(6.5, 53.9, 8.8, 55.2)
+        # Munich : même pays, ville intérieure, pas un port
+        out = classify_poe_point(
+            48.14, 11.58, geom,
+            inland={"country_ok": True, "harbour_like": False},
+        )
+        assert out["validated"] is False
+        assert out["kind"] == "inland"
+
+    def test_hundred_km_harbour_is_inland_river(self):
+        from shapely.geometry import box
+        geom = box(6.5, 53.9, 8.8, 55.2)
+        # Hambourg / Elbe ~100 km dans les terres
+        out = classify_poe_point(
+            53.54, 9.99, geom,
+            inland={"country_ok": True, "harbour_like": True},
+        )
+        assert out["kind"] == "inland_river"
+        assert out["validated"] is True
+        assert 15.0 < out["dist_km"] <= 400.0
+
+    def test_five_hundred_km_harbour_rejected(self):
+        from shapely.geometry import box
+        geom = box(6.5, 53.9, 8.8, 55.2)
+        # Trop loin même avec preuve de port
+        out = classify_poe_point(
+            48.14, 11.58, geom,
+            inland={"country_ok": True, "harbour_like": True},
+        )
+        assert out["validated"] is False
+        assert out["kind"] == "inland"
+        assert out["dist_km"] > 400.0
+
     def test_far_inland_rejected(self):
         from shapely.geometry import box
         geom = box(-2, 48, 2, 51)
-        # Paris-ish, well inland north of... wait lat 48-51 is the box.
-        # Point south of box on land: 47.0, 2.0 is south of Brittany box
         out = classify_poe_point(45.0, 2.0, geom)
         assert out["validated"] is False
         assert out["kind"] in ("inland", "other_water")
+
+
+class TestHarbourEvidence:
+    def test_name_and_osm(self):
+        assert harbour_evidence({"name": "Port of Hamburg"}) is True
+        assert harbour_evidence({"name": "München"}) is False
+        assert harbour_evidence({"name": "Hamburg"}, {"osm_type": "harbour"}) is True
+        assert harbour_evidence({"name": "Hamburg"}, {"fcode": "HBR"}) is True
+        assert harbour_evidence({"name": "Hamburg", "listing_role": "poe"}) is True
+        assert harbour_evidence({
+            "name": "Hamburg", "extraction_engine": "catalog", "lat": 53.5,
+        }) is True
+
+    def test_inland_flags_use_zone_iso_not_sovereign(self):
+        flags = inland_exception_flags(
+            {"name": "Bordeaux"},
+            {"iso2": "MQ", "sov_iso2": "FR"},
+            {"osm_type": "harbour"},
+        )
+        # iso2 de la zone (Martinique) : le géocodeur est déjà borné à MQ
+        assert flags["country_ok"] is True
+        assert flags["harbour_like"] is True
+        empty = inland_exception_flags({"name": "Paris"}, {"iso2": ""})
+        assert empty["country_ok"] is False
+        assert empty["harbour_like"] is False
 
 
 class TestConfidenceScore:
@@ -124,6 +203,22 @@ class TestConfidenceScore:
         }
         s = score_port(port, official_source=False)
         assert s["confidence"] < 40
+
+    def test_inland_river_scores_below_coastal(self):
+        base = {
+            "name": "Hamburg",
+            "extraction_engine": "catalog",
+            "validated": True,
+            "lat": 53.54, "lon": 9.99,
+            "source_urls": ["https://zoll.de/x"],
+        }
+        river = score_port({**base, "spatial_kind": "inland_river"},
+                           official_source=True)
+        coast = score_port({**base, "spatial_kind": "coastal_land"},
+                           official_source=True)
+        assert river["parts"]["map"] == 14
+        assert coast["parts"]["map"] == 16
+        assert river["confidence"] < coast["confidence"]
 
 
 class TestMonitoringOnlyOnRefresh:

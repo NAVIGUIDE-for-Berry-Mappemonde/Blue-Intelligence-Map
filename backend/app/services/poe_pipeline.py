@@ -43,10 +43,10 @@ from app.core.extract import (
     extract_structured_ports, internal_followups, looks_like_port_catalog,
     official_attachments, serp_filter, should_follow_attachments,
 )
-from app.core.geo import classify_poe_point, geocode_port_dual
+from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception_flags
 from app.core.llm import extract_ports, grounded_search
 from app.core.rag import select_list_context, semantic_similarity
-from app.services.poe_confidence import apply_score, score_port, zone_confidence_avg
+from app.services.poe_confidence import apply_score, listing_role, score_port, zone_confidence_avg
 
 from app.config import DATA_DIR as DATA
 
@@ -1376,8 +1376,9 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
                                rec=None, run=None, catalog_text: str | None = None,
                                settings: dict | None = None) -> list[dict]:
     """Étape 4 — Extraction parallèle (OpenRouter ∥ Claude ∥ NER) puis
-    géocodage double. Un point n'est gardé que s'il est dans cette ZEE
-    ou sur son bord terrestre — pas de tampon 300 km, pas de snap_to_ocean."""
+    géocodage double. Un point n'est gardé que s'il est dans cette ZEE,
+    sur son bord terrestre (≤ 15 km), ou — exception rivière — un port
+    de CE pays à ≤ 400 km. Pas de tampon 300 km, pas de snap_to_ocean."""
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
     ports = await extract_ports_llm(context, zone, log, rec=rec,
@@ -1397,10 +1398,10 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     except Exception:
         prepared = None
 
-    def _spatial(lat, lon):
+    def _spatial(lat, lon, inland=None):
         if geom is None and prepared is None:
             return {"kind": "unknown", "validated": False, "dist_km": None}
-        return classify_poe_point(lat, lon, geom, prepared)
+        return classify_poe_point(lat, lon, geom, prepared, inland=inland)
 
     docs = []
     seen_names = set()
@@ -1410,10 +1411,16 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             continue
         seen_names.add(norm)
 
+        role = listing_role(p.get("name") or "", listing_ports)
+        port_ev = {**p, "listing_role": role}
+
         if p.get("lat") is not None and p.get("lon") is not None:
             geo = {"nominatim": None, "geonames": None, "agree": None,
-                   "agreement_km": None, "geonames_available": True}
-            sp = _spatial(float(p["lat"]), float(p["lon"]))
+                   "agreement_km": None, "geonames_available": True,
+                   "nominatim_meta": {}, "geonames_meta": {}}
+            # Décret de CETTE zone : le pays est implicite.
+            inland = inland_exception_flags(port_ev, zone, official_list=True)
+            sp = _spatial(float(p["lat"]), float(p["lon"]), inland)
             cands = [{"source": "official_list", "lat": float(p["lat"]),
                       "lon": float(p["lon"]), "validated": sp["validated"],
                       "dist_km": sp["dist_km"], "kind": sp["kind"]}]
@@ -1424,7 +1431,9 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             coords = geo.get(source)
             if not coords:
                 continue
-            sp = _spatial(coords[0], coords[1])
+            meta = geo.get(f"{source}_meta") or {}
+            inland = inland_exception_flags(port_ev, zone, meta)
+            sp = _spatial(coords[0], coords[1], inland)
             cands.append({"source": source, "lat": coords[0], "lon": coords[1],
                           "validated": sp["validated"], "dist_km": sp["dist_km"],
                           "kind": sp["kind"]})
@@ -1448,7 +1457,8 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
                     f"— bascule sur {other['source']}")
                 chosen, arbitration = other, "spatial_switch"
             else:
-                log(f"  ⚠ {p['name']}: hors ZEE et hors bord terrestre "
+                log(f"  ⚠ {p['name']}: hors ZEE, hors bord terrestre "
+                    f"et hors exception rivière "
                     f"({chosen.get('kind')}, {chosen.get('dist_km')} km) — coordonnées rejetées")
                 chosen, arbitration = None, "spatial_rejected"
 
@@ -1503,6 +1513,8 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             kind_note = " ✓ ZEE"
         elif spatial_kind == "coastal_land":
             kind_note = " ✓ bord terrestre"
+        elif spatial_kind == "inland_river":
+            kind_note = " ✓ exception rivière"
         elif lat is not None:
             kind_note = f" ⚠ {spatial_kind} ({dist_km} km)"
         log(f"  ⚓ {p['name']} → {'%.3f, %.3f' % (lat, lon) if lat is not None else 'non géocodé'}"

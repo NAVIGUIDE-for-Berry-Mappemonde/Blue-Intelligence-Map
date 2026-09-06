@@ -114,12 +114,16 @@ class TestGeocodeDual:
 
     def test_agreement_under_2km(self, monkeypatch):
         res = self._run(monkeypatch,
-                        [{"lat": "10.0", "lon": "20.0", "display_name": "Port Alpha"}],
-                        [{"lat": "10.001", "lng": "20.001", "name": "Port Alpha"}])
+                        [{"lat": "10.0", "lon": "20.0", "display_name": "Port Alpha",
+                          "class": "harbour", "type": "harbour"}],
+                        [{"lat": "10.001", "lng": "20.001", "name": "Port Alpha",
+                          "fcode": "HBR"}])
         assert res["nominatim"] == [10.0, 20.0]
         assert res["geonames"] == [10.001, 20.001]
         assert res["agree"] is True
         assert res["agreement_km"] < 2.0
+        assert res["nominatim_meta"]["osm_type"] == "harbour"
+        assert res["geonames_meta"]["geonames_fcode"] == "HBR"
 
     def test_disagreement_flagged(self, monkeypatch):
         res = self._run(monkeypatch,

@@ -76,7 +76,9 @@ export default function useFormalitiesLayers({
       });
       m.bindPopup(() => {
         const t = tRef.current;
-        const valid = p.spatial_kind === "coastal_land"
+        const valid = p.spatial_kind === "inland_river"
+          ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#22d3ee;border:1px solid rgba(34,211,238,0.45);padding:2px 6px;border-radius:2px;">✓ ${escH(t("poeInlandRiver"))}</span>`
+          : p.spatial_kind === "coastal_land"
           ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#39ff14;border:1px solid rgba(57,255,20,0.45);padding:2px 6px;border-radius:2px;">✓ ${escH(t("poeCoastalLand"))}</span>`
           : p.validated
           ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#39ff14;border:1px solid rgba(57,255,20,0.45);padding:2px 6px;border-radius:2px;">✓ ${escH(t("poeValidated"))}</span>`

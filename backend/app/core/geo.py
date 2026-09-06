@@ -407,18 +407,23 @@ def _port_queries(port: dict, zone: dict) -> tuple[list[str], str]:
     return queries, ctx
 
 
-async def _geocode_port_nominatim(port: dict, zone: dict) -> tuple[float, float] | None:
+async def _geocode_port_nominatim(port: dict, zone: dict) -> dict | None:
     queries, ctx = _port_queries(port, zone)
     cc = (zone.get("iso2") or "").lower() or None
     for q in queries:
         rows = await _nominatim_rows(q, cc, limit=3)
         if rows:
             best = _rerank_rows(ctx, rows, "display_name")
-            return float(best["lat"]), float(best["lon"])
+            return {
+                "lat": float(best["lat"]),
+                "lon": float(best["lon"]),
+                "osm_class": best.get("class") or "",
+                "osm_type": best.get("type") or "",
+            }
     return None
 
 
-async def _geocode_port_geonames(port: dict, zone: dict) -> tuple[float, float] | None:
+async def _geocode_port_geonames(port: dict, zone: dict) -> dict | None:
     name = port["name"]
     territory = zone.get("name") or ""
     _, ctx = _port_queries(port, zone)
@@ -427,8 +432,18 @@ async def _geocode_port_geonames(port: dict, zone: dict) -> tuple[float, float] 
         rows = await _geonames_rows(q, country, limit=3)
         if rows:
             best = _rerank_rows(ctx, rows, "name")
-            return float(best["lat"]), float(best["lng"])
+            return {
+                "lat": float(best["lat"]),
+                "lon": float(best["lng"]),
+                "geonames_fcode": best.get("fcode") or "",
+            }
     return None
+
+
+def _xy(hit: dict | None) -> list[float] | None:
+    if not hit:
+        return None
+    return [hit["lat"], hit["lon"]]
 
 
 async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
@@ -437,6 +452,7 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
     est un signal de confiance fort ; le désaccord est arbitré en aval
     (point-in-EEZ). Retourne :
       {nominatim: [lat, lon]|None, geonames: [lat, lon]|None,
+       nominatim_meta: dict, geonames_meta: dict,
        agreement_km: float|None, agree: bool|None, geonames_available: bool}
     agree=None quand un seul fournisseur a répondu (GeoNames absent/désactivé)."""
     log = log or (lambda m: None)
@@ -447,13 +463,21 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
     agreement_km = None
     agree = None
     if nomi and geon:
-        agreement_km = round(haversine_km(nomi[0], nomi[1], geon[0], geon[1]), 2)
+        agreement_km = round(haversine_km(
+            nomi["lat"], nomi["lon"], geon["lat"], geon["lon"]), 2)
         agree = agreement_km <= 2.0
     if not nomi and not geon:
         log(f"géocodage: aucun résultat pour « {port['name']} »")
     return {
-        "nominatim": list(nomi) if nomi else None,
-        "geonames": list(geon) if geon else None,
+        "nominatim": _xy(nomi),
+        "geonames": _xy(geon),
+        "nominatim_meta": {
+            "osm_class": (nomi or {}).get("osm_class") or "",
+            "osm_type": (nomi or {}).get("osm_type") or "",
+        },
+        "geonames_meta": {
+            "geonames_fcode": (geon or {}).get("geonames_fcode") or "",
+        },
         "agreement_km": agreement_km,
         "agree": agree,
         "geonames_available": geonames_status() == "ok",
@@ -481,9 +505,56 @@ def point_in_eez(lat: float, lon: float, geom, prepared=None, tol_deg: float = 0
         return False, None
 
 
-# Bord terrestre d'une ZEE : le quai est à terre, le polygone est en mer.
-# Quelques kilomètres, pas 300 — un port du pays voisin doit être rejeté.
-COASTAL_LAND_KM = 12.0
+# Le polygone VLIZ est en mer. Un quai est souvent juste à terre.
+# 0,02° ≈ 2,2 km : sliver « encore la ZEE » (pas le vieux tampon 0,5° / 55 km).
+# 15 km : bord terrestre côtier. Au-delà : seulement l'exception rivière.
+IN_EEZ_SLIVER_KM = 2.2
+COASTAL_LAND_KM = 15.0
+INLAND_RIVER_MAX_KM = 400.0
+
+_HARBOUR_NAME_RE = re.compile(
+    r"\b(port|harbour|harbor|haven|hafen|puerto|porto|terminal|dock|wharf|"
+    r"quai|marina|capitan[ií]a)\b",
+    re.I,
+)
+_HARBOUR_OSM = {
+    "harbour", "port", "ferry_terminal", "dock", "basin", "marina", "pier",
+    "boatyard", "shipyard", "quay", "slipway",
+}
+_HARBOUR_GN = {"HBR", "HBRX", "PRT", "MAR", "ANCH", "JTY", "WHF"}
+
+
+def harbour_evidence(port: dict | None = None, meta: dict | None = None) -> bool:
+    """Le point ressemble à un port / un quai, pas à une ville intérieure."""
+    meta = meta or {}
+    port = port or {}
+    osm = f"{meta.get('osm_class') or ''} {meta.get('osm_type') or ''}".lower()
+    if any(tok in osm for tok in _HARBOUR_OSM):
+        return True
+    fcode = (meta.get("fcode") or meta.get("geonames_fcode") or "").upper()
+    if fcode in _HARBOUR_GN:
+        return True
+    name = f"{port.get('name') or ''} {port.get('city') or ''}"
+    if _HARBOUR_NAME_RE.search(name):
+        return True
+    if (port.get("extraction_engine") or "") == "catalog" and port.get("lat") is not None:
+        return True
+    if port.get("listing_role") == "poe":
+        return True
+    return False
+
+
+def inland_exception_flags(port: dict | None, zone: dict | None,
+                           meta: dict | None = None, *,
+                           official_list: bool = False) -> dict:
+    """Preuves pour l'exception rivière : CE pays (iso2 de la zone, pas le
+    souverain) et un vrai port — pas une ville intérieure à 100 km."""
+    zone = zone or {}
+    iso = (zone.get("iso2") or "").strip()
+    return {
+        "country_ok": bool(iso) or official_list,
+        "harbour_like": harbour_evidence(port, meta),
+    }
 
 
 def _dist_km_to_geom(lat: float, lon: float, geom) -> float | None:
@@ -505,14 +576,20 @@ def _dist_km_to_geom(lat: float, lon: float, geom) -> float | None:
 
 
 def classify_poe_point(lat: float, lon: float, geom, prepared=None,
-                       coastal_km: float = COASTAL_LAND_KM) -> dict:
+                       coastal_km: float = COASTAL_LAND_KM,
+                       inland: dict | None = None) -> dict:
     """Classe un candidat PoE par rapport à CETTE ZEE (pas snap_to_ocean).
 
-    - in_eez        : dans le polygone (mer de la zone) → accepté
-    - coastal_land  : à terre, collé au trait de côte de cette ZEE → accepté
-    - other_water   : en mer hors de cette ZEE (souvent les eaux d'à côté) → rejeté
-    - inland        : trop loin dans les terres → rejeté
+    - in_eez         : dans le polygone, ou sliver ≤ 2,2 km → accepté
+    - coastal_land   : à terre, ≤ 15 km du trait de côte de cette ZEE → accepté
+    - inland_river   : exception — à terre, dans CE pays, jusqu'à 400 km,
+                       seulement si c'est un port (pas une ville intérieure)
+    - other_water    : en mer hors de cette ZEE → rejeté
+    - inland         : trop loin / pas un port → rejeté
+
+    `inland` = {country_ok, harbour_like}. Sans les deux, pas d'exception.
     """
+    inland = inland or {}
     try:
         from shapely.geometry import Point
         pt = Point(lon, lat)
@@ -524,9 +601,14 @@ def classify_poe_point(lat: float, lon: float, geom, prepared=None,
         dist = _dist_km_to_geom(lat, lon, geom)
         if inside:
             return {"kind": "in_eez", "validated": True, "dist_km": 0.0}
+        if dist is not None and dist <= IN_EEZ_SLIVER_KM:
+            return {"kind": "in_eez", "validated": True, "dist_km": dist}
         on_land = not is_ocean(lat, lon)
         if on_land and dist is not None and dist <= coastal_km:
             return {"kind": "coastal_land", "validated": True, "dist_km": dist}
+        if (on_land and dist is not None and dist <= INLAND_RIVER_MAX_KM
+                and inland.get("country_ok") and inland.get("harbour_like")):
+            return {"kind": "inland_river", "validated": True, "dist_km": dist}
         if on_land:
             return {"kind": "inland", "validated": False, "dist_km": dist}
         return {"kind": "other_water", "validated": False, "dist_km": dist}

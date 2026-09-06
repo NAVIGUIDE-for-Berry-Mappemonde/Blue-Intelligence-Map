@@ -16,7 +16,7 @@ from __future__ import annotations
 from app.core.dedup import normalize_name, text_similarity
 
 
-def _listing_role(name: str, listing_ports: list[dict] | None) -> str | None:
+def listing_role(name: str, listing_ports: list[dict] | None) -> str | None:
     """'poe' | 'other' | None — le listing n'est pas une source de vérité."""
     if not name or not listing_ports:
         return None
@@ -109,7 +109,7 @@ def score_port(port: dict, *,
         parts["map"] = 0
         reasons.append("non géocodé")
     elif kind == "rejected" or (port.get("validated") is False and kind not in (
-            "in_eez", "coastal_land")):
+            "in_eez", "coastal_land", "inland_river")):
         parts["map"] = 0
         reasons.append("hors ZEE et hors bord terrestre")
     elif kind == "in_eez" and agree is True:
@@ -118,12 +118,18 @@ def score_port(port: dict, *,
     elif kind == "coastal_land" and agree is True:
         parts["map"] = 22
         reasons.append("bord terrestre de la ZEE, géocodeurs d'accord")
+    elif kind == "inland_river" and agree is True:
+        parts["map"] = 18
+        reasons.append("port fluvial du pays, géocodeurs d'accord")
     elif kind == "in_eez":
         parts["map"] = 18
         reasons.append("dans la ZEE")
     elif kind == "coastal_land":
         parts["map"] = 16
         reasons.append("bord terrestre de la ZEE")
+    elif kind == "inland_river":
+        parts["map"] = 14
+        reasons.append("port fluvial hors ZEE (exception)")
     elif port.get("validated"):
         parts["map"] = 16
         reasons.append("point accepté dans la zone")
@@ -131,13 +137,13 @@ def score_port(port: dict, *,
         parts["map"] = 4
         reasons.append("position incertaine")
 
-    listing_role = _listing_role(port.get("name") or "", listing_ports)
+    role = listing_role(port.get("name") or "", listing_ports)
     osm = port.get("osm_confidence")
     ext = 0
-    if listing_role == "poe":
+    if role == "poe":
         ext += 8
         reasons.append("connu du listing communautaire (PoE)")
-    elif listing_role == "other":
+    elif role == "other":
         ext += 2
         reasons.append("listing : autre port (pas un PoE)")
     if osm is not None:
@@ -159,7 +165,7 @@ def score_port(port: dict, *,
         "confidence": total,
         "parts": parts,
         "reasons": reasons,
-        "listing_role": listing_role,
+        "listing_role": role,
     }
 
 
