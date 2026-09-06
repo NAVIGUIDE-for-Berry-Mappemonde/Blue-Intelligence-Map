@@ -249,7 +249,7 @@ Return JSON:
 POE_EXTRACT_PROMPT = """Tu extrais les ports officiellement désignés pour l'entrée des navires étrangers dans : {name} ({sovereign}).
 
 Réponds UNIQUEMENT avec un JSON strict de la forme:
-{{"ports": [{{"name": "...", "city": "... ou null", "note": "précision courte ou null"}}]}}
+{{"ports": [{{"name": "...", "city": "... ou null", "note": "... ou null", "lat": <decimal ou null>, "lon": <decimal ou null>, "geocodeable": true}}]}}
 
 Règles absolues:
 - Prendre tout port / terminal / harbour que la source officielle désigne comme point d'entrée :
@@ -259,21 +259,96 @@ Règles absolues:
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
 - Ignorer les aéroports (sauf s'ils sont le seul point d'entrée maritime nommé — ne pas les extraire).
 - "name" = nom du port tel qu'écrit. "note" en français, max 120 caractères.
+- "lat"/"lon" : recopier UNIQUEMENT un nombre présent dans l'extrait. Sinon null.
+  Ne jamais estimer un GPS de mémoire.
+- "geocodeable": false si le nom n'est pas un toponyme (phrase, verbe, fragment).
 
 EXTRAITS DES SOURCES OFFICIELLES:
 {context}"""
 
 
-def coerce_ports(data) -> list[dict]:
+_COORD_TOKEN_RE = re.compile(r"[+-]?\d+\.\d+|[+-]\d{2,}")
+
+
+def _parse_coord(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _number_in_text(value: float, text: str) -> bool:
+    """Le nombre (ou un arrondi cohérent) figure dans l'extrait source."""
+    if not text:
+        return False
+    raw = f"{value:.10f}".rstrip("0").rstrip(".")
+    if raw and raw in text:
+        return True
+    decimals = len(raw.split(".")[1]) if "." in raw else 0
+    for m in _COORD_TOKEN_RE.finditer(text):
+        try:
+            n = float(m.group(0))
+        except ValueError:
+            continue
+        if decimals >= 2:
+            if abs(round(n, decimals) - round(value, decimals)) <= 10 ** (-decimals):
+                return True
+        elif decimals == 1:
+            if abs(n - value) <= 0.05:
+                return True
+        elif abs(n - value) < 1e-6:
+            return True
+    return False
+
+
+def coords_appear_in_text(lat: float, lon: float, text: str) -> bool:
+    """True seulement si lat et lon sont recopiés depuis l'extrait (pas inventés)."""
+    return _number_in_text(lat, text) and _number_in_text(lon, text)
+
+
+def _as_bool_or_none(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1", "yes"):
+            return True
+        if low in ("false", "0", "no"):
+            return False
+    return None
+
+
+def coerce_ports(data, context: str | None = None) -> list[dict]:
     ports = data.get("ports") if isinstance(data, dict) else None
     out = []
     for p in ports or []:
-        if isinstance(p, dict) and (p.get("name") or "").strip():
-            out.append({
-                "name": str(p["name"]).strip()[:120],
-                "city": (str(p["city"]).strip()[:80] if p.get("city") else None),
-                "note": (str(p["note"]).strip()[:200] if p.get("note") else None),
-            })
+        if not (isinstance(p, dict) and (p.get("name") or "").strip()):
+            continue
+        row = {
+            "name": str(p["name"]).strip()[:120],
+            "city": (str(p["city"]).strip()[:80] if p.get("city") else None),
+            "note": (str(p["note"]).strip()[:200] if p.get("note") else None),
+        }
+        geo_flag = _as_bool_or_none(p.get("geocodeable"))
+        if geo_flag is not None:
+            row["geocodeable"] = geo_flag
+        lat = _parse_coord(p.get("lat") if p.get("lat") is not None else p.get("latitude"))
+        lon = _parse_coord(p.get("lon") if p.get("lon") is not None else p.get("longitude"))
+        if lat is not None and lon is not None:
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
+                lat = lon = None
+            elif context is not None and not coords_appear_in_text(lat, lon, context):
+                lat = lon = None
+        if lat is not None and lon is not None:
+            row["lat"] = lat
+            row["lon"] = lon
+        out.append(row)
     return out[:150]  # plafond de sécurité élevé — pas de cap par pays (grands États maritimes)
 
 
@@ -309,7 +384,7 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
     )
     data = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
                           settings=s, max_tokens=2500, log=log)
-    ports = coerce_ports(data)
+    ports = coerce_ports(data, context=context)
     for p in ports:
         p["extraction_engine"] = "openrouter"
     if log:

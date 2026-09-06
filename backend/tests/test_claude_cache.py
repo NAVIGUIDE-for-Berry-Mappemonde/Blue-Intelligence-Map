@@ -7,7 +7,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core import claude  # noqa: E402
-from app.core.extract import catalog_is_sufficient, extract_structured_ports  # noqa: E402
+from app.core.extract import (  # noqa: E402
+    catalog_is_sufficient, catalog_ports_with_coords, extract_structured_ports,
+    is_geocodeable_name,
+)
+from app.core.llm import coerce_ports, coords_appear_in_text  # noqa: E402
 
 
 @pytest.fixture
@@ -125,3 +129,68 @@ class TestCatalogSufficient:
     def test_empty_is_not_enough(self):
         assert catalog_is_sufficient([], "hello") is False
         assert catalog_is_sufficient(None, "") is False
+
+    def test_eight_fragments_are_not_enough(self):
+        text = " ".join(f"le port de Port{i}," for i in range(1, 9))
+        ports = extract_structured_ports(text)
+        assert len(ports) >= 8
+        assert catalog_ports_with_coords(ports) == []
+        assert catalog_is_sufficient(ports, text) is False
+
+
+class TestGeocodeableName:
+    def test_real_ports_pass(self):
+        assert is_geocodeable_name("Nouméa") is True
+        assert is_geocodeable_name("Saint-Laurent du Maroni") is True
+        assert is_geocodeable_name("Bar") is True
+        assert is_geocodeable_name("Port of Spain") is True
+
+    def test_canary_junk_rejected(self):
+        assert is_geocodeable_name("eerste binnenkomst") is False
+        assert is_geocodeable_name("binnenkomst moet worden ingediend") is False
+        assert is_geocodeable_name("l’uniforme") is False
+        assert is_geocodeable_name("armes") is False
+        assert is_geocodeable_name("Bar has continuously conducted") is False
+
+    def test_llm_flag_false_wins(self):
+        assert is_geocodeable_name("Marokko", geocodeable=False) is False
+
+
+class TestSourceCoords:
+    def test_coords_must_appear_in_excerpt(self):
+        src = "Latitud: 31.8522146 Longitud: -116.625788"
+        assert coords_appear_in_text(31.8522146, -116.625788, src) is True
+        assert coords_appear_in_text(31.85, -116.63, src) is True
+        assert coords_appear_in_text(46.48, 30.73, src) is False
+
+    def test_coerce_drops_invented_gps(self):
+        data = {"ports": [
+            {"name": "Ensenada", "lat": 31.8522146, "lon": -116.625788,
+             "geocodeable": True},
+            {"name": "Odessa", "lat": 46.48, "lon": 30.73, "geocodeable": True},
+        ]}
+        src = "#### 4.- Ensenada\nLatitud: 31.8522146\nLongitud: -116.625788"
+        ports = coerce_ports(data, context=src)
+        by = {p["name"]: p for p in ports}
+        assert by["Ensenada"]["lat"] == 31.8522146
+        assert "lat" not in by["Odessa"]
+        assert by["Ensenada"]["geocodeable"] is True
+
+    def test_coerce_without_context_keeps_numbers(self):
+        data = {"ports": [{"name": "X", "lat": 10.5, "lon": 20.5}]}
+        ports = coerce_ports(data)
+        assert ports[0]["lat"] == 10.5
+
+
+class TestTiebreakParse:
+    def test_maps_choices(self):
+        items = [{"name": "Port Alpha", "nominatim": [1, 2], "geonames": [3, 4]}]
+        parsed = {"picks": [
+            {"name": "Port Alpha", "choice": "geonames"},
+            {"name": "Unknown", "choice": "nominatim"},
+            {"name": "Port Alpha", "choice": "invented"},
+        ]}
+        out = claude._parse_tiebreak(parsed, items)
+        assert out["Port Alpha"] == "geonames"
+        assert out["port alpha"] == "geonames"
+        assert "Unknown" not in out

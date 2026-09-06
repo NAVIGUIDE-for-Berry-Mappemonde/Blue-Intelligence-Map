@@ -215,7 +215,9 @@ _RULES = """Tu es le moteur d'extraction Ports d'Entrée de Blue Intelligence.
 Tu réponds UNIQUEMENT avec un unique objet JSON valide, sans prose, sans fences markdown.
 
 Schéma obligatoire :
-{"ports": [{"name": "...", "city": "... ou null", "note": "précision courte ou null"}]}
+{"ports": [{"name": "...", "city": "... ou null", "note": "... ou null",
+            "lat": <decimal ou null>, "lon": <decimal ou null>,
+            "geocodeable": true}]}
 
 Règles absolues :
 - Extraire tout port, terminal ou harbour que la source officielle désigne comme
@@ -230,6 +232,10 @@ Règles absolues :
 - "name" = nom du port tel qu'écrit dans la source (ne pas traduire).
 - "city" = ville ou entité fédérative si elle figure dans la source, sinon null.
 - "note" en français, max 120 caractères.
+- "lat" / "lon" : recopier UNIQUEMENT un nombre déjà écrit dans l'extrait
+  (Latitud, Longitude, GPS du décret). Sinon null. Jamais de GPS de mémoire.
+- "geocodeable": false si le nom n'est pas un toponyme (phrase, verbe,
+  fragment de loi). true pour un vrai nom de port / baie / ville portuaire.
 - Conserver l'orthographe officielle (accents, particules, numéros de terminal).
 - Un même port répété une seule fois. Plafond 150 ports.
 """
@@ -250,8 +256,10 @@ Latitud: 19.057546
 Longitud: -104.313762
 JSON attendu :
 {"ports": [
-  {"name": "Ensenada", "city": "Baja California", "note": "catalogue officiel"},
-  {"name": "Manzanillo", "city": "Colima", "note": "catalogue officiel"}
+  {"name": "Ensenada", "city": "Baja California", "note": "catalogue officiel",
+   "lat": 31.8522146, "lon": -116.625788, "geocodeable": true},
+  {"name": "Manzanillo", "city": "Colima", "note": "catalogue officiel",
+   "lat": 19.057546, "lon": -104.313762, "geocodeable": true}
 ]}
 
 --- Exemple B : tournure légale isolée (ne pas extraire l'aéroport) ---
@@ -259,7 +267,8 @@ SOURCE:
 No plant material may be imported into Niue except through the port of Alofi,
 the Hanan International Airport, or the Post Office.
 JSON attendu :
-{"ports": [{"name": "Alofi", "city": null, "note": "port of Alofi (loi)"}]}
+{"ports": [{"name": "Alofi", "city": null, "note": "port of Alofi (loi)",
+            "lat": null, "lon": null, "geocodeable": true}]}
 
 --- Exemple C : décret français, plusieurs ports, ignorer le hors-sujet ---
 SOURCE:
@@ -341,8 +350,8 @@ def _glossary() -> str:
         "dans la liste officielle d'entrée des navires étrangers.",
         "« Port » suivi d'un numéro TCP/IP ou d'un protocole n'est jamais un PoE.",
         "Une marina OSM sans mention réglementaire n'est pas un PoE.",
-        "Les coordonnées du décret, si présentes, n'ont pas à figurer dans le JSON "
-        "(le parseur local les lira à part).",
+        "Les coordonnées du décret, si présentes dans l'extrait, se recopient "
+        "dans lat/lon ; un GPS absent de l'extrait reste null.",
         "Si la source mélange aéroports et ports maritimes, ne retenir que les ports maritimes.",
         "Les homonymes (Portsmouth, Victoria, Georgetown) se distinguent par la ville "
         "ou le territoire nommé dans l'extrait, jamais par connaissance mondiale.",
@@ -472,7 +481,103 @@ async def extract_ports_claude(context: str, zone: dict,
     parsed = parse_json_flexible(raw)
     if parsed is None:
         raise RuntimeError("claude: no JSON in output")
-    ports = coerce_ports(parsed)
+    ports = coerce_ports(parsed, context=context)
     for p in ports:
         p["extraction_engine"] = "claude"
     return ports
+
+
+_TIEBREAK_SYSTEM = (
+    "Tu départages un géocodage double. Réponds UNIQUEMENT avec un JSON "
+    '{"picks": [{"name": "...", "choice": "nominatim|geonames|none"}]}. '
+    "Ne propose aucune autre coordonnée. none = les deux points sont faux "
+    "ou hors sujet pour ce port dans cette zone."
+)
+
+
+def _parse_tiebreak(parsed, items: list[dict]) -> dict:
+    """Mappe name → choice. Clés originales + casefold."""
+    allowed = {"nominatim", "geonames", "none"}
+    names = {(it.get("name") or "").strip() for it in items if it.get("name")}
+    out: dict[str, str] = {}
+    for pick in (parsed or {}).get("picks") or []:
+        if not isinstance(pick, dict):
+            continue
+        n = (pick.get("name") or "").strip()
+        c = (pick.get("choice") or "").strip().lower()
+        if c not in allowed:
+            continue
+        if n in names or n.casefold() in {x.casefold() for x in names}:
+            out[n] = c
+            out[n.casefold()] = c
+    return out
+
+
+async def arbitrate_geocode_claude(zone: dict, items: list[dict],
+                                   settings: dict | None = None,
+                                   log=None) -> dict:
+    """Un appel Haiku par zone : Nominatim vs GeoNames, sans 3e GPS.
+
+    items = [{name, nominatim: [lat, lon], geonames: [lat, lon]}, ...]
+    Retourne {name: 'nominatim'|'geonames'|'none'} (aussi en casefold).
+    Dict vide si Claude éteint, budget, ou parse KO (repli EEZ côté pipeline).
+    """
+    if not items:
+        return {}
+    if not claude_enabled(settings) or not budget_allows_call(settings):
+        return {}
+
+    name = zone.get("name") or zone.get("geoname") or ""
+    sovereign = zone.get("sovereign") or ""
+    lines = [
+        f"Zone : {name} ({sovereign}).",
+        "Nominatim et GeoNames divergent. Choisis pour chaque port "
+        "nominatim, geonames ou none. N'invente aucune coordonnée.",
+        "",
+    ]
+    for i, it in enumerate(items, 1):
+        nom = it.get("nominatim") or [None, None]
+        geo = it.get("geonames") or [None, None]
+        lines.append(
+            f"{i}. {it.get('name')}\n"
+            f"   nominatim: {nom[0]}, {nom[1]}\n"
+            f"   geonames: {geo[0]}, {geo[1]}"
+        )
+    payload = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 400,
+        "temperature": 0,
+        "system": _TIEBREAK_SYSTEM,
+        "messages": [{"role": "user", "content": "\n".join(lines)}],
+    }
+    key = get_anthropic_key(settings)
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+    }
+
+    async with _call_lock:
+        if not budget_allows_call(settings):
+            return {}
+        async with httpx.AsyncClient(timeout=45) as client:
+            r = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
+        body = r.text or ""
+        if _is_billing_error(r.status_code, body):
+            raise ClaudeBudgetExhausted(f"anthropic HTTP {r.status_code}")
+        if r.status_code >= 400:
+            raise RuntimeError(f"anthropic HTTP {r.status_code}: {body[:180]}")
+        data = r.json()
+        usage = data.get("usage") or {}
+        cost = estimate_cost_usd(usage)
+        record_usage(usage, cost)
+        if log:
+            log(f"Claude tiebreak {CLAUDE_MODEL}: {len(items)} port(s) "
+                f"cost=${cost:.4f}")
+
+    from app.core.llm import parse_json_flexible
+    raw = _content_text({"content": data.get("content") or []})
+    parsed = parse_json_flexible(raw)
+    if not isinstance(parsed, dict):
+        return {}
+    return _parse_tiebreak(parsed, items)

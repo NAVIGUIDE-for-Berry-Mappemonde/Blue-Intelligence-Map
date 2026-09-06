@@ -81,6 +81,10 @@ def build_code_fingerprint(settings: dict | None = None,
             "listing_control": _module_has(
                 "app.services.listing_control", "compare_to_listing"),
             "claude_adapter": _module_has("app.core.claude", "extract_ports_claude"),
+            "haiku_source_coords": _module_has("app.core.llm", "coords_appear_in_text"),
+            "geocode_name_veto": _module_has("app.core.extract", "is_geocodeable_name"),
+            "haiku_geocode_tiebreak": _module_has(
+                "app.core.claude", "arbitrate_geocode_claude"),
         },
     }
 

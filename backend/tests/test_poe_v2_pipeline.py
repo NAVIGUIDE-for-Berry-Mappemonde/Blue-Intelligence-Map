@@ -723,3 +723,131 @@ class TestFetchMirrorArbitration:
         text, level, *rest = asyncio.run(ext.fetch_mirror_text("https://aduana.gob.mx/list"))
         assert level == "N3-mirror-tinyfish"
         assert "Puerto" in text
+
+
+class TestCatalogSkipPolicy:
+    def test_eight_port_of_fragments_still_call_llm(self, monkeypatch):
+        called = []
+
+        async def fake_llm(context, zone, settings=None, log=None):
+            called.append(1)
+            return [{"name": "Nouméa", "extraction_engine": "claude"}]
+
+        monkeypatch.setattr(poe, "extract_ports", fake_llm)
+        import app.core.ml as ml
+        monkeypatch.setattr(ml, "extract_entities", lambda text: [])
+        catalog = " ".join(f"le port de Fragment{i}," for i in range(1, 9))
+
+        ports = asyncio.run(poe.extract_ports_llm(
+            "slice", {"name": "New Caledonia"}, lambda m: None,
+            catalog_text=catalog))
+        assert called == [1]
+        names = {p["name"] for p in ports}
+        assert names == {"Nouméa"}
+
+    def test_skip_returns_only_coord_ports(self, monkeypatch):
+        called = []
+
+        async def boom(context, zone, settings=None, log=None):
+            called.append(1)
+            return []
+
+        monkeypatch.setattr(poe, "extract_ports", boom)
+        mixed = TestStructuredDiscovery._MX_JINA + (
+            "\nL'entrée s'effectue par le port de Papeete uniquement.\n")
+        ports = asyncio.run(poe.extract_ports_llm(
+            "slice", {"name": "Mexico"}, lambda m: None, catalog_text=mixed))
+        assert called == []
+        names = {p["name"] for p in ports}
+        assert "Ensenada" in names and "Papeete" not in names
+        assert all(p.get("lat") is not None for p in ports)
+
+
+class TestGeocodePolicy:
+    def _zone(self):
+        return {"mrgid": 1, "name": "Testland", "iso2": "TL",
+                "sovereign": "Testland", "geometry": None}
+
+    def test_junk_name_skips_dual(self, monkeypatch):
+        called = []
+
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "eerste binnenkomst", "geocodeable": False,
+                     "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            called.append(port["name"])
+            return {"nominatim": [52.0, 5.0], "geonames": [52.0, 5.0],
+                    "agree": True, "agreement_km": 0.1, "geonames_available": True}
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None))
+        assert called == []
+        assert docs[0]["lat"] is None
+        assert docs[0]["geocode_arbitration"] == "not_geocodeable"
+
+    def test_source_coords_skip_dual(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Ensenada", "lat": 31.85, "lon": -116.62,
+                     "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            raise AssertionError("geocode_port_dual should not run")
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None))
+        assert docs[0]["lat"] == 31.85
+        assert docs[0]["geocode_source"] == "source"
+        assert docs[0]["geocode_arbitration"] == "single"
+
+    def test_haiku_tiebreak_picks_geonames(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Port Alpha", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": [10.0, 20.0], "geonames": [50.0, 5.0],
+                    "agree": False, "agreement_km": 4000,
+                    "geonames_available": True}
+
+        async def fake_arb(zone, items, settings=None, log=None):
+            assert len(items) == 1
+            return {"Port Alpha": "geonames", "port alpha": "geonames"}
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        import app.core.claude as claude_mod
+        monkeypatch.setattr(claude_mod, "arbitrate_geocode_claude", fake_arb)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None))
+        assert docs[0]["geocode_source"] == "geonames"
+        assert docs[0]["lat"] == 50.0
+        assert docs[0]["geocode_arbitration"] == "haiku_tiebreak"
+
+    def test_haiku_none_rejects_both(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Port Alpha", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": [10.0, 20.0], "geonames": [50.0, 5.0],
+                    "agree": False, "agreement_km": 4000,
+                    "geonames_available": True}
+
+        async def fake_arb(zone, items, settings=None, log=None):
+            return {"Port Alpha": "none", "port alpha": "none"}
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        import app.core.claude as claude_mod
+        monkeypatch.setattr(claude_mod, "arbitrate_geocode_claude", fake_arb)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None))
+        assert docs[0]["lat"] is None
+        assert docs[0]["geocode_arbitration"] == "haiku_none"

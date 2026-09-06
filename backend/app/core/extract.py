@@ -474,25 +474,64 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
     return out
 
 
+def catalog_ports_with_coords(ports: list | None) -> list[dict]:
+    """Sous-ensemble catalogue qui a réellement lat/lon dans la source."""
+    return [
+        p for p in (ports or [])
+        if p.get("lat") is not None and p.get("lon") is not None
+    ]
+
+
 def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
-    """Skip LLM seulement si le parseur local a déjà une liste officielle solide.
+    """Skip LLM seulement si le parseur a lu une vraie table (noms + coords).
 
     - ≥ 3 ports avec lat/lon (catalogue type SCT) ;
-    - ou looks_like_port_catalog + ≥ 1 port coordonné ;
-    - ou ≥ 8 noms extraits.
-    Une ou deux tournures « port of X » sans coords ne suffisent pas.
+    - ou looks_like_port_catalog + ≥ 1 port coordonné.
+    Un décompte de fragments (« port de X », phrases) ne suffit plus :
+    Haiku doit lire ces pages. Au skip, ne renvoyer que les ports coordonnés.
     """
     if not ports:
         return False
-    with_coords = sum(
-        1 for p in ports
-        if p.get("lat") is not None and p.get("lon") is not None
-    )
+    with_coords = len(catalog_ports_with_coords(ports))
     if with_coords >= 3:
         return True
-    if looks_like_port_catalog(text or "") and with_coords >= 1:
-        return True
-    return len(ports) >= 8
+    return bool(looks_like_port_catalog(text or "") and with_coords >= 1)
+
+
+_JUNK_NAME_RE = re.compile(
+    r"\b(moet|worden|ingediend|ligt|binnenkomst|uniforme|armes|"
+    r"continuously|conducted|described|consists)\b",
+    re.I,
+)
+_GEOCODE_STOP = frozenset({
+    "the", "and", "or", "of", "a", "an", "to", "for", "in", "on",
+    "de", "het", "van", "een", "is", "la", "le", "les", "du", "des",
+    "un", "une", "et", "ou", "el", "los", "las", "y",
+})
+
+
+def is_geocodeable_name(name: str, geocodeable=None) -> bool:
+    """False → ne pas appeler Nominatim/GeoNames (fragment, pas un toponyme).
+
+    `geocodeable is False` (flag LLM) gagne toujours. Un filet local recale
+    les phrases type canari NL/CI même si le flag est absent ou True.
+    """
+    if geocodeable is False:
+        return False
+    n = (name or "").strip()
+    if len(n) < 2 or len(n) > 80:
+        return False
+    if _JUNK_NAME_RE.search(n):
+        return False
+    tokens = re.findall(r"[^\W\d_]+", n, flags=re.UNICODE)
+    if not tokens:
+        return False
+    if all(t.casefold() in _GEOCODE_STOP for t in tokens):
+        return False
+    caps = sum(1 for t in tokens if t[:1].isupper())
+    if len(tokens) >= 3 and caps == 0:
+        return False
+    return True
 
 
 def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:

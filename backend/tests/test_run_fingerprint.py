@@ -46,6 +46,9 @@ class TestFingerprint:
         assert fp["features"]["p0_pdf_isolated"] is True
         assert fp["features"]["p0_geocode_cache"] is True
         assert fp["features"]["claude_adapter"] is True
+        assert fp["features"]["haiku_source_coords"] is True
+        assert fp["features"]["geocode_name_veto"] is True
+        assert fp["features"]["haiku_geocode_tiebreak"] is True
         assert fp["git_sha"]
 
     def test_claude_off_without_budget(self, monkeypatch):
