@@ -55,6 +55,7 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef }) {
       <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:2px 6px;border-radius:2px;">${escH(statusLabel)}</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#f8fafc;border:1px solid #f8fafc55;padding:2px 6px;border-radius:2px;">⚓ ${z.poe_count || 0} ${escH(t("poePortsCount"))}</span>
+        ${z.confidence_avg != null ? `<span data-testid="zone-confidence" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${Number(z.confidence_avg) >= 70 ? "#39ff14" : Number(z.confidence_avg) >= 40 ? "#fbbf24" : "#fca5a5"};border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${escH(t("poeConfidenceAvg"))} ${Number(z.confidence_avg)}</span>` : ""}
         ${z.stale ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,0.5);background:rgba(251,191,36,0.1);padding:2px 6px;border-radius:2px;">⏰ ${escH(t("poeStale"))}</span>` : ""}
       </div>
       ${gen ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${escH(t("poeGeneratedAt"))}: ${escH(gen)}</div>` : ""}
