@@ -13,6 +13,13 @@ GET  /api/poe/runs/{id}/ports
 GET  /api/poe/runs/{id}/events
 GET  /api/poe/runs/{id}/diff
 GET  /api/poe/runs/{id}/report
+GET  /api/poe/runs/{id}/listing-control   rapport de contrôle vs listing_ref
+POST /api/poe/runs/{id}/listing-control   calcule + persist la file de revue
+GET  /api/poe/listing-control/v1
+POST /api/poe/listing-control/v1
+GET  /api/poe/listing-control/compare
+GET  /api/poe/listing-control/review
+GET  /api/poe/listing-control/ref
 """
 import asyncio
 import os
@@ -27,6 +34,10 @@ from app.core.tasks import TaskState
 from app.db import db as _db
 from app.services import poe_pipeline as poe
 from app.services import poe_runs
+from app.services.listing_control import (
+    build_listing_control_report, compare_runs_to_listing, persist_review,
+)
+from app.services.listing_ref import project_listing
 from app.services.poe_bestof import compare_runs, synthesize_best_of
 from app.services.poe_diff import diff_run_vs_baseline
 from app.services.poe_pipeline import normalize_variant
@@ -189,6 +200,63 @@ async def poe_runs_list():
             "active_run_id": (_active_ids() or [None])[0], "items": docs}
 
 
+@router.get("/poe/listing-control/ref")
+async def listing_control_ref():
+    """Projection slug → mrgid (pas les ports détaillés)."""
+    proj = project_listing()
+    return {
+        "listing_ref_id": proj["listing_ref_id"],
+        "generated_at": proj.get("generated_at"),
+        "disclaimer": proj.get("disclaimer"),
+        "stats": proj["stats"],
+        "unresolved": proj.get("unresolved") or [],
+        "resolutions": [
+            {k: r[k] for k in ("slug", "name", "mrgids", "iso2", "method")}
+            for r in proj.get("resolutions") or []
+        ],
+    }
+
+
+@router.get("/poe/listing-control/v1")
+async def listing_control_v1(restrict_to_run_zones: bool = False):
+    return await build_listing_control_report(
+        _db, "v1", restrict_to_run_zones=restrict_to_run_zones)
+
+
+@router.post("/poe/listing-control/v1")
+async def listing_control_v1_persist(restrict_to_run_zones: bool = False):
+    report = await build_listing_control_report(
+        _db, "v1", restrict_to_run_zones=restrict_to_run_zones)
+    persisted = await persist_review(_db, report)
+    return {"report": report, "persisted": persisted}
+
+
+@router.get("/poe/listing-control/compare")
+async def listing_control_compare(run_ids: str = "", include_v1: bool = True,
+                                  persist: bool = False):
+    ids = [x.strip() for x in run_ids.split(",") if x.strip()]
+    if not include_v1 and not ids:
+        raise HTTPException(400, "run_ids requis si include_v1=false")
+    for rid in ids:
+        if not await _db.poe_runs.find_one({"_id": rid}):
+            raise HTTPException(404, f"Run {rid} unknown")
+    return await compare_runs_to_listing(
+        _db, ids, include_v1=include_v1, persist=persist)
+
+
+@router.get("/poe/listing-control/review")
+async def listing_control_review(run_id: str | None = None, reason: str | None = None,
+                                 skip: int = 0, limit: int = 500):
+    q: dict = {}
+    if run_id:
+        q["run_id"] = run_id
+    if reason:
+        q["reason"] = reason
+    total = await _db.poe_listing_review.count_documents(q)
+    docs = await _db.poe_listing_review.find(q).skip(skip).to_list(min(limit, 2000))
+    return {"total": total, "skip": skip, "count": len(docs), "items": docs}
+
+
 @router.get("/poe/runs/compare")
 async def poe_runs_compare(run_ids: str, include_v1: bool = True):
     ids = [x.strip() for x in run_ids.split(",") if x.strip()]
@@ -278,3 +346,21 @@ async def poe_run_report(run_id: str, format: str = "json"):
     if format == "markdown":
         return PlainTextResponse(report_to_markdown(rep), media_type="text/markdown; charset=utf-8")
     return rep
+
+
+@router.get("/poe/runs/{run_id}/listing-control")
+async def poe_run_listing_control(run_id: str, restrict_to_run_zones: bool = True):
+    if not await _db.poe_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    return await build_listing_control_report(
+        _db, run_id, restrict_to_run_zones=restrict_to_run_zones)
+
+
+@router.post("/poe/runs/{run_id}/listing-control")
+async def poe_run_listing_control_persist(run_id: str, restrict_to_run_zones: bool = True):
+    if not await _db.poe_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    report = await build_listing_control_report(
+        _db, run_id, restrict_to_run_zones=restrict_to_run_zones)
+    persisted = await persist_review(_db, report)
+    return {"report": report, "persisted": persisted}

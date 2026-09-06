@@ -71,6 +71,8 @@ async def _startup():
         await db.eez_zones.create_index("mrgid", unique=True)
         await db.poe_ports.create_index("dedup_key", unique=True)
         await db.poe_ports.create_index("mrgid")
+        await db.poe_listing_review.create_index("run_id")
+        await db.poe_listing_review.create_index([("run_id", 1), ("reason", 1)])
     except Exception as e:
         print(f"[startup] poe index creation failed (non-fatal): {e}")
     try:
