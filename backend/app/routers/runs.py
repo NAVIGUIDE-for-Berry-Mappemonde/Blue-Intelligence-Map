@@ -21,8 +21,13 @@ GET  /api/poe/listing-control/compare
 GET  /api/poe/listing-control/review
 GET  /api/poe/listing-control/ref
 GET  /api/poe/listing-control/canary
-GET  /api/poe/seeds/union              union bottom-up v1+runs+listing (aucun crawl)
+GET  /api/poe/seeds/union              union bottom-up v1+runs+OSM+listing (aucun crawl)
 POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
+POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
+GET  /api/poe/seeds/enrich/status
+POST /api/poe/seeds/enrich/cancel
+GET  /api/poe/seeds/osm                Taginfo + cache OSM (pas d'Overpass)
+POST /api/poe/seeds/osm/refresh        recharge Overpass → osm_port_seeds
 GET  /api/poe/runs/code-fingerprint
 """
 import asyncio
@@ -89,9 +94,20 @@ class SeedVerifyBody(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
     include_v1: bool = True
     include_listing: bool = True
+    include_osm: bool = True
     use_default_mondials: bool = True
     persist: bool = True
     label: str = "seed-verify"
+
+
+class SeedEnrichBody(BaseModel):
+    run_id: str = "20260906-071347-6a9509"
+    do_geocode: bool = True
+    do_verify: bool = True
+    verdicts: list[str] = Field(default_factory=lambda: ["name_only"])
+    limit: int = 200
+    concurrency: int = 2
+    use_agent: bool = True
 
 
 async def _launch_run(*, resume: bool, run_id: str, label: str, limit: int,
@@ -279,19 +295,35 @@ async def listing_control_canary(run_ids: str = "", include_v1: bool = True,
         _db, ids, include_v1=include_v1, limit=limit)
 
 
+@router.get("/poe/seeds/osm")
+async def poe_seeds_osm():
+    """Comptages Taginfo mondiaux + état du cache osm_port_seeds. Pas d'Overpass."""
+    from app.services.osm_seeds import osm_inventory
+    return await osm_inventory(_db)
+
+
+@router.post("/poe/seeds/osm/refresh")
+async def poe_seeds_osm_refresh():
+    """Recharge Overpass (lent, 2–10 min). N'écrit pas dans poe_ports."""
+    from app.services.osm_seeds import refresh_osm_cache
+    return await refresh_osm_cache(_db)
+
+
 @router.get("/poe/seeds/union")
 async def poe_seeds_union(run_ids: str = "", include_v1: bool = True,
                           include_listing: bool = True,
+                          include_osm: bool = True,
                           use_default_mondials: bool = False):
-    """Union bottom-up des graines (v1, runs, listing). Aucun crawl, pas d'écriture poe_ports.
+    """Union bottom-up des graines (v1, runs, OSM, listing). Aucun crawl, pas d'écriture poe_ports.
 
     `use_default_mondials=true` ajoute les 5 runs 285 ZEE déjà en base si
-    `run_ids` est vide. Le résidu = noms listing à géocoder, pas à re-scraper.
+    `run_ids` est vide. OSM vient du cache `osm_port_seeds` (pas d'Overpass ici).
+    Le résidu = noms listing à géocoder, pas à re-scraper.
     """
     ids = [x.strip() for x in run_ids.split(",") if x.strip()]
     return await build_seed_union(
         _db, ids, include_v1=include_v1, include_listing=include_listing,
-        use_default_mondials=use_default_mondials)
+        include_osm=include_osm, use_default_mondials=use_default_mondials)
 
 
 @router.post("/poe/seeds/verify")
@@ -306,6 +338,7 @@ async def poe_seeds_verify(body: SeedVerifyBody | None = None):
     report = await collect_seed_report(
         _db, ids, include_v1=body.include_v1,
         include_listing=body.include_listing,
+        include_osm=body.include_osm,
         use_default_mondials=body.use_default_mondials)
     out = public_seed_view(report, mode="seed-verify")
     if body.persist:
@@ -313,6 +346,85 @@ async def poe_seeds_verify(body: SeedVerifyBody | None = None):
         out["persisted"] = persisted
         out["run_id"] = persisted["run_id"]
     return out
+
+
+@router.post("/poe/seeds/enrich", status_code=202)
+async def poe_seeds_enrich(body: SeedEnrichBody | None = None):
+    """Géocode / juge un lot du run verify. N'écrit pas dans poe_ports.
+
+    Défaut : run mondial `20260906-071347-6a9509`, 200 `name_only`.
+    Relancer avec `verdicts: ["unverified"]` pour le lot suivant.
+    """
+    from app.services.poe_seed_enrich import execute_enrich
+
+    body = body or SeedEnrichBody()
+    run_id = (body.run_id or "").strip()
+    if not run_id:
+        raise HTTPException(400, "run_id requis")
+    existing = await _db.poe_runs.find_one({"_id": run_id})
+    if not existing:
+        raise HTTPException(404, f"Run {run_id} unknown — lancer POST /api/poe/seeds/verify")
+    if len(_active_ids()) >= MAX_PARALLEL_RUNS:
+        raise HTTPException(409, f"déjà {MAX_PARALLEL_RUNS} runs actifs")
+    if run_id in RUN_STATES and RUN_STATES[run_id].running:
+        raise HTTPException(409, f"Run {run_id} already running")
+    verdicts = [v for v in (body.verdicts or ["name_only"]) if v]
+    state = TaskState(max_logs=2000)
+    state.start()
+    RUN_STATES[run_id] = state
+
+    async def _runner():
+        try:
+            state.summary = await execute_enrich(
+                _db, state, run_id=run_id,
+                do_geocode=body.do_geocode, do_verify=body.do_verify,
+                verdicts=verdicts, limit=int(body.limit or 0),
+                concurrency=max(1, min(2, int(body.concurrency or 2))),
+                use_agent=bool(body.use_agent))
+        except Exception as e:
+            state.error = f"{type(e).__name__}: {e}"
+            state.log(f"FATAL: {state.error}")
+            await _db.poe_runs.update_one({"_id": run_id}, {"$set": {
+                "enrich_error": state.error,
+                "enrich_finished_at": poe.now_iso()}})
+        finally:
+            state.finish()
+
+    asyncio.create_task(_runner())
+    return {
+        "status": "started",
+        "run_id": run_id,
+        "limit": body.limit,
+        "verdicts": verdicts,
+        "do_geocode": body.do_geocode,
+        "do_verify": body.do_verify,
+        "use_agent": body.use_agent,
+        "wrote_poe_ports": False,
+    }
+
+
+@router.get("/poe/seeds/enrich/status")
+async def poe_seeds_enrich_status(run_id: str = "20260906-071347-6a9509"):
+    doc = await _db.poe_runs.find_one({"_id": run_id})
+    if not doc:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    out = {"run_id": run_id, "enrich": doc.get("enrich"),
+           "enriched_at": doc.get("enriched_at"),
+           "wrote_poe_ports": False}
+    st = RUN_STATES.get(run_id)
+    if st is not None:
+        out["live"] = st.status()
+    return out
+
+
+@router.post("/poe/seeds/enrich/cancel")
+async def poe_seeds_enrich_cancel(run_id: str = "20260906-071347-6a9509"):
+    st = RUN_STATES.get(run_id)
+    if st is None or not st.running:
+        raise HTTPException(409, f"Enrich {run_id} is not running")
+    st.cancel = True
+    st.log("Annulation enrich demandée — les graines restantes ne démarreront pas")
+    return {"cancelling": True, "run_id": run_id}
 
 
 @router.get("/poe/listing-control/review")

@@ -19,6 +19,27 @@ POE_PURPOSE = (
 SEARCH_RETRY_SLEEP_S = 2.0
 FETCH_LEVEL = "N3-mirror-tinyfish"
 
+# Quotas publics PAYG (docs.tinyfish.ai) — Search 30 req/min, Fetch 150 URL/min.
+# Starter = 60 / 300 ; on aligne le bucket sur le plan le plus bas.
+SEARCH_RPM = 30
+FETCH_RPM = 150
+AGENT_CONCURRENCY = 2
+AGENT_CREDIT_CAP = 40          # max_steps = crédits, pas la file
+FETCH_URL_CAP = 10             # max URLs / requête Fetch
+SEARCH_PAGE_CAP = 3            # ~10 hits/page → jusqu'à 30 URLs / graine
+SEARCH_PAGE_MAX = 10           # plafond API TinyFish
+
+POE_JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_poe": {"type": ["boolean", "null"]},
+        "confidence": {"type": "integer"},
+        "reason": {"type": "string"},
+        "official_name": {"type": ["string", "null"]},
+    },
+    "required": ["is_poe", "confidence", "reason"],
+}
+
 DISCOVERY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -105,9 +126,16 @@ async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int 
         return r.json()
 
 
-async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None, timeout: int = 420) -> dict:
+async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None,
+                     timeout: int = 420, browser_profile: str = "lite",
+                     agent_config: dict | None = None) -> dict:
     """Stream a TinyFish run via SSE; returns final result dict, raises on failure."""
-    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+    payload = {
+        "url": url, "goal": goal, "output_schema": schema,
+        "browser_profile": browser_profile or "lite",
+    }
+    if agent_config:
+        payload["agent_config"] = agent_config
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=30)) as client:
         async with client.stream("POST", f"{BASE}/automation/run-sse", headers=_headers(key), json=payload) as r:
             r.raise_for_status()
@@ -152,7 +180,7 @@ def find_live_url(body: dict):
 # Search / Fetch (gratuits) — client httpx, no-op sans clé
 # ---------------------------------------------------------------------------
 class _TokenBucket:
-    """Quota in-process (Search ~25 req/min, Fetch ~120 URL/min)."""
+    """Quota in-process (Search PAYG 30 req/min, Fetch PAYG 150 URL/min)."""
 
     def __init__(self, rate_per_min: float):
         self.rate = rate_per_min / 60.0
@@ -176,15 +204,17 @@ class _TokenBucket:
                 self.tokens -= n
 
 
-_search_bucket = _TokenBucket(25)
-_fetch_bucket = _TokenBucket(120)
+_search_bucket = _TokenBucket(SEARCH_RPM)
+_fetch_bucket = _TokenBucket(FETCH_RPM)
+_agent_sem = asyncio.Semaphore(AGENT_CONCURRENCY)
 
 
 def reset_rate_limits():
-    """Réinitialise les buckets (tests)."""
-    global _search_bucket, _fetch_bucket
-    _search_bucket = _TokenBucket(25)
-    _fetch_bucket = _TokenBucket(120)
+    """Réinitialise les buckets et le sémaphore Agent (tests)."""
+    global _search_bucket, _fetch_bucket, _agent_sem
+    _search_bucket = _TokenBucket(SEARCH_RPM)
+    _fetch_bucket = _TokenBucket(FETCH_RPM)
+    _agent_sem = asyncio.Semaphore(AGENT_CONCURRENCY)
 
 
 def tf_api_key(settings=None) -> str:
@@ -205,7 +235,7 @@ def _tf_domain(url: str) -> str:
 
 
 def _search_params(query: str, location=None, language=None,
-                   include_domains=None, purpose=None) -> dict:
+                   include_domains=None, purpose=None, page: int = 0) -> dict:
     params = {"query": query}
     if location:
         params["location"] = str(location).upper()
@@ -220,6 +250,9 @@ def _search_params(query: str, location=None, language=None,
             params.pop("include_domains", None)
     if purpose:
         params["purpose"] = purpose
+    page = max(0, min(SEARCH_PAGE_MAX, int(page or 0)))
+    if page:
+        params["page"] = page
     return params
 
 
@@ -241,12 +274,13 @@ def _map_search_hits(payload: dict) -> list[dict]:
 
 async def tf_search(query: str, key: str, *, location: str | None = None,
                     language: str | None = None, include_domains=None,
-                    purpose: str | None = POE_PURPOSE, log=None) -> list[dict]:
+                    purpose: str | None = POE_PURPOSE, page: int = 0,
+                    log=None) -> list[dict]:
     """GET Search API. 401/402/429/timeout → [] (jamais d'exception)."""
     log = log or (lambda m: None)
     if not (key or "").strip() or not (query or "").strip():
         return []
-    params = _search_params(query, location, language, include_domains, purpose)
+    params = _search_params(query, location, language, include_domains, purpose, page)
     await _search_bucket.acquire()
     last_status = None
     for attempt in range(2):
@@ -349,3 +383,73 @@ async def tf_fetch(urls: list[str], key: str, *, ttl: int = 0, links: bool = Tru
             for u in batch:
                 out.setdefault(u, _fetch_record(u, error=type(e).__name__))
     return out
+
+
+async def tf_search_pages(query: str, key: str, *, location: str | None = None,
+                          language: str | None = None, include_domains=None,
+                          purpose: str | None = POE_PURPOSE,
+                          max_pages: int = SEARCH_PAGE_CAP,
+                          stop_when=None, log=None) -> list[dict]:
+    """Enchaîne les pages Search (0..max_pages-1) jusqu'à stop_when(hits)."""
+    log = log or (lambda m: None)
+    pages = max(1, min(SEARCH_PAGE_MAX + 1, int(max_pages or 1)))
+    hits, seen = [], set()
+    for page in range(pages):
+        batch = await tf_search(
+            query, key, location=location, language=language,
+            include_domains=include_domains, purpose=purpose, page=page, log=log)
+        if not batch:
+            break
+        added = 0
+        for h in batch:
+            u = (h.get("url") or "").strip()
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            hits.append(h)
+            added += 1
+        if added == 0:
+            break
+        if stop_when and stop_when(hits):
+            break
+    return hits
+
+
+def poe_agent_goal(name: str, zone_name: str, iso2: str | None = None) -> str:
+    cc = f" ({iso2})" if iso2 else ""
+    return (
+        f"Open this official page. Decide if « {name} » in {zone_name}{cc} "
+        "is a designated port of entry / puerto habilitado / port d'entrée "
+        "for foreign vessels. Do not invent names. is_poe=true only if THIS "
+        "page designates this place. false if the page is about something else. "
+        "null if you cannot decide."
+    )
+
+
+async def tf_poe_agent(url: str, name: str, zone_name: str, key: str, *,
+                       iso2: str | None = None, log=None,
+                       credit_cap: int = AGENT_CREDIT_CAP) -> dict:
+    """Un Agent par graine : lite puis stealth. 2 concurrents, max_steps=crédits."""
+    log = log or (lambda m: None)
+    if not (key or "").strip() or not (url or "").startswith("http"):
+        return {}
+    goal = poe_agent_goal(name, zone_name, iso2)
+    cap = max(1, min(500, int(credit_cap or AGENT_CREDIT_CAP)))
+    cfg = {"max_steps": cap, "max_duration_seconds": 180}
+    last_err = None
+    async with _agent_sem:
+        for profile in ("lite", "stealth"):
+            try:
+                log(f"TinyFish Agent {profile} cap={cap} {url[:80]}")
+                result = await tf_run_sse(
+                    url, goal, POE_JUDGE_SCHEMA, key,
+                    browser_profile=profile, agent_config=cfg, timeout=240)
+                if isinstance(result, dict) and result:
+                    out = dict(result)
+                    out["_agent_profile"] = profile
+                    return out
+                last_err = "empty result"
+            except Exception as e:
+                last_err = e
+                log(f"TinyFish Agent {profile}: {type(e).__name__}: {str(e)[:80]}")
+    return {"_agent_error": str(last_err or "empty")}

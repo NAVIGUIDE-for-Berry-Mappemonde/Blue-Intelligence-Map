@@ -87,6 +87,10 @@ def build_code_fingerprint(settings: dict | None = None,
                 "app.core.claude", "arbitrate_geocode_claude"),
             "seed_union": _module_has("app.services.poe_seeds", "build_seed_union"),
             "seed_verify": _module_has("app.services.poe_seeds", "verdict_for_seed"),
+            "seed_osm": _module_has("app.services.osm_seeds", "refresh_osm_cache"),
+            "seed_enrich": _module_has("app.services.poe_seed_enrich", "execute_enrich"),
+            "tinyfish_poe_agent": _module_has("app.core.tinyfish", "tf_poe_agent"),
+            "claude_sonnet_judge": _module_has("app.core.claude", "complete_json_claude"),
         },
     }
 
