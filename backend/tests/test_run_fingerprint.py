@@ -50,6 +50,7 @@ class TestFingerprint:
 
     def test_claude_off_without_budget(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
         monkeypatch.delenv("CLAUDE_BUDGET_USD", raising=False)
         fp = build_code_fingerprint({}, zone_timeout_s=900)
         assert fp["claude_enabled"] is False
