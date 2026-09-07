@@ -134,6 +134,8 @@ def test_slim_geojson_has_maps_url_not_route_fields():
     assert "ODbL" in fc["attribution"]
     p = fc["features"][0]["properties"]
     assert p["maps_url"].startswith("https://www.google.com/maps/search/")
+    assert p["has_google_place"] is False
+    assert p["maps_place_url"] is None
     assert p["website"] == "https://portlarochelle.com"
     assert "priority" not in p
     assert "nearest_waypoint" not in p
@@ -180,6 +182,27 @@ def test_upsert_preserves_enrichment_and_locked_website():
     assert doc["enriched"] is True
     assert doc["website"] == "https://official.example"
     assert doc["website_status"] == "osm_ok"
+
+
+def test_upsert_copies_osm_google_place_website():
+    place = (
+        "https://www.google.com/maps/place/Port+de+plaisance+de+La+Rochelle/"
+        "@46.1445053,-1.1676049,17z"
+    )
+    coll = _FakeColl()
+    cand = {
+        "osm_id": "way/741789648",
+        "name": "Port des Minimes",
+        "lat": 46.14676,
+        "lon": -1.16606,
+        "tags": {"website": place},
+        "website": place,
+    }
+    asyncio.run(mw.upsert_world_marina(coll, cand, "2026-09-07T00:00:00Z"))
+    doc = coll.docs[0]
+    assert doc["maps_place_status"] == "found"
+    assert "/maps/place/" in doc["maps_place_url"]
+    assert doc["maps_place_source"] == "osm_tag"
 
 
 def test_upsert_inserts_with_osm_id_as_id():

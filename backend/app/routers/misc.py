@@ -144,7 +144,7 @@ The header pill lets you switch between three modes. Each mode paints the app wi
   - *Export GeoJSON* button — exports the projects visible in this mode.
 
 ### 2) Marinas (red)
-- **Map**: world catalog of OpenStreetMap `leisure=marina` points, clustered. Each popup has the OSM website tag (unchecked) and a deterministic Google Maps search link.
+- **Map**: world catalog of OpenStreetMap `leisure=marina` points, clustered. All points stay visible. A larger red dot marks a marina whose Google Maps `/place/` page was found (TinyFish Search or OSM tag) — we do not scrape Maps or wait for the `/search` → `/place` redirect. Each popup has the OSM website tag (unchecked) and a Google Maps link (place page when known, otherwise the deterministic search URL).
 - **Left sidebar**: search by name or OSM id (list capped at 250 rows). Attribution: © OpenStreetMap contributors (ODbL).
 - *Export GeoJSON* — slim FeatureCollection, uncapped.
 - The world dump is started from the Console (resumable tiles, no purge). Formalities / Ports of Entry stay a separate job.
@@ -165,7 +165,7 @@ The header pill lets you switch between three modes. Each mode paints the app wi
 ## Swarm Intelligence Audit (header toggle)
 Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
 - **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
-- **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). Anchorages stay on the route corridor.
+- **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). A second Console action resolves Google `/place/` pages via TinyFish Search (signal only, no filter). Anchorages stay on the route corridor.
 - **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
 - **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
@@ -204,7 +204,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
   - Bouton *Export GeoJSON* — exporte les projets visibles dans ce mode.
 
 ### 2) Marinas (rouge)
-- **Carte** : catalogue mondial OpenStreetMap `leisure=marina`, en clusters. Chaque popup affiche le site tagué OSM (non vérifié) et un lien de recherche Google Maps déterministe.
+- **Carte** : catalogue mondial OpenStreetMap `leisure=marina`, en clusters. Tous les points restent visibles. Un point rouge plus gros signale une fiche Google `/maps/place/` déjà trouvée (TinyFish Search ou tag OSM) — pas de scrape Maps, pas d'attente de la redirection `/search` → `/place`. Chaque popup affiche le site tagué OSM (non vérifié) et un lien Google Maps (fiche `/place/` si connue, sinon recherche déterministe).
 - **Bandeau gauche** : recherche par nom ou id OSM (liste plafonnée à 250 lignes). Attribution : © les contributeurs OpenStreetMap (ODbL).
 - *Export GeoJSON* — FeatureCollection maigre, non plafonnée.
 - Le dump mondial se lance depuis la Console (tuiles reprenables, pas de purge). Les Formalités / Ports d'Entrée restent un autre job.
@@ -225,7 +225,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 ## Audit Swarm Intelligence (bascule dans l'en-tête)
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
-- **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Les mouillages restent sur le corridor de la route.
+- **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Une seconde action Console résout les fiches Google `/place/` via TinyFish Search (signal seulement, pas de filtre). Les mouillages restent sur le corridor de la route.
 - **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 

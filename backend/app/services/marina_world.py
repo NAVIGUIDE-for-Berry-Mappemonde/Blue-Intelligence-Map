@@ -51,6 +51,10 @@ PRESERVE_ON_UPDATE = (
     "priority",
     "nearest_waypoint",
     "dedup_key",
+    "maps_place_url",
+    "maps_place_status",
+    "maps_place_source",
+    "maps_place_checked_at",
 )
 
 SLIM_PROJECTION = {
@@ -66,6 +70,8 @@ SLIM_PROJECTION = {
     "image": 1,
     "fetched_at": 1,
     "tags": 1,
+    "maps_place_url": 1,
+    "maps_place_status": 1,
 }
 
 FetchTile = Callable[
@@ -201,6 +207,20 @@ def merge_website(existing: dict | None, raw_site: str | None) -> tuple[str | No
     return None, None, None
 
 
+def _apply_osm_google_place(patch: dict, website: str | None, existing: dict | None) -> None:
+    """Si le tag OSM est déjà une URL /maps/place/, on la signale sans TinyFish."""
+    raw = (website or "").strip()
+    if "/maps/place/" not in raw or "/maps/search/" in raw:
+        return
+    if "google." not in raw.lower():
+        return
+    if existing and existing.get("maps_place_url"):
+        return
+    patch["maps_place_url"] = raw[:400]
+    patch["maps_place_status"] = "found"
+    patch["maps_place_source"] = "osm_tag"
+
+
 def official_website(doc: dict) -> str | None:
     if doc.get("website"):
         return doc["website"]
@@ -225,6 +245,11 @@ def slim_feature(doc: dict) -> dict:
             "website_source": doc.get("website_source"),
             "image": doc.get("image"),
             "maps_url": google_maps_url(name, lat, lon),
+            "maps_place_url": doc.get("maps_place_url") or None,
+            "has_google_place": bool(
+                doc.get("maps_place_url")
+                and "/maps/place/" in str(doc.get("maps_place_url"))
+            ),
             "fetched_at": doc.get("fetched_at"),
         },
     }
@@ -259,6 +284,8 @@ async def upsert_world_marina(coll, cand: dict, now_iso: str) -> str:
         for field in PRESERVE_ON_UPDATE:
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
+    _apply_osm_google_place(patch, website, existing)
+    if existing:
         await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
         return "updated"
     patch["_id"] = osm_id

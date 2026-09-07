@@ -18,6 +18,8 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
   const [anchStatus, setAnchStatus] = useState(null);
   const [anchStarting, setAnchStarting] = useState(false);
   const [corridorOn, setCorridorOn] = useState(true);
+  const [mapsPlaceStatus, setMapsPlaceStatus] = useState(null);
+  const [mapsPlaceStarting, setMapsPlaceStarting] = useState(false);
   const pollRefs = useRef({});
 
   useEffect(() => {
@@ -56,6 +58,18 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
     pollRefs.current.anchBuild = setInterval(check, 3000);
     return () => { alive = false; clearInterval(pollRefs.current.anchBuild); };
   }, []);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/marinas/maps-place/status");
+        if (alive) setMapsPlaceStatus(data);
+      } catch (_) { /* transient */ }
+    };
+    check();
+    pollRefs.current.mapsPlace = setInterval(check, 3000);
+    return () => { alive = false; clearInterval(pollRefs.current.mapsPlace); };
+  }, []);
 
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
@@ -84,6 +98,13 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
     try { await api.post("/marinas/enrich-batch/cancel"); }
     catch (e) { console.warn("marina batch cancel failed", e); }
   };
+  const startMapsPlace = async () => {
+    if (mapsPlaceStarting || mapsPlaceStatus?.running) return;
+    setMapsPlaceStarting(true);
+    try { await api.post("/marinas/maps-place", { limit: 0, force: false }); }
+    catch (e) { console.warn("maps-place start failed", e); }
+    finally { setTimeout(() => setMapsPlaceStarting(false), 800); }
+  };
 
   return (
     <div data-testid="audit-batch-hub" data-mode-card="marinas">
@@ -110,6 +131,23 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
           {buildStatus?.summary && !buildStatus.running && (
             <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
               ✓ +{buildStatus.summary.inserted ?? 0} · ~{buildStatus.summary.updated ?? 0} · OSM {buildStatus.summary.fetched_raw ?? 0}
+            </p>
+          )}
+          <button
+            data-testid="audit-maps-place-btn"
+            onClick={startMapsPlace}
+            disabled={mapsPlaceStarting || mapsPlaceStatus?.running}
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 border border-alert/40 bg-alert/10 hover:bg-alert/20 disabled:opacity-70 disabled:cursor-not-allowed text-alert font-semibold text-xs rounded-sm"
+          >
+            {mapsPlaceStatus?.running ? (
+              <><Loader2 size={13} className="animate-spin" /> {mapsPlaceStatus.progress}/{mapsPlaceStatus.total}</>
+            ) : (
+              <><PlayCircle size={13} /> {t("auditMapsPlace")}</>
+            )}
+          </button>
+          {mapsPlaceStatus?.summary && !mapsPlaceStatus.running && (
+            <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
+              ✓ /place/ {mapsPlaceStatus.summary.found ?? 0} · none {mapsPlaceStatus.summary.none ?? 0}
             </p>
           )}
           {/* Phase 8 — anchorages scan (same ±25 NM corridor logic) */}

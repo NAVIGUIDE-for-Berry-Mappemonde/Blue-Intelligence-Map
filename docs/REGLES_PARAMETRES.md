@@ -147,7 +147,10 @@ Déjà dans `settings` Mongo : inland, scores, partenaires, URLs, saturation, Ag
 ### 3.3 Marinas (dump mondial — corridor = mouillages seulement)
 
 Le mode Marinas charge le catalogue OSM mondial (`leisure=marina`), identité
-`osm_id`, upsert sans purge. Les règles `corridor_*` / `waypoint_*` /
+`osm_id`, upsert sans purge. On affiche **toutes** les marinas ; un point plus
+gros signale une URL Google `/maps/place/` déjà trouvée (tag OSM ou TinyFish
+Search). On ne scrape pas Maps et on n'attend pas la redirection JS
+`/search` → `/place`. Les règles `corridor_*` / `waypoint_*` /
 `priority_escale_*` restent pour les **mouillages** (et l'historique).
 
 | Id | Défaut | Famille | Phénomène / ancrage |

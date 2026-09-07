@@ -15,6 +15,7 @@ from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
 from app.db import db, get_settings
 from app.services.anchorage_build import build_anchorages as run_build_anchorages, anchorages_to_geojson
 from app.services.marina_enrich import ENRICH_FIELDS, enrich_marina
+from app.services.marina_maps_place import is_google_place_url, resolve_maps_places
 from app.services.marina_world import (
     SLIM_PROJECTION,
     marinas_to_slim_geojson,
@@ -92,6 +93,11 @@ async def import_marinas_geojson(fc: dict = Body(...)):
                 doc["priority"] = int(p["priority"])
             if p.get("nearest_waypoint"):
                 doc["nearest_waypoint"] = p["nearest_waypoint"]
+            place = p.get("maps_place_url")
+            if is_google_place_url(place):
+                doc["maps_place_url"] = place
+                doc["maps_place_status"] = "found"
+                doc["maps_place_source"] = p.get("maps_place_source") or "import"
             existing = await db.marinas.find_one({"_id": mid})
             if existing:
                 await db.marinas.update_one({"_id": mid}, {"$set": doc})
@@ -272,6 +278,9 @@ async def marinas_count():
             "curated": await db.marinas.count_documents({"source": "curated"}),
         },
         "enriched": await db.marinas.count_documents({"enriched": True}),
+        "with_google_place": await db.marinas.count_documents(
+            {"maps_place_url": {"$regex": "/maps/place/"}}
+        ),
     }
 
 
@@ -420,6 +429,12 @@ class MarinaEnrichBatchBody(BaseModel):
 
 
 ENRICH_BATCH_STATE = TaskState(max_logs=400)
+MAPS_PLACE_STATE = TaskState(max_logs=400)
+
+
+class MapsPlaceBody(BaseModel):
+    limit: int = 0
+    force: bool = False
 
 
 _MARINA_ENGINE_LABELS = {
@@ -668,4 +683,50 @@ async def marina_enrich_batch_status():
         "results": s.results,
         "logs_tail": s.logs[-60:],
         "error": s.error,
+    }
+
+
+@router.post("/marinas/maps-place")
+async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
+    if MAPS_PLACE_STATE.running:
+        raise HTTPException(409, "A Google-place resolve is already running")
+    body = body or MapsPlaceBody()
+
+    async def _runner():
+        try:
+            await resolve_maps_places(
+                marinas_coll=db.marinas,
+                state=MAPS_PLACE_STATE,
+                limit=int(body.limit or 0),
+                force=bool(body.force),
+            )
+        except Exception as exc:
+            MAPS_PLACE_STATE.error = f"{type(exc).__name__}: {exc}"
+
+    asyncio.create_task(_runner())
+    return {"started": True, "limit": body.limit, "force": body.force}
+
+
+@router.post("/marinas/maps-place/cancel")
+async def marinas_maps_place_cancel():
+    if not MAPS_PLACE_STATE.running:
+        raise HTTPException(409, "No Google-place resolve is running")
+    MAPS_PLACE_STATE.cancel = True
+    MAPS_PLACE_STATE.log("Stop demandé")
+    return {"cancelling": True}
+
+
+@router.get("/marinas/maps-place/status")
+async def marinas_maps_place_status():
+    s = MAPS_PLACE_STATE
+    return {
+        "running": s.running,
+        "cancelling": s.cancel,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
     }

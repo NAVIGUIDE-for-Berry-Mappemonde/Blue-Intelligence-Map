@@ -55,6 +55,25 @@ export default function MarinasPanel({
 
   useEffect(() => {
     let live = true;
+    let iv = null;
+    let wasRunning = false;
+    const check = async () => {
+      try {
+        const { data } = await api.get("/marinas/maps-place/status");
+        if (!live) return;
+        if (wasRunning && !data.running) {
+          if (onRefresh) onRefresh();
+        }
+        wasRunning = data.running;
+      } catch (_) { /* transient */ }
+    };
+    check();
+    iv = setInterval(check, 4000);
+    return () => { live = false; if (iv) clearInterval(iv); };
+  }, [onRefresh]);
+
+  useEffect(() => {
+    let live = true;
     let wasRunning = false;
     const check = async () => {
       try {
@@ -116,8 +135,12 @@ export default function MarinasPanel({
           <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#ff4a4a", boxShadow: "0 0 6px #ff4a4a66" }} />
+              <span className="w-2 h-2 rounded-full shrink-0 opacity-70" style={{ background: "#ff4a4a" }} />
               <span className="text-[11px] text-slate-300">{t("legendMarinaWorld")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: "#ff4a4a", boxShadow: "0 0 6px #ff4a4a66" }} />
+              <span className="text-[11px] text-slate-300">{t("legendMarinaGooglePlace")}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#2dd4bf", boxShadow: "0 0 6px #2dd4bf66" }} />
@@ -163,6 +186,11 @@ export default function MarinasPanel({
                     <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-bio/15 text-bio border-bio/40">
                       {t("marinasSourceOSM")}
                     </span>
+                    {p.has_google_place && (
+                      <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-alert/15 text-alert border-alert/40">
+                        {t("marinasGooglePlace")}
+                      </span>
+                    )}
                     {p.website && (
                       <ExternalLink size={11} className="text-slate-500 ml-auto shrink-0" />
                     )}
