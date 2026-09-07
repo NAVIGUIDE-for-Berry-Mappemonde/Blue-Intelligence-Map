@@ -59,6 +59,8 @@ export default function App() {
   // rebuild useEffect re-fires and the DOM briefly drops to 0 markers.
   const t = useMemo(() => makeT(lang), [lang]);
   const lastTotalRef = useRef(-1);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   // Persist mode + reflect on <html> for CSS var switching
   const setMode = useCallback((m) => {
@@ -256,14 +258,18 @@ export default function App() {
     fetchAnchorages();
     fetchPoeZones();
     fetchPoePorts();
+    const unlessReview = (fn) => () => {
+      if (viewRef.current === "review") return;
+      fn();
+    };
     const s = setInterval(fetchStatus, 2000);
-    const p = setInterval(fetchProjects, 5000);
+    const p = setInterval(unlessReview(() => fetchProjects()), 5000);
     const c = setInterval(fetchCategories, 15000);
     // Marinas refresh only when a build might be running — a light 8s poll.
-    const m = setInterval(fetchMarinas, 8000);
-    const a = setInterval(fetchAnchorages, 10000);
-    const z = setInterval(fetchPoeZones, 12000);
-    const pp = setInterval(fetchPoePorts, 12000);
+    const m = setInterval(unlessReview(fetchMarinas), 8000);
+    const a = setInterval(unlessReview(fetchAnchorages), 10000);
+    const z = setInterval(unlessReview(fetchPoeZones), 12000);
+    const pp = setInterval(unlessReview(fetchPoePorts), 12000);
     return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(a); clearInterval(z); clearInterval(pp); };
   }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
 
