@@ -311,7 +311,7 @@ def test_coastal_in_eez_not_flagged():
     assert rep["n_flagged"] == 0
 
 
-def test_st_nazaire_gard_flagged_not_corrected():
+def test_st_nazaire_gard_corrected_to_loire():
     seeds = [
         {
             "_id": "5677:stnazaire", "dedup_key": "5677:stnazaire",
@@ -333,6 +333,13 @@ def test_st_nazaire_gard_flagged_not_corrected():
             "lat": 46.1591, "lon": -1.1520,
             "verify_verdict": "confirmed", "seed_sources": ["listing"],
         },
+        {
+            "_id": "5677:nantessaintnazaire",
+            "dedup_key": "5677:nantessaintnazaire",
+            "name": "Nantes Saint-Nazaire", "mrgid": 5677,
+            "lat": 47.27, "lon": -2.20,
+            "verify_verdict": "confirmed", "seed_sources": ["v1"],
+        },
     ]
     listing = [
         {"dedup_key": k, "name": n, "mrgid": 5677, "group": "Atlantic (France)"}
@@ -347,17 +354,19 @@ def test_st_nazaire_gard_flagged_not_corrected():
     by = {s["key"]: s for s in rep["flags"]}
     assert "5677:stnazaire" in by
     st = by["5677:stnazaire"]
-    assert st["will_correct"] is False
-    assert REASON_INLAND_FAR in st["reasons"] or REASON_GROUP_OUTLIER in st["reasons"]
-    assert REASON_NOMINATIM_INLAND in st["reasons"] or REASON_GROUP_OUTLIER in st["reasons"]
+    assert st["will_correct"] is True
+    assert abs(st["correction"]["lat"] - 47.27805) < 1e-4
     assert "5677:brest" not in by
     db = _DB(seeds, [], n_ports=1280)
     out = persist_gps_audit(db, rep, geoms=geoms, seeds=seeds)
     st_doc = db.poe_seed_ports.docs["5677:stnazaire"]
-    assert st_doc["lat"] == 44.1986
-    assert st_doc["gps_audit_status"] == "flagged"
+    assert abs(st_doc["lat"] - 47.27805) < 1e-4
+    assert st_doc["lon"] < 0
+    assert st_doc["gps_audit_status"] == "corrected"
     assert st_doc["verify_verdict"] == "confirmed"
-    assert out["corrected"] == 0
+    other = db.poe_seed_ports.docs["5677:nantessaintnazaire"]
+    assert other["lat"] == 47.27
+    assert out["corrected"] >= 1
 
 
 def test_astoria_west_coast_group_flagged_not_corrected():
@@ -391,8 +400,76 @@ def test_astoria_west_coast_group_flagged_not_corrected():
     by = {s["key"]: s for s in rep["flags"]}
     assert "8456:astoria" in by
     assert REASON_GROUP_OUTLIER in by["8456:astoria"]["reasons"]
-    assert by["8456:astoria"]["will_correct"] is False
+    assert by["8456:astoria"]["will_correct"] is True
+    assert abs(by["8456:astoria"]["correction"]["lat"] - 46.1879) < 1e-4
     assert "8456:coosbay" not in by
+    db = _DB(seeds, [], n_ports=1280)
+    persist_gps_audit(db, rep, geoms=_usa_geom(), seeds=seeds)
+    ast = db.poe_seed_ports.docs["8456:astoria"]
+    assert ast["lat"] > 46
+    assert ast["lon"] < -120
+    assert ast["verify_verdict"] == "confirmed"
+    assert db.poe_seed_ports.docs["8456:coosbay"]["lat"] == 43.3678937
+
+
+def test_melilla_keep_not_flagged():
+    seeds = [{
+        "_id": "5693:puertodemelilla", "dedup_key": "5693:puertodemelilla",
+        "name": "Puerto de Melilla", "mrgid": 5693,
+        "lat": 35.2909189, "lon": -2.928011,
+        "verify_verdict": "confirmed", "seed_sources": ["v1", "listing"],
+    }]
+    # Polygone trop à l'ouest : le GPS du quai paraît inland (faux positif VLIZ).
+    geoms = {5693: box(-5.2, 35.8, -5.0, 36.2)}
+    rep = audit_confirmed_seeds(seeds, geoms=geoms, listing_ports=[])
+    assert "5693:puertodemelilla" not in {s["key"] for s in rep["flags"]}
+    db = _DB(seeds, [], n_ports=1280)
+    persist_gps_audit(db, rep, geoms=geoms, seeds=seeds)
+    doc = db.poe_seed_ports.docs["5693:puertodemelilla"]
+    assert doc["lat"] == 35.2909189
+    assert doc["gps_audit_status"] == "ok"
+    assert doc["verify_verdict"] == "confirmed"
+
+
+def test_reviewed_savannah_persists_georgia_not_cluster():
+    seeds = [{
+        "_id": "8456:savannah", "dedup_key": "8456:savannah",
+        "name": "Savannah", "mrgid": 8456,
+        "lat": 43.0654611, "lon": -76.7568196,
+        "verify_verdict": "confirmed", "seed_sources": ["v1", "listing"],
+    }, {
+        "_id": "8456:charleston", "dedup_key": "8456:charleston",
+        "name": "Charleston", "mrgid": 8456,
+        "lat": 32.78, "lon": -79.93,
+        "verify_verdict": "confirmed", "seed_sources": ["listing"],
+    }]
+    listing = [
+        {"dedup_key": "8456:savannah", "name": "Savannah",
+         "mrgid": 8456, "group": "East Coast (USA)"},
+        {"dedup_key": "8456:charleston", "name": "Charleston",
+         "mrgid": 8456, "group": "East Coast (USA)"},
+    ]
+    geoms = _usa_geom()
+    # Finger Lakes hors du box east 32–45N / 80–70W → inland.
+    geoms = {8456: box(-81.5, 31.5, -70.0, 41.0)}
+    rep = audit_confirmed_seeds(seeds, geoms=geoms, listing_ports=listing)
+    sav = next(s for s in rep["flags"] if s["key"] == "8456:savannah")
+    assert sav["will_correct"] is True
+    assert abs(sav["correction"]["lat"] - 32.0809) < 1e-4
+    # Pas le centroïde Delaware du groupe.
+    assert sav["correction"]["lat"] < 35
+    db = _DB(seeds, [], n_ports=1280)
+    persist_gps_audit(db, rep, geoms=geoms, seeds=seeds)
+    doc = db.poe_seed_ports.docs["8456:savannah"]
+    assert abs(doc["lat"] - 32.0809) < 1e-4
+    assert doc["geocode_source"] == "manual_audit"
+    seeds = [{
+        "_id": "1:x", "dedup_key": "1:x", "name": "X", "mrgid": 1,
+        "lat": 0, "lon": 0, "verify_verdict": "probable",
+    }]
+    rep = audit_confirmed_seeds(seeds, geoms={1: box(-1, -1, 1, 1)}, listing_ports=[])
+    assert rep["n_confirmed"] == 0
+    assert rep["n_flagged"] == 0
 
 
 def test_skips_non_confirmed():

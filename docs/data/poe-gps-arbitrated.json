@@ -1,0 +1,625 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-07",
+  "comment": "GPS tranchés à la main (UN/LOCODE, WPI, quai, centroïde d'île). Source de vérité revue en PR. Claude ne choisit jamais un point. N=10 Nominatim est un filet : parenthèses, listing_group, pairs et ce registre font le système. Ne pas fusionner Tanjung Pinang avec Bandar Bintan Telani.",
+  "wrote_poe_ports": false,
+  "seeds_build": false,
+  "entries": [
+    {
+      "dedup_key": "8492:tanjungpinangbintanislandriauislands",
+      "name": "Tanjung Pinang (Bintan Island, Riau Islands)",
+      "listing_name": "Tanjung Pinang (Bintan Island, Riau Islands)",
+      "listing_group": "Western Indonesia - Bintan, Lingga, Riau and Anambas Islands",
+      "mrgid": 8492,
+      "country_iso2": "ID",
+      "lat": 1.08,
+      "lon": 104.42,
+      "source": "manual",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": [
+        "Nominatim a pris le village homonyme de Sumatra (Ogan Ilir)",
+        "centroïde île Bintan, jamais le GPS de Bandar Bintan Telani"
+      ],
+      "wrong": {
+        "lat": -3.3564491,
+        "lon": 104.6572233,
+        "label": "Tanjung Pinang, Ogan Ilir, Sumatera Selatan, Indonesia",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 1.08,
+        "lon": 104.42,
+        "label": "Tanjungpinang, Bintan Island, Riau Islands, Indonesia",
+        "osm_class": "place",
+        "osm_type": "city"
+      },
+      "peers": [
+        {"lat": 1.1605006, "lon": 104.3201677, "name": "Bandar Bintan Telani"}
+      ],
+      "eez_boxes": [[104.2, 0.9, 104.7, 1.4]],
+      "never_copy": [
+        {
+          "dedup_key": "8492:bandarbintantelani",
+          "name": "Bandar Bintan Telani (Tanjung Pinang)",
+          "lat": 1.1605006,
+          "lon": 104.3201677
+        }
+      ]
+    },
+    {
+      "dedup_key": "8456:savannah",
+      "name": "Savannah",
+      "listing_name": "Savannah",
+      "listing_group": "East Coast (USA)",
+      "mrgid": 8456,
+      "country_iso2": "US",
+      "lat": 32.0809,
+      "lon": -81.0912,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["homonyme Finger Lakes NY", "USSAV Savannah GA, pas un centroïde Delaware"],
+      "wrong": {
+        "lat": 43.0654611,
+        "lon": -76.7568196,
+        "label": "Savannah, Wayne County, New York, United States",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 32.0809,
+        "lon": -81.0912,
+        "label": "Port of Savannah, Georgia, United States",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "peers": [
+        {"lat": 31.129059, "lon": -81.544011, "name": "Brunswick"}
+      ],
+      "eez_boxes": [[-81.6, 31.0, -80.7, 32.3]]
+    },
+    {
+      "dedup_key": "8456:astoria",
+      "name": "Astoria",
+      "listing_name": "Astoria (West Coast USA)",
+      "listing_group": "West Coast (USA)",
+      "mrgid": 8456,
+      "country_iso2": "US",
+      "lat": 46.1879,
+      "lon": -123.8313,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim a pris Astoria Queens NY (ZEE US transcontinentale)", "Oregon USOR AST"],
+      "wrong": {
+        "lat": 40.7720145,
+        "lon": -73.9302673,
+        "label": "Astoria, Queens, New York, United States",
+        "osm_class": "place",
+        "osm_type": "suburb"
+      },
+      "right": {
+        "lat": 46.1879,
+        "lon": -123.8313,
+        "label": "Astoria, Clatsop County, Oregon, United States",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "peers": [
+        {"lat": 43.3678937, "lon": -124.2174647, "name": "Coos Bay"},
+        {"lat": 32.7174202, "lon": -117.162772, "name": "San Diego"}
+      ],
+      "eez_boxes": [[-125.5, 32.0, -116.5, 49.0], [-80.0, 32.0, -70.0, 45.0]]
+    },
+    {
+      "dedup_key": "5677:stnazaire",
+      "name": "St Nazaire",
+      "listing_name": "St-Nazaire (Atlantic France)",
+      "listing_group": "Atlantic (France)",
+      "mrgid": 5677,
+      "country_iso2": "FR",
+      "lat": 47.27805,
+      "lon": -2.19995,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim a pris Saint-Nazaire du Gard", "FRSNR Loire-Atlantique ; clé nantessaintnazaire inchangée"],
+      "wrong": {
+        "lat": 44.1986,
+        "lon": 4.62529,
+        "label": "Saint-Nazaire, Gard, Occitanie, France",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 47.27805,
+        "lon": -2.19995,
+        "label": "Saint-Nazaire, Loire-Atlantique, Pays de la Loire, France",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "peers": [
+        {"lat": 48.3905, "lon": -4.486, "name": "Brest"},
+        {"lat": 46.1591, "lon": -1.152, "name": "La Rochelle"}
+      ],
+      "eez_boxes": [[-5.5, 43.0, 0.5, 51.2], [3.0, 42.0, 7.6, 43.45]]
+    },
+    {
+      "dedup_key": "8367:safi",
+      "name": "Safi",
+      "listing_name": "Safi",
+      "listing_group": "Atlantic Coast (Morocco)",
+      "mrgid": 8367,
+      "country_iso2": "MA",
+      "lat": 32.3083,
+      "lon": -9.251,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim hinterland", "MASFI quai"],
+      "wrong": {
+        "lat": 31.6048574,
+        "lon": -8.3654032,
+        "label": "Safi, Marrakesh-Safi, Morocco",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 32.3083,
+        "lon": -9.251,
+        "label": "Port of Safi, Morocco",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[-9.5, 32.2, -9.1, 32.4]]
+    },
+    {
+      "dedup_key": "8366:gabes",
+      "name": "Gabes",
+      "listing_name": "Gabès",
+      "listing_group": null,
+      "mrgid": 8366,
+      "country_iso2": "TN",
+      "lat": 33.90724,
+      "lon": 10.10169,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim hinterland", "TNGAE quai"],
+      "wrong": {
+        "lat": 33.7765032,
+        "lon": 9.793063,
+        "label": "Gabès inland, Tunisia",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 33.90724,
+        "lon": 10.10169,
+        "label": "Port of Gabès, Tunisia",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[10.05, 33.86, 10.16, 33.95]]
+    },
+    {
+      "dedup_key": "8479:portofmtwara",
+      "name": "Port of Mtwara",
+      "listing_name": "Port of Mtwara",
+      "listing_group": null,
+      "mrgid": 8479,
+      "country_iso2": "TZ",
+      "lat": -10.268833,
+      "lon": 40.197917,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["GPS 86 km inland", "TZMYW"],
+      "wrong": {
+        "lat": -10.6990264,
+        "lon": 39.0217984,
+        "label": "Mtwara hinterland, Tanzania",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": -10.268833,
+        "lon": 40.197917,
+        "label": "Port of Mtwara, Tanzania",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[40.1, -10.32, 40.3, -10.2]]
+    },
+    {
+      "dedup_key": "8479:portoftanga",
+      "name": "Port of Tanga",
+      "listing_name": "Port of Tanga",
+      "listing_group": null,
+      "mrgid": 8479,
+      "country_iso2": "TZ",
+      "lat": -5.066,
+      "lon": 39.10556,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["GPS 82 km inland", "TZTGT"],
+      "wrong": {
+        "lat": -5.202134,
+        "lon": 38.2275548,
+        "label": "Tanga hinterland, Tanzania",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": -5.066,
+        "lon": 39.10556,
+        "label": "Port of Tanga, Tanzania",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[39.05, -5.12, 39.16, -5.02]]
+    },
+    {
+      "dedup_key": "8464:recife",
+      "name": "Recife",
+      "listing_name": "Recife (NE Brazil)",
+      "listing_group": "Eastern Coast (north of Rio de Janeiro)",
+      "mrgid": 8464,
+      "country_iso2": "BR",
+      "lat": -8.0556,
+      "lon": -34.8705,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim Recife do Paraná", "BRREC Pernambuco"],
+      "wrong": {
+        "lat": -25.5612408,
+        "lon": -49.1662218,
+        "label": "Recife, Paraná, Brazil",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": -8.0556,
+        "lon": -34.8705,
+        "label": "Recife, Pernambuco, Brazil",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[-35.1, -8.2, -34.7, -7.9]]
+    },
+    {
+      "dedup_key": "8493:vancouver",
+      "name": "Vancouver",
+      "listing_name": "Vancouver",
+      "listing_group": "British Columbia",
+      "mrgid": 8493,
+      "country_iso2": "CA",
+      "lat": 49.2888,
+      "lon": -123.1113,
+      "source": "manual",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Gold River / Nootka, pas Canada Place", "pas le centroïde Prince Rupert"],
+      "wrong": {
+        "lat": 49.5929495,
+        "lon": -125.702557,
+        "label": "Gold River, Vancouver Island, British Columbia, Canada",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 49.2888,
+        "lon": -123.1113,
+        "label": "Canada Place, Vancouver Harbour, British Columbia, Canada",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[-123.25, 49.22, -123.0, 49.35]]
+    },
+    {
+      "dedup_key": "8456:brunswick",
+      "name": "Brunswick",
+      "listing_name": "Brunswick",
+      "listing_group": "East Coast (USA)",
+      "mrgid": 8456,
+      "country_iso2": "US",
+      "lat": 31.129059,
+      "lon": -81.544011,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Nominatim Brunswick NY inland", "Géorgie USBRW"],
+      "wrong": {
+        "lat": 42.7360586,
+        "lon": -73.562296,
+        "label": "Brunswick, Rensselaer County, New York, United States",
+        "osm_class": "place",
+        "osm_type": "town"
+      },
+      "right": {
+        "lat": 31.129059,
+        "lon": -81.544011,
+        "label": "Port of Brunswick, Georgia, United States",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "peers": [
+        {"lat": 32.0809, "lon": -81.0912, "name": "Savannah"}
+      ],
+      "eez_boxes": [[-81.7, 30.9, -81.3, 31.3]]
+    },
+    {
+      "dedup_key": "8484:tpdanang",
+      "name": "Tp Da Nang",
+      "listing_name": "Tp Da Nang",
+      "listing_group": null,
+      "mrgid": 8484,
+      "country_iso2": "VN",
+      "lat": 16.0974,
+      "lon": 108.2343,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["Quảng Nam inland", "VNDAD Tiên Sa"],
+      "wrong": {
+        "lat": 15.1794882,
+        "lon": 108.1289381,
+        "label": "Quảng Nam inland, Vietnam",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 16.0974,
+        "lon": 108.2343,
+        "label": "Tiên Sa Port, Da Nang, Vietnam",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[108.18, 16.05, 108.28, 16.14]]
+    },
+    {
+      "dedup_key": "5697:canakkale",
+      "name": "Çanakkale",
+      "listing_name": "Çanakkale",
+      "listing_group": "Dardanelles",
+      "mrgid": 5697,
+      "country_iso2": "TR",
+      "lat": 40.1023,
+      "lon": 26.379,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["hinterland", "Kepez / Dardanelles"],
+      "wrong": {
+        "lat": 40.0549886,
+        "lon": 26.9278292,
+        "label": "Çanakkale hinterland, Turkey",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 40.1023,
+        "lon": 26.379,
+        "label": "Kepez Port, Çanakkale, Turkey",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[26.32, 40.07, 26.44, 40.14]]
+    },
+    {
+      "dedup_key": "5697:mersin",
+      "name": "Mersin",
+      "listing_name": "Mersin",
+      "listing_group": "Eastern Med",
+      "mrgid": 5697,
+      "country_iso2": "TR",
+      "lat": 36.80045,
+      "lon": 34.63908,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["hinterland Mut", "TRMER"],
+      "wrong": {
+        "lat": 36.8328277,
+        "lon": 33.9685895,
+        "label": "Mut hinterland, Mersin, Turkey",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 36.80045,
+        "lon": 34.63908,
+        "label": "Mersin International Port, Turkey",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[34.6, 36.76, 34.68, 36.83]]
+    },
+    {
+      "dedup_key": "8349:portofkilifi",
+      "name": "Port of Kilifi",
+      "listing_name": "Port of Kilifi",
+      "listing_group": null,
+      "mrgid": 8349,
+      "country_iso2": "KE",
+      "lat": -3.637462,
+      "lon": 39.858398,
+      "source": "manual",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["hinterland", "Kilifi Creek"],
+      "wrong": {
+        "lat": -3.1507392,
+        "lon": 39.6750716,
+        "label": "Kilifi hinterland, Kenya",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": -3.637462,
+        "lon": 39.858398,
+        "label": "Kilifi Creek harbour, Kenya",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[39.82, -3.67, 39.9, -3.6]]
+    },
+    {
+      "dedup_key": "8324:portofmadang",
+      "name": "Port of Madang",
+      "listing_name": "Port of Madang",
+      "listing_group": "Main Island",
+      "mrgid": 8324,
+      "country_iso2": "PG",
+      "lat": -5.208333,
+      "lon": 145.800833,
+      "source": "unlocode",
+      "geocode_source": "manual_audit",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["point générique −5,0 / 145,5", "PGMAG"],
+      "wrong": {
+        "lat": -5.0,
+        "lon": 145.5,
+        "label": "Madang hinterland, Papua New Guinea",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": -5.208333,
+        "lon": 145.800833,
+        "label": "Madang Harbour, Papua New Guinea",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[145.75, -5.24, 145.85, -5.17]]
+    },
+    {
+      "dedup_key": "5693:puertodemelilla",
+      "name": "Puerto de Melilla",
+      "listing_name": "Puerto de Melilla",
+      "listing_group": null,
+      "mrgid": 5693,
+      "country_iso2": "ES",
+      "lat": 35.2909189,
+      "lon": -2.928011,
+      "source": "manual",
+      "geocode_source": "v1",
+      "status": "accepted",
+      "action": "keep",
+      "reasons": [
+        "GPS déjà le quai (~400 m Wikipedia)",
+        "faux positif VLIZ (enclave) — ne pas déplacer vers le Maroc"
+      ]
+    },
+    {
+      "dedup_key": "8429:ensenada",
+      "name": "Ensenada",
+      "listing_name": "Ensenada",
+      "listing_group": null,
+      "mrgid": 8429,
+      "country_iso2": "MX",
+      "lat": 31.8522146,
+      "lon": -116.625788,
+      "source": "manual",
+      "geocode_source": "observation",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["observation in_eez du même nom, pas Sinaloa"],
+      "wrong": {
+        "lat": 24.058876,
+        "lon": -106.6994959,
+        "label": "Ensenada, Sinaloa, Mexico",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 31.8522146,
+        "lon": -116.625788,
+        "label": "Ensenada, Baja California, Mexico",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[-117.2, 31.2, -116.2, 32.2]]
+    },
+    {
+      "dedup_key": "8429:lapaz",
+      "name": "La Paz",
+      "listing_name": "La Paz",
+      "listing_group": null,
+      "mrgid": 8429,
+      "country_iso2": "MX",
+      "lat": 24.16,
+      "lon": -110.33,
+      "source": "manual",
+      "geocode_source": "observation",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["observation in_eez BCS, pas le plateau central"],
+      "wrong": {
+        "lat": 19.35,
+        "lon": -98.96,
+        "label": "La Paz, México, Mexico",
+        "osm_class": "place",
+        "osm_type": "city"
+      },
+      "right": {
+        "lat": 24.16,
+        "lon": -110.33,
+        "label": "La Paz, Baja California Sur, Mexico",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[-110.5, 24.05, -110.2, 24.3]]
+    },
+    {
+      "dedup_key": "5675:parnu2parnuport",
+      "name": "Pärnu 2 (Pärnu Port)",
+      "listing_name": "Parnu",
+      "listing_group": null,
+      "mrgid": 5675,
+      "country_iso2": "EE",
+      "lat": 58.3775193,
+      "lon": 24.5007085,
+      "source": "manual",
+      "geocode_source": "observation",
+      "status": "accepted",
+      "action": "correct",
+      "reasons": ["observation in_eez Pärnu, pas inland est"],
+      "wrong": {
+        "lat": 57.771889,
+        "lon": 26.0296356,
+        "label": "Pärnu inland, Estonia",
+        "osm_class": "place",
+        "osm_type": "village"
+      },
+      "right": {
+        "lat": 58.3775193,
+        "lon": 24.5007085,
+        "label": "Pärnu, Pärnu County, Estonia",
+        "osm_class": "harbour",
+        "osm_type": "harbour"
+      },
+      "eez_boxes": [[23.5, 57.9, 24.8, 58.6]]
+    }
+  ]
+}

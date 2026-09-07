@@ -13,15 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections import Counter
+from collections import Counter, defaultdict
+from functools import lru_cache
 
 from shapely.geometry import shape
 from shapely.prepared import prep
 
 from app.core.extract import geocode_query_name, is_geocodeable_name
 from app.core.geo import (
+    INLAND_FAR_SCORE_KM,
     classify_poe_point, geocode_port_dual, inland_exception_flags,
+    select_geocode_candidate,
 )
+from app.services.poe_gps_registry import accepted_by_key
 from app.core.llm import ask_json
 from app.core.tinyfish import (
     FETCH_URL_CAP, SEARCH_PAGE_CAP, tf_api_key, tf_fetch, tf_poe_agent,
@@ -124,16 +128,78 @@ def select_fetch_urls(hits: list[dict], whitelist: list[str],
     return out
 
 
-def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
-    """Choisit Nominatim/GeoNames puis applique le filtre spatial VLIZ."""
+def _legacy_geocode_cands(dual: dict) -> list[dict]:
     cands = []
     for source in ("nominatim", "geonames"):
         xy = (dual or {}).get(source)
         if not xy:
             continue
         meta = (dual or {}).get(f"{source}_meta") or {}
+        cands.append({
+            "source": source, "lat": float(xy[0]), "lon": float(xy[1]),
+            "label": "",
+            "osm_class": meta.get("osm_class") or "",
+            "osm_type": meta.get("osm_type") or "",
+            "geonames_fcode": meta.get("geonames_fcode") or "",
+        })
+    return cands
+
+
+def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
+    """Score les homonymes (ZEE, parenthèses, listing), puis filtre spatial."""
+    dual = dual or {}
+    pick = dual.get("pick") or {}
+    raw_cands = list(dual.get("candidates") or []) or _legacy_geocode_cands(dual)
+    sel = pick if pick.get("status") else None
+    if raw_cands and (sel is None or not sel.get("ranked")):
+        sel = select_geocode_candidate(raw_cands, port, zone, geom, prepared)
+    if sel and sel.get("status") == "ambiguous":
+        ranked = sel.get("ranked") or []
+        alts = ranked[:2]
+        return {
+            "lat": None, "lon": None, "geocode_source": None,
+            "validated": False, "spatial_kind": "ambiguous",
+            "geocode_status": "ambiguous",
+            "geocode_arbitration": "ambiguous",
+            "geocode_agree": dual.get("agree"),
+            "has_coords": False,
+            "geocode_alt": [
+                {"lat": c.get("lat"), "lon": c.get("lon"),
+                 "source": c.get("source"), "score": c.get("score"),
+                 "label": (c.get("label") or "")[:160]}
+                for c in alts
+            ],
+        }
+    chosen_scored = (sel or {}).get("chosen") if sel else None
+    cands = []
+    if chosen_scored and chosen_scored.get("lat") is not None:
+        sources = [chosen_scored]
+        for source in ("nominatim", "geonames"):
+            xy = dual.get(source)
+            if not xy:
+                continue
+            if (abs(float(xy[0]) - float(chosen_scored["lat"])) < 1e-4
+                    and abs(float(xy[1]) - float(chosen_scored["lon"])) < 1e-4):
+                continue
+            sources.append({"source": source, "lat": xy[0], "lon": xy[1]})
+        # Un seul point à valider : le gagnant du score. Les autres restent
+        # dispo si le gagnant est rejeté spatialement.
+        ordered = [chosen_scored] + [
+            c for c in raw_cands
+            if not (abs(float(c["lat"]) - float(chosen_scored["lat"])) < 1e-4
+                    and abs(float(c["lon"]) - float(chosen_scored["lon"])) < 1e-4)
+        ]
+    else:
+        ordered = raw_cands
+    for item in ordered:
+        source = item.get("source") or "nominatim"
+        meta = dual.get(f"{source}_meta") or {
+            "osm_class": item.get("osm_class") or "",
+            "osm_type": item.get("osm_type") or "",
+            "geonames_fcode": item.get("geonames_fcode") or "",
+        }
         inland = inland_exception_flags(port, zone, meta, official_list=True)
-        lat, lon = float(xy[0]), float(xy[1])
+        lat, lon = float(item["lat"]), float(item["lon"])
         row = {"source": source, "lat": lat, "lon": lon,
                "validated": False, "dist_km": None, "kind": "unknown"}
         if geom is not None:
@@ -145,10 +211,9 @@ def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
     if not cands:
         return {"lat": None, "lon": None, "geocode_source": None,
                 "validated": False, "spatial_kind": "miss",
-                "geocode_agree": (dual or {}).get("agree")}
-    if (dual or {}).get("agree"):
-        chosen = next((c for c in cands if c["source"] == "nominatim"), cands[0])
-        arb = "agree"
+                "geocode_agree": dual.get("agree")}
+    if dual.get("agree"):
+        chosen, arb = cands[0], "agree"
     elif len(cands) == 1:
         chosen, arb = cands[0], "single"
     else:
@@ -196,12 +261,39 @@ def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
     }
 
 
+GPS_AUDIT_KEEP = {"ok", "corrected", "dismissed"}
+INLAND_FAR_KINDS = {"inland_river", "inland", "other_water"}
+
+
 def _needs_geocode(doc: dict) -> bool:
+    """name_only sans GPS, ou inland_far / ambiguous. Pas les confirmed ok."""
+    verdict = doc.get("verify_verdict") or ""
+    audit = doc.get("gps_audit_status") or ""
+    if verdict == "confirmed" and audit in GPS_AUDIT_KEEP:
+        return False
+    if (doc.get("geocode_status") or doc.get("geocode_arbitration")) == "ambiguous":
+        return True
+    kind = doc.get("spatial_kind") or doc.get("spatial_class") or ""
+    dist = doc.get("dist_km_to_eez_poly")
+    if dist is None:
+        dist = doc.get("distance_km")
+    try:
+        dist_f = float(dist) if dist is not None else None
+    except (TypeError, ValueError):
+        dist_f = None
+    if kind in INLAND_FAR_KINDS and dist_f is not None and dist_f > INLAND_FAR_SCORE_KM:
+        return True
+    if audit == "flagged":
+        reasons = doc.get("gps_audit_reasons") or []
+        if any(r in reasons for r in (
+                "inland_far", "listing_group_outlier",
+                "homonym_paren_mismatch", "nominatim_inland_listing_only")):
+            return True
     if doc.get("geocoded_at"):
         return False
     if doc.get("lat") is not None and doc.get("lon") is not None:
         return False
-    return (doc.get("verify_verdict") or "") == "name_only"
+    return verdict == "name_only"
 
 
 def _needs_judge(doc: dict, verdicts: tuple[str, ...]) -> bool:
@@ -234,21 +326,133 @@ async def _zone_cache(db, mrgids: set[int]) -> dict[int, dict]:
     return out
 
 
+@lru_cache(maxsize=1)
+def _listing_group_by_key() -> dict[str, str]:
+    from app.services.listing_ref import project_listing
+    out: dict[str, str] = {}
+    try:
+        for p in project_listing().get("ports") or []:
+            k = p.get("dedup_key")
+            g = p.get("group")
+            if k and g:
+                out[str(k)] = str(g)
+    except Exception:
+        return out
+    return out
+
+
+def attach_geocode_context(ports: list[dict]) -> None:
+    """listing_group + pairs côtiers (filtre, jamais un GPS à copier)."""
+    groups = _listing_group_by_key()
+    for p in ports:
+        if not p.get("listing_group"):
+            g = groups.get(str(p.get("dedup_key") or ""))
+            if g:
+                p["listing_group"] = g
+    peers_by: dict[tuple, list] = defaultdict(list)
+    for p in ports:
+        try:
+            lat, lon = p.get("lat"), p.get("lon")
+            if lat is None or lon is None:
+                continue
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        kind = p.get("spatial_kind") or p.get("spatial_class") or ""
+        audit = p.get("gps_audit_status") or ""
+        inland = kind in INLAND_FAR_KINDS
+        if inland and audit not in GPS_AUDIT_KEEP:
+            continue
+        grp = p.get("listing_group")
+        if not grp or p.get("mrgid") is None:
+            continue
+        try:
+            mid = int(p["mrgid"])
+        except (TypeError, ValueError):
+            continue
+        peers_by[(mid, grp)].append(
+            {"lat": lat, "lon": lon, "name": p.get("name")})
+    for p in ports:
+        grp = p.get("listing_group")
+        if not grp or p.get("mrgid") is None:
+            continue
+        try:
+            mid = int(p["mrgid"])
+        except (TypeError, ValueError):
+            continue
+        others = [
+            x for x in peers_by.get((mid, grp), [])
+            if x.get("name") != p.get("name")
+        ]
+        p["geocode_peers"] = others[:24]
+
+
+def _registry_geocode(doc: dict, zone: dict, log) -> dict | None:
+    """GPS déjà tranché (registre git) : pas Nominatim, pas Claude."""
+    hit = accepted_by_key(str(doc.get("dedup_key") or ""))
+    if not hit:
+        return None
+    lat, lon = float(hit["lat"]), float(hit["lon"])
+    src = hit.get("geocode_source") or "manual_audit"
+    out = {
+        "lat": lat, "lon": lon, "has_coords": True,
+        "geocode_source": src,
+        "geocode_arbitration": "gps_registry",
+        "geocoded_at": now_iso(),
+        "geocode_query": geocode_query_name(doc.get("name") or ""),
+    }
+    geom = zone.get("_geom") if zone else None
+    prepared = zone.get("_prep") if zone else None
+    if geom is not None:
+        inland = inland_exception_flags(doc, zone or {}, {}, official_list=True)
+        cls = classify_poe_point(lat, lon, geom, prepared, inland=inland)
+        out["spatial_kind"] = cls.get("kind")
+        out["validated"] = bool(cls.get("validated"))
+        out["distance_km"] = cls.get("dist_km")
+    if hit.get("action") == "keep":
+        out["geocode_kept_previous"] = True
+        log(f"géocode registre keep: {hit.get('dedup_key')}")
+    else:
+        log(f"géocode registre: {hit.get('dedup_key')}")
+    return out
+
+
 async def geocode_one(doc: dict, zone: dict, log) -> dict:
     raw = doc.get("name") or ""
     name = geocode_query_name(raw)
     if name != raw:
         log(f"géocode alias: {raw} → {name}")
+    registered = _registry_geocode(doc, zone, log)
+    if registered is not None:
+        return registered
     if not is_geocodeable_name(name) and not is_geocodeable_name(raw):
         log(f"géocode sauté (non toponyme): {raw}")
         return {"geocoded_at": now_iso(), "spatial_kind": "not_geocodeable",
                 "geocode_query": name}
-    port = {"name": name, "city": doc.get("city"),
-            "listing_role": "poe" if "listing" in (doc.get("seed_sources") or []) else None}
+    if not doc.get("listing_group"):
+        g = _listing_group_by_key().get(str(doc.get("dedup_key") or ""))
+        if g:
+            doc["listing_group"] = g
+    port = {
+        "name": name,
+        "city": doc.get("city"),
+        "listing_role": "poe" if "listing" in (doc.get("seed_sources") or []) else None,
+        "listing_name": doc.get("listing_name") or raw,
+        "listing_group": doc.get("listing_group"),
+        "geocode_peers": list(doc.get("geocode_peers") or []),
+        "dedup_key": doc.get("dedup_key"),
+    }
     dual = await geocode_port_dual(port, zone, log)
     picked = pick_geocode(dual, port, zone, zone.get("_geom"), zone.get("_prep"))
     picked["geocoded_at"] = now_iso()
     picked["geocode_query"] = name
+    if (not picked.get("has_coords") and doc.get("lat") is not None
+            and doc.get("lon") is not None):
+        # Ne jamais écraser un GPS existant par un miss / ambiguous.
+        picked.pop("lat", None)
+        picked.pop("lon", None)
+        picked["has_coords"] = True
+        picked["geocode_kept_previous"] = True
     return picked
 
 
@@ -439,6 +643,7 @@ async def execute_enrich(db, state, *, run_id: str = "",
         if not ports:
             raise ValueError(f"run {run_id} sans ports — lancer POST /api/poe/seeds/verify")
         task_id = run_id
+    attach_geocode_context(ports)
     geo_todo = [p for p in ports if do_geocode and _needs_geocode(p)]
     judge_pool = [p for p in ports if do_verify and _needs_judge(p, wanted)]
     if limit and limit > 0:

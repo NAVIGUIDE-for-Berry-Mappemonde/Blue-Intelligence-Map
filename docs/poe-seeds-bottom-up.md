@@ -73,7 +73,7 @@ On n’aplatit pas listing / OSM / runs en un champ `is_poe`.
 
 | Verdict | Règle | Action |
 |---|---|---|
-| `confirmed` | listing PoE ∩ (v1 \| run \| osm) **et** coordonnées | Auditer le GPS (homonymes Nominatim, inland_river) avant tout lot probable. |
+| `confirmed` | listing PoE ∩ (v1 \| run \| osm) **et** coordonnées | GPS audité (homonymes). Re-géocoder seulement `inland_far` / `ambiguous`, pas les `ok`. |
 | `probable` | OSM confiance ≥ 0,5, ou ≥ 2 sources extraites, ou listing ∩ extrait sans point | Plus tard, optionnel |
 | `unverified` | Une seule source extraite + coords | Juger |
 | `name_only` | Listing PoE sans point | Géocoder, puis juger |

@@ -25,6 +25,7 @@ GET  /api/poe/seeds/union              union bottom-up v1+runs+OSM+listing (aucu
 POST /api/poe/seeds/build              reconstruit poe_seed_ports (pas poe_ports)
 GET  /api/poe/seeds                    lecture poe_seed_ports
 GET  /api/poe/seeds/gps-audit          audit GPS confirmed (dry-run, pas persist)
+GET  /api/poe/seeds/gps-arbitrated     registre git des GPS tranchés (pas persist)
 GET  /api/poe/seeds/line               requête TinyFish + résumé inventaire
 POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
 POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
@@ -63,6 +64,7 @@ from app.services.poe_seeds import (
     persist_verify_run, public_seed_view, seed_from_files, seed_search_query,
 )
 from app.services.poe_confirmed_gps_audit import audit_from_db
+from app.services.poe_gps_registry import public_view as gps_registry_view
 
 router = APIRouter(prefix="/api")
 
@@ -365,6 +367,12 @@ async def poe_seeds_list(mrgid: int | None = None, verdict: str | None = None,
 async def poe_seeds_gps_audit():
     """Audit GPS des `confirmed` (dry-run). Pas de persist, pas poe_ports, pas build."""
     return await audit_from_db(_db)
+
+
+@router.get("/poe/seeds/gps-arbitrated")
+async def poe_seeds_gps_arbitrated():
+    """Registre git des GPS tranchés. Pas de persist, pas poe_ports, pas build."""
+    return gps_registry_view()
 
 
 @router.get("/poe/seeds/line")

@@ -22,6 +22,7 @@ from app.core.geo import (
     spatial_class_for_point,
 )
 from app.services.listing_ref import project_listing
+from app.services.poe_gps_registry import accepted_by_key
 from app.services.poe_pipeline import MAP_FILE, now_iso
 
 INLAND_FAR_KM = 30.0
@@ -43,6 +44,7 @@ INLAND_KINDS = {"inland_river", "inland", "other_water"}
 
 TANJUNG_PINANG_KEY = "8492:tanjungpinangbintanislandriauislands"
 # Centroïde île Bintan (pas Bandar Bintan Telani 1.1605 / 104.3202).
+# Les lat/lon tranchés vivent dans docs/data/poe-gps-arbitrated.json.
 BINTAN_CLUSTER = (1.08, 104.42)
 BANDAR_BINTAN_TELANI_KEY = "8492:bandarbintantelani"
 
@@ -420,10 +422,27 @@ def _severity(reasons: list[str], spatial: dict, seed: dict, extra: dict) -> str
     return "medium"
 
 
+def _already_at(seed: dict, lat: float, lon: float, tol: float = 5e-3) -> bool:
+    xy = _coords(seed)
+    if xy is None:
+        return False
+    return abs(xy[0] - lat) <= tol and abs(xy[1] - lon) <= tol
+
+
 def _plan_correction(seed: dict, spatial: dict, extra: dict,
                      reasons: list[str]) -> dict | None:
-    """Cas évidents seulement. Homonyme possible → None (flag only)."""
+    """Cas évidents + GPS du registre git (accepted)."""
     key = _seed_key(seed)
+    hit = accepted_by_key(key)
+    if hit:
+        if hit.get("action") == "keep":
+            return None
+        if hit.get("action") == "correct":
+            lat, lon = float(hit["lat"]), float(hit["lon"])
+            if _already_at(seed, lat, lon):
+                return None
+            src = hit.get("geocode_source") or "manual_audit"
+            return {"lat": lat, "lon": lon, "geocode_source": src}
     if key == TANJUNG_PINANG_KEY:
         lat, lon = BINTAN_CLUSTER
         if extra.get("suggested_source") == "island_cluster" and extra.get("suggested_lat"):
@@ -481,6 +500,10 @@ def flag_confirmed_seeds(
     flags: list[dict] = []
     for seed in confirmed:
         spatial = spatial_by_key[_seed_key(seed)]
+        key = _seed_key(seed)
+        hit = accepted_by_key(key)
+        if hit and hit.get("action") == "keep":
+            continue
         reasons = _spatial_reasons(spatial)
         extra: dict = {}
         obs_extra = _best_same_name_in_eez_obs(seed, geoms, spatial)
