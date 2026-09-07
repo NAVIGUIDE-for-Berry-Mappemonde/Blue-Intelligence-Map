@@ -112,6 +112,8 @@ FOLLOWUP_PATTERNS = (
     "clearance", "douane", "customs", "bureaux", "offices", "liste", "list-of",
     "projets", "projects", "annexe", "habilit", "designated", "decreto",
     "gazette", "legislation", "aduana", "anexo",
+    "puerto", "terminal", "plaisance", "first-arrival", "small-craft",
+    "formalit", "seaport", "marina-mercante", "inventario",
 )
 
 

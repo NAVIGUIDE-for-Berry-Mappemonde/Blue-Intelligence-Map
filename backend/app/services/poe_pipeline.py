@@ -114,7 +114,9 @@ def searx_instances() -> list[str]:
 LANG_BY_ISO2 = {
     # fr
     "FR": "fr", "MC": "fr", "BE": "fr", "SN": "fr", "CI": "fr", "CM": "fr", "GA": "fr",
-    "MG": "fr", "DJ": "fr", "KM": "fr", "BJ": "fr", "TG": "fr", "GN": "fr", "CG": "fr", "CD": "fr", "HT": "fr",
+    "MG": "fr", "DJ": "fr", "KM": "fr", "BJ": "fr", "TG": "fr", "GN": "fr", "CG": "fr",
+    "CD": "fr", "HT": "fr", "NC": "fr", "PF": "fr", "PM": "fr", "WF": "fr", "YT": "fr",
+    "RE": "fr", "GP": "fr", "MQ": "fr", "GF": "fr", "BL": "fr", "MF": "fr",
     # es
     "ES": "es", "MX": "es", "AR": "es", "CL": "es", "PE": "es", "CO": "es", "EC": "es",
     "VE": "es", "UY": "es", "PA": "es", "CR": "es", "GT": "es", "HN": "es", "NI": "es",
@@ -155,6 +157,9 @@ _LIST_PATH_TOKENS = (
     "arrete", "arrêté", "gazette", "legislat", "jorf", "liste", "listen",
     "list-of", "listing", "ordonnance", "ordinance", "plaisance",
     "points-d-entree", "points-of-entry", "eligibles", "ppf",
+    "first-arrival", "places-of-first", "seaports", "small-craft",
+    "sailing-to", "terminales", "formalit", "niue_laws", "habilitados",
+    "marina-mercante", "vous-naviguez", "inventario",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -305,14 +310,16 @@ def load_exceptions() -> dict:
         return _empty_exceptions()
 
 
+def polygon_iso2(zone: dict) -> str:
+    """ISO2 du polygone VLIZ, jamais le souverain (Niue ≠ NZ, Mayotte ≠ FR)."""
+    return (zone.get("iso2") or "").strip().upper()
+
+
 def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict]:
     """URLs officielles épinglées (page ou PDF d'État — jamais une liste de noms)."""
     exc = exceptions or load_exceptions()
-    urls: list[str] = []
-    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
-        if not cc:
-            continue
-        urls.extend((exc.get("seed_urls") or {}).get(cc.upper()) or [])
+    cc = polygon_iso2(zone)
+    urls: list[str] = list((exc.get("seed_urls") or {}).get(cc) or []) if cc else []
     seen, out = set(), []
     for u in urls:
         if not u or u in seen:
@@ -329,10 +336,39 @@ def default_search_hints(zone: dict) -> list[str]:
     if not poly:
         return []
     generic = f"{poly} customs act designated ports of entry official legislation gazette"
+    iso = polygon_iso2(zone)
     if is_france_mainland_eez(zone):
         return [
             f"liste ports de plaisance éligibles douane {poly}",
             f"carte PPF maritimes points de passage frontaliers {poly}",
+            generic,
+        ]
+    if iso == "NZ":
+        return [
+            f"places of first arrival seaports MPI {poly}",
+            f"small craft sailing customs {poly}",
+            generic,
+        ]
+    if iso == "VE":
+        return [
+            f"INEA puertos habilitados {poly}",
+            f"{poly} puertos habilitados decreto lista oficial",
+            generic,
+        ]
+    if iso == "NC":
+        return [
+            f"formalités douanières navires de plaisance douane {poly}",
+            f"ports d'entrée officiels liste douane décret {poly}",
+            generic,
+        ]
+    if iso == "MX":
+        return [
+            f"{poly} puertos habilitados decreto Coordinación General de Puertos y Marina Mercante",
+            generic,
+        ]
+    if iso == "NU":
+        return [
+            f"Niue Customs Act Port of Entry Order official legislation",
             generic,
         ]
     lang = zone_search_lang(zone)
@@ -351,13 +387,14 @@ def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]
         if q not in seen:
             seen.add(q)
             out.append(q)
-    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
-        for q in (exc.get("search_hints") or {}).get((cc or "").upper(), []) or []:
+    cc = polygon_iso2(zone)
+    if cc:
+        for q in (exc.get("search_hints") or {}).get(cc, []) or []:
             q = (q or "").strip()
             if q and q not in seen:
                 seen.add(q)
                 out.append(q)
-    return out[:3]
+    return out[:5]
 
 
 def list_url_bonus(url: str) -> float:
@@ -383,7 +420,7 @@ def remember_seed_urls(zone: dict, urls: list[str], exceptions: dict | None = No
                        persist: bool = True, max_per_country: int = 4) -> list[str]:
     """Mémorise les URL officielles qui ont produit un catalogue — la prochaine
     ZEE du même pays n'attend plus le SERP (leçon Mexique / Niue généralisée)."""
-    cc = (zone.get("iso2") or zone.get("sov_iso2") or "").upper()
+    cc = polygon_iso2(zone)
     if not cc or not urls:
         return []
     exc = exceptions if exceptions is not None else load_exceptions()
@@ -489,7 +526,8 @@ def build_whitelist(iso2: str | None, sov_iso2: str | None, exceptions: dict | N
     exc = exceptions or load_exceptions()
     maritime = eez_iso2_set()
     out: set[str] = set()
-    for cc in {c for c in (iso2, sov_iso2) if c}:
+    primary = iso2 or sov_iso2
+    for cc in {c for c in (primary,) if c}:
         up = cc.upper()
         if maritime and up not in maritime:
             continue
@@ -1212,15 +1250,47 @@ async def _tf_search_safe(query: str, key: str, log, *, location=None, language=
 
 def site_list_pdf_query(domain: str, zone: dict) -> str:
     """Requête `site:` une fois le domaine d'État connu."""
+    iso = polygon_iso2(zone)
     if is_france_mainland_eez(zone):
         return (f"site:{domain} filetype:pdf "
                 f"(liste ports de plaisance OR carte PPF OR points de passage frontaliers)")
+    if iso == "NZ":
+        return f"site:{domain} filetype:pdf (places of first arrival OR small craft OR ports of entry)"
+    if iso == "VE":
+        return f"site:{domain} filetype:pdf (puertos habilitados OR lista de puertos)"
+    if iso == "NC":
+        return f"site:{domain} filetype:pdf (plaisance OR formalités douanières)"
+    if iso == "NU":
+        return f"site:{domain} filetype:pdf (customs act OR port of entry OR niue laws)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
     if lang == "es":
         return f"site:{domain} filetype:pdf (puertos habilitados OR decreto lista)"
     return f"site:{domain} filetype:pdf (ports of entry OR designated ports list)"
+
+
+def site_list_page_query(domain: str, zone: dict) -> str:
+    """Même hop pour une page HTML (leçon NZ MPI / VE INEA : la liste n'est pas un PDF)."""
+    iso = polygon_iso2(zone)
+    if is_france_mainland_eez(zone):
+        return f"site:{domain} (liste ports de plaisance OR vous naviguez pays non membre)"
+    if iso == "NZ":
+        return f"site:{domain} (places of first arrival seaports OR small craft sailing)"
+    if iso == "VE":
+        return f"site:{domain} (inventario de puertos OR puertos habilitados INEA)"
+    if iso == "NC":
+        return f"site:{domain} (formalités douanières navires de plaisance)"
+    if iso == "MX":
+        return f"site:{domain} (puertos y terminales habilitados)"
+    if iso == "NU":
+        return f"site:{domain} (customs act port of entry)"
+    lang = zone_search_lang(zone)
+    if lang == "fr":
+        return f"site:{domain} (ports d'entrée OR liste douane)"
+    if lang == "es":
+        return f"site:{domain} (puertos habilitados OR decreto)"
+    return f"site:{domain} (ports of entry OR designated ports list)"
 
 
 def landing_url_candidates(zone: dict) -> list[dict]:
@@ -1248,6 +1318,20 @@ async def _site_list_pdf_search(domains: list[str], zone: dict, log) -> list[dic
         res = await search_searxng(q, log)
         if res:
             log(f"site PDF {dom}: {len(res)} résultat(s)")
+            out.extend(res)
+    return out
+
+
+async def _site_list_page_search(domains: list[str], zone: dict, log) -> list[dict]:
+    """Hop HTML : INEA / MPI / douane.nc exposent une page, pas un PDF."""
+    out: list[dict] = []
+    for dom in domains[:3]:
+        if not dom:
+            continue
+        q = site_list_page_query(dom, zone)
+        res = await search_searxng(q, log)
+        if res:
+            log(f"site page {dom}: {len(res)} résultat(s)")
             out.extend(res)
     return out
 
@@ -1433,16 +1517,16 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             await emit(rec, "bootstrap", domains=[c["domain"] for c in boot])
             official = boot
 
+    domains: list[str] = []
+    for c in official:
+        d = (c.get("domain") or domain_of(c.get("url") or "")).lower()
+        if d and d not in domains:
+            domains.append(d)
     if official and not any(
         (c.get("url") or "").lower().endswith(".pdf")
         and list_url_bonus(c.get("url") or "") >= 0.5
         for c in official
     ):
-        domains: list[str] = []
-        for c in official:
-            d = (c.get("domain") or domain_of(c.get("url") or "")).lower()
-            if d and d not in domains:
-                domains.append(d)
         extra_pdfs = await _site_list_pdf_search(domains, zone, log)
         await emit(rec, "search", engine="searxng", lang="site-pdf",
                    query="site:domain filetype:pdf", n=len(extra_pdfs),
@@ -1452,6 +1536,16 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             candidates = _merge_candidates(candidates, extra_pdfs)
             official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
             log(f"site PDF: {len(extra_pdfs)} candidat(s) sur {domains[:3]}")
+    if official and not any(list_url_bonus(c.get("url") or "") >= 0.45 for c in official):
+        extra_pages = await _site_list_page_search(domains, zone, log)
+        await emit(rec, "search", engine="searxng", lang="site-page",
+                   query="site:domain liste", n=len(extra_pages),
+                   results=extra_pages, domains=domains[:3])
+        if extra_pages:
+            extra_pages = serp_filter(extra_pages, protect_fn=protect)
+            candidates = _merge_candidates(candidates, extra_pages)
+            official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
+            log(f"site page: {len(extra_pages)} candidat(s) sur {domains[:3]}")
 
     seeds = seed_url_candidates(zone, exceptions)
     landings = landing_url_candidates(zone)
@@ -1538,8 +1632,9 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
                     log(f"pièce jointe officielle: {att[:90]}")
                     await emit(rec, "attachment", parent=url, url=att)
                     queue.append({"url": att, "domain": domain_of(att)})
-        if len(text) < 400 and res.get("html"):
-            for fu in internal_followups(res["html"], url, limit=2):
+        if (res.get("html") and not (url or "").lower().endswith(".pdf")
+                and not looks_like_port_catalog(text or "")):
+            for fu in internal_followups(res["html"], url, limit=3):
                 try:
                     sub = await extract_cascade(fu, min_chars=200, log=log)
                 except Exception:

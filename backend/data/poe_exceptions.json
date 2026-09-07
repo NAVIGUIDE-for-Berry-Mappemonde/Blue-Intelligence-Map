@@ -115,6 +115,10 @@
       "semar.gob.mx",
       "anam.gob.mx"
     ],
+    "VE": [
+      "gob.ve",
+      "inea.gob.ve"
+    ],
     "ES": [
       "gob.es",
       "agenciatributaria.es"
@@ -327,6 +331,20 @@
     "NU": [
       "https://www.gov.nu/media/pages/information/39290dbbd4-1764012801/niue_laws_vol4_part1_ul2022.pdf",
       "https://mof.gov.nu/customs/"
+    ],
+    "NZ": [
+      "https://www.mpi.govt.nz/resources-and-forms/registers-and-lists/places-of-first-arrival-seaports",
+      "https://www.customs.govt.nz/about-us/news/our-stories/sailing-to-new-zealand-this-small-craft-season"
+    ],
+    "NC": [
+      "https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance"
+    ],
+    "VE": [
+      "https://inea.gob.ve/",
+      "https://inea.gob.ve/category/tramites/puertos/inventario-de-puertos/"
+    ],
+    "FR": [
+      "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
     ]
   },
   "search_hints": {
@@ -335,6 +353,19 @@
     ],
     "NU": [
       "Niue Customs Act Port of Entry Order official legislation"
+    ],
+    "NZ": [
+      "New Zealand MPI places of first arrival seaports register",
+      "New Zealand customs small craft sailing season"
+    ],
+    "NC": [
+      "Nouvelle-Calédonie formalités douanières navires de plaisance"
+    ],
+    "VE": [
+      "Venezuela INEA puertos habilitados"
+    ],
+    "FR": [
+      "liste ports de plaisance éligibles PPF douane France"
     ]
   }
 }

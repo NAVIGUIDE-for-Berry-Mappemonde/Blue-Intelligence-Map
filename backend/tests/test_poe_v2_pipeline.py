@@ -587,6 +587,56 @@ class TestStructuredDiscovery:
         assert poe.search_hint_queries({"iso2": "NU"})
         assert not any("Alofi" in q for q in poe.search_hint_queries({"iso2": "NU"}))
 
+    def test_example_official_pages_are_seeded_per_polygon_iso2(self):
+        cases = {
+            "FR": "vous-naviguez-en-provenance",
+            "MX": "puertos-y-terminales",
+            "NU": "niue_laws_vol4_part1",
+            "NZ": "places-of-first-arrival-seaports",
+            "NC": "formalites-douanieres-pour-les-navires-de-plaisance",
+            "VE": "inventario-de-puertos",
+        }
+        for iso, needle in cases.items():
+            urls = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": iso}))
+            assert needle in urls, (iso, urls)
+        ve = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": "VE"}))
+        assert "inea.gob.ve/" in ve
+        nz_on_niue = poe.seed_url_candidates({
+            "iso2": "NU", "sov_iso2": "NZ", "name": "Niue", "sovereign": "New Zealand",
+        })
+        blob = " ".join(c["url"] for c in nz_on_niue)
+        assert "mpi.govt.nz" not in blob and "customs.govt.nz" not in blob
+        mayotte = poe.seed_url_candidates({
+            "iso2": "YT", "sov_iso2": "FR", "name": "Mayotte", "sovereign": "France",
+        })
+        assert not any("vous-naviguez" in c["url"] for c in mayotte)
+        nz_hints = " ".join(poe.search_hint_queries({
+            "iso2": "NZ", "name": "New Zealand", "sovereign": "New Zealand",
+        }))
+        assert "places of first arrival" in nz_hints
+        niue_hints = " ".join(poe.search_hint_queries({
+            "iso2": "NU", "sov_iso2": "NZ", "name": "Niue", "sovereign": "New Zealand",
+        }))
+        assert "places of first arrival" not in niue_hints
+        assert "mpi.govt.nz" not in poe.build_whitelist("NU", "NZ")
+
+    def test_example_urls_outrank_homes(self):
+        home_ve = poe.list_url_bonus("https://inea.gob.ve/")
+        mpi = poe.list_url_bonus(
+            "https://www.mpi.govt.nz/resources-and-forms/registers-and-lists/"
+            "places-of-first-arrival-seaports")
+        craft = poe.list_url_bonus(
+            "https://www.customs.govt.nz/about-us/news/our-stories/"
+            "sailing-to-new-zealand-this-small-craft-season")
+        nc = poe.list_url_bonus(
+            "https://douane.gouv.nc/particuliers/"
+            "formalites-douanieres-pour-les-navires-de-plaisance")
+        mx = poe.list_url_bonus(
+            "https://www.gob.mx/puertosymarinamercante/acciones-y-programas/"
+            "puertos-y-terminales")
+        assert mpi > 0.3 and craft > 0.2 and nc > 0.2 and mx > 0.2
+        assert mpi > home_ve and mx > home_ve
+
     def test_numbered_law_is_not_a_port_catalog(self):
         from app.core.extract import looks_like_port_catalog
         law = "\n".join(f"{i}. Article transitoire sans coordonnées." for i in range(1, 20))
