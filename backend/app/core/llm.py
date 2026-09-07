@@ -195,17 +195,42 @@ Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>
 # ---------------------------------------------------------------------------
 # Extraction structurée d'un projet marin (ex ai.extract_project)
 # ---------------------------------------------------------------------------
+def _coerce_sites(raw) -> list[dict]:
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name") or s.get("location") or "").strip()
+        loc = str(s.get("location") or s.get("name") or "").strip() or None
+        if not name and not loc:
+            continue
+        lat = s.get("lat") if s.get("lat") is not None else s.get("latitude")
+        lon = s.get("lon") if s.get("lon") is not None else s.get("longitude")
+        out.append({
+            "name": (name or loc or "")[:200],
+            "location": loc or name,
+            "lat": lat,
+            "lon": lon,
+            "evidence": str(s.get("evidence") or "")[:400],
+        })
+    return out[:20]
+
+
 def heuristic_extract(title: str, text: str, meta_desc: str, settings: dict) -> dict:
     desc = (meta_desc or text[:400]).strip().replace("\n", " ")
     desc = re.sub(r"\s+", " ", desc)[:250]
     gk = heuristic_gatekeeper(f"{title} {text}", settings)
     return {"title": title[:200], "description": desc, "location": None,
             "latitude": None, "longitude": None, "s_ocean": gk["score"],
+            "sites": [], "funders": [],
             "engine": "Heuristic Extractor"}
 
 
 async def extract_project(title: str, text: str, meta_desc: str, url: str, funder: str,
                           settings: dict, ext_links=None) -> dict:
+    partner_cap = max(1, int((settings or {}).get("max_partner_orgs", 5) or 5))
     if not has_llm(settings):
         return heuristic_extract(title, text, meta_desc, settings)
     links_block = ""
@@ -222,23 +247,41 @@ Content (truncated):
 Return JSON:
 {{"title": "<official project name>",
  "description": "<ecological impact synthesis, WHAT and WHY, max 250 chars, do not repeat title>",
- "location": "<most specific geographic place name, e.g. 'Banc d'Arguin, Mauritania', or null if global>",
- "latitude": <decimal or null>,
- "longitude": <decimal or null>,
+ "funders": ["<organizations funding this work, include '{funder}' if listed>"],
+ "sites": [{{"name": "<visitable action site: reef, MPA, bay, island, hope spot>",
+            "location": "<toponym, not HQ city>",
+            "lat": <decimal or null — copy from the page only, never invent>,
+            "lon": <decimal or null>,
+            "evidence": "<short quote that this is where the work happens>"}}],
  "s_ocean": <0.0-1.0 relevance score: technicality + source reliability + oceanic localization>,
  "category": "<exactly one of: MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other>",
- "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
+ "partners": [<partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}
+
+Rules for sites:
+- One entry per distinct boat-accessible place where work happens.
+- A worldwide program with 4 reefs → 4 sites. Never a single "Pacific" or "global" point.
+- Headquarters, offices, Washington / Paris / London / Geneva of the funder are NOT sites.
+- If the page names no visitable place: "sites": [].
+- Do not invent GPS. lat/lon only if written on the page."""
     try:
         out = await ask_json(prompt, settings=settings)
+        sites = _coerce_sites(out.get("sites"))
+        funders = [str(x).strip()[:120] for x in (out.get("funders") or []) if str(x).strip()]
+        if funder and funder not in funders:
+            funders = [funder] + funders
+        first = sites[0] if sites else {}
         return {
             "title": str(out.get("title") or title)[:200],
             "description": str(out.get("description") or "")[:250],
-            "location": out.get("location"),
-            "latitude": out.get("latitude"),
-            "longitude": out.get("longitude"),
+            "location": first.get("location") or out.get("location"),
+            "latitude": first.get("lat") if first else out.get("latitude"),
+            "longitude": first.get("lon") if first else out.get("longitude"),
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
             "category": str(out.get("category") or "Other"),
-            "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
+            "partners": [p for p in (out.get("partners") or [])
+                         if isinstance(p, dict) and p.get("name")][:partner_cap],
+            "funders": funders[:12],
+            "sites": sites,
             "engine": "OpenRouter Extractor",
         }
     except Exception:

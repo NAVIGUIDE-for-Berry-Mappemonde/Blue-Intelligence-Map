@@ -7,7 +7,7 @@ export default function ProjectList({ t, projects, funderFilter, searchQuery, ca
   const features = (projects.features || []).filter(
     (f) => (funderFilter === "All" || (f.properties.funder || "").includes(funderFilter)) &&
       (categoryFilter === "All" || f.properties.category_group === categoryFilter) &&
-      (!q || `${f.properties.title} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q))
+      (!q || `${f.properties.title} ${f.properties.site_name || ""} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q))
   );
 
   return (
@@ -22,7 +22,7 @@ export default function ProjectList({ t, projects, funderFilter, searchQuery, ca
         {features.slice(0, 100).map((f) => (
           <div key={f.properties.id} data-testid={`project-item-${f.properties.id}`}
             className="p-2.5 hover:bg-raised/60">
-            <p className="text-xs font-semibold text-slate-200 leading-snug">{f.properties.title}</p>
+            <p className="text-xs font-semibold text-slate-200 leading-snug">{f.properties.site_name || f.properties.title}</p>
             <div className="flex items-center justify-between mt-1">
               <span className="font-mono text-[10px] text-funder truncate max-w-[220px]">{f.properties.funder}</span>
               <a href={f.properties.url} target="_blank" rel="noreferrer"

@@ -1,4 +1,11 @@
-MASTER_SEEDS = [
+"""MasterSeeds Projets : 21 listings curés (priority 1) + fichier élargi (~861)."""
+from __future__ import annotations
+
+import json
+
+from app.config import DATA_DIR
+
+CURATED_SEEDS = [
     {"name": "The Ocean Foundation", "url": "https://oceanfdn.org/projects/", "country": "US", "priority": 1, "category": "Conservation & Research"},
     {"name": "Oceana", "url": "https://oceana.org/campaigns/", "country": "US", "priority": 1, "category": "Advocacy & Campaigns"},
     {"name": "Blue Marine Foundation", "url": "https://www.bluemarinefoundation.com/projects/", "country": "UK", "priority": 1, "category": "Conservation & Research"},
@@ -23,6 +30,24 @@ MASTER_SEEDS = [
 ]
 
 TEST_SEED_COUNT = 3
+MASTER_SEEDS_PATH = DATA_DIR / "master_seeds.json"
+
+
+def load_master_seeds() -> list[dict]:
+    """21 curés en tête si le fichier manque ; sinon le dump ~861."""
+    if MASTER_SEEDS_PATH.exists():
+        try:
+            data = json.loads(MASTER_SEEDS_PATH.read_text(encoding="utf-8"))
+            seeds = data.get("seeds") if isinstance(data, dict) else data
+            if isinstance(seeds, list) and seeds:
+                return seeds
+        except Exception:
+            pass
+    return list(CURATED_SEEDS)
+
+
+# Compat : les imports existants lisent MASTER_SEEDS (fichier s'il est là).
+MASTER_SEEDS = load_master_seeds()
 
 URL_PATTERNS = [
     "/project", "/campaign", "/initiative", "/hope-spot", "/where-we-work/",

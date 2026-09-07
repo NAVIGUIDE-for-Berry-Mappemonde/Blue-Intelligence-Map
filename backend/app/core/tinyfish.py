@@ -15,6 +15,11 @@ POE_PURPOSE = (
     "for foreign pleasure craft; prefer customs gazette, decree or official list."
 )
 
+PROJECT_PURPOSE = (
+    "Individual marine, ocean or coastal conservation project or program pages "
+    "(one place of action per page). Exclude news, donate, jobs, HQ/about."
+)
+
 # Une retry 429 ; monkeypatchable dans les tests.
 SEARCH_RETRY_SLEEP_S = 2.0
 FETCH_LEVEL = "N3-mirror-tinyfish"

@@ -256,5 +256,6 @@ def project_to_public(d: dict) -> dict:
         "verdict": d.get("verdict"),
         "geo_source": d.get("geo_source"),
         "category_group": d.get("category_group"),
+        "sites": d.get("sites") or [],
         "wrote_projects": False,
     }
