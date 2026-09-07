@@ -57,17 +57,20 @@ _LAND_NEGATIVES = [
 # Statistiques dataset (Bottom-Up : la BDD est le jeu d'entraînement)
 # ---------------------------------------------------------------------------
 async def dataset_stats(db) -> dict:
+    from app.services import project_review as review
     projects = await db.projects.count_documents({})
     poe = await db.poe_ports.count_documents({})
     poe_geocoded = await db.poe_ports.count_documents({"lat": {"$ne": None}})
     failed = await db.failed.count_documents({})
     osm_checked = await db.poe_ports.count_documents({"osm_checked_at": {"$exists": True}})
     anomalies = await db.poe_ports.count_documents({"spatial_anomaly": True})
+    gold = await review.gold_stats(db)
     return {
         "projects": projects, "poe_ports": poe, "poe_geocoded": poe_geocoded,
         "failed_urls": failed, "poe_osm_checked": osm_checked,
         "poe_spatial_anomalies": anomalies,
-        "total_training_entities": projects + poe,
+        "total_training_entities": gold.get("gold_count", 0) + poe,
+        "gold": gold,
     }
 
 
@@ -107,16 +110,18 @@ def models_status() -> dict:
 # Classifieur de pertinence (Gatekeeper local — weak supervision)
 # ---------------------------------------------------------------------------
 async def build_gatekeeper_dataset(db, max_docs: int = 8000):
-    positives = []
-    async for p in db.projects.find({}, {"title": 1, "description": 1, "location": 1}).limit(max_docs):
-        txt = " ".join(str(p.get(k) or "") for k in ("title", "description", "location")).strip()
-        if len(txt) > 20:
-            positives.append(txt)
+    """Positifs = Gold (v1 − snapped − fallback + acceptés revue).
+
+    Plus tout `projects` : le modèle v1 recopierait sièges et snaps.
+    """
+    from app.services import project_review as review
+    positives = await review.gold_positive_texts(db, max_docs=max_docs)
     negatives = []
     async for f in db.failed.find({"stage": "gatekeeper"}, {"reason": 1, "url": 1}).limit(2000):
         reason = str(f.get("reason") or "")
         if "terrestrial" in reason or "freshwater" in reason or "not marine" in reason.lower():
             negatives.append(f"{f.get('url', '')} {reason}")
+    negatives.extend(await review.rejected_negative_texts(db))
     n_real_neg = len(negatives)
     # Weak supervision : compléter avec le corpus terrestre synthétique
     target_neg = max(len(_LAND_NEGATIVES) * 10, len(positives) // 3)
@@ -160,7 +165,7 @@ async def train_gatekeeper(db, log=None) -> dict:
     positives, negatives, n_real_neg = await build_gatekeeper_dataset(db)
     if len(positives) < 100:
         raise ValueError(f"dataset trop petit ({len(positives)} positifs) — bootstrapping impossible")
-    log(f"dataset weak supervision: {len(positives)} positifs (BDD projets), "
+    log(f"dataset weak supervision: {len(positives)} positifs (Gold), "
         f"{len(negatives)} négatifs ({n_real_neg} réels + synthétiques)")
     metrics = await asyncio.to_thread(_train_sync, positives, negatives)
     metrics["n_neg_real"] = n_real_neg

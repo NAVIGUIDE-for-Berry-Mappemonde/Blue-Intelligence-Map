@@ -1,6 +1,7 @@
 import FormalitiesCard from "./audit/FormalitiesCard";
 import MarinasCard from "./audit/MarinasCard";
 import ProjectsCard from "./audit/ProjectsCard";
+import ReviewCard from "./audit/ReviewCard";
 
 /**
  * BatchHub — bloc contextuel de la vue Audit.
@@ -24,12 +25,15 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
     return <FormalitiesCard t={t} onPoeRefresh={onPoeRefresh} />;
   }
   return (
-    <ProjectsCard
-      t={t}
-      status={status}
-      refresh={refresh}
-      settings={settings}
-      onSettingsSaved={onSettingsSaved}
-    />
+    <div className="space-y-4">
+      <ProjectsCard
+        t={t}
+        status={status}
+        refresh={refresh}
+        settings={settings}
+        onSettingsSaved={onSettingsSaved}
+      />
+      <ReviewCard t={t} status={status} />
+    </div>
   );
 }
