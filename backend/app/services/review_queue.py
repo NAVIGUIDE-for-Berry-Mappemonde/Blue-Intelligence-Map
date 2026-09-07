@@ -1,0 +1,442 @@
+"""
+File de revue humaine — une fiche à la fois, commentaire persisté.
+
+Ne lit que les collections de run / v1. N'écrit JAMAIS dans `projects`,
+`poe_ports`, `eez_zones` ni `marinas`. Seule `review_comments` est mutée.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from app.core.dedup import normalize_name
+from app.services.poe_zone_fiche import (
+    PUBLISHED_RUN,
+    bu_by_port_name,
+    build_zone_fiche,
+)
+from app.services.poe_zone_label import attach_zone_labels
+
+KINDS = ("project", "eez", "poe", "marina")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def comment_key(kind: str, run_id: str, entity_id: str) -> str:
+    return f"{kind}:{run_id}:{entity_id}"
+
+
+def is_published(run_id: str | None) -> bool:
+    return not run_id or run_id == PUBLISHED_RUN
+
+
+def _sid(value) -> str:
+    return "" if value is None else str(value)
+
+
+def _sort_title(docs: list[dict], key: str = "title") -> list[dict]:
+    return sorted(docs, key=lambda d: (_sid(d.get(key) or d.get("name") or "")).casefold())
+
+
+async def ensure_review_indexes(db) -> None:
+    try:
+        await db.review_comments.create_index([("kind", 1), ("run_id", 1)])
+        await db.review_comments.create_index("entity_id")
+    except Exception:
+        pass
+
+
+async def _comment_flags(db, kind: str, run_id: str) -> dict[str, bool]:
+    flags: dict[str, bool] = {}
+    try:
+        docs = await db.review_comments.find({"kind": kind, "run_id": run_id}).to_list(20000)
+    except Exception:
+        return flags
+    for d in docs:
+        eid = _sid(d.get("entity_id"))
+        flags[eid] = bool((d.get("comment") or "").strip())
+    return flags
+
+
+def _queue_item(entity_id: str, title: str, subtitle: str, flags: dict[str, bool],
+                extra: dict | None = None) -> dict:
+    item = {
+        "id": entity_id,
+        "title": title or "—",
+        "subtitle": subtitle or "",
+        "has_comment": bool(flags.get(entity_id)),
+    }
+    if extra:
+        item.update(extra)
+    return item
+
+
+async def _count(coll, q: dict | None = None) -> int:
+    if coll is None:
+        return 0
+    try:
+        return await coll.count_documents(q or {})
+    except Exception:
+        return 0
+
+
+async def list_runs(db, kind: str) -> dict:
+    """Runs disponibles pour un type de fiche, plus la carte publiée (v1)."""
+    if kind not in KINDS:
+        raise ValueError("kind must be project|eez|poe|marina")
+    published_count = 0
+    if kind == "project":
+        published_count = await _count(db.projects)
+    elif kind == "eez":
+        published_count = await _count(db.eez_zones)
+    elif kind == "poe":
+        published_count = await _count(db.poe_ports)
+    else:
+        published_count = await _count(db.marinas)
+
+    items = [{
+        "id": PUBLISHED_RUN,
+        "label": "published",
+        "state": "published",
+        "created_at": None,
+        "count": published_count,
+        "dataset": kind,
+    }]
+    if kind == "project":
+        docs = await db.project_runs.find({}).to_list(100)
+        docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+        for d in docs:
+            rid = _sid(d.get("_id"))
+            n = await _count(db.project_run_projects, {"run_id": rid})
+            items.append({
+                "id": rid,
+                "label": d.get("label") or rid,
+                "state": d.get("state"),
+                "created_at": d.get("created_at"),
+                "count": n,
+                "dataset": kind,
+            })
+    elif kind in ("eez", "poe"):
+        docs = await db.poe_runs.find({}).to_list(100)
+        docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+        coll = db.poe_run_zones if kind == "eez" else db.poe_run_ports
+        for d in docs:
+            rid = _sid(d.get("_id"))
+            n = await _count(coll, {"run_id": rid})
+            items.append({
+                "id": rid,
+                "label": d.get("label") or rid,
+                "state": d.get("state"),
+                "created_at": d.get("created_at"),
+                "count": n,
+                "dataset": kind,
+            })
+    return {"kind": kind, "count": len(items), "items": items}
+
+
+async def _label_zones(db, zones: list[dict]) -> list[dict]:
+    if not zones:
+        return zones
+    # Libellés : un polygone = une fiche (France hexagone ≠ Mayotte).
+    all_sibs: list[dict] = []
+    try:
+        all_sibs = await db.eez_zones.find(
+            {},
+            {"_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
+             "iso2": 1, "sov_iso2": 1, "pol_type": 1},
+        ).to_list(500)
+    except Exception:
+        all_sibs = []
+    if all_sibs:
+        attach_zone_labels(all_sibs)
+        by_id = {int(s.get("mrgid") or 0): s for s in all_sibs}
+        for z in zones:
+            hit = by_id.get(int(z.get("mrgid") or 0))
+            if hit:
+                for key in ("label", "qualifier", "qualifier_key", "disambiguated"):
+                    z[key] = hit.get(key)
+    else:
+        attach_zone_labels(zones)
+    return zones
+
+
+async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
+    if kind not in KINDS:
+        raise ValueError("kind must be project|eez|poe|marina")
+    rid = run_id or PUBLISHED_RUN
+    flags = await _comment_flags(db, kind, rid)
+    items: list[dict] = []
+
+    if kind == "project":
+        if is_published(rid):
+            docs = await db.projects.find({}).to_list(20000)
+        else:
+            docs = await db.project_run_projects.find({"run_id": rid}).to_list(20000)
+        for d in _sort_title(docs, "title"):
+            eid = _sid(d.get("_id") or d.get("url"))
+            if not eid:
+                continue
+            funders = d.get("funders") or ([d.get("funder")] if d.get("funder") else [])
+            items.append(_queue_item(
+                eid, d.get("title") or "",
+                ", ".join(x for x in funders if x) or (d.get("verdict") or ""),
+                flags,
+                {"verdict": d.get("verdict")},
+            ))
+
+    elif kind == "eez":
+        if is_published(rid):
+            docs = await db.eez_zones.find({}, {"geometry": 0}).to_list(2000)
+        else:
+            docs = await db.poe_run_zones.find({"run_id": rid}, {"geometry": 0}).to_list(2000)
+        docs = await _label_zones(db, docs)
+        docs.sort(key=lambda z: (z.get("label") or z.get("name") or "").casefold())
+        for z in docs:
+            mid = z.get("mrgid")
+            if mid is None:
+                continue
+            eid = str(int(mid))
+            items.append(_queue_item(
+                eid,
+                z.get("label") or z.get("name") or eid,
+                z.get("sovereign") or z.get("iso2") or "",
+                flags,
+                {"mrgid": int(mid), "poe_count": z.get("poe_count") or 0},
+            ))
+
+    elif kind == "poe":
+        if is_published(rid):
+            docs = await db.poe_ports.find({}).to_list(20000)
+        else:
+            docs = await db.poe_run_ports.find({"run_id": rid}).to_list(20000)
+        for d in _sort_title(docs, "name"):
+            eid = _sid(d.get("dedup_key") or d.get("_id"))
+            if not eid:
+                continue
+            items.append(_queue_item(
+                eid, d.get("name") or "",
+                d.get("zone_name") or str(d.get("mrgid") or ""),
+                flags,
+                {"mrgid": d.get("mrgid")},
+            ))
+
+    else:
+        docs = await db.marinas.find({}).to_list(20000)
+        for d in _sort_title(docs, "name"):
+            eid = _sid(d.get("_id"))
+            if not eid:
+                continue
+            items.append(_queue_item(
+                eid, d.get("name") or "",
+                d.get("source") or "",
+                flags,
+            ))
+
+    commented = sum(1 for it in items if it["has_comment"])
+    return {
+        "kind": kind,
+        "run_id": rid,
+        "total": len(items),
+        "commented": commented,
+        "items": items,
+        "wrote_projects": False,
+        "wrote_poe_ports": False,
+        "wrote_marinas": False,
+    }
+
+
+def _project_fiche(doc: dict) -> dict:
+    funders = doc.get("funders") or ([doc.get("funder")] if doc.get("funder") else [])
+    return {
+        "kind": "project",
+        "id": _sid(doc.get("_id") or doc.get("url")),
+        "title": doc.get("title"),
+        "url": doc.get("url"),
+        "description": doc.get("description") or "",
+        "funders": [f for f in funders if f],
+        "location": doc.get("location"),
+        "lat": doc.get("lat"),
+        "lon": doc.get("lon"),
+        "s_ocean": doc.get("s_ocean"),
+        "category_group": doc.get("category_group"),
+        "image": doc.get("image"),
+        "verdict": doc.get("verdict"),
+        "geo_source": doc.get("geo_source"),
+        "sites": doc.get("sites") or [],
+        "snapped": bool(doc.get("snapped")),
+        "wrote_projects": False,
+    }
+
+
+def _marina_fiche(doc: dict) -> dict:
+    return {
+        "kind": "marina",
+        "id": _sid(doc.get("_id")),
+        "name": doc.get("name"),
+        "lat": doc.get("lat"),
+        "lon": doc.get("lon"),
+        "source": doc.get("source"),
+        "priority": doc.get("priority"),
+        "osm_id": doc.get("osm_id"),
+        "tags": doc.get("tags") or {},
+        "nearest_waypoint": doc.get("nearest_waypoint") or {},
+        "enriched": bool(doc.get("enriched")),
+        "enrichment_source": doc.get("enrichment_source"),
+        "enriched_at": doc.get("enriched_at"),
+        "canal_vhf": doc.get("canal_vhf"),
+        "places_visiteurs": doc.get("places_visiteurs"),
+        "tirant_eau_max_metres": doc.get("tirant_eau_max_metres"),
+        "score_protection_meteo": doc.get("score_protection_meteo"),
+        "services_disponibles": doc.get("services_disponibles"),
+        "telephone_capitainerie": doc.get("telephone_capitainerie"),
+        "resume_avis": doc.get("resume_avis"),
+        "wrote_marinas": False,
+    }
+
+
+async def _poe_fiche(db, doc: dict, run_id: str) -> dict:
+    mrgid = doc.get("mrgid")
+    seeds: list[dict] = []
+    extras: list[dict] = []
+    if mrgid is not None:
+        try:
+            seeds = await db.poe_seed_ports.find({"mrgid": int(mrgid)}).to_list(8000)
+        except Exception:
+            seeds = []
+        try:
+            if is_published(run_id):
+                extras = await db.poe_run_ports.find({"mrgid": int(mrgid)}).to_list(8000)
+            else:
+                extras = await db.poe_run_ports.find(
+                    {"run_id": run_id, "mrgid": int(mrgid)}).to_list(8000)
+        except Exception:
+            extras = []
+    by = bu_by_port_name(list(seeds) + list(extras) + [doc])
+    url_bu = by.get(normalize_name(doc.get("name") or "") or "")
+    return {
+        "kind": "poe",
+        "id": _sid(doc.get("dedup_key") or doc.get("_id")),
+        "name": doc.get("name"),
+        "city": doc.get("city"),
+        "lat": doc.get("lat"),
+        "lon": doc.get("lon"),
+        "mrgid": mrgid,
+        "zone_name": doc.get("zone_name"),
+        "country_iso2": doc.get("country_iso2"),
+        "confidence": doc.get("confidence"),
+        "spatial_kind": doc.get("spatial_kind"),
+        "validated": bool(doc.get("validated")),
+        "geocode_source": doc.get("geocode_source"),
+        "osm_confidence": doc.get("osm_confidence"),
+        "osm_tags": doc.get("osm_tags"),
+        "note": doc.get("note"),
+        "url_bu": url_bu,
+        "wrote_poe_ports": False,
+    }
+
+
+async def get_comment(db, kind: str, run_id: str, entity_id: str) -> dict:
+    doc = await db.review_comments.find_one({
+        "_id": comment_key(kind, run_id, entity_id),
+    })
+    if not doc:
+        return {"comment": "", "updated_at": None}
+    return {
+        "comment": doc.get("comment") or "",
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str) -> dict:
+    if kind not in KINDS:
+        raise ValueError("kind must be project|eez|poe|marina")
+    rid = run_id or PUBLISHED_RUN
+    eid = _sid(entity_id)
+    cid = comment_key(kind, rid, eid)
+    text = comment if comment is not None else ""
+    if not isinstance(text, str):
+        text = str(text)
+    doc = {
+        "_id": cid,
+        "kind": kind,
+        "run_id": rid,
+        "entity_id": eid,
+        "comment": text,
+        "updated_at": now_iso(),
+    }
+    await db.review_comments.update_one({"_id": cid}, {"$set": doc}, upsert=True)
+    return {
+        "kind": kind,
+        "run_id": rid,
+        "id": eid,
+        "comment": text,
+        "updated_at": doc["updated_at"],
+        "wrote_projects": False,
+        "wrote_poe_ports": False,
+        "wrote_marinas": False,
+    }
+
+
+async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict | None:
+    if kind not in KINDS:
+        raise ValueError("kind must be project|eez|poe|marina")
+    rid = run_id or PUBLISHED_RUN
+    eid = _sid(entity_id)
+    fiche = None
+
+    if kind == "project":
+        if is_published(rid):
+            doc = await db.projects.find_one({"_id": eid})
+            if not doc:
+                doc = await db.projects.find_one({"url": eid})
+        else:
+            doc = await db.project_run_projects.find_one({"run_id": rid, "_id": eid})
+            if not doc:
+                doc = await db.project_run_projects.find_one({"run_id": rid, "url": eid})
+        if not doc:
+            return None
+        fiche = _project_fiche(doc)
+
+    elif kind == "eez":
+        try:
+            mid = int(eid)
+        except (TypeError, ValueError):
+            return None
+        fiche = await build_zone_fiche(db, mid, run_id=rid)
+        if fiche is None:
+            return None
+        fiche["kind"] = "eez"
+        fiche["id"] = str(mid)
+
+    elif kind == "poe":
+        if is_published(rid):
+            doc = await db.poe_ports.find_one({"dedup_key": eid})
+            if not doc:
+                doc = await db.poe_ports.find_one({"_id": eid})
+        else:
+            doc = await db.poe_run_ports.find_one({"run_id": rid, "dedup_key": eid})
+            if not doc:
+                doc = await db.poe_run_ports.find_one({"run_id": rid, "_id": eid})
+        if not doc:
+            return None
+        fiche = await _poe_fiche(db, doc, rid)
+
+    else:
+        doc = await db.marinas.find_one({"_id": eid})
+        if not doc:
+            return None
+        fiche = _marina_fiche(doc)
+
+    comment = await get_comment(db, kind, rid, eid)
+    return {
+        "kind": kind,
+        "run_id": rid,
+        "id": eid,
+        "fiche": fiche,
+        "comment": comment.get("comment") or "",
+        "comment_updated_at": comment.get("updated_at"),
+        "wrote_projects": False,
+        "wrote_poe_ports": False,
+        "wrote_marinas": False,
+    }

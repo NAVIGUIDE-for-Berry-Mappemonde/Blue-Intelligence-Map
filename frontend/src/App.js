@@ -7,6 +7,7 @@ import MarinasPanel from "./components/MarinasPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
+import ReviewView from "./components/ReviewView";
 import SettingsPanel from "./components/SettingsPanel";
 import ReportModal from "./components/ReportModal";
 
@@ -289,7 +290,7 @@ export default function App() {
         mode={mode} setMode={setMode}
       />
       <div className="flex flex-1 min-h-0">
-        {mode === "projects" && (
+        {view !== "review" && mode === "projects" && (
           <SwarmPanel
             t={t} projects={projects} funders={funders}
             funderFilter={funderFilter} setFunderFilter={setFunderFilter}
@@ -298,7 +299,7 @@ export default function App() {
             onReport={() => setShowReport(true)}
           />
         )}
-        {mode === "marinas" && (
+        {view !== "review" && mode === "marinas" && (
           <MarinasPanel
             t={t}
             marinas={marinas}
@@ -307,7 +308,7 @@ export default function App() {
             onRefreshAnchorages={fetchAnchorages}
           />
         )}
-        {mode === "formalities" && (
+        {view !== "review" && mode === "formalities" && (
           <FormalitiesPanel
             t={t}
             zones={poeZones}
@@ -331,11 +332,13 @@ export default function App() {
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
-          ) : (
+          ) : view === "audit" ? (
             <AuditView t={t} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }}
               onPoeRefresh={() => { fetchPoeZones(); fetchPoePorts(); }}
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
+          ) : (
+            <ReviewView t={t} mode={mode} />
           )}
         </main>
           {showSettings && (

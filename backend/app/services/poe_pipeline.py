@@ -1904,6 +1904,10 @@ def zone_to_item(doc: dict) -> dict:
     return {
         "mrgid": doc.get("mrgid"),
         "name": doc.get("name"),
+        "label": doc.get("label") or doc.get("name"),
+        "qualifier": doc.get("qualifier"),
+        "qualifier_key": doc.get("qualifier_key"),
+        "disambiguated": bool(doc.get("disambiguated")),
         "geoname": doc.get("geoname"),
         "sovereign": doc.get("sovereign"),
         "iso2": doc.get("iso2"),

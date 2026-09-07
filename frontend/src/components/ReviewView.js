@@ -1,0 +1,339 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, ClipboardCheck, Search } from "lucide-react";
+import api from "../api";
+import ZoneFiche from "./ZoneFiche";
+import ProjectFiche from "./review/ProjectFiche";
+import PoeFiche from "./review/PoeFiche";
+import MarinaFiche from "./review/MarinaFiche";
+
+const KINDS = [
+  { id: "project", labelKey: "reviewKindProject" },
+  { id: "eez", labelKey: "reviewKindEez" },
+  { id: "poe", labelKey: "reviewKindPoe" },
+  { id: "marina", labelKey: "reviewKindMarina" },
+];
+
+function kindFromMode(mode) {
+  if (mode === "marinas") return "marina";
+  if (mode === "formalities") return "eez";
+  return "project";
+}
+
+export default function ReviewView({ t, mode }) {
+  const [kind, setKind] = useState(() => kindFromMode(mode));
+  const [runs, setRuns] = useState([]);
+  const [runId, setRunId] = useState("published");
+  const [queue, setQueue] = useState([]);
+  const [filter, setFilter] = useState("");
+  const [index, setIndex] = useState(0);
+  const [fiche, setFiche] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [comment, setComment] = useState("");
+  const [savedAt, setSavedAt] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const dirtyRef = useRef(false);
+  const commentRef = useRef("");
+  const currentIdRef = useRef(null);
+
+  useEffect(() => {
+    setKind(kindFromMode(mode));
+    setIndex(0);
+    setFilter("");
+  }, [mode]);
+
+  const filtered = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return queue;
+    return queue.filter((it) =>
+      `${it.title || ""} ${it.subtitle || ""}`.toLowerCase().includes(needle));
+  }, [queue, filter]);
+
+  const current = filtered[index] || null;
+
+  const persistIfDirty = useCallback(async () => {
+    const id = currentIdRef.current;
+    if (!dirtyRef.current || !id) return;
+    try {
+      setSaving(true);
+      const { data } = await api.put("/review/comment", {
+        kind, run_id: runId, id, comment: commentRef.current,
+      });
+      dirtyRef.current = false;
+      setSavedAt(data.updated_at || new Date().toISOString());
+      setQueue((q) => q.map((it) => (
+        it.id === id ? { ...it, has_comment: Boolean((commentRef.current || "").trim()) } : it
+      )));
+    } catch (e) {
+      /* transient */
+    } finally {
+      setSaving(false);
+    }
+  }, [kind, runId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/review/runs", { params: { kind } });
+        if (cancelled) return;
+        const items = data.items || [];
+        setRuns(items);
+        setRunId((prev) => (items.some((r) => r.id === prev) ? prev : "published"));
+      } catch (e) {
+        if (!cancelled) setRuns([{ id: "published", label: "published", count: 0 }]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/review/queue", { params: { kind, run_id: runId } });
+        if (cancelled) return;
+        setQueue(data.items || []);
+        setIndex(0);
+      } catch (e) {
+        if (!cancelled) setQueue([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind, runId]);
+
+  useEffect(() => {
+    commentRef.current = comment;
+  }, [comment]);
+
+  useEffect(() => {
+    currentIdRef.current = current?.id || null;
+    if (!current) {
+      setFiche(null);
+      setComment("");
+      setSavedAt(null);
+      dirtyRef.current = false;
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const { data } = await api.get("/review/fiche", {
+          params: { kind, run_id: runId, id: current.id },
+        });
+        if (cancelled) return;
+        setFiche(data.fiche);
+        setComment(data.comment || "");
+        setSavedAt(data.comment_updated_at || null);
+        dirtyRef.current = false;
+      } catch (e) {
+        if (!cancelled) setFiche(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind, runId, current?.id]);
+
+  const go = useCallback(async (delta) => {
+    if (!filtered.length) return;
+    await persistIfDirty();
+    setIndex((i) => {
+      const next = i + delta;
+      if (next < 0) return filtered.length - 1;
+      if (next >= filtered.length) return 0;
+      return next;
+    });
+  }, [filtered.length, persistIfDirty]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [go]);
+
+  const saveComment = async () => {
+    if (!current) return;
+    try {
+      setSaving(true);
+      const { data } = await api.put("/review/comment", {
+        kind, run_id: runId, id: current.id, comment,
+      });
+      dirtyRef.current = false;
+      setSavedAt(data.updated_at || new Date().toISOString());
+      setQueue((q) => q.map((it) => (
+        it.id === current.id ? { ...it, has_comment: Boolean((comment || "").trim()) } : it
+      )));
+    } catch (e) {
+      /* transient */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderFiche = () => {
+    if (loading) {
+      return (
+        <p className="p-4 font-mono text-[10px] text-slate-500" data-testid="review-fiche-loading">
+          {t("poeFicheLoading")}
+        </p>
+      );
+    }
+    if (!fiche) return null;
+    if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
+    if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
+    if (kind === "poe") return <PoeFiche t={t} fiche={fiche} />;
+    return <MarinaFiche t={t} fiche={fiche} />;
+  };
+
+  return (
+    <div className="h-full flex min-h-0 bg-abyss" data-testid="review-view">
+      <aside className="w-[280px] shrink-0 flex flex-col border-r border-line bg-surface">
+        <div className="p-3 border-b border-line">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">
+            {t("reviewJump")} <span className="text-accent">({filtered.length})</span>
+          </p>
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              data-testid="review-search-input"
+              type="text"
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); setIndex(0); }}
+              placeholder={t("reviewSearch")}
+              className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto" data-testid="review-queue-list">
+          {filtered.length === 0 && (
+            <p className="p-4 text-xs text-slate-500">{t("reviewEmpty")}</p>
+          )}
+          {filtered.map((it, i) => (
+            <button
+              key={it.id}
+              type="button"
+              data-testid={`review-queue-item-${it.id}`}
+              onClick={async () => { await persistIfDirty(); setIndex(i); }}
+              className={`w-full text-left px-3 py-2 border-b border-line hover:bg-raised transition-colors ${
+                i === index ? "bg-accent/10 border-l-2 border-l-accent" : ""
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                  it.has_comment ? "bg-bio" : "bg-slate-600"
+                }`} title={it.has_comment ? t("reviewHasComment") : undefined} />
+                <div className="min-w-0">
+                  <p className="text-xs text-slate-100 truncate">{it.title}</p>
+                  {it.subtitle ? (
+                    <p className="font-mono text-[10px] text-slate-500 truncate">{it.subtitle}</p>
+                  ) : null}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <div className="px-5 py-3 border-b border-line flex flex-wrap items-center gap-2">
+          <ClipboardCheck size={16} className="text-accent" />
+          <h2 className="font-heading font-black text-lg text-accent mr-2">{t("reviewTitle")}</h2>
+          <div className="flex border border-line rounded-sm overflow-hidden" data-testid="review-kind-switch">
+            {KINDS.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                data-testid={`review-kind-${k.id}`}
+                onClick={async () => { await persistIfDirty(); setKind(k.id); }}
+                className={`px-2.5 py-1.5 text-[11px] font-semibold ${
+                  k.id !== "project" ? "border-l border-line" : ""
+                } ${kind === k.id ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+              >
+                {t(k.labelKey)}
+              </button>
+            ))}
+          </div>
+          <select
+            data-testid="review-run-select"
+            value={runId}
+            onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); }}
+            className="bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[280px]"
+          >
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.id === "published" ? t("reviewPublished") : (r.label || r.id)}
+                {r.count != null ? ` (${r.count})` : ""}
+              </option>
+            ))}
+          </select>
+          <span className="ml-auto font-mono text-[11px] text-slate-400" data-testid="review-counter">
+            {filtered.length ? `${index + 1} / ${filtered.length}` : "0 / 0"}
+          </span>
+          <button
+            type="button"
+            data-testid="review-prev"
+            onClick={() => go(-1)}
+            disabled={!filtered.length}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
+          >
+            <ChevronLeft size={13} /> {t("reviewPrev")}
+          </button>
+          <button
+            type="button"
+            data-testid="review-next"
+            onClick={() => go(1)}
+            disabled={!filtered.length}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
+          >
+            {t("reviewNext")} <ChevronRight size={13} />
+          </button>
+        </div>
+        <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line">
+          {t("reviewHint")}
+        </p>
+        <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
+          {filtered.length === 0 && !loading ? (
+            <p className="p-6 text-sm text-slate-500">{t("reviewEmpty")}</p>
+          ) : renderFiche()}
+        </div>
+        <div className="border-t border-line p-4 bg-surface space-y-2" data-testid="review-comment-box">
+          <div className="flex items-center justify-between">
+            <label htmlFor="review-comment" className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">
+              {t("reviewComment")}
+            </label>
+            {savedAt && (
+              <span className="font-mono text-[10px] text-bio" data-testid="review-comment-saved">
+                {saving ? t("reviewSaving") : t("reviewSaved")}
+              </span>
+            )}
+          </div>
+          <textarea
+            id="review-comment"
+            data-testid="review-comment"
+            value={comment}
+            disabled={!current}
+            onChange={(e) => { setComment(e.target.value); dirtyRef.current = true; }}
+            placeholder={t("reviewCommentPlaceholder")}
+            rows={4}
+            className="w-full bg-raised border border-line rounded-sm px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-40"
+          />
+          <button
+            type="button"
+            data-testid="review-comment-save"
+            onClick={saveComment}
+            disabled={!current || saving}
+            className="px-3 py-1.5 text-[11px] font-semibold border border-accent/50 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
+          >
+            {saving ? t("reviewSaving") : t("reviewSave")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
