@@ -31,6 +31,15 @@ class TestParseAndLegal:
     def test_strict_json_rejects_prose_then_json(self):
         assert nvidia.parse_json_strict('Sure. {"is_poe": true}') is None
 
+    def test_message_text_ignores_reasoning_only(self):
+        assert nvidia._message_text({
+            "content": None,
+            "reasoning_content": '{"is_poe": true}',
+        }) == ""
+        assert nvidia._message_text({
+            "content": '{"is_poe": false}',
+        }) == '{"is_poe": false}'
+
     def test_legal_gazette_fr(self):
         text = (
             "Arrêté relatif aux points de passage frontaliers maritimes pour la "

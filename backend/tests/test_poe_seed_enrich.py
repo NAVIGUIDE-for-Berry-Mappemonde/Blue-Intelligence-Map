@@ -89,6 +89,11 @@ class TestParseAndVerdict:
         assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
         assert enr.parse_judge({"is_poe": True, "confidence": 80})["judge_confidence"] == 80
 
+    def test_parse_judge_scales_unit_confidence(self):
+        assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
+        assert enr.parse_judge({"is_poe": True, "confidence": 0.8})["judge_confidence"] == 80
+        assert enr.parse_judge({"is_poe": True, "confidence": 90})["judge_confidence"] == 90
+
     def test_parse_judge_pleasure_or_mixed_accepted(self):
         pleasure = enr.parse_judge({
             "is_poe": True, "confidence": 90, "kind": "pleasure"})
