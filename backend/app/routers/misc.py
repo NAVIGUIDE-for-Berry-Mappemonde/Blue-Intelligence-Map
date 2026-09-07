@@ -184,7 +184,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 ### 3) Formalités (ambre)
 - **Carte** : choroplèthe mondiale des ~285 Zones Économiques Exclusives (ZEE, Marine Regions/VLIZ v12) colorées par statut de génération, plus des marqueurs ambre pour chaque Port d'Entrée officiel extrait (plaisance). Cliquez une ZEE pour ouvrir sa fiche.
 - **Bandeau gauche** : liste de toutes les ZEE avec recherche (drapeau, souverain, statut, nombre de PoE), un filtre par statut et le disclaimer ambre permanent (« Informations indicatives — à vérifier auprès des autorités avant le départ »).
-- **Fiche ZEE (popup carte)** : pastille de statut, nombre de PoE, date de génération, sources officielles utilisées (cliquables), et un bouton Générer / Régénérer qui exécute le pipeline complet pour cette zone.
+- **Fiche ZEE (popup carte)** : pastille de statut, nombre de PoE, date de génération, sources officielles utilisées (cliquables). Pas de bouton Générer / Régénérer.
 - **Statut d'une zone** (4 valeurs possibles) :
   - `non générée` — gris, aucun contenu IA pour l'instant.
   - `IA · sources officielles` — ambre, les sources passent la whitelist auto-générée de domaines gouvernementaux.
@@ -198,7 +198,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
 - **Marinas — Build & Enrich batch** : reconstruit le jeu marinas depuis les sources ouvertes, puis enrichit N marinas à la fois (VHF, téléphone, site web) avec progression en direct et statut par item.
-- **Formalités — Référentiel ZEE & batch PoE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions), puis génère les Ports d'Entrée zone par zone en lots (5/10/25/toutes), avec logs live, résultats par zone et bouton Stop.
+- **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 
 ## Paramètres (bandeau droit, icône engrenage)

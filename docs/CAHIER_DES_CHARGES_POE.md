@@ -373,7 +373,7 @@ Verdicts de graine (`verdict_for_seed`) :
 
 ### 9.6 API Formalités (rappel)
 
-- `POST /api/poe/zones/{mrgid}/generate` — Top-Down une ZEE (peut écrire `poe_ports`)
+- `POST /api/poe/zones/{mrgid}/generate` · `POST /api/poe/generate-batch` — **410** (retirés, n’écrasent plus `poe_ports`)
 - `POST /api/poe/runs` · `/multi` · `/best-of` — runs isolés
 - `GET /api/poe/seeds/union` · `POST /api/poe/seeds/verify` · `POST /api/poe/seeds/enrich`
 - `GET /api/poe/seeds/osm` · `POST /api/poe/seeds/osm/refresh`
@@ -412,7 +412,7 @@ Contrôle listing (hors extraction) :
 3. **PoE = plaisance désignée**, pas « n’importe quel port du World Port Index ».
 4. **Claude est un scalpel**, pas le moteur : budget, cache, stop à 90 %, repli OpenRouter.
 5. **P0 « survive »** : PDF hors process, cache géocode Mongo, verrou sur `poe_exceptions.json`. L’argent n’est plus le risque principal ; les crashs et les hangs l’étaient.
-6. **Un seul chef de file** pour les boutons dangereux (Générer / generate-batch).
+6. **Pas de Générer / generate-batch** sur la carte ni en Audit : ces routes répondent **410**. Runs isolés et enrichissement des graines seulement.
 7. Mentions légales carte : données **indicatives**.
 
 ---
@@ -508,7 +508,7 @@ Ce cahier **prime** sur les détails d’implémentation dès qu’il y a confli
 | Acteur | Ce qu’il fait | Ce qu’il ne fait pas |
 |--------|----------------|----------------------|
 | **Skipper** (carte publique) | Consulte les ZEE, les PoE, les sources, le score. Vérifie toujours auprès des autorités avant de partir. | Ne lance pas de génération. Ne vote pas encore (crowdsourcing = backlog). |
-| **Opérateur** (Console) | Construit le référentiel ZEE, lance un run isolé, relance l’enrichissement des graines, consulte diffs et listing-control. Un seul chef de file pour les boutons dangereux. | N’écrase pas `poe_ports` par un `generate-batch` mondial. |
+| **Opérateur** (Console) | Construit le référentiel ZEE, lance un run isolé, relance l’enrichissement des graines, consulte diffs et listing-control. | N’écrase pas `poe_ports` (`generate-batch` / Générer = 410). |
 | **Juge automatique** (Claude / OpenRouter) | Sur le **résidu** : dit si **ce lieu** est un PoE plaisance d’après des extraits officiels. Ne lit pas le catalogue à la place du parseur. | N’invente pas de nom. Ne voit pas le badge Noonsite ni les tags OSM (anti-biais). Ne jette pas une liste officielle après un oui/non. |
 | **Réviseur humain** | Tranche les discordants D/P, les `contradiction` listing, les `unverified`. Promeut un port vers la carte. | Ne « goldise » pas Noonsite. |
 | **Pipeline** | Cherche **en parallèle** (TD ∥ BU), télécharge, extrait les catalogues, géocode, unionne, note chaque étape. | Ne purge jamais la carte v1. N’écrase pas une étape antérieure. |
@@ -717,7 +717,7 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 - Carte mondiale des ZEE colorées par statut (pas encore générée / générée / sans source officielle / erreur).
 - Points ambre = PoE publiés. Clic : nom, ZEE, score, badge OSM, anomalie spatiale, jusqu’à 3 URLs sources, mention « indicatif ».
 - Bandeau gauche : les ~285 ZEE, recherche, filtre de statut, nombre de PoE, confiance moyenne.
-- Popup ZEE : **fiche** — liste des PoE de l’étape affichée, sources Top-Down cliquables, sources Bottom-Up cliquables, bloc UNCLOS si pas de port. Bouton Générer (opérateur / debug — **à supprimer** du geste courant, commentaire Word #12).
+- Popup ZEE : **fiche** — sources officielles cliquables, bloc UNCLOS si pas de port. **Pas** de bouton Générer (`POST …/generate` = 410).
 - Mention fixe : *vérifiez auprès des autorités avant le départ.*
 - Tant que §12 n’est pas atteint, l’opérateur peut **changer l’étape affichée** (v1, un run, confirmed…) sans que cela vaille publication.
 
@@ -844,7 +844,7 @@ On ne « sent » pas qu’une ZEE est bonne. On coche.
 
 ### Interdit pendant la recette
 
-Cliquer Générer / `generate-batch` / `force` sur la carte. Relancer un mondial Top-Down « pour comparer ». Rebuild des graines. Publier `poe_ports` avant §12.
+Cliquer Générer / `generate-batch` / `force` sur la carte (routes **410**). Relancer un mondial Top-Down « pour comparer ». Rebuild des graines. Publier `poe_ports` avant §12.
 
 Commande locale :
 
@@ -907,7 +907,7 @@ Fonction : `qualify_unclos`. Le bloc disparaît dès que la zone a des ports.
 
 ### B. Collections et API (rappel court)
 
-Écriture carte : `POST /api/poe/zones/{mrgid}/generate` — **dangereux**, upsert `poe_ports`.  
+Écriture carte : `POST /api/poe/zones/{mrgid}/generate` et `POST /api/poe/generate-batch` — **410**, plus d’upsert `poe_ports` par un clic.  
 Écriture run : `POST /api/poe/runs` — sûr.  
 Lecture graines : `GET /api/poe/seeds/union`.  
 Juge : `POST /api/poe/seeds/enrich` — géocode + juge du résidu ; **cible** : moisson catalogue → `sources_bu`.  

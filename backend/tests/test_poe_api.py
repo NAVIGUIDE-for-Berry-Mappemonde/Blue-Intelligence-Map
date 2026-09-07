@@ -110,23 +110,23 @@ class TestTaskStatus:
         for k in ("running", "progress", "total", "summary"):
             assert k in d, d
 
-    def test_batch_status(self, client):
+    def test_batch_status_gone(self, client):
         r = client.get(f"{BASE_URL}/api/poe/generate-batch/status", timeout=60)
-        assert r.status_code == 200
-        assert "running" in r.json()
+        assert r.status_code == 410, r.status_code
 
-    def test_batch_cancel_when_idle(self, client):
+    def test_batch_cancel_gone(self, client):
         r = client.post(f"{BASE_URL}/api/poe/generate-batch/cancel", timeout=60)
-        assert r.status_code == 409, r.status_code
+        assert r.status_code == 410, r.status_code
 
-    def test_generate_status_unknown_zone_idle(self, client):
+    def test_generate_status_gone(self, client):
         r = client.get(f"{BASE_URL}/api/poe/zones/999999/generate/status", timeout=60)
-        assert r.status_code == 200
-        assert r.json()["state"] == "idle"
+        assert r.status_code == 410, r.status_code
 
-    def test_generate_unknown_zone_404(self, client):
+    def test_generate_zone_gone(self, client):
         r = client.post(f"{BASE_URL}/api/poe/zones/999999/generate", timeout=60)
-        assert r.status_code == 404, r.status_code
+        assert r.status_code == 410, r.status_code
+        r2 = client.post(f"{BASE_URL}/api/poe/generate-batch", json={"limit": 5}, timeout=60)
+        assert r2.status_code == 410, r2.status_code
 
 
 # --- Module: legacy endpoints removed ---------------------------------------

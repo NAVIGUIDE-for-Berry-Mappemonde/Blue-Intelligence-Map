@@ -188,7 +188,7 @@ Lots : `limit: 200` possible. `limit: 0` = tout le verdict demandé, en
 géocodant d’abord les `name_only` pour ne pas juger deux fois la même fiche.
 
 Interdit pour la découverte mondiale : `POST /api/poe/runs` avec `limit: 0`,
-`generate-batch`, `extract_ports` par ZEE.
+`generate-batch` (410), `extract_ports` par ZEE via un clic carte.
 
 Promotion vers la carte = **manuelle**.
 

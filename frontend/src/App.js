@@ -240,64 +240,11 @@ export default function App() {
       }
     };
 
-    // ---- Refactor 2026-06: PoE generation handler (wired to the EEZ map popup) ----
-    // Kicks the async pipeline (202) then polls the status until done (~1-6 min)
-    // and refreshes zones + ports so the map recolours live.
-    window.__biPoeGenState = window.__biPoeGenState || {};
-    window.__biGeneratePoeZone = async (mrgid) => {
-      // The popup HTML is rebuilt on every zones/ports refetch — re-resolve the
-      // button on EVERY update and keep a global gen-state that the popup
-      // builder reads so a rebuilt popup renders the "Generating…" state too.
-      const setBtn = (label, disabled = true) => {
-        const btn = document.querySelector('[data-testid="poe-generate-btn"]');
-        if (!btn) return;
-        btn.disabled = disabled;
-        btn.textContent = label;
-      };
-      const finish = (label) => {
-        delete window.__biPoeGenState[mrgid];
-        setBtn(label, false);
-      };
-      window.__biPoeGenState[mrgid] = "running";
-      try {
-        const r = await api.post(`/poe/zones/${mrgid}/generate`);
-        if (r.status !== 202 && r.status !== 200) {
-          finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
-          return;
-        }
-      } catch (e) {
-        if (e?.response?.status !== 409) {
-          finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
-          return;
-        }
-      }
-      setBtn("↻ " + (lang === "fr" ? "Génération…" : "Generating…"));
-      for (let i = 0; i < 150; i++) {
-        await new Promise((res) => setTimeout(res, 3000));
-        setBtn("↻ " + (lang === "fr" ? "Génération…" : "Generating…"));
-        try {
-          const st = await api.get(`/poe/zones/${mrgid}/generate/status`);
-          if (st.data?.state === "done") {
-            await fetchPoeZones();
-            await fetchPoePorts();
-            finish("✓ " + (lang === "fr" ? "Générée" : "Generated"));
-            return;
-          }
-          if (st.data?.state === "error") {
-            finish("↻ " + (lang === "fr" ? "Échec" : "Failed"));
-            return;
-          }
-        } catch (_) { /* transient */ }
-      }
-      finish("↻ Timeout");
-    };
-
     return () => {
       delete window.__biEnrichMarina;
       delete window.__biEnrichProject;
-      delete window.__biGeneratePoeZone;
     };
-  }, [fetchMarinas, fetchProjects, fetchPoeZones, fetchPoePorts, lang]);
+  }, [fetchMarinas, fetchProjects, lang]);
 
   useEffect(() => {
     fetchStatus();
