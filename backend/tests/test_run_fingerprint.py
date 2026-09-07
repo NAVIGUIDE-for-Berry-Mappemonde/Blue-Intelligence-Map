@@ -28,6 +28,7 @@ class TestFingerprint:
         monkeypatch.setenv("TINYFISH_API_KEY", "tf-secret")
         monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:8888/")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+        monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-secret")
         fp = build_code_fingerprint(
             {"anthropic_api_key": "sk-ant-secret", "claude_budget_usd": 12},
             zone_timeout_s=900,
@@ -36,6 +37,9 @@ class TestFingerprint:
         assert "sk-or-secret" not in blob
         assert "tf-secret" not in blob
         assert "sk-ant-secret" not in blob
+        assert "nvapi-secret" not in blob
+        assert fp["nvidia_configured"] is True
+        assert fp["features"]["nvidia_adapter"] is True
         assert fp["openrouter_configured"] is True
         assert fp["tinyfish_configured"] is True
         assert fp["searxng_url"] == "http://127.0.0.1:8888"

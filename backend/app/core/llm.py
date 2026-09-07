@@ -1,17 +1,19 @@
 """
-llm_core.py — Adaptateur LLM (OpenRouter par défaut).
+llm_core.py — Adaptateur LLM.
 
-Tous les appels IA passent par OpenRouter. extract_ports_openrouter est le
-lecteur JSON ; Claude Haiku est un second lecteur, orchestré dans le pipeline :
-  - ask_json / ask_text        : complétions (mode JSON strict ou texte libre)
+Complétions JSON : NVIDIA NIM si LLM_PROVIDER=nvidia (ou auto + clé),
+sinon OpenRouter. extract_ports_openrouter reste le lecteur OpenRouter ;
+le second lecteur (Muse / Kimi / Claude) est orchestré dans le pipeline.
+grounded_search reste OpenRouter (:online) — NIM n'a pas de recherche web.
+
+  - ask_json / ask_text        : complétions (JSON strict ou texte libre)
   - gatekeeper_check           : filtre marin (pré-filtre ML local puis LLM)
   - extract_project            : extraction structurée d'un projet marin
   - extract_ports              : extraction stricte des Ports d'Entrée
   - llm_geocode                : géocodage intelligent
   - grounded_search            : recherche web groundée (suffixe :online)
 
-Clé : OPENROUTER_API_KEY (env) ou settings["openrouter_api_key"] (UI).
-Modèle : OPENROUTER_MODEL (env, défaut openai/gpt-4o-mini).
+Clés : NVIDIA_API_KEY / OPENROUTER_API_KEY (env) ou settings UI.
 """
 import asyncio
 import json
@@ -53,7 +55,8 @@ def get_llm_key(settings: dict | None = None) -> str:
 
 
 def has_llm(settings: dict | None = None) -> bool:
-    return bool(get_llm_key(settings))
+    from app.core.nvidia import nvidia_enabled
+    return nvidia_enabled(settings) or bool(get_llm_key(settings))
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +119,10 @@ async def _call_openrouter(prompt: str, system: str, key: str, model: str | None
 async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
                    max_tokens: int = 2000, log=None) -> dict:
     """Complétion en mode JSON strict. Lève RuntimeError si pas de clé ou pas de JSON."""
+    from app.core.nvidia import complete_json_nvidia, nvidia_enabled
+    if nvidia_enabled(settings):
+        return await complete_json_nvidia(
+            system, prompt, settings, max_tokens=max_tokens, log=log)
     key = get_llm_key(settings)
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing")
@@ -373,8 +380,8 @@ async def extract_ports_openrouter(context: str, zone: dict,
 
 
 async def extract_ports(context: str, zone: dict, settings: dict | None = None, log=None) -> list[dict]:
-    """Compat : OpenRouter seul. Le second lecteur Claude est orchestré
-    dans poe_pipeline.extract_ports_llm (les deux tournent ensemble)."""
+    """Lecteur principal. Le second lecteur (Muse / Kimi / Claude) est
+    orchestré dans poe_pipeline.extract_ports_llm."""
     s = settings
     if s is None:
         try:
@@ -382,6 +389,9 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
             s = await get_settings()
         except Exception:
             s = {}
+    from app.core.nvidia import extract_ports_nvidia, nvidia_enabled
+    if nvidia_enabled(s):
+        return await extract_ports_nvidia(context, zone, settings=s, log=log)
     return await extract_ports_openrouter(context, zone, settings=s, log=log)
 
 

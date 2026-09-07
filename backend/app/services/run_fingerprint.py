@@ -55,7 +55,10 @@ def build_code_fingerprint(settings: dict | None = None,
     sha, dirty = git_state()
     timeout = 900 if zone_timeout_s is None else zone_timeout_s
 
+    from app.core import nvidia
+
     env_or = os.environ.get("OPENROUTER_API_KEY") or ""
+    env_nv = os.environ.get("NVIDIA_API_KEY") or ""
     env_tf = os.environ.get("TINYFISH_API_KEY") or ""
     env_searx = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/") or None
 
@@ -66,6 +69,10 @@ def build_code_fingerprint(settings: dict | None = None,
         "claude_allows_call": claude.budget_allows_call(s),
         "claude_model": claude.CLAUDE_MODEL,
         "claude_budget_usd": claude.get_claude_budget_usd(s),
+        "nvidia_configured": _key_configured(
+            s.get("nvidia_api_key"), env_nv),
+        "nvidia_enabled": nvidia.nvidia_enabled(s),
+        "nvidia_model": nvidia.primary_model() if nvidia.nvidia_enabled(s) else None,
         "openrouter_configured": _key_configured(
             s.get("openrouter_api_key"), env_or),
         "tinyfish_configured": _key_configured(
@@ -97,6 +104,8 @@ def build_code_fingerprint(settings: dict | None = None,
                 "app.services.poe_seeds", "seed_search_query"),
             "wpi_counterlist": _module_has(
                 "app.services.wpi_ports", "load_wpi_ports"),
+            "nvidia_adapter": _module_has(
+                "app.core.nvidia", "complete_json_nvidia"),
         },
     }
 

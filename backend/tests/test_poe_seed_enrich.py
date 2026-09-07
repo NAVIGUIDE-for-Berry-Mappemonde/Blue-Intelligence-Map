@@ -12,6 +12,11 @@ from app.services import poe_seed_enrich as enr  # noqa: E402
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, seed_search_query  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _keep_unit_tests_off_nvidia(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+
+
 def _run(coro):
     return asyncio.run(coro)
 

@@ -20,7 +20,7 @@ S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, K
 blue-intelligence/
 ├── backend/            API FastAPI (Python 3.11+) + MongoDB
 │   ├── server.py       Point d'entrée, endpoints REST /api/*
-│   ├── llm_core.py     Adaptateur LLM unique — tous les appels IA passent par OpenRouter
+│   ├── llm_core.py     Adaptateur LLM — NIM (complétions) ou OpenRouter ; :online reste OpenRouter
 │   ├── pipeline.py     Swarm de découverte/extraction des projets marins
 │   ├── poe.py          Pipeline [ZEE → Ports d'Entrée] (poe_routes.py = endpoints)
 │   ├── marinas.py      Build marinas (Overpass/SHOM), anchorages.py (mouillages)
@@ -37,12 +37,13 @@ blue-intelligence/
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 
-### Intelligence artificielle : 100 % OpenRouter
+### Intelligence artificielle : NIM pour l'inférence, OpenRouter pour le web
 
-Tous les appels LLM (gatekeeper marin, extraction structurée, géocodage intelligent, recherche web groundée `:online`, enrichissement des marinas) passent par **[OpenRouter](https://openrouter.ai)** :
+Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par **[NVIDIA NIM](https://build.nvidia.com)** si `NVIDIA_API_KEY` est présente, sinon par **[OpenRouter](https://openrouter.ai)**. La recherche web groundée (`:online`) reste OpenRouter :
 
-- **Clé** : `OPENROUTER_API_KEY` (ou saisie dans l'UI, Paramètres → Clés API) ;
-- **Modèle** : `OPENROUTER_MODEL` (défaut `openai/gpt-4o-mini`) — changer de modèle ne demande aucune modification de code ;
+- **Complétions** : `NVIDIA_API_KEY` (hosted NIM — Laguna / Muse / Kimi) si présente ; sinon OpenRouter ;
+- **Recherche web** : `OPENROUTER_API_KEY` uniquement (`:online`) — NIM n'a pas de plugin web ;
+- **Modèle OpenRouter** : `OPENROUTER_MODEL` (défaut `openai/gpt-4o-mini`) ;
 - **Sans clé**, l'application reste fonctionnelle en mode dégradé : heuristiques par mots-clés + modèles ML locaux (TF-IDF, spaCy NER) sans aucun appel réseau IA.
 
 Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les sources reste `null`, chaque port d'entrée est géocodé puis validé spatialement dans son polygone de ZEE.
@@ -94,7 +95,12 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `MONGO_URL` | ✅ | Chaîne de connexion MongoDB |
 | `DB_NAME` | ✅ | Nom de la base MongoDB |
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
-| `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — moteur LLM par défaut (swarm, marinas, recherche `:online`) |
+| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — juge / extracteur PoE (Laguna, Muse, Kimi) |
+| `LLM_PROVIDER` | optionnel | `auto` (défaut : NVIDIA si clé), `nvidia`, ou `openrouter` |
+| `NVIDIA_MODEL` | optionnel | Lecteur rapide (défaut `poolside/laguna-xs-2.1`) |
+| `NVIDIA_MODEL_SECONDARY` | optionnel | Second lecteur (défaut `meta/muse-glimmer-30b`) |
+| `NVIDIA_MODEL_LEGAL` | optionnel | Décrets / gazettes (défaut `moonshotai/kimi-k3`) |
+| `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — recherche web `:online` et fallback si NIM absent |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |
 | `ANTHROPIC_API_KEY` | optionnel | Claude Haiku 4.5 pour l'extraction PoE seulement — inerte si `CLAUDE_BUDGET_USD` (ou le plafond UI) est 0 |
 | `CLAUDE_BUDGET_USD` | optionnel | Plafond local Claude (USD). Stop à 90 %. Défaut 0 = Claude éteint |
