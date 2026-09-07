@@ -245,6 +245,9 @@ Règles absolues :
   Un scan OCR de Gaceta reste une source : extraire les noms malgré les fautes.
   Mexique : ignorer un port sans tag turística / Turística.
   Royaume-Uni : tout port de plaisance nommé est un Port of Entry (sPCR).
+  Sint Maarten : extraire tous les exemples de la page douane (Simpsonbay,
+  Port de Plaisance, Il de Sol, Cupecoy, Captain Olivers, Greatbay harbor,
+  Cruise Terminal). Ignorer aéroport, poste et coastline.
 - La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé :
   {"ports": []}.

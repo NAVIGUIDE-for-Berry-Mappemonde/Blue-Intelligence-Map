@@ -16,6 +16,7 @@ et suivi sélectif des liens internes (depth=2 : /annuaire, /contacts…).
 import asyncio
 import difflib
 import hashlib
+import html
 import os
 import re
 import subprocess
@@ -551,6 +552,17 @@ _UK_PLEASURE_SECTION_RE = re.compile(
     r"pleasure craft ports?)\s*:?\s*(.*?)(?=\n#{1,3}\s|\Z)",
     re.I | re.S,
 )
+# Page douane SX : « Some examples include: Simpsonbay Marina, … Greatbay harbor »
+# Ne pas matcher « authorized ports in Sint Maarten. » (phrase trop courte).
+_SX_EXAMPLES_RE = re.compile(
+    r"(?:some\s+examples\s+include|examples\s+include)\s*[:\s]+"
+    r"(.+?)(?:Customs Officers have access|\.\s+Furthermore|\Z)",
+    re.I | re.S,
+)
+_SX_SKIP_PLACE_RE = re.compile(
+    r"(?i)\b(airport|aeroport|a[eé]roport|post office|coastline|"
+    r"entire coastline|juliana)\b",
+)
 _JORF_READERS = {
     "JORFTEXT000030235682": [
         # Même arrêté (NOR INTV1430080A) : Légifrance est derrière Cloudflare.
@@ -629,6 +641,12 @@ def looks_like_port_catalog(text: str) -> bool:
             and re.search(r"fronti[eè]res\s+maritimes", text, re.I)):
         return True
     if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
+        return True
+    if (re.search(r"simpson\s*bay", text, re.I)
+            and re.search(r"great\s*bay", text, re.I)):
+        return True
+    if (re.search(r"examples include", text, re.I)
+            and len(re.findall(r"\bmarina\b", text, re.I)) >= 3):
         return True
     return False
 
@@ -862,6 +880,48 @@ def _extract_annexe_ppc_maritime(text: str) -> list[dict]:
     return out
 
 
+def _sx_normalize_place(raw: str) -> str | None:
+    """Simpsonbay Marina, Greatbay harbor, Cruise Terminal — pas l'aéroport."""
+    n = " ".join((raw or "").split()).strip(" .;:")
+    n = re.sub(r"^(?:including|and)\s+(?:the\s+)?", "", n, flags=re.I).strip()
+    if not n or len(n) < 4 or _SX_SKIP_PLACE_RE.search(n):
+        return None
+    fold = re.sub(r"[^a-z]+", "", n.casefold())
+    if fold.startswith("simpson"):
+        return "Simpsonbay Marina"
+    if fold in {"greatbay", "greatbayharbor", "greatbayharbour"}:
+        return "Greatbay harbor"
+    if fold in {"cruiseterminal", "thecruiseterminal"}:
+        return "Cruise Terminal"
+    if re.search(r"\b(marina|harbor|harbour|port|cruise\s+terminal)\b", n, re.I) and len(n) >= 8:
+        return n[:120]
+    return None
+
+
+def _extract_sx_customs_examples(text: str) -> list[dict]:
+    """Lieux d'autorité listés par la douane de Sint Maarten (pas l'aéroport)."""
+    out, seen = [], set()
+    # SharePoint encode le deux-points : « examples include&#58; ».
+    text = html.unescape(text or "")
+    blobs = _SX_EXAMPLES_RE.findall(text)
+    if not blobs and re.search(r"simpson\s*bay", text, re.I):
+        blobs = [text]
+    for blob in blobs:
+        chunk = re.sub(r"\s+", " ", blob)
+        chunk = re.sub(r"\band\b", ",", chunk, flags=re.I)
+        for raw in chunk.split(","):
+            name = _sx_normalize_place(raw)
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "lieu d'autorité douanière (Sint Maarten)",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
 def _extract_uk_pleasure_ports(text: str) -> list[dict]:
     """Si une liste de ports de plaisance UK est publiée, tous sont Ports of Entry."""
     out, seen = [], set()
@@ -915,6 +975,7 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         _extract_fr_plaisance_table(text),
         _extract_annexe_ppc_maritime(text),
         _extract_uk_pleasure_ports(text),
+        _extract_sx_customs_examples(text),
         _extract_douane_bureaux(text),
     ):
         for p in extra:
@@ -997,7 +1058,11 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
         return True
     named = [p for p in ports if (p.get("name") or "").strip()]
     min_names = int(get_rule("formalities.catalog_min_names", 8))
-    return bool(looks_like_port_catalog(text or "") and len(named) >= min_names)
+    if looks_like_port_catalog(text or "") and len(named) >= min_names:
+        return True
+    sx = [p for p in named
+          if "sint maarten" in (p.get("note") or "").casefold()]
+    return len(sx) >= 4
 
 
 _JUNK_NAME_RE = re.compile(

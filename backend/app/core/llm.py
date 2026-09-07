@@ -270,6 +270,8 @@ Règles absolues:
   est un catalogue : ne garder QUE les ports tagués turística / Turística.
   Annexe I Mayotte : uniquement les sites « Frontières maritimes » (pas l'aéroport).
   Royaume-Uni : si une liste de ports de plaisance est publiée, tous sont Ports of Entry.
+  Sint Maarten : la phrase « Some examples include » de Customs.aspx est une liste
+  de PoE (marinas + Greatbay harbor + Cruise Terminal) — ignorer aéroport et poste.
   Tableaux MPI « | Nom | / Approved vessels » = places of first arrival.
   La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.

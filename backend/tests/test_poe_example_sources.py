@@ -243,6 +243,19 @@ def test_example_hints_stay_on_the_polygon():
     assert "customs department" in qsx and "binnenkomst" not in qsx
 
 
+def test_sint_maarten_gov_org_is_whitelisted_not_sx_cctld():
+    """Le site d'État SX est sintmaartengov.org, pas un host .sx."""
+    wl = poe.build_whitelist("SX", "NL")
+    url = ("https://www.sintmaartengov.org/Ministries/Departments/"
+           "Pages/Customs.aspx")
+    assert "sintmaartengov.org" in wl
+    assert poe.url_allowed(url, wl)
+    assert poe.url_allowed("https://www.sintmaartengov.org/", wl)
+    assert not poe.url_allowed("https://www.government.nl/", wl)
+    assert not poe.is_foreign_gov_domain("sintmaartengov.org", {"sx"})
+    assert poe.domain_of(url) == "sintmaartengov.org"
+
+
 def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):
     landing = (
         "https://www.douane.gouv.fr/particuliers/vous-naviguez/"
@@ -446,6 +459,38 @@ def test_nc_clearance_bureau_and_sx_generic_marina():
     sx = extract_structured_ports("Port de plaisance de Marina\nGreat Bay.")
     assert not any(p["name"].casefold() in {"marina", "port de plaisance de marina"}
                    for p in sx)
+
+
+def test_sint_maarten_customs_examples_yield_simpson_and_great_bay():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    # Texte officiel Customs.aspx — SharePoint encode « : » en &#58;.
+    text = (
+        "Where Do Customs Officers Perform Their Duties? "
+        "Sint Maarten is a place where the Customs Officer can exercise his "
+        "authority. Some examples include&#58; Princess Juliana International "
+        "Airport, Simpsonbay Marina, Port de Plaisance Marina, Il de Sol "
+        "Marina, Cupecoy Marina, Captain Olivers Marina, Greatbay harbor, "
+        "including the Cruise Terminal, and the Post Office and the entire "
+        "coastline. Customs Officers have access to these areas at all times."
+    )
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert names == {
+        "Simpsonbay Marina",
+        "Port de Plaisance Marina",
+        "Il de Sol Marina",
+        "Cupecoy Marina",
+        "Captain Olivers Marina",
+        "Greatbay harbor",
+        "Cruise Terminal",
+    }
+    assert not any("Juliana" in n or "Airport" in n or "Post" in n
+                   or "coastline" in n.casefold() for n in names)
+    assert catalog_is_sufficient(ports, text)
+    short = extract_structured_ports(
+        "authorized ports in Sint Maarten. Princess Juliana International Airport."
+    )
+    assert short == []
 
 
 def test_attachments_beat_remaining_serp_queue(monkeypatch):
