@@ -215,14 +215,13 @@ export default function ReviewView({ t, mode }) {
   };
 
   const renderFiche = () => {
-    if (loading) {
+    if (!fiche) {
       return (
-        <p className="p-4 font-mono text-[10px] text-slate-500" data-testid="review-fiche-loading">
-          {t("poeFicheLoading")}
+        <p className="p-8 font-mono text-sm text-slate-400" data-testid="review-fiche-loading">
+          {loading ? t("poeFicheLoading") : t("reviewEmpty")}
         </p>
       );
     }
-    if (!fiche) return null;
     if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
     if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
     if (kind === "poe") return <PoeFiche t={t} fiche={fiche} />;
