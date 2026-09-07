@@ -520,7 +520,8 @@ class TestSeedDatabase:
             }],
         }
         report = build_seeds_offline(
-            extracted=[], listing_ports=proj["ports"], priors_doc=priors)
+            extracted=[], listing_ports=proj["ports"], priors_doc=priors,
+            include_wpi=False)
         assert report["summary"]["by_verdict"]["confirmed"] == 1
         assert report["summary"]["by_verdict"]["name_only"] == 1
         fort = next(s for s in report["seeds"] if s["name"] == "Fort Bay")
@@ -545,3 +546,10 @@ class TestRealFiles:
         assert "is_poe" not in sample
         assert {o.get("source") for o in sample["observations"]} <= {
             "listing", "osm", "run"}
+        wpi = report.get("wpi") or {}
+        assert wpi.get("wpi_created") == 0
+        assert wpi.get("wrote_poe_ports") is False
+        assert wpi.get("wpi_ports", 0) >= 3000
+        assert wpi.get("wpi_matched", 0) >= 1
+        assert all("wpi" not in (s.get("seed_sources") or [])
+                   for s in report["seeds"])

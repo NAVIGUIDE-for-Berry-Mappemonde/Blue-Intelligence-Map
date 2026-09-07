@@ -500,7 +500,7 @@ async def geocode_one(doc: dict, zone: dict, log) -> dict:
 
 
 def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
-    """Nom + zone + extraits. Pas de jetons listing/OSM (ça biaiserait)."""
+    """Nom + zone + extraits. Pas de jetons listing/OSM/WPI (ça biaiserait)."""
     name = (doc.get("name") or "").strip()
     return (
         f"Candidat : {name}\n"

@@ -60,12 +60,15 @@ SEED_LEGEND = (
     "osm:border = barrier=border_control ≤ 800 m ; "
     "osm:poe=yes|no = tag port_of_entry ; "
     "osm:marina / osm:port = infra OSM ; "
+    "wpi_commercial = World Port Index commerce/industriel "
+    "(contre-liste, jamais une preuve PoE) ; "
     "runs:N = vu dans N extraits (v1 inclus) ; "
     "verdict:* = confirmed|probable|unverified|name_only. "
     "Juge uniquement CE lieu. Ne liste aucun autre port."
 )
 
 OSM_PROXIMITY_KM = 0.8
+WPI_PROXIMITY_KM = 1.0
 
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
 _SPLIT_NAME = re.compile(r"\s*/\s*|\s*&\s*|\s+and\s+", re.I)
@@ -266,6 +269,13 @@ def _merge_seed(existing: dict, incoming: dict) -> None:
     existing["osm_border"] = bool(
         existing.get("osm_border") or incoming.get("osm_border")
         or incoming.get("osm_border_control"))
+    existing["wpi_commercial"] = bool(
+        existing.get("wpi_commercial") or incoming.get("wpi_commercial"))
+    if incoming.get("wpi_index") and not existing.get("wpi_index"):
+        existing["wpi_index"] = incoming.get("wpi_index")
+        existing["wpi_name"] = incoming.get("wpi_name") or existing.get("wpi_name")
+        existing["wpi_harbor_use"] = incoming.get("wpi_harbor_use") or existing.get(
+            "wpi_harbor_use")
     poe_in, poe_ex = incoming.get("osm_port_of_entry"), existing.get("osm_port_of_entry")
     if poe_in == "yes" or poe_ex == "yes":
         existing["osm_port_of_entry"] = "yes"
@@ -651,6 +661,33 @@ def attach_osm_priors(extracted: list[dict], osm: dict | None = None) -> dict:
     return attach_converted_osm(extracted, osm_priors_as_seeds(osm))
 
 
+def attach_wpi_commercial(seeds: list[dict], wpi: dict | None = None) -> dict:
+    """Pose wpi_commercial sur les graines déjà connues. 0 création, 0 preuve PoE."""
+    from app.services.wpi_ports import load_wpi_ports, match_wpi_port
+
+    doc = wpi if wpi is not None else load_wpi_ports()
+    ports = list(doc.get("ports") or [])
+    matched = 0
+    for seed in seeds:
+        if seed.get("wpi_commercial"):
+            matched += 1
+            continue
+        hit = match_wpi_port(seed, ports, radius_km=WPI_PROXIMITY_KM)
+        if hit is None:
+            continue
+        seed["wpi_commercial"] = True
+        seed["wpi_index"] = hit.get("index")
+        seed["wpi_name"] = hit.get("name")
+        seed["wpi_harbor_use"] = hit.get("harbor_use")
+        matched += 1
+    return {
+        "wpi_ports": len(ports),
+        "wpi_matched": matched,
+        "wpi_created": 0,
+        "wrote_poe_ports": False,
+    }
+
+
 def listing_is_poe(seed: dict) -> bool:
     role = seed.get("listing_role")
     if role == "other":
@@ -692,6 +729,8 @@ def seed_tokens(seed: dict) -> list[str]:
         tokens.append("osm:marina")
     if "port" in kinds or "industrial=port" in blob or "harbour" in blob:
         tokens.append("osm:port")
+    if seed.get("wpi_commercial"):
+        tokens.append("wpi_commercial")
     n_runs = sum(
         1 for s in srcs if s == "v1" or str(s).startswith("run:"))
     if n_runs:
@@ -761,16 +800,26 @@ def seed_from_files(mrgid: int, name: str, *,
 def build_seeds_offline(*, extracted: list[dict] | None = None,
                         listing_ports: list[dict] | None = None,
                         priors_doc: dict | None = None,
-                        include_priors: bool = True) -> dict:
-    """Assemble l'inventaire sans Mongo (listing + OSM priors + extraits fournis)."""
+                        include_priors: bool = True,
+                        wpi_doc: dict | None = None,
+                        include_wpi: bool = True) -> dict:
+    """Assemble l'inventaire sans Mongo (listing + OSM priors + WPI + extraits)."""
     ports = list(extracted or [])
     prior_stats: dict = {}
+    wpi_stats: dict = {}
     if include_priors:
         prior_stats = attach_osm_priors(ports, priors_doc)
     if listing_ports is None:
         listing_ports = project_listing()["ports"]
     report = build_seed_report(ports, listing_ports)
+    if include_wpi:
+        wpi_stats = attach_wpi_commercial(report["seeds"], wpi_doc)
+        for seed in report["seeds"]:
+            seed["seed_line"] = format_seed_line(seed)
     report["osm_priors"] = prior_stats
+    report["wpi"] = wpi_stats
+    summary = report.get("summary") or {}
+    summary["wpi"] = wpi_stats
     return report
 
 
@@ -786,6 +835,9 @@ VERDICTS = ("confirmed", "probable", "unverified", "name_only")
 
 
 def _is_extracted_source(source: str) -> bool:
+    """WPI / listing ne comptent pas : ce ne sont pas des extraits officiels."""
+    if source in ("wpi", "wpi_commercial", "listing"):
+        return False
     return source == "v1" or source == "osm" or str(source).startswith("run:")
 
 
@@ -925,6 +977,10 @@ async def persist_verify_run(db, report: dict, *, label: str = "seed-verify") ->
             "osm_border": bool(seed.get("osm_border")),
             "osm_port_of_entry": seed.get("osm_port_of_entry"),
             "osm_kinds": list(seed.get("osm_kinds") or []),
+            "wpi_commercial": bool(seed.get("wpi_commercial")),
+            "wpi_index": seed.get("wpi_index"),
+            "wpi_name": seed.get("wpi_name"),
+            "wpi_harbor_use": seed.get("wpi_harbor_use"),
             "observations": list(seed.get("observations") or []),
             "seed_line": seed.get("seed_line") or format_seed_line(seed),
             "search_query": seed.get("search_query") or seed_search_query(seed),
@@ -1020,6 +1076,10 @@ def seed_db_doc(seed: dict, built_at: str) -> dict:
         "osm_border": bool(seed.get("osm_border")),
         "osm_port_of_entry": seed.get("osm_port_of_entry"),
         "osm_kinds": list(seed.get("osm_kinds") or []),
+        "wpi_commercial": bool(seed.get("wpi_commercial")),
+        "wpi_index": seed.get("wpi_index"),
+        "wpi_name": seed.get("wpi_name"),
+        "wpi_harbor_use": seed.get("wpi_harbor_use"),
         "source_urls": list(seed.get("source_urls") or []),
         "observations": list(seed.get("observations") or []),
         "verify_verdict": seed.get("verify_verdict") or verdict_for_seed(seed),
@@ -1106,6 +1166,10 @@ async def collect_seed_report(db, run_ids: list[str] | None = None,
     proj = project_listing()
     listing_ports = proj["ports"] if include_listing else []
     report = build_seed_report(extracted, listing_ports)
+    wpi_stats = attach_wpi_commercial(report.get("seeds") or [])
+    for seed in report.get("seeds") or []:
+        seed["seed_line"] = format_seed_line(seed)
+    report["wpi"] = wpi_stats
     report["listing_ref_id"] = proj["listing_ref_id"]
     report["listing_stats"] = proj["stats"]
     report["sources"] = loaded
@@ -1117,6 +1181,7 @@ async def collect_seed_report(db, run_ids: list[str] | None = None,
         "osm_merged_by_name", "osm_merged_by_proximity", "osm_created",
         "refreshed_at", "priors",
     )}
+    summary["wpi"] = wpi_stats
     return report
 
 
@@ -1131,6 +1196,7 @@ def public_seed_view(report: dict, *, mode: str = "seed-union") -> dict:
         "sources": report.get("sources") or [],
         "missing_run_ids": report.get("missing_run_ids") or [],
         "osm": report.get("osm") or {},
+        "wpi": report.get("wpi") or {},
         "summary": report.get("summary"),
         "residual_preview": (report.get("residual") or [])[:80],
         "residual_total": len(report.get("residual") or []),

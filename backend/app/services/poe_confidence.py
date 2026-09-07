@@ -158,6 +158,8 @@ def score_port(port: dict, *,
     if multi_run or port.get("multi_run"):
         ext += 4
         reasons.append("vu dans plusieurs runs")
+    if port.get("wpi_commercial"):
+        reasons.append("WPI commerce (contre-liste, pas une preuve PoE)")
     parts["external"] = min(20, ext)
 
     total = min(100, sum(parts.values()))

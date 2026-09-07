@@ -274,7 +274,7 @@ Qualifier, ne pas inventer : `sovereign_entry`, `uninhabited`, `overlapping_clai
 | **Carte v1** | ~1 170–1 280 PoE géocodés, jeu d’entraînement | Ne jamais l’écraser |
 | **Listing Noonsite** | 196 pays, **1 193** PoE, **1 092** autres ports (harvest 2026-09-05). Rôles `poe` / `other`. Contrôle et graine de nom | Pas Gold. Pas d’URL Noonsite en source. Les `other` non appariés (marinas) ne partent pas en revue « listing seul » |
 | **OpenStreetMap** | Lieu, marina, havre, douane, `port_of_entry`. Overpass + Taginfo | ~32 000 `leisure=marina` : trop pour tout prendre. Une marina + douane proche = **candidat**, pas un PoE |
-| **World Port Index (WPI)** | Inventaire NGA des **ports de commerce et industriels** (~3 700, domaine public US) | **Pas encore branché dans le code.** Sert à reconnaître un port fret, pas à prouver la clearance yacht |
+| **World Port Index (WPI)** | Inventaire NGA des **ports de commerce et industriels** (~3 800, domaine public US) | **Branché** : ingest `wpi_ports.json` + jeton `wpi_commercial`. Jamais une preuve de clearance yacht. « First Port of Entry » WPI est ignoré. |
 | **UN/LOCODE** | Code lieu + fonction portuaire | Même logique que WPI : existence, pas statut plaisance |
 | **Nominatim** | Géocodage OSM, ~1 req/s, cache Mongo | Peut pointer une ville, pas le quai |
 | **GeoNames** | Second géocodeur, quota horaire | Accord < 2 km = bon signal |
@@ -332,9 +332,10 @@ Variantes de recherche (`normalize_variant`) :
 
 | Fichier | Fonctions clés |
 |---------|----------------|
-| `services/poe_seeds.py` | `union_extracted`, `attach_listing_seeds`, `attach_osm_seeds`, `verdict_for_seed`, `build_seed_union`, `persist_verify_run` |
+| `services/poe_seeds.py` | `union_extracted`, `attach_listing_seeds`, `attach_osm_seeds`, `attach_wpi_commercial`, `verdict_for_seed`, `build_seed_union`, `persist_verify_run` |
 | `services/poe_seed_enrich.py` | `geocode_one`, `judge_one`, `execute_enrich`, `apply_judge_verdict`. **Écart** : `judge_one` ne lance pas encore le parseur catalogue ni `remember_seed_urls` |
 | `services/osm_seeds.py` | `is_marina_only`, `is_seed_candidate`, `refresh_osm_cache`, `osm_inventory` |
+| `services/wpi_ports.py` | ingest Pub 150, `match_wpi_port`, `wpi_commercial` (contre-liste, pas une preuve) |
 | `services/osm_validate.py` | `overpass_around`, `score_confidence`, `validate_ports` — osm_confidence **sans** changer nom/GPS |
 | `services/listing_ref.py` | `project_listing` — slug Noonsite → mrgid |
 | `services/listing_control.py` | `compare_to_listing`, `persist_review` — file de revue |
@@ -468,9 +469,9 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 |-------|--------|
 | **Bottom-Up = oui/non seulement** | `judge_one` répond pour **un** nom et **jette le reste** de la page d’État. Commentaires Word #3 / #20 : le BU **peut** découvrir une liste inconnue. Contrat §6.3 pas encore dans le code. |
 | **`remember_seed_urls` TD seulement** | Les URLs productives du BU ne sont pas mémorisées pour les autres ZEE du même pays. |
-| **WPI absent du code** | Spécifié ici comme contre-liste commerce/industriel. À brancher en signal Bottom-Up, comme OSM : jamais comme preuve PoE. |
+| **WPI absent du code** | **Recalé (ingest + jeton, pas rebuild).** Snapshot `backend/data/wpi_ports.json` (~3 805 ports). Appariement nom + ≤ 1 km → `wpi_commercial`. 0 graine nouvelle, 0 `seed_sources`, 0 preuve juge/score/verdict. **Ne pas** `POST /api/poe/seeds/build` (4034 / 1280 / 781 figés). |
 | **Marinas OSM exclues des graines** | **Recalé (code + tests, pas de rebuild).** `leisure=marina` / CATHAF marina* = graine P si douane / `border_control` / `port_of_entry` à ≤ 800 m (`around.ctrl`, `osm_role=marina_pleasure`). Loin d’un contrôle : toujours exclu. **Ne pas** `POST /api/poe/seeds/build` ni Overpass refresh tant qu’un rebuild n’est pas décidé (4034 / 1280 / 781 figés). |
-| **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI encore absente. |
+| **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI comme preuve).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI : jeton seulement. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
 | **Promotion manuelle** | Pas d’UI de revue → carte. |
 | **Gold Dataset** | N’existe pas. Le listing n’en est pas un. |
@@ -707,6 +708,7 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 - `backend/data/poe_exceptions.json` — domaines d’État hors motif `gov` + URLs productives
 - `backend/data/territories.json` — France / outre-mer curés + blacklist
 - `backend/data/eez_world_map.geojson` — polygones simplifiés pour Leaflet
+- `backend/data/wpi_ports.json` — World Port Index slim (~3 805 ports, contre-liste `wpi_commercial`)
 
 ---
 
@@ -764,21 +766,19 @@ Validation a posteriori (`osm_validate.py`) : autour d’un PoE **déjà en cart
 
 ## 23. World Port Index et UN/LOCODE
 
-**Pas encore dans le code.** Spécifiés ici pour le faisceau D « commerce ».
+### WPI (NGA, domaine public US, ~3 805 ports)
 
-### WPI (NGA, domaine public US, ~3 700 ports)
+Liste de **ports de commerce et industriels** : nom, pays, coordonnées, type de trafic (cargo, tanker, pêche…). Snapshot : `backend/data/wpi_ports.json`. Recharge : `python scripts/ingest_wpi.py UpdatedPub150.csv`.
 
-Liste de **ports de commerce et industriels** : nom, pays, coordonnées, type de trafic (cargo, tanker, pêche…).
+Usage :
 
-Usage prévu :
-
-1. charger le WPI, rattacher chaque entrée à une ZEE VLIZ (point-in-polygon) ;
-2. apparier par nom + proximité (~1 km) aux graines et aux PoE ;
-3. poser un jeton `wpi_commercial=true` ;
-4. si D oui et P non et WPI oui → confirmer l’écart **hors carte Formalités** ;
+1. charger le WPI (fichier slim ; le rattachement VLIZ se fait via les graines déjà zonées) ;
+2. apparier par nom + proximité (≤ 1 km) aux graines — **pas** de graine WPI orpheline ;
+3. poser un jeton `wpi_commercial` (ligne d’inventaire, pas envoyé au juge) ;
+4. si D oui et P non et WPI oui → confirmer l’écart **hors carte Formalités** (revue, pas auto) ;
 5. si P oui et WPI oui → port **mixte**, rester sur la carte si la source d’État le permet.
 
-Le WPI **ne prouve jamais** qu’un yacht peut dédouaner. Il aide à **ne pas** coller un terminal conteneur sur la carte plaisance.
+Le WPI **ne prouve jamais** qu’un yacht peut dédouaner. Le champ *First Port of Entry* du CSV NGA est **ignoré**. Le jeton n’ajoute aucun point de confiance et ne change pas `verify_verdict`.
 
 ### UN/LOCODE (UNECE)
 

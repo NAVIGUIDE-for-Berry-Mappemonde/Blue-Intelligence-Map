@@ -61,6 +61,7 @@ Un même toponyme dans deux ZEE reste deux graines.
 | Listing Noonsite | `backend/data/listing_control/all_countries.json` | Rôle `poe` ou `other`, souvent sans GPS |
 | OSM cache | Mongo `osm_port_seeds` | Havres commerciaux, `port_of_entry`, contrôles ; marinas **seulement** si douane / border / PoE ≤ 800 m (`marina_pleasure`) |
 | Priors OSM | `backend/data/osm_port_priors.json` | Harbour / marina ≤ 800 m d’une douane ou `border_control` |
+| WPI | `backend/data/wpi_ports.json` | Contre-liste commerce/industriel. Jeton `wpi_commercial`. **Jamais** une preuve PoE |
 
 Une graine vue seulement par v1, seulement par OSM ou seulement par le
 listing **reste** dans l’union. On ne jette pas un nom parce qu’une autre
