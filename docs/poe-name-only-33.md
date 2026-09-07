@@ -98,7 +98,80 @@ Légende échec : `miss` = pas de point ; `ow` = `other_water` ; `inl` = `inland
 
 ---
 
+## Vérification (2026-09-07)
+
+Revue humaine documentée des **33** `name_only`. Aucune écriture Mongo, aucun `POST /api/poe/seeds/build`, `poe_ports` intact.
+
+Export machine : [`data/poe-name-only-33-verifications.json`](data/poe-name-only-33-verifications.json).
+
+### Décompte
+
+| Action | n | Sens |
+|---|---:|---|
+| `fusion` | 16 | Jumeau v1/graine déjà là : ne pas recréer |
+| `nouveau_point` | 10 | 1 lieu réel, GPS sourcé, pas de jumeau |
+| `scinder` | 5 | La fiche listing colle 2 ports |
+| `corriger_zee` | 1 | Kiritimati : 8488 → **8441** + GPS Navy Harbour |
+| `abandonner` | 1 | Prince Edward ZA : réserve, pas un PoE yacht |
+| `doute` | 0 | — |
+
+Ketchikan, Dutch Harbor, Longyearbyen et Andaman sont classés **fusion** (la cible porte déjà la bonne ZEE). La name_only reste sur le mauvais `mrgid` : on l’abandonne, on ne la « corrige » pas sur place.
+
+### Tableau des 33 décisions
+
+| # | Nom | Kind | Action | mrgid | GPS proposé | Cible / notes | Conf. |
+|---|---|---|---|---|---|---|---|
+| 1 | Geelong | 1 lieu | nouveau_point | 8323 | −38.1418881, 144.3621583 | Cunningham Pier ; FPOE DAFF commercial | haute |
+| 2 | Newcastle and Port Stephen | composé | fusion | 8323 | −32.9265876, 151.7839674 | → `8323:newcastle` ; Port Stephens ≠ FPOE | haute |
+| 3 | Port Kembla / Shellharbour | composé | fusion | 8323 | −34.480919, 150.9012821 | → Port Kembla / Wollongong ; Shellharbour ≠ FPOE | haute |
+| 4 | Big Creek / Placencia | 2 lieux | scinder | 8457 | 16.5203, −88.4104 / 16.5156, −88.3672 | → Big Creek + Placencia | haute |
+| 5 | West End/Sopers Hole | 1 lieu | fusion | 8411 | 18.3875292, −64.7033916 | → Soper’s Hole Dock | haute |
+| 6 | Grand Mannan Harbour | 1 lieu | nouveau_point | 8493 | 44.7633421, −66.7455097 | North Head Wharf (CBSA) | haute |
+| 7 | Marigot Bay (St Martin) | 1 lieu | fusion | 8495 | 18.0700053, −63.0884097 | → `8495:marinamarigot` + GPS Fort Louis ; ≠ Ste-Lucie | haute |
+| 8 | Oyster Pond - St Martin | 1 lieu FR/NL | nouveau_point | 8495 | 18.0549308, −63.0155268 | Baie frontière ; PoE listing = côté FR | haute |
+| 9 | Marina Los Morros | 1 lieu | nouveau_point | 8406 | 21.8999934, −84.9074329 | Cabo San Antonio ; ≠ Tazacorte | haute |
+| 10 | Cassis | 1 lieu | nouveau_point | 5677 | 43.2139518, 5.5360613 | Port de Cassis (sliver 2,3 km) | haute |
+| 11 | Gironde Estuary & Bordeaux | région | fusion | 5677 | 44.841225, −0.5800364 | → Bordeaux | haute |
+| 12 | Gulfe de Fos (…) | 2 ports | scinder | 5677 | 43.3758, 4.8316 / 43.4278, 4.9420 | Port Napoléon + Saint-Gervais | haute |
+| 13 | Christmas Island/Kiritimati | 1 lieu | corriger_zee | **8441** | 2.0075, −157.485833 | Navy Harbour ; ≠ AU 8309 ; ≠ Phoenix 8450 | haute |
+| 14 | Tyrell Bay & Hillsborough | 2 lieux | scinder | 8419 | 12.4833, −61.4568 / 12.4621, −61.4861 | Hillsborough v1 + Tyrrel Bay marina | haute |
+| 15 | Barbers Point (Ko Olina) | 1 complexe | nouveau_point | 8453 | 21.3278642, −158.1196613 | KoʻOlina Marina ; ZEE 8453 déjà OK | haute |
+| 16 | Andaman Islands | région | fusion | **8333** | 11.6730477, 92.7460414 | → Port of Port Blair | haute |
+| 17 | Bandar Bintan Telani (BBT) | 1 lieu | fusion | 8492 | 1.1605006, 104.3201677 | → Bandar Bintan Telani ; Tanjung Pinang lat −3,36 suspect | haute |
+| 18 | Bowden Harbour/Port Morant | 1 lieu | nouveau_point | 8459 | 17.88718, −76.31667 | Un seul havre (Bowden Wharf) | haute |
+| 19 | Khuludhufushi | faute | fusion | 8345 | 6.6233167, 73.0694663 | → Kulhudhuffushi Port (v1) | haute |
+| 20 | Puerto Vallarta/ Banderas Bay | ville+baie | fusion | 8429 | 20.6561446, −105.243527 | → Puerto Vallarta ; ≠ Nuevo Vallarta | haute |
+| 21 | Colonia, Yap Island | 1 lieu | nouveau_point | 8316 | 9.5162421, 138.121629 | ≠ Colonia del Sacramento | haute |
+| 22 | Lele/Leluh Harbour | 1 lieu | fusion | 8316 | 5.3324023, 163.0241705 | → Lelu Harbor ; ≠ Okat | haute |
+| 23 | Tanapag Harbour (Saipan) | 1 lieu | fusion | 48980 | 15.22667, 145.73667 | → Saipan ; affiner le quai | haute |
+| 24 | Longyearbyen | 1 lieu | fusion | **33181** | 78.22334, 15.64689 | → `33181:longyearbyen` déjà probable | haute |
+| 25 | San Carlos - Vista Mar | 1 lieu | nouveau_point | 8423 | 8.4823008, −79.9435075 | ≠ San Carlos MX | haute |
+| 26 | Prince Edward Island | pas un PoE | abandonner | 8384 | — | Réserve ZA ; homonyme Canada | haute |
+| 27 | Britannia Bay, Lovell | 1 lieu | fusion | 8421 | 12.8760094, −61.1828409 | → Mustique | haute |
+| 28 | Lata, Ndendo Island | 1 lieu | fusion | 8314 | −10.7244151, 165.7982204 | → Lata | haute |
+| 29 | Ria de Vigo and Baiona | 2 lieux | scinder | 5693 | 42.2413, −8.7266 / 42.1185, −8.8451 | Vigo + Baiona (Galice) | haute |
+| 30 | Cowes & R. Medina | 1 lieu | nouveau_point | 5696 | 50.7614678, −1.2966036 | Cowes Yacht Haven | haute |
+| 31 | Oban/Dunstaffnage | 2 lieux | scinder | 5696 | 56.4148, −5.4746 / 56.4499, −5.4325 | Oban North Pier + Dunstaffnage | haute |
+| 32 | Ketchikan | 1 lieu | fusion | **8463** | 55.3430696, −131.6466819 | → Ketchikan Small Boat Harbor ; 8456:ketchikanalaska already rejected | haute |
+| 33 | Unalaska/Dutch Harbor | 1 lieu | fusion | **8463** | 53.8831064, −166.552545 | → Dutch Harbor Small Boat Harbor | haute |
+
+### Comment appliquer (sans rebuild)
+
+1. **Ne jamais** `POST /api/poe/seeds/build` (delete+insert, jugements perdus).
+2. **Ne jamais** écrire dans `poe_ports`.
+3. **Fusion** : noter `review_target_dedup_key` sur la name_only ; éventuellement copier une observation `listing` sur la cible. Ne pas dupliquer le GPS sur une 2ᵉ fiche. Un `judge_status: rejected` sans coords laisse `verify_verdict=name_only` (`apply_judge_verdict`).
+4. **Nouveau point** : `$set` `lat`/`lon`/`has_coords: true`/`geocode_source: "manual_review"`. Ne pas effacer `geocoded_at` si le GPS manuel doit rester (l’enrich regéocoderait).
+5. **Corriger ZEE** : `dedup_key` = `{mrgid}:{nom}` est unique. Insérer la nouvelle clé, retirer l’ancienne. Overrides utiles : Alaska **8463**, Line Group **8441**, Andaman **8333**, Svalbard **33181** (à ajouter dans `slug_overrides` pour `norway`).
+6. **Scinder** : abandonner le nom composé ; rattacher ou créer un point par lieu.
+7. **Abandonner** : motif uniquement, pas de GPS de l’homonyme.
+8. Exemples `$set` : voir le JSON. **Mongo n’a pas été modifié** dans cette revue.
+
+
+---
+
 ## Ce qui est le plus rentable à la main
+
+Les décisions **vérifiées** sont dans [Vérification](#vérification-2026-09-07) (cette section A–D était l’hypothèse initiale).
 
 Trois familles, par ordre de ROI.
 
@@ -213,6 +286,19 @@ Oban/Dunstaffnage.
 
 Nominatim et GeoNames sont d’accord (`geocode_agree: true`) mais le point est à 3,4 km hors polygone ZEE Australie (`other_water`). Quasi-succès : le filtre spatial a tout jeté. Relancer le géocode avec un nom plus précis (Geelong Harbour / Port of Geelong) ou accepter un sliver > 2,2 km.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8323** (inchangé 8323)
+- GPS : **-38.1418881, 144.3621583** — Cunningham Pier (quai Geelong)
+- Variante : -38.15, 144.366667 — Port of Geelong FPOE DAFF
+- Sources :
+  - Nominatim OSM way/node Cunningham Pier -38.1418881, 144.3621583 (2026-09-07)
+  - DAFF First Point of Entry — Port of Geelong Determination 2019 (−38.15, 144.366667)
+  - geocode_cache Nominatim Geelong, Australia −38.1493248, 144.3598241 (rejeté other_water 3,4 km)
+- Note : 1 ville / 1 port. ZEE 8323 OK. Le géocode ville a été jeté (sliver 3,4 km). DAFF : FPOE commercial + passenger, pas non-commercial (yacht = permission préalable). Pas de jumeau v1/graine.
+
 ---
 
 ### 2. Newcastle and Port Stephen
@@ -250,6 +336,20 @@ Nominatim et GeoNames sont d’accord (`geocode_agree: true`) mais le point est 
 **Lecture**
 
 Nom composé « A and B » : le géocodeur n’a rien posé. Sur la même ZEE, la graine `Newcastle` existe déjà en `probable` (-32.9266, 151.7840) et dans `poe_ports` v1. Port Stephens (orthographe listing : Stephen) est un second lieu. Décider : fusionner avec Newcastle, ou créer deux points.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `2_lieux_listing_1_poe_officiel` · confiance : **haute**
+- mrgid correct : **8323** (inchangé 8323)
+- Cible fusion : `8323:newcastle`
+- GPS : **-32.9265876, 151.7839674** — Newcastle (v1 + probable)
+- Variante : -32.7218138, 152.1440889 — Nelson Bay / Port Stephens (mouillage, pas FPOE DAFF)
+- Sources :
+  - poe_ports v1 Newcastle −32.9265876, 151.7839674 mrgid 8323
+  - DAFF FPOE Port of Newcastle (−32.933333, 151.766667) — non-commercial autorisé
+  - DAFF seaport-locations : Port Stephens et Shellharbour absents
+- Note : Nom composé. Newcastle = vrai PoE (v1 + DAFF non-commercial). Port Stephens (~45 km, Nelson Bay) n’est pas un First Point of Entry DAFF : ne pas créer un 2e PoE. Faux ami Port Kennedy (WA / Torres) déjà noté.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -298,6 +398,20 @@ Nom composé « A and B » : le géocodeur n’a rien posé. Sur la même ZEE, l
 
 Nom composé A / B. v1 et une graine `probable` portent déjà `Port Kembla / Wollongong` (-34.4809, 150.9013). Shellharbour est une ville voisine, pas le même quai. Fusion probable avec Port Kembla / Wollongong, ou point distinct à Shellharbour.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `2_toponymes_1_poe_officiel` · confiance : **haute**
+- mrgid correct : **8323** (inchangé 8323)
+- Cible fusion : `8323:portkemblawollongong`
+- GPS : **-34.480919, 150.9012821** — Port Kembla / Wollongong (v1 + probable)
+- Variante : -34.5788697, 150.8672489 — Shellharbour (ville, ~13 km, pas FPOE DAFF)
+- Sources :
+  - poe_ports v1 Port Kembla / Wollongong −34.480919, 150.9012821
+  - Nominatim harbour Port Kembla −34.46346, 150.90148
+  - DAFF FPOE Port Kembla (−34.466667, 150.9) — commercial + passenger, pas non-commercial
+- Note : Shellharbour est la ville voisine / marina Shell Cove, pas un FPOE distinct. Fusionner vers Port Kembla / Wollongong. Ne pas scinder un 2e PoE.
+
 **Déjà en base (même ZEE ou nom proche)**
 
 | Source | Nom | Verdict / juge | lat, lon |
@@ -342,6 +456,19 @@ Nom composé A / B. v1 et une graine `probable` portent déjà `Port Kembla / Wo
 **Lecture**
 
 Deux ports Belize déjà dans v1 et en `probable` : Big Creek (16.5203, -88.4104) et Placencia (16.5156, -88.3672). La fiche listing colle deux lieux. Ne pas recréer : fusionner ou scinder.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `scinder` · kind : `2_lieux` · confiance : **haute**
+- mrgid correct : **8457** (inchangé 8457)
+- Cibles : `8457:bigcreek`, `8457:placencia`
+- GPS Big Creek (`8457:bigcreek`) : **16.5203083, -88.4103792** (v1 + poe_seed_ports probable)
+- GPS Placencia (`8457:placencia`) : **16.5156113, -88.3671785** (poe_seed_ports probable)
+- Sources :
+  - poe_ports v1 Big Creek 16.5203083, −88.4103792
+  - poe_seed_ports Placencia probable 16.5156113, −88.3671785
+- Note : Deux ports Belize (~4 km). La fiche listing colle les deux. Rattacher le listing aux deux graines existantes ; ne pas créer 8457:bigcreekplacencia comme 3e point.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -388,6 +515,18 @@ Deux ports Belize déjà dans v1 et en `probable` : Big Creek (16.5203, -88.4104
 **Lecture**
 
 v1 + graine `probable` : `Soper’s Hole Dock / West End Ferry Terminal` (18.3875, -64.7034), plus une graine `West End`. C’est le même lieu Tortola. Fusion, pas nouveau port.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8411** (inchangé 8411)
+- Cible fusion : `8411:sopersholedockwestendferryterminal`
+- GPS : **18.3875292, -64.7033916** — Soper’s Hole Dock / West End Ferry Terminal
+- Sources :
+  - poe_ports v1 Soper’s Hole Dock / West End Ferry Terminal 18.3875292, −64.7033916
+  - poe_seed_ports West End probable mêmes coords
+- Note : Un seul lieu Tortola (Soper’s Hole = West End). Pas Bahamas West End. Fusion, pas nouveau port.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -437,6 +576,18 @@ v1 + graine `probable` : `Soper’s Hole Dock / West End Ferry Terminal` (18.387
 
 Orthographe listing « Mannan » au lieu de Manan. Aucun match v1/graine. Piste : Grand Manan, New Brunswick (Canada).
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8493** (inchangé 8493)
+- GPS : **44.7633421, -66.7455097** — North Head Ferry Terminal / North Head Wharf
+- Sources :
+  - Nominatim OSM North Head Ferry Terminal 44.7633421, −66.7455097 (2026-09-07)
+  - CBSA small marine vessel reporting site : North Head Wharf, Grand Manan (Newswire 2020 + CCA cruising guide)
+  - Nominatim Grand Harbour (autre anse) 44.6704433, −66.7561930 — ne pas confondre
+- Note : Faute listing Mannan → Manan. Le PoE CBSA documenté est North Head Wharf (aussi Seal Cove). Grand Harbour est une autre baie. ZEE Canada 8493 OK.
+
 **Autres noms listing proches (à traiter avec prudence)** : `Grand Harbour` (Malta).
 
 ---
@@ -476,6 +627,19 @@ Orthographe listing « Mannan » au lieu de Manan. Aucun match v1/graine. Piste 
 **Lecture**
 
 Ne pas confondre avec `Marigot Bay Marina` v1 à Sainte-Lucie (mrgid 8416). Ici : Collectivity of Saint Martin (mrgid 8495). Le listing a aussi `Marigot` (autre nom). Géocode du nom composé a miss.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8495** (inchangé 8495)
+- Cible fusion : `8495:marinamarigot`
+- GPS : **18.0700053, -63.0884097** — Marina Fort Louis, Marigot
+- Sources :
+  - Nominatim OSM Marina Fort Louis 18.0700053, −63.0884097 (2026-09-07)
+  - Nominatim Marigot town 18.0668544, −63.0848869
+  - marinafortlouis.com GPS 18.069901, −63.087788
+- Note : Capitale FR de Saint-Martin, pas Marigot Bay Sainte-Lucie (8416:marigotbaymarina 13.9657, −61.0260). Graine 8495:marinamarigot déjà probable/accepted sans coords : fusion + poser ce GPS sur la cible. Anse Marcel est un autre PoE listing.
 
 **Autres noms listing proches (à traiter avec prudence)** : `Marigot` (Dominica), `Marigot Bay` (St. Lucia), `St Martin's` (United Kingdom).
 
@@ -517,6 +681,18 @@ Ne pas confondre avec `Marigot Bay Marina` v1 à Sainte-Lucie (mrgid 8416). Ici 
 
 Listing a aussi `Oyster Pond` (sans suffixe). Frontière FR/NL de l’île. Pas de match v1 sur 8495.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu_frontalier` · confiance : **haute**
+- mrgid correct : **8495** (inchangé 8495)
+- GPS : **18.0549308, -63.0155268** — Oyster Pond (baie, frontière FR/NL)
+- Sources :
+  - Nominatim OSM bay Oyster Pond 18.0549308, −63.0155268
+  - Nominatim suburb FR 18.0582808, −63.0149083 / village SX 18.0531951, −63.0199401
+  - Listing Sint Maarten : Oyster Pond other_port is_port_of_entry=false ; le PoE listing est le côté FR
+- Note : 1 étang frontalier, 2 toponymes admin. Garder mrgid 8495 (Collectivity of Saint Martin). Pas un doublon de Marigot (~8 km). Pas Sainte-Lucie.
+
 **Autres noms listing proches (à traiter avec prudence)** : `Oyster Pond` (Sint Maarten), `St Martin's` (United Kingdom).
 
 ---
@@ -557,6 +733,18 @@ Listing a aussi `Oyster Pond` (sans suffixe). Frontière FR/NL de l’île. Pas 
 
 Aucune occurrence v1/OSM/runs. Nom manquant dans les extraits. Recherche manuelle Cuba (Los Morros / marina).
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8406** (inchangé 8406)
+- GPS : **21.8999934, -84.9074329** — Marina Cabo San Antonio / Los Morros
+- Sources :
+  - Nominatim OSM Marina Cabo San Antonio (fuel) 21.8999934, −84.9074329
+  - Listing Noonsite position 21°54′07″N, 84°54′30″W = 21.90194, −84.90833
+  - Ocean Posse ~21°52′N, 84°56′W (pointe, moins précis)
+- Note : Pointe ouest de Cuba (Guanahacabibes), ex-Club Náutico Cabo San Antonio. Ne pas prendre Los Morros / Tazacorte (Canaries) que Nominatim renvoie sur la requête nue « Marina Los Morros ».
+
 ---
 
 ### 10. Cassis
@@ -595,6 +783,18 @@ Aucune occurrence v1/OSM/runs. Nom manquant dans les extraits. Recherche manuell
 
 Comme Geelong : accord Nominatim/GeoNames, rejeté à 2,3 km hors ZEE France (`other_water`). Le port est dans la calanque, souvent juste hors polygone. Quasi-succès spatial.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **5677** (inchangé 5677)
+- GPS : **43.2139518, 5.5360613** — Port de Cassis (marina OSM)
+- Sources :
+  - Nominatim OSM Port de Cassis marina 43.2139518, 5.5360613 (2026-09-07)
+  - geocode_cache Nominatim Cassis admin 43.2140359, 5.5396318 (rejeté other_water 2,3 km)
+  - GeoNames Cassis 43.21571
+- Note : 1 port calanque. ZEE France 5677 OK. Quasi-succès spatial : poser le quai (marina) plutôt que le centroïde admin.
+
 ---
 
 ### 11. Gironde Estuary & Bordeaux
@@ -632,6 +832,19 @@ Comme Geelong : accord Nominatim/GeoNames, rejeté à 2,3 km hors ZEE France (`o
 **Lecture**
 
 Région + ville, pas un quai. Graine `Bordeaux` déjà `probable` (44.8412, -0.5800) et dans v1. Fusionner vers Bordeaux, ou pointer un bureau (Pauillac / Le Verdon) si le listing vise l’estuaire.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `region_plus_ville` · confiance : **haute**
+- mrgid correct : **5677** (inchangé 5677)
+- Cible fusion : `5677:bordeaux`
+- GPS : **44.841225, -0.5800364** — Bordeaux (v1 + probable)
+- Variante : 45.547543, -1.0622993 — Le Verdon-sur-Mer (embouchure, si on veut un point côtier)
+- Sources :
+  - poe_ports v1 Bordeaux 44.841225, −0.5800364
+  - Nominatim Bordeaux identique
+- Note : L’estuaire n’est pas un quai. Le listing nomme Bordeaux. Fusionner. Le Verdon / Pauillac = bureaux possibles en aval, pas un second PoE listing.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -675,7 +888,20 @@ Région + ville, pas un quai. Graine `Bordeaux` déjà `probable` (44.8412, -0.5
 
 **Lecture**
 
+Nom cassé (« Gulfe ») + trois toponymes du golfe de Fos. Port Napoléon est la marina de Port-Saint-Louis-du-Rhône ; Saint-Gervais est le port de plaisance de Fos-sur-Mer. Deux lieux yacht, pas trois.
 
+**Vérification** (2026-09-07)
+
+- Décision : `scinder` · kind : `3_noms_2_ports_plaisance` · confiance : **haute**
+- mrgid correct : **5677** (inchangé 5677)
+- GPS Port Napoléon (Port-Saint-Louis-du-Rhône) : **43.3758376, 4.8316198** (Nominatim OSM marina Port Napoléon)
+- GPS Port Saint-Gervais / Claude Rossi (Fos-sur-Mer) : **43.4277969, 4.9420273** (Nominatim OSM marina Port Saint-Gervais ; fossurmer.fr)
+- Sources :
+  - Nominatim Port Napoléon 43.3758376, 4.8316198
+  - Nominatim Port Saint-Gervais 43.4277969, 4.9420273
+  - Navily / MarinaSpots Port Napoleon 43°22.56′N, 4°49.86′E
+  - Mairie Fos-sur-Mer : port Claude Rossi pointe Saint-Gervais (ex-Saint-Gervais)
+- Note : Faute Gulfe → Golfe. Port Napoléon est DANS Port-Saint-Louis-du-Rhône (1 commune, 1 marina plaisance). Saint-Gervais = Fos-sur-Mer, ~8 km. Scinder en 2 points yacht. Pas de jumeau v1. Sibling listing « Fos » = cette fiche, pas un 4e port.
 
 ---
 
@@ -714,6 +940,21 @@ Région + ville, pas un quai. Graine `Bordeaux` déjà `probable` (44.8412, -0.5
 **Lecture**
 
 Double piège : (1) « Christmas Island » = souvent l’île australienne, pas Kiritimati ; (2) la fiche est rangée en ZEE Gilbert Islands (8488) alors que Kiritimati est dans Line Group (mrgid 8441). Rejet `other_water` à 2529 km. Existe une graine `Christmas Island Port` unverified sans coords. Corriger la ZEE vers 8441 puis géocoder « Kiritimati » / London, Christmas Island.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `corriger_zee` · kind : `1_lieu_mauvaise_zee` · confiance : **haute**
+- mrgid correct : **8441** (Line Group)
+- Nouvelle clé : `8441:christmasislandkiritimati`
+- GPS : **2.0075, -157.48583333** — Port of Navy Harbour, London / Ronton, Kiritimati
+- Variante : 2.003017, -157.4820927 — London village OSM
+- Sources :
+  - LogCluster / KPA Port of Navy Harbour 2.0075°N, 157.48583333°W
+  - Nominatim London, Kiritimati 2.003017, −157.4820927 (Line Islands, KI)
+  - Wikipedia London, Kiribati 1.98333°N, 157.47500°W
+  - eez_index mrgid 8441 Line Group ; listing group = Line Islands
+- Note : PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). 8441:christmasislandport existe déjà (unverified, sans GPS) : après correction on peut fusionner vers cette clé et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -759,6 +1000,19 @@ Double piège : (1) « Christmas Island » = souvent l’île australienne, pas 
 
 Deux baies Carriacou. v1 a `Port of Hillsborough` (12.4833, -61.4568). Tyrell Bay est un autre mouillage. Fusion Hillsborough + point Tyrell, ou scinder.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `scinder` · kind : `2_lieux` · confiance : **haute**
+- mrgid correct : **8419** (inchangé 8419)
+- GPS Port of Hillsborough (`8419:portofhillsborough`) : **12.4833286, -61.4567557** (v1 poe_ports)
+- GPS Tyrrel / Tyrell Bay Marina : **12.4621, -61.4860667** (tyrellbaymarinacarriacou.com 12°27.726′N, 61°29.164′W)
+- Sources :
+  - poe_ports v1 Port of Hillsborough 12.4833286, −61.4567557
+  - Tyrell Bay Marina site officiel 12°27.726′N 61°29.164′W
+  - Nominatim OSM Tyrrel Bay 12.4580658, −61.4870166
+- Note : Deux baies Carriacou (~4 km). Hillsborough = PoE v1. Tyrell/Tyrrel Bay = marina/boatyard (Harvey Vale). Scinder : fusion Hillsborough + nouveau_point Tyrell.
+
 **Déjà en base (même ZEE, autre `dedup_key`)**
 
 | Source | Nom | Verdict / juge | lat, lon |
@@ -803,6 +1057,19 @@ Deux baies Carriacou. v1 a `Port of Hillsborough` (12.4833, -61.4568). Tyrell Ba
 
 Hawaii (8453), iso2 null côté VLIZ (normal). Ko Olina / Barbers Point, Oahu. Pas de match v1. Honolulu est le sibling listing du groupe Oahu.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_complexe_adjacent` · confiance : **haute**
+- mrgid correct : **8453** (inchangé 8453)
+- GPS : **21.3278642, -158.1196613** — KoʻOlina Marina (yacht)
+- Variante : 21.325, -158.1177778 — Kalaeloa Barbers Point Harbor (commercial USNAX)
+- Sources :
+  - Nominatim OSM Ko'Olina Marina 21.3278642, −158.1196613
+  - kalaeloaharbor.com 21°19′30″N, 158°07′04″W
+  - MarineRadar USNAX ~21.3147, −158.0942
+- Note : ZEE Hawaii 8453 déjà correcte (iso2 VLIZ null = normal). Ko Olina et Barbers Point sont adjacents (~400 m–2 km). 1 complexe ouest Oahu, distinct d’Honolulu v1 (21.3045, −157.8557). CBP liste Honolulu comme PoE Hawaii ; Barbers Point = port commercial. Listing les traite à part : nouveau_point yacht à Ko Olina.
+
 ---
 
 ### 16. Andaman Islands
@@ -840,6 +1107,19 @@ Hawaii (8453), iso2 null côté VLIZ (normal). Ko Olina / Barbers Point, Oahu. P
 **Lecture**
 
 Ce n’est pas un port, c’est un archipel. Assigné à la ZEE Inde continentale (8480), alors que Port Blair v1 est en ZEE Andaman and Nicobar (8333) (11.6730, 92.7460). Rejet inland 698 km (mauvais polygone / toponyme trop large). Action : fusionner avec Port Blair ou recréer sur mrgid 8333.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `region` · confiance : **haute**
+- mrgid correct : **8333** (Andaman and Nicobar)
+- Cible fusion : `8333:portofportblair`
+- GPS : **11.6730477, 92.7460414** — Port of Port Blair
+- Sources :
+  - poe_ports v1 Port of Port Blair 11.6730477, 92.7460414 mrgid 8333
+  - Nominatim Port Blair 11.6645348, 92.7390448
+  - eez_index 8333 Andaman and Nicobar
+- Note : Archipel, pas un quai. Inland 698 km = mauvais polygone 8480 (Inde continentale). Ne pas recréer sur 8480. Fusionner vers Port Blair 8333. Car Nicobar (8333) est un autre lieu.
 
 **Déjà en base (autre ZEE)**
 
@@ -884,6 +1164,18 @@ Ce n’est pas un port, c’est un archipel. Assigné à la ZEE Inde continental
 **Lecture**
 
 Graine `Bandar Bintan Telani` déjà `probable` (1.1605, 104.3202). `Tanjung Pinang (Bintan Island)` est `confirmed` mais avec lat **-3.36** (Bintan est ~1,2°N : point suspect). Fusionner avec Bandar Bintan Telani.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8492** (inchangé 8492)
+- Cible fusion : `8492:bandarbintantelani`
+- GPS : **1.1605006, 104.3201677** — Bandar Bentan Telani ferry terminal
+- Sources :
+  - poe_seed_ports Bandar Bintan Telani probable 1.1605006, 104.3201677
+  - Nominatim Bandar Bentan Telani identique
+- Note : Même terminal. Tanjung Pinang confirmed (−3.3564491, 104.6571166) est un autre port ET un GPS suspect (Bintan ≈ 1,16°N ; −3,36° / 104,66° ≈ Sumatra sud / Palembang). Ne pas fusionner vers Tanjung Pinang.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -932,6 +1224,18 @@ Graine `Bandar Bintan Telani` déjà `probable` (1.1605, 104.3202). `Tanjung Pin
 
 Nom composé Jamaïque. Pas de v1. Port Morant / Bowden, côte est. Scinder ou un point.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8459** (inchangé 8459)
+- GPS : **17.88718, -76.31667** — Bowden Wharf / Coast Guard, Port Morant
+- Sources :
+  - Cruiserswiki Port Morant Bowden Wharf 17.88718, −76.31667
+  - Nominatim Bowden hamlet 17.8895747, −76.3130602 (dans Port Morant)
+  - Listing Noonsite 17°53.11′N, 76°19.06′W = 17.88517, −76.31767
+- Note : Un seul havre (côte SE Jamaïque). Bowden est le hameau / wharf dans Port Morant. Pas deux PoE. ZEE 8459 OK.
+
 ---
 
 ### 19. Khuludhufushi
@@ -970,6 +1274,18 @@ Nom composé Jamaïque. Pas de v1. Port Morant / Bowden, côte est. Scinder ou u
 
 Très probablement faute pour Khulhudhuffushi (Haa Dhaalu, Maldives). Aucun match. Corriger l’orthographe avant géocode.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu_faute` · confiance : **haute**
+- mrgid correct : **8345** (inchangé 8345)
+- Cible fusion : `8345:kulhudhuffushiport`
+- GPS : **6.6233167, 73.0694663** — Kulhudhuffushi Port
+- Sources :
+  - poe_ports v1 Kulhudhuffushi Port 6.6233167, 73.0694663
+  - Nominatim Kulhudhuffushi 6.6233167, 73.0694663
+- Note : Faute listing Khuludhufushi → Kulhudhuffushi (Haa Dhaalu). Le jumeau v1+probable existe déjà. Fusion, pas nouveau point.
+
 ---
 
 ### 20. Puerto Vallarta/ Banderas Bay
@@ -1007,6 +1323,18 @@ Très probablement faute pour Khulhudhuffushi (Haa Dhaalu, Maldives). Aucun matc
 **Lecture**
 
 v1 + graine `probable` `Puerto Vallarta` (20.6561, -105.2435). Banderas Bay est la baie, pas un second PoE. Fusion.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu_plus_baie` · confiance : **haute**
+- mrgid correct : **8429** (inchangé 8429)
+- Cible fusion : `8429:puertovallarta`
+- GPS : **20.6561446, -105.243527** — Puerto Vallarta
+- Sources :
+  - poe_ports v1 Puerto Vallarta 20.6561446, −105.243527
+  - Nuevo Vallarta v1 20.6913097, −105.291834 est un autre marina (ne pas fusionner)
+- Note : Banderas Bay = la baie, pas un 2e PoE. Fusion vers Puerto Vallarta. Nuevo Vallarta reste à part.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -1053,6 +1381,17 @@ v1 + graine `probable` `Puerto Vallarta` (20.6561, -105.2435). Banderas Bay est 
 
 Colonia (Yap). Pas de v1. Attention à ne pas fusionner avec Colonia del Sacramento (Uruguay) présent en v1.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8316** (inchangé 8316)
+- GPS : **9.5162421, 138.121629** — Colonia (Yap)
+- Sources :
+  - Nominatim OSM Colonia, Yap 9.5162421, 138.121629
+  - UN/LOCODE FMYAP / MagicPort 9.52, 138.13
+- Note : Capitale de Yap / Tomil Harbour. NE PAS fusionner avec Colonia del Sacramento (Uruguay v1 −34.47, −57.84) ni Yap International Airport (9.4979, 138.0864).
+
 ---
 
 ### 22. Lele/Leluh Harbour
@@ -1089,7 +1428,18 @@ Colonia (Yap). Pas de v1. Attention à ne pas fusionner avec Colonia del Sacrame
 
 **Lecture**
 
+Lele / Lelu / Leluh = un seul havre à Kosrae. Une graine `Lelu Harbor` existe déjà en `probable`. Okat Harbour (même groupe listing) est l’autre PoE de l’île.
 
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8316** (inchangé 8316)
+- Cible fusion : `8316:leluharbor`
+- GPS : **5.3324023, 163.0241705** — Lelu Harbor, Kosrae
+- Sources :
+  - poe_seed_ports Lelu Harbor probable 5.3324023, 163.0241705
+  - Nominatim Lelu, Kosrae identique
+- Note : Lele / Lelu / Leluh = même havre Kosrae. Okat Harbour (8316:okatharbor confirmed 5.3233, 162.97) est l’autre PoE listing du groupe Kosrae — ne pas fusionner.
 
 ---
 
@@ -1128,6 +1478,19 @@ Colonia (Yap). Pas de v1. Attention à ne pas fusionner avec Colonia del Sacrame
 **Lecture**
 
 Graine `Saipan` déjà `probable` (15.1685). Tanapag est le port commercial de Saipan. Fusion ou point plus précis sur le quai Tanapag.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **48980** (inchangé 48980)
+- Cible fusion : `48980:saipan`
+- GPS : **15.22667, 145.73667** — Tanapag Harbor (plus précis que le centroïde Saipan)
+- Sources :
+  - Wikipedia Tanapag Harbor 15°13′36″N 145°44′12″E = 15.22667, 145.73667
+  - poe_seed_ports Saipan probable/accepted 15.16847, 145.74081 (île / Garapan)
+  - Nominatim Tanapag locality 15.2418863, 145.7572312
+- Note : Tanapag = port commercial de Saipan (seul PoE listing du pays). Fusion vers 48980:saipan. Option : $set le GPS Saipan vers 15.22667, 145.73667 (quai plutôt que centroïde).
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -1173,6 +1536,19 @@ Graine `Saipan` déjà `probable` (15.1685). Tanapag est le port commercial de S
 
 Accord géocodeurs, mais rejeté `inland` à 520 km de la ZEE Norvège continentale (5686). Longyearbyen est au Svalbard : le polygone 200NM continental ne le couvre pas. Le listing groupe = Svalbard (Spitsbergen). Il manque une ZEE Svalbard dans l’assignation.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu_mauvaise_zee` · confiance : **haute**
+- mrgid correct : **33181** (Svalbard)
+- Cible fusion : `33181:longyearbyen`
+- GPS : **78.22334, 15.64689** — Longyearbyen (déjà en base sur 33181)
+- Sources :
+  - poe_seed_ports 33181:longyearbyen probable 78.22334, 15.64689
+  - Nominatim Longyearbyen 78.2231558, 15.6463656 (Svalbard, Norge)
+  - eez_index mrgid 33181 Svalbard iso2=SJ
+- Note : Le point existe déjà sur la bonne ZEE. La name_only 5686 est le doublon continental (inland 520 km). Fusionner / abandonner 5686:longyearbyen. Ne pas recréer. Svalbard manquait dans slug_overrides norway.
+
 ---
 
 ### 25. San Carlos - Vista Mar Marina
@@ -1210,6 +1586,17 @@ Accord géocodeurs, mais rejeté `inland` à 520 km de la ZEE Norvège continent
 **Lecture**
 
 Ne pas prendre les San Carlos mexicains v1 (Baja / Sonora). Ici : Pacific Panama. Vista Mar Marina, San Carlos (Panama Ouest).
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8423** (inchangé 8423)
+- GPS : **8.4823008, -79.9435075** — Vista Mar Marina, San Carlos, Panamá Oeste
+- Sources :
+  - Nominatim OSM Vista Mar Marina 8.4823008, −79.9435075
+  - Listing Noonsite 08°29.10′N, 79°56.40′W = 8.485, −79.94 (carte 8.48611, −79.94444)
+- Note : Pacifique Panama, pas San Carlos Baja (24.79, −112.12) ni Sonora (27.95, −111.06). Immigration sur place ; cruising permit à Panama City d’après le listing. ZEE 8423 OK.
 
 **Autres noms listing proches (à traiter avec prudence)** : `San Carlos` (Mexico).
 
@@ -1251,6 +1638,20 @@ Ne pas prendre les San Carlos mexicains v1 (Baja / Sonora). Ici : Pacific Panama
 
 Homonyme violent : le listing « Marion & Prince Edward Island » est subantarctique sud-africain (mrgid 8384). Le géocodeur a visé l’Île-du-Prince-Édouard canadienne → inland 13 907 km. Il n’y a probablement pas de PoE plaisance là-bas ; Marion / Prince Edward sont des bases. Vérifier si le listing est pertinent.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `abandonner` · kind : `region_pas_poe` · confiance : **haute**
+- mrgid correct : **8384** (inchangé 8384)
+- GPS : aucun (ne pas poser l’homonyme)
+- Île (réf. seulement) : -46.6365552, 37.946448 — Prince Edward Island (subantarctique ZA) — île, pas un port
+- Sources :
+  - Nominatim Prince Edward Island ZA −46.6365552, 37.946448
+  - Marion Island OSM −46.9029708, 37.7527452
+  - SANAP / Prince Edward Islands Management Plan : Special Nature Reserve, pas de tourisme à terre
+  - Règlement AMP : Sanctuary 12 NM, entrée navires interdite hors État / force majeure
+- Note : Listing « Marion & Prince Edward Island » = archipel ZA, ZEE 8384 correcte. Le géocodeur a visé le Canada (inland 13 907 km). Pas de PoE plaisance. Ne pas poser le GPS canadien. Abandonner la fiche.
+
 ---
 
 ### 27. Britannia Bay, Lovell
@@ -1288,6 +1689,19 @@ Homonyme violent : le listing « Marion & Prince Edward Island » est subantarct
 **Lecture**
 
 Mustique (listing group). v1 a `Mustique` (12.8760, -61.1828). Britannia Bay / Lovell Village = le mouillage principal de Mustique. Fusion probable.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8421** (inchangé 8421)
+- Cible fusion : `8421:mustique`
+- GPS : **12.8760094, -61.1828409** — Mustique (v1) — mouillage Britannia Bay
+- Variante : 12.8792913, -61.1889553 — Britannia Bay (OSM bay, plus précis)
+- Sources :
+  - poe_ports v1 Mustique 12.8760094, −61.1828409
+  - Nominatim Britannia Bay 12.8792913, −61.1889553
+- Note : Listing group Mustique. Britannia Bay / Lovell Village = le mouillage principal. Pas Britannia Bay Afrique du Sud ni Ontario. Fusion vers Mustique ; option affiner vers la baie.
 
 **Déjà en base (même ZEE)**
 
@@ -1332,6 +1746,19 @@ Mustique (listing group). v1 a `Mustique` (12.8760, -61.1828). Britannia Bay / L
 **Lecture**
 
 v1 + graine `probable` `Lata` (-10.7244, 165.7982). Même île Ndendo. Fusion.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **8314** (inchangé 8314)
+- Cible fusion : `8314:lata`
+- GPS : **-10.7244151, 165.7982204** — Lata (Ndendo / Temotu)
+- Sources :
+  - poe_seed_ports Lata probable −10.7244151, 165.7982204
+  - poe_ports v1 Lata mêmes coords
+  - Nominatim Lata, Solomon Islands −10.7241726, 165.7977641
+- Note : Même ville. Ne pas matcher les Santa Cruz des Canaries / Açores. Fusion.
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -1379,6 +1806,18 @@ v1 + graine `probable` `Lata` (-10.7244, 165.7982). Même île Ndendo. Fusion.
 
 Ría (plan d’eau) + Baiona. Deux ports possibles : Vigo et Baiona. Nom composé → miss. Scinder.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `scinder` · kind : `2_lieux` · confiance : **haute**
+- mrgid correct : **5693** (inchangé 5693)
+- GPS Porto de Vigo : **42.2413406, -8.7265604** (Nominatim OSM marina Porto de Vigo)
+- GPS Porto Deportivo de Baiona : **42.1184779, -8.8451206** (Nominatim OSM Puerto Deportivo de Baiona)
+- Sources :
+  - Nominatim Porto de Vigo 42.2413406, −8.7265604 (Galice, pas le hameau Vigo/Asturies)
+  - Nominatim Porto Deportivo de Baiona 42.1184779, −8.8451206
+- Note : Ría = plan d’eau. Deux ports ~16 km. Aucun jumeau v1. Scinder en 2 nouveau_point. Requête « Puerto de Vigo » sans Galice tombe sur Asturies.
+
 ---
 
 ### 30. Cowes & R. Medina (Isle of Wight)
@@ -1416,6 +1855,18 @@ Ría (plan d’eau) + Baiona. Deux ports possibles : Vigo et Baiona. Nom compos�
 **Lecture**
 
 Cowes + Medina. Nom composé → miss. Pas de v1 Cowes. Siblings listing South Coast : Dover, Falmouth, Plymouth, Portsmouth, Southampton Water.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `nouveau_point` · kind : `1_lieu` · confiance : **haute**
+- mrgid correct : **5696** (inchangé 5696)
+- GPS : **50.7614678, -1.2966036** — Cowes Yacht Haven
+- Sources :
+  - Nominatim OSM Cowes Yacht Haven marina 50.7614678, −1.2966036
+  - Nominatim Cowes town 50.7633176, −1.2985186
+  - cowes.co.uk Cowes Harbour
+- Note : Cowes + Medina = un estuaire, un PoE. La rivière mène à Newport mais le clearance yacht est Cowes. Pas de v1. nouveau_point unique.
 
 ---
 
@@ -1455,6 +1906,18 @@ Cowes + Medina. Nom composé → miss. Pas de v1 Cowes. Siblings listing South C
 
 Deux sites Écosse (Oban et marina Dunstaffnage). Nom composé → miss. Scinder ou Oban.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `scinder` · kind : `2_lieux` · confiance : **haute**
+- mrgid correct : **5696** (inchangé 5696)
+- GPS Oban North Pier : **56.4148317, -5.474593** (Nominatim OSM North Pier Oban)
+- GPS Dunstaffnage Marina : **56.4498834, -5.4325487** (Nominatim OSM Dunstaffnage Marina)
+- Sources :
+  - Nominatim North Pier Oban 56.4148317, −5.4745930
+  - Nominatim Dunstaffnage Marina 56.4498834, −5.4325487
+- Note : Deux sites ~4,5 km. Oban = ville / pier ; Dunstaffnage = marina (Dunbeg). Scinder. « Oban Harbour » Nominatim a renvoyé un salon de manucure — ignorer.
+
 ---
 
 ### 32. Ketchikan
@@ -1492,6 +1955,19 @@ Deux sites Écosse (Oban et marina Dunstaffnage). Nom composé → miss. Scinder
 **Lecture**
 
 Triple problème : (1) listing USA group Alaska mais mrgid 8456 = ZEE United States (côte ouest continentale), pas Alaska 8463 ; (2) géocode OK mais inland 920 km hors polygone 8456 ; (3) le lieu existe déjà en v1 et `probable` comme `Ketchikan Small Boat Harbor` (55.3431, -131.6467) sur mrgid 8463. Une autre fiche `Ketchikan, Alaska` (8456) a été jugée `rejected`. Action : fusionner vers 8463, ne pas republier 8456.
+
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu_mauvaise_zee` · confiance : **haute**
+- mrgid correct : **8463** (Alaska)
+- Cible fusion : `8463:ketchikansmallboatharbor`
+- GPS : **55.3430696, -131.6466819** — Ketchikan Small Boat Harbor
+- Sources :
+  - poe_ports v1 Ketchikan Small Boat Harbor 55.3430696, −131.6466819 mrgid 8463
+  - Nominatim Ketchikan 55.3430696, −131.6466819
+  - 8456:ketchikanalaska unverified/rejected (ne pas republier)
+- Note : slug usa→[8456,8463,8453] a pris le 1er. Inland 920 km hors ZEE continentale. Le lieu existe déjà en Alaska 8463. Fusionner. Ne pas corriger 8456:ketchikan sur place (collision / mauvais polygone).
 
 **Déjà en base (même ZEE ou nom proche)**
 
@@ -1539,6 +2015,18 @@ Triple problème : (1) listing USA group Alaska mais mrgid 8456 = ZEE United Sta
 
 Même erreur de ZEE (8456 au lieu de 8463). v1 + `probable` : `Dutch Harbor Small Boat Harbor` (53.8831, -166.5525) sur 8463. Fusion.
 
+
+**Vérification** (2026-09-07)
+
+- Décision : `fusion` · kind : `1_lieu_mauvaise_zee` · confiance : **haute**
+- mrgid correct : **8463** (Alaska)
+- Cible fusion : `8463:dutchharborsmallboatharbor`
+- GPS : **53.8831064, -166.552545** — Dutch Harbor Small Boat Harbor
+- Sources :
+  - poe_ports v1 Dutch Harbor Small Boat Harbor 53.8831064, −166.552545 mrgid 8463
+  - Nominatim Dutch Harbor, Unalaska 53.8867533, −166.5418000 (Alaska, pas WA/MD)
+- Note : Unalaska = la ville, Dutch Harbor = le port, même île. Même bug 8456 vs 8463. Fusionner vers v1 8463. 19 CFR : Dutch Harbor est une Customs station sous Anchorage, pas un PoE CBP autonome — le listing Noonsite le traite quand même comme PoE yacht.
+
 **Déjà en base (ZEE Alaska 8463)**
 
 | Source | Nom | Verdict / juge | lat, lon |
@@ -1562,6 +2050,7 @@ Même erreur de ZEE (8456 au lieu de 8463). v1 + `probable` : `Dutch Harbor Smal
    - Hawaii → `8453` (déjà)
    - Line Group / Kiritimati → `8441`
    - Andaman → `8333`
+   - Svalbard / Longyearbyen → `33181` (à ajouter dans `slug_overrides` pour `norway`)
 4. Ensuite seulement : `POST /api/poe/seeds/enrich` avec
    `verdicts: ["name_only"]` **après** avoir retiré `geocoded_at` des
    fiches à retenter — ou juger à la main (listing + GPS → `confirmed`
@@ -1610,8 +2099,8 @@ Utile pour savoir si le listing parle d’une *région* ou d’un *port*.
 
 ## Fichier machine
 
-Export brut des 33 documents Mongo : [`data/poe-name-only-33.json`](data/poe-name-only-33.json)
-(mêmes données, sans les rapprochements).
+- Export brut des 33 documents Mongo : [`data/poe-name-only-33.json`](data/poe-name-only-33.json)
+- Décisions de cette revue : [`data/poe-name-only-33-verifications.json`](data/poe-name-only-33-verifications.json)
 
 ## Constantes de ce snapshot
 
