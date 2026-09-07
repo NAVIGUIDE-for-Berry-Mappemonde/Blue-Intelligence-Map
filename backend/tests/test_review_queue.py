@@ -42,7 +42,15 @@ class _FakeColl:
         if not q:
             return True
         for k, v in q.items():
-            if doc.get(k) != v:
+            if isinstance(v, dict) and "$in" in v:
+                if doc.get(k) not in v["$in"]:
+                    return False
+            elif isinstance(v, dict) and "$regex" in v:
+                import re
+                flags = re.I if "i" in str(v.get("$options") or "") else 0
+                if not re.search(str(v["$regex"]), str(doc.get(k) or ""), flags):
+                    return False
+            elif doc.get(k) != v:
                 return False
         return True
 
@@ -312,6 +320,7 @@ def test_test_run_labels_and_ocean_fallback():
     assert review_gold.is_test_run({"label": "canary-claude-v2"})
     assert review_gold.is_test_run({"label": "smoke-3-zones"})
     assert review_gold.is_test_run({"label": "seed-enrich"})
+    assert review_gold.is_test_run({"_id": "seed-enrich", "label": ""})
     assert not review_gold.is_test_run({"label": "seed-verify-mondial"})
     assert not review_gold.is_test_run({"label": "bestof3-v1"})
     from app.core.geo import ocean_fallback_coords

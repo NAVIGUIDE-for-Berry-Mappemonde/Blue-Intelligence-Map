@@ -31,7 +31,7 @@ _TEST_LABEL = re.compile(
 )
 
 _eez_pre_gold_cache: tuple[float, frozenset[int]] | None = None
-_EEZ_CACHE_TTL_S = 60.0
+_EEZ_CACHE_TTL_S = 300.0
 
 
 def now_iso() -> str:
@@ -52,8 +52,11 @@ def is_test_run(doc: dict | None) -> bool:
         return False
     if str(doc.get("purpose") or "").strip().lower() == "test":
         return True
-    label = str(doc.get("label") or "").strip()
-    return bool(label and _TEST_LABEL.match(label))
+    for raw in (doc.get("label"), doc.get("_id")):
+        text = str(raw or "").strip()
+        if text and _TEST_LABEL.match(text):
+            return True
+    return False
 
 
 def is_pre_gold_project(doc: dict | None) -> bool:
@@ -180,36 +183,40 @@ async def pre_gold_eez_mrgids(db) -> set[int]:
             for mid in mrgids
         })
 
-    for run in await production_poe_runs(db):
-        rid = _sid(run.get("_id"))
-        if not rid:
-            continue
-        by_ports: dict[int, list[dict]] = {}
+    prod_runs = await production_poe_runs(db)
+    rids = [_sid(r.get("_id")) for r in prod_runs if _sid(r.get("_id"))]
+    ports_by_run: dict[str, dict[int, list[dict]]] = {rid: {} for rid in rids}
+    td_by_run: dict[str, dict[int, str]] = {rid: {} for rid in rids}
+    if rids:
         try:
             for p in await db.poe_run_ports.find(
-                {"run_id": rid}, {"name": 1, "mrgid": 1},
-            ).to_list(20000):
+                {"run_id": {"$in": rids}}, {"name": 1, "mrgid": 1, "run_id": 1},
+            ).to_list(80000):
+                rid = _sid(p.get("run_id"))
                 try:
                     mid = int(p.get("mrgid") or 0)
                 except (TypeError, ValueError):
                     continue
-                if mid:
-                    by_ports.setdefault(mid, []).append(p)
+                if rid in ports_by_run and mid:
+                    ports_by_run[rid].setdefault(mid, []).append(p)
         except Exception:
-            by_ports = {}
-        by_td: dict[int, str] = {}
+            ports_by_run = {rid: {} for rid in rids}
         try:
             for z in await db.poe_run_zones.find(
-                {"run_id": rid}, {"mrgid": 1, "sources": 1},
-            ).to_list(500):
+                {"run_id": {"$in": rids}}, {"mrgid": 1, "sources": 1, "run_id": 1},
+            ).to_list(4000):
+                rid = _sid(z.get("run_id"))
                 try:
                     mid = int(z.get("mrgid") or 0)
                 except (TypeError, ValueError):
                     continue
-                if mid:
-                    by_td[mid] = _td_url(z)
+                if rid in td_by_run and mid:
+                    td_by_run[rid][mid] = _td_url(z)
         except Exception:
-            by_td = {}
+            td_by_run = {rid: {} for rid in rids}
+    for rid in rids:
+        by_ports = ports_by_run.get(rid) or {}
+        by_td = td_by_run.get(rid) or {}
         mrgids = set(by_ports) | set(by_td)
         if not mrgids:
             continue

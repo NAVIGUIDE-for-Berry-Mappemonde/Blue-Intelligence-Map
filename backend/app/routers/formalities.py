@@ -219,6 +219,17 @@ async def poe_zones(visible: bool = False):
     }
 
 
+_EEZ_FC_CACHE: dict | None = None
+
+
+def _eez_feature_collection() -> dict:
+    global _EEZ_FC_CACHE
+    if _EEZ_FC_CACHE is None:
+        import json
+        _EEZ_FC_CACHE = json.loads(poe.MAP_FILE.read_text(encoding="utf-8"))
+    return _EEZ_FC_CACHE
+
+
 @router.get("/poe/zones/geojson")
 async def poe_zones_geojson(visible: bool = False):
     if not poe.MAP_FILE.exists():
@@ -228,9 +239,8 @@ async def poe_zones_geojson(visible: bool = False):
             poe.MAP_FILE, media_type="application/geo+json",
             headers={"Cache-Control": "public, max-age=3600", "X-EEZ-Source": "Marine Regions (VLIZ) v12 CC-BY 4.0"},
         )
-    import json
     from app.services.review_gold import visible_eez_mrgids
-    raw = json.loads(poe.MAP_FILE.read_text(encoding="utf-8"))
+    raw = _eez_feature_collection()
     allowed = await visible_eez_mrgids(_db)
     feats = []
     for feat in raw.get("features") or []:
