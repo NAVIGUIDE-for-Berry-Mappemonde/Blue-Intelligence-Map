@@ -238,8 +238,10 @@ Schéma obligatoire :
 Règles absolues :
 - Extraire tout port, terminal ou harbour que la source officielle désigne comme
   point d'entrée des navires étrangers : ports d'entrée, clearance, puertos
-  habilitados, ports of entry, « port of / port de / puerto de X », capitanías,
-  designated ports, gazette, décret, arrêté, customs act.
+  habilitados, ports of entry, « port of / port de / puerto de X », capitanías
+  de puerto, delegaciones, designated ports, gazette, décret, arrêté,
+  customs act, liste de ports de plaisance, places of first arrival.
+  Un scan OCR de Gaceta reste une source : extraire les noms malgré les fautes.
 - La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé :
   {"ports": []}.

@@ -422,12 +422,51 @@ _PORT_OF_SKIP = frozenset({
     "call", "departure", "the", "a", "an", "any",
     "registry", "register", "registre", "destination",
     "commerce", "plaisance", "recreo", "recreio", "mer", "mar",
-    "base", "principal",
+    "base", "principal", "éligibles", "eligibles", "eligible",
+    "rattachement", "liste",
 })
 _CATALOG_MARKERS_RE = re.compile(
     r"puertos habilitados|designated ports|ports? d['’]entrée|"
-    r"ports? of entry|puertos de entrada|portos de entrada",
+    r"ports? of entry|puertos de entrada|portos de entrada|"
+    r"ports? de plaisance|capitan[ií]as?\s+de\s+puerto|"
+    r"places of first arrival",
     re.I,
+)
+_CAPITANIA_RE = re.compile(
+    r"capitan[iíea][aáe]?\s+d[ae]\s+puerto\s+(?:d[ae]\s+|del?\s+)?"
+    r"([A-ZÁÉÍÓÚÑÜ][\w'’.\-áéíóúñüÁÉÍÓÚÑÜ ]{1,55})",
+    re.I,
+)
+_CAPITANIA_CUT_RE = re.compile(
+    r"\b(?:tendr[aá]|art[ií]culo|su sede|geogr[aá]fica|dependencias)\b",
+    re.I,
+)
+_CAPITANIA_SKIP = frozenset({
+    "la republica", "la república", "la circunscripcion", "la circunscripción",
+    "cada circunscripcion",
+})
+_PLAISANCE_PORT_RE = re.compile(
+    r"port(?:s)?\s+de\s+plaisance\s+(?:de\s+|d['’]|du\s+|des\s+)?"
+    r"([A-ZÀ-Ý][\w'’. \-]{1,50})",
+    re.I,
+)
+_FR_REGION_RE = re.compile(
+    r"^(haut\s+de\s+france|normandie|bretagne|paca|nouvelle\s+aquitaine|"
+    r"corse|occitanie|pays\s+de\s+la\s+loire|provence)",
+    re.I,
+)
+_FR_AUTH_RE = re.compile(
+    r"^(paf|douane|police aux fronti|garde-fronti|autorit|version\s|"
+    r"liste des ports|r[eé]gion|commune|port de plaisance|ppf\b)",
+    re.I,
+)
+_DELEG_BLOCK_RE = re.compile(
+    r"delegaciones\s*:\s*(.*?)(?=art[ií]culo|estaci[oó]n de pilotos|\Z)",
+    re.I | re.S,
+)
+_DELEG_LINE_RE = re.compile(
+    r"^[\s\-—–•·]+([A-ZÁÉÍÓÚÑÜ][\w'’.\-áéíóúñüÁÉÍÓÚÑÜ ()]{2,50})\s*$",
+    re.M,
 )
 _PDF_ABS_RE = re.compile(r"https?://[^\s\]\)'\"<>]+\.pdf(?:\?[^\s\]\)'\"<>]*)?", re.I)
 _PDF_HREF_RE = re.compile(
@@ -470,6 +509,12 @@ def looks_like_port_catalog(text: str) -> bool:
         return True
     if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= lat_need or lat_hits >= 3):
         return True
+    if len(_CAPITANIA_RE.findall(text)) >= 4:
+        return True
+    if len(re.findall(r"port\s+de\s+plaisance", text, re.I)) >= 3:
+        return True
+    if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
+        return True
     return False
 
 
@@ -495,8 +540,95 @@ def extract_structured_ports(text: str) -> list[dict]:
     return out
 
 
+def _clean_legal_port_name(raw: str) -> str:
+    n = " ".join((raw or "").replace(":", " ").split()).strip(" .;,-")
+    n = _CAPITANIA_CUT_RE.split(n, maxsplit=1)[0]
+    n = re.sub(r"\s+tendr[aá].*$", "", n, flags=re.I)
+    n = re.sub(r"\s+ten-\s*$", "", n, flags=re.I)
+    n = re.sub(r"^(?:po|da|del)\s+", "", n, flags=re.I)
+    return n.strip(" .;,-")[:120]
+
+
+def _extract_capitanias(text: str) -> list[dict]:
+    out, seen = [], set()
+    for m in _CAPITANIA_RE.finditer(text or ""):
+        name = _clean_legal_port_name(m.group(1))
+        fold = name.casefold()
+        if (not name or len(name) < 3 or fold in _CAPITANIA_SKIP or fold in seen
+                or "republica" in fold or "república" in fold
+                or "refrend" in fold or fold.endswith(("tendrá", "tendra", "su"))):
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": name, "city": None,
+            "note": "capitanía de puerto (règlement de juridiction)",
+            "extraction_engine": "catalog",
+        })
+    for block in _DELEG_BLOCK_RE.findall(text or ""):
+        for m in _DELEG_LINE_RE.finditer(block):
+            name = _clean_legal_port_name(m.group(1))
+            if (not name or len(name) < 3 or name.casefold() in seen
+                    or _FR_AUTH_RE.match(name)):
+                continue
+            seen.add(name.casefold())
+            out.append({
+                "name": name, "city": None,
+                "note": "délégation de capitanía",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _extract_fr_plaisance_table(text: str) -> list[dict]:
+    """Table douane : Région / Commune / Port de plaisance / PPF / autorité."""
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    out, seen = [], set()
+    i = 0
+    while i < len(lines):
+        if not _FR_REGION_RE.match(lines[i]):
+            i += 1
+            continue
+        if i + 2 >= len(lines):
+            break
+        commune, port = lines[i + 1], lines[i + 2]
+        if (_FR_AUTH_RE.match(commune) or _FR_REGION_RE.match(commune)
+                or _FR_AUTH_RE.match(port) or _FR_REGION_RE.match(port)):
+            i += 1
+            continue
+        key = port.casefold()
+        if key not in seen and 3 <= len(port) <= 80:
+            seen.add(key)
+            out.append({
+                "name": port[:120], "city": commune[:80],
+                "note": "liste ports de plaisance éligibles",
+                "extraction_engine": "catalog",
+            })
+        i += 3
+    for m in _PLAISANCE_PORT_RE.finditer(text or ""):
+        name = _clean_legal_port_name(m.group(1))
+        fold = name.casefold()
+        if (not name or fold in seen or fold in _PORT_OF_SKIP or len(name) < 3
+                or fold.startswith(("éligibl", "eligibl", "ppf", "rattachement"))):
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": f"Port de plaisance de {name}"[:120], "city": None,
+            "note": "liste ports de plaisance éligibles",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
 def _extract_structured_ports_one(text: str) -> list[dict]:
     out, seen = [], set()
+    for extra in (_extract_capitanias(text), _extract_fr_plaisance_table(text)):
+        for p in extra:
+            key = p["name"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
     for m in _CATALOG_HEAD.finditer(text or ""):
         name = " ".join(m.group(1).split()).strip()
         block = m.group(2) or ""
@@ -518,6 +650,8 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
             "note": "catalogue officiel (nom + coordonnées dans la source)",
             "extraction_engine": "catalog",
         })
+    if len(out) >= 10:
+        return out
     for m in _PORT_OF_RE.finditer(text or ""):
         name = m.group(1).strip().rstrip(".")
         first = name.split()[0].casefold() if name else ""
@@ -558,7 +692,11 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
     like_min = int(get_rule("formalities.catalog_looks_like_min_coords", 1))
     if with_coords >= min_coords:
         return True
-    return bool(looks_like_port_catalog(text or "") and with_coords >= like_min)
+    if looks_like_port_catalog(text or "") and with_coords >= like_min:
+        return True
+    named = [p for p in ports if (p.get("name") or "").strip()]
+    min_names = int(get_rule("formalities.catalog_min_names", 8))
+    return bool(looks_like_port_catalog(text or "") and len(named) >= min_names)
 
 
 _JUNK_NAME_RE = re.compile(

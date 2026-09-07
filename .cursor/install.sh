@@ -24,7 +24,9 @@ sudo mkdir -p /var/lib/mongodb /var/log/mongodb
 sudo chown -R "$(id -u):$(id -g)" /var/lib/mongodb /var/log/mongodb
 
 echo "==> [2/4] Backend (Python venv + dependencies)"
-sudo apt-get install -y python3.12-venv build-essential >/dev/null 2>&1 || true
+sudo apt-get install -y python3.12-venv build-essential \
+  tesseract-ocr tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-eng \
+  >/dev/null 2>&1 || true
 cd "$REPO/backend"
 [ -d .venv ] || python3 -m venv .venv
 # shellcheck disable=SC1091

@@ -103,6 +103,89 @@ def test_france_landing_still_yields_current_list_and_ppf():
     assert should_follow_attachments(html, base)
 
 
+def test_venezuela_reglamento_ocr_yields_capitanias():
+    from app.core.extract import extract_structured_ports, looks_like_port_catalog
+    text = """
+    Artículo 4:—Las Capitanias de Puerto de la República, son las siguientes:
+    1) Capitanía de Puerto de Maracaibo
+    2) Capitanía de Puerto de Las Piedras
+    3) Capitanía de Puerto de La Vela de Coro
+    4) Capitanía de Puerto de Puerto Cabello
+    5) Capitanía de Puerto de La Guaira
+    6) Capitanía de Puerto de Guanta-Puerto La Cruz
+    7) Capitanía de Puerto de Puerto Sucre
+    8) Capitanía de Puerto de Carúpano
+    9) Capitanía de Puerto de Pampatar
+    10) Capitanía de Puerto de Güiria
+    11) Capitanía de Puerto de Caripito
+    12) Capitanía de Puerto de Ciudad Guayana
+    13) Capitanía de Puerto de Ciudad Bolívar
+    14) Capitanía de Puerto de Amazonas
+    15) Capitanía de Puerto de Apure
+    Delegaciones:
+    —La Salina (Cabimas)
+    —Puerto Miranda
+    """
+    ports = extract_structured_ports(text)
+    names = " ".join(p["name"] for p in ports)
+    assert looks_like_port_catalog(text)
+    assert "Maracaibo" in names and "La Guaira" in names
+    assert "Pampatar" in names and "Güiria" in names
+    assert len(ports) >= 15
+
+
+def test_france_plaisance_table_yields_ports():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    text = """
+    Liste des ports de plaisance éligibles
+    Haut de France
+    Calais
+    Port de plaisance de Calais
+    Calais
+    PAF
+    Haut de France
+    Dunkerque
+    Dunkerque Marina
+    Dunkerque
+    PAF
+    Normandie
+    Dieppe
+    Port de plaisance de Dieppe
+    Dieppe
+    Douane
+    Bretagne
+    Saint-Malo
+    Saint-Malo Plaisance
+    Saint Malo
+    PAF
+    PACA
+    Antibes
+    Port Vauban
+    Cannes
+    Douane
+    PACA
+    Cap d'Ail
+    Port de Cap d'Ail
+    Monaco
+    PAF
+    Nouvelle Aquitaine
+    La Rochelle
+    Port de plaisance de La Rochelle
+    La Rochelle La Pallice
+    Douane
+    Corse
+    Ajaccio
+    Tino Rossi
+    Ajaccio
+    PAF
+    """
+    ports = extract_structured_ports(text)
+    names = " ".join(p["name"] for p in ports)
+    assert "Calais" in names and "Dunkerque Marina" in names
+    assert "Port Vauban" in names and "La Rochelle" in names
+    assert catalog_is_sufficient(ports, text)
+
+
 def test_venezuela_inea_attachments_keep_ley_and_reglamento():
     html = """
     <a href="/wp-content/uploads/2026/04/Ley-de-Marinas-y-Actividades-Conexas.pdf">ley</a>

@@ -348,7 +348,9 @@
       "https://inea.gob.ve/"
     ],
     "FR": [
-      "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
+      "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de",
+      "https://www.douane.gouv.fr/sites/default/files/2026-07/06/Liste-ports-de-plaisance-eligibles.pdf",
+      "https://www.douane.gouv.fr/sites/default/files/uploads/files/carte-PPF-maritimes.pdf"
     ],
     "SX": [
       "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx"
@@ -370,7 +372,8 @@
     ],
     "VE": [
       "Venezuela INEA Ley de Marinas y Actividades Conexas",
-      "Venezuela reglamento jurisdicción capitanías de puerto"
+      "Venezuela reglamento jurisdicción capitanías de puerto",
+      "Venezuela INEA puertos habilitados"
     ],
     "FR": [
       "liste ports de plaisance éligibles PPF douane France"

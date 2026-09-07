@@ -15,6 +15,7 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+from app.core.extract import extract_structured_ports  # noqa: E402
 from app.services import poe_pipeline as poe  # noqa: E402
 from app.services.poe_pipeline import _collect_texts  # noqa: E402
 
@@ -82,6 +83,7 @@ async def probe_zone(zone: dict) -> dict:
     if zone["mrgid"] == 5677:
         needles.extend(FR_PDF_NEEDLES)
     missing = [n for n in needles if n not in found]
+    ports = extract_structured_ports("\n\n".join(texts))
     return {
         "mrgid": zone["mrgid"],
         "name": zone.get("name"),
@@ -91,6 +93,8 @@ async def probe_zone(zone: dict) -> dict:
         "fetched_chars": sum(len(t) for t in texts),
         "needles_ok": not missing,
         "missing": missing,
+        "ports": [p.get("name") for p in ports],
+        "n_ports": len(ports),
         "logs": logs,
     }
 
@@ -160,9 +164,12 @@ async def main(argv: list[str] | None = None) -> int:
         reports.append(rep)
         flag = "OK" if rep["needles_ok"] else "MANQUE"
         print(f"[{flag}] {rep['name']} ({mid}) used={len(rep['used'])} "
-              f"chars={rep['fetched_chars']} missing={rep['missing']}")
+              f"chars={rep['fetched_chars']} ports={rep['n_ports']} "
+              f"missing={rep['missing']}")
         for u in rep["used"]:
             print(f"    {u}")
+        for name in (rep.get("ports") or [])[:12]:
+            print(f"      · {name}")
 
     out = {"probes": reports}
     if args.run:
