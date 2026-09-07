@@ -409,3 +409,41 @@ class TestExecuteEnrich:
         assert judged.count("OnlyName") == 1
         assert judged.count("AlreadyXY") == 1
         assert set(judged) == {"OnlyName", "AlreadyXY"}
+
+
+class TestPickGeocode:
+    def test_agree_near_eez_keeps_point(self, monkeypatch):
+        monkeypatch.setattr(enr, "classify_poe_point", lambda *a, **k: {
+            "validated": False, "kind": "other_water", "dist_km": 3.4,
+        })
+        out = enr.pick_geocode(
+            {"nominatim": [-38.147, 144.361],
+             "geonames": [-38.149, 144.357],
+             "agree": True},
+            {"name": "Geelong"},
+            {"iso2": "AU"},
+            object(),
+            None,
+        )
+        assert out["lat"] == -38.147
+        assert out["has_coords"] is True
+        assert out["geocode_arbitration"] == "agree_near_eez"
+        assert out["validated"] is True
+
+    def test_outside_persists_rejected_coords(self, monkeypatch):
+        monkeypatch.setattr(enr, "classify_poe_point", lambda *a, **k: {
+            "validated": False, "kind": "other_water", "dist_km": 2.3,
+        })
+        out = enr.pick_geocode(
+            {"nominatim": [43.216, 5.537], "agree": False},
+            {"name": "Cassis"},
+            {"iso2": "FR"},
+            object(),
+            None,
+        )
+        assert out["lat"] is None
+        assert out["has_coords"] is False
+        assert out["geocode_arbitration"] == "spatial_rejected"
+        assert out["geocode_rejected_lat"] == 43.216
+        assert out["geocode_rejected_lon"] == 5.537
+        assert out["geocode_rejected_source"] == "nominatim"

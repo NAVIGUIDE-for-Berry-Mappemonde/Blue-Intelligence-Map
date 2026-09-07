@@ -67,10 +67,19 @@ SEED_LEGEND = (
 OSM_PROXIMITY_KM = 0.8
 
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
+_SPLIT_NAME = re.compile(r"\s*/\s*|\s*&\s*|\s+and\s+", re.I)
 _PREFIX = (
     "porto de ", "port of ", "port de ", "pkk porti i ", "puerto de ", "haven ",
     "port autonome de ",
 )
+# Fautes listing → forme déjà en base (normalize_name).
+_LISTING_NAME_ALIASES = {
+    "khuludhufushi": "kulhudhuffushi",
+    "grandmannan": "grandmanan",
+    "grandmannanharbourgrandmananisland": "grandmanan",
+    "leleleluhharbour": "leluharbor",
+    "leleluhharbour": "leluharbor",
+}
 
 
 def _alias_name(name: str) -> str:
@@ -80,6 +89,37 @@ def _alias_name(name: str) -> str:
         if low.startswith(p):
             return n[len(p):].strip() or n
     return n
+
+
+def listing_name_parts(name: str) -> list[str]:
+    """Découpe « A / B » et « A and B » pour l'appariement. Garde le nom plein."""
+    raw = (name or "").strip()
+    if not raw:
+        return []
+    parts = [p.strip() for p in _SPLIT_NAME.split(raw) if p.strip() and p.strip() != raw]
+    inner = re.match(r"^(.+?)\s*\((.+)\)\s*$", raw)
+    if inner:
+        for bit in re.split(r"\s*[,/&]\s*", inner.group(2)):
+            bit = bit.strip()
+            if bit and bit not in parts:
+                parts.append(bit)
+    return parts
+
+
+def _norm_alias(name: str) -> str:
+    n = normalize_name(name)
+    return _LISTING_NAME_ALIASES.get(n, n)
+
+
+def _names_overlap(a: str, b: str) -> bool:
+    """Ketchikan ⊂ Ketchikan Small Boat Harbor, Kulhudhuffushi ≈ Khuludhufushi."""
+    na, nb = _norm_alias(a), _norm_alias(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return len(short) >= 6 and short in long
 
 
 def _match_seed(seed: dict, pool: list[dict]) -> dict | None:
@@ -97,6 +137,8 @@ def _match_seed(seed: dict, pool: list[dict]) -> dict | None:
         if find_duplicate_in_list({"name": a}, [{"name": b}], title_key="name"):
             return other
         if text_similarity(a, b) >= 0.90:
+            return other
+        if _names_overlap(a, b):
             return other
         if seed.get("mrgid") is not None and seed.get("mrgid") == other.get("mrgid"):
             if text_similarity(a, b) >= 0.82:
@@ -343,10 +385,18 @@ def attach_listing_seeds(extracted: list[dict], listing_ports: list[dict]) -> di
         if not pool:
             novel.append(ls)
             continue
+        hits: list[dict] = []
         hit = _match_seed(ls, pool)
         if hit is not None:
-            _merge_seed(hit, ls)
-            hit["listing_name"] = ls["name"]
+            hits.append(hit)
+        for part in listing_name_parts(ls.get("name") or ""):
+            part_hit = _match_seed({"name": part, "mrgid": ls.get("mrgid")}, pool)
+            if part_hit is not None and part_hit not in hits:
+                hits.append(part_hit)
+        if hits:
+            for h in hits:
+                _merge_seed(h, ls)
+                h["listing_name"] = h.get("listing_name") or ls["name"]
             attached += 1
         else:
             novel.append(ls)

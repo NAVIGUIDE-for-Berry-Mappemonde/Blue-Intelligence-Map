@@ -23,6 +23,24 @@ EEZ_INDEX_FILE = LISTING_DIR / "eez_index.json"
 AUTO_THRESHOLD = 0.86
 _SLUG_TAIL = re.compile(r"-\d+$")
 
+# Groupe listing / nom → mrgid VLIZ (le 1er override n'est pas toujours le bon).
+_GROUP_MRGID = (
+    ("usa", "alaska", 8463),
+    ("usa", "hawaii", 8453),
+    ("kiribati", "line", 8441),
+    ("kiribati", "phoenix", 8450),
+    ("kiribati", "gilbert", 8488),
+    ("norway", "svalbard", 33181),
+    ("india", "andaman", 8333),
+    ("india", "nicobar", 8333),
+)
+_NAME_MRGID = (
+    ("usa", ("ketchikan", "unalaska", "dutchharbor", "juneau", "anchorage"), 8463),
+    ("kiribati", ("kiritimati", "christmasisland"), 8441),
+    ("india", ("andaman", "portblair", "nicobar"), 8333),
+    ("norway", ("longyearbyen",), 33181),
+)
+
 # Slugs listing → libellé comparable à eez_index.name
 _ALIASES = {
     "france-2": "france",
@@ -132,15 +150,46 @@ def _resolution(slug: str, name: str, zones: list[dict], method: str) -> dict:
     }
 
 
-def _emit_port(country: dict, res: dict, port: dict, role: str) -> dict:
+def pick_listing_mrgid(res: dict, port: dict | str | None,
+                       zones: list[dict] | None = None) -> int:
+    """Choisit le polygone VLIZ d'un port listing (groupe / nom, pas le 1er override)."""
+    mrgids = [int(x) for x in (res.get("mrgids") or [])]
+    slug = (res.get("slug") or "").lower()
+    if isinstance(port, dict):
+        group = normalize_name(port.get("group") or "")
+        name_n = normalize_name(port.get("name") or "")
+    else:
+        group, name_n = "", normalize_name(port or "")
+    hinted = None
+    for s, needle, mid in _GROUP_MRGID:
+        if slug == s and needle in group:
+            hinted = mid
+            break
+    if hinted is None:
+        for s, needles, mid in _NAME_MRGID:
+            if slug == s and any(n in name_n for n in needles):
+                hinted = mid
+                break
+    if hinted:
+        return hinted
+    return mrgids[0] if mrgids else 0
+
+
+def _emit_port(country: dict, res: dict, port: dict, role: str,
+               zones: list[dict] | None = None) -> dict:
     name = (port.get("name") if isinstance(port, dict) else port) or ""
     group = port.get("group") if isinstance(port, dict) else None
-    primary = res["mrgids"][0] if res["mrgids"] else 0
+    by_mrgid = {int(z["mrgid"]): z for z in (zones or [])}
+    primary = pick_listing_mrgid(res, port, zones)
+    mrgids = list(res["mrgids"])
+    if primary and primary not in mrgids:
+        mrgids = [primary, *mrgids]
+    z = by_mrgid.get(primary) or {}
     return {
         "mrgid": primary,
-        "mrgids": list(res["mrgids"]),
-        "zone_name": (res["zone_names"] or [country.get("name")])[0],
-        "country_iso2": res.get("iso2"),
+        "mrgids": mrgids,
+        "zone_name": z.get("name") or (res["zone_names"] or [country.get("name")])[0],
+        "country_iso2": z.get("iso2") or res.get("iso2"),
         "name": name,
         "slug": country.get("slug"),
         "country": country.get("name"),
@@ -170,9 +219,9 @@ def project_listing(listing: dict | None = None, zones: list[dict] | None = None
                                "other": len(country.get("other_ports") or [])})
             continue
         for p in country.get("ports_of_entry") or []:
-            ports.append(_emit_port(country, res, p, "poe"))
+            ports.append(_emit_port(country, res, p, "poe", zones=zones))
         for p in country.get("other_ports") or []:
-            ports.append(_emit_port(country, res, p, "other"))
+            ports.append(_emit_port(country, res, p, "other", zones=zones))
 
     poe_n = sum(1 for p in ports if p["role"] == "poe")
     other_n = sum(1 for p in ports if p["role"] == "other")

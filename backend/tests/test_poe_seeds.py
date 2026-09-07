@@ -8,9 +8,9 @@ from app.services.listing_ref import project_listing  # noqa: E402
 from app.services.poe_seeds import (  # noqa: E402
     attach_listing_other, attach_listing_seeds, attach_osm_priors,
     attach_osm_seeds, build_seed_report, build_seeds_offline,
-    format_seed_line, listing_name_seeds, persist_seed_database,
-    seed_db_doc, seed_search_query, union_extracted, url_is_excluded_search,
-    verdict_for_seed,
+    format_seed_line, listing_name_parts, listing_name_seeds,
+    persist_seed_database, seed_db_doc, seed_search_query, union_extracted,
+    url_is_excluded_search, verdict_for_seed,
 )
 
 ZONES = [
@@ -100,6 +100,51 @@ class TestListingSeeds:
         assert rep["summary"]["extracted_geocoded"] == 1
         assert rep["summary"]["by_verdict"]["confirmed"] == 1
         assert rep["summary"]["by_verdict"]["name_only"] == 1
+
+    def test_compound_listing_attaches_to_both(self):
+        extracted = union_extracted([
+            ("v1", [
+                _port(8457, "Big Creek", lat=16.52, lon=-88.41),
+                _port(8457, "Placencia", lat=16.51, lon=-88.36),
+            ]),
+        ])
+        ports = [{
+            "name": "Big Creek / Placencia", "role": "poe",
+            "mrgid": 8457, "mrgids": [8457],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_novel"] == []
+        assert packed["listing_attached"] == 1
+        assert all("listing" in p["seed_sources"] for p in extracted)
+
+    def test_short_name_matches_longer_twin(self):
+        extracted = union_extracted([
+            ("v1", [_port(8463, "Ketchikan Small Boat Harbor", lat=55.3, lon=-131.6)]),
+        ])
+        ports = [{
+            "name": "Ketchikan", "role": "poe",
+            "mrgid": 8456, "mrgids": [8456, 8463],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_attached"] == 1
+        assert packed["listing_novel"] == []
+
+    def test_listing_typo_alias(self):
+        extracted = union_extracted([
+            ("v1", [_port(8345, "Kulhudhuffushi Port", lat=6.62, lon=73.06)]),
+        ])
+        ports = [{
+            "name": "Khuludhufushi", "role": "poe",
+            "mrgid": 8345, "mrgids": [8345],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_attached"] == 1
+
+    def test_listing_name_parts(self):
+        assert "Newcastle" in listing_name_parts("Newcastle and Port Stephen")
+        assert "Port Stephen" in listing_name_parts("Newcastle and Port Stephen")
+        assert "Placencia" in listing_name_parts("Big Creek / Placencia")
+        assert "Kiritimati" in listing_name_parts("Christmas Island/Kiritimati")
 
     def test_listing_name_seeds_skip_other_ports(self):
         ports = [

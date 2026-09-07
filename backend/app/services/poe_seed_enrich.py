@@ -159,11 +159,30 @@ def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
         if other:
             chosen, arb = other, "spatial_switch"
         else:
-            return {"lat": None, "lon": None, "geocode_source": None,
-                    "validated": False, "spatial_kind": chosen.get("kind"),
-                    "distance_km": chosen.get("dist_km"),
-                    "geocode_agree": (dual or {}).get("agree"),
-                    "geocode_arbitration": "spatial_rejected"}
+            dist = chosen.get("dist_km")
+            # Accords Nominatim/GeoNames juste hors sliver 2,2 km (Cassis, Geelong).
+            if ((dual or {}).get("agree") and dist is not None
+                    and float(dist) <= 4.0):
+                return {
+                    "lat": chosen["lat"], "lon": chosen["lon"],
+                    "geocode_source": chosen["source"],
+                    "validated": True, "spatial_kind": chosen.get("kind"),
+                    "distance_km": dist,
+                    "geocode_agree": True,
+                    "geocode_arbitration": "agree_near_eez",
+                    "has_coords": True,
+                }
+            return {
+                "lat": None, "lon": None, "geocode_source": None,
+                "validated": False, "spatial_kind": chosen.get("kind"),
+                "distance_km": dist,
+                "geocode_agree": (dual or {}).get("agree"),
+                "geocode_arbitration": "spatial_rejected",
+                "geocode_rejected_lat": chosen["lat"],
+                "geocode_rejected_lon": chosen["lon"],
+                "geocode_rejected_source": chosen["source"],
+                "has_coords": False,
+            }
     return {
         "lat": chosen["lat"], "lon": chosen["lon"],
         "geocode_source": chosen["source"],
