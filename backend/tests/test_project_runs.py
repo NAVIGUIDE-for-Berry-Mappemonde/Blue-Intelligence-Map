@@ -420,9 +420,10 @@ def test_diff_and_report_wrote_projects_false():
     asyncio.run(run())
 
 
-def test_promote_is_phase_d():
+def test_promote_is_manual_phase_d():
     src = Path(__file__).resolve().parents[1] / "app" / "routers" / "project_runs.py"
     text = src.read_text()
-    assert "501" in text
-    assert "phase D" in text
+    assert "HTTPException(501" not in text
+    assert "promote_run" in text
+    assert "Promotion manuelle" in text
     assert "/projects/runs/{run_id}/report" in text

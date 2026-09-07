@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.core.tasks import TaskState
 from app.db import db, get_settings
-from app.services import project_runs
+from app.services import project_review, project_runs
 from app.state import swarm
 
 router = APIRouter(prefix="/api")
@@ -52,10 +52,11 @@ async def project_run_start(body: ProjectRunBody | None = None):
 @router.get("/projects/runs")
 async def project_runs_list():
     docs = await db.project_runs.find({}).sort("created_at", -1).to_list(100)
+    any_promoted = any(bool(d.get("wrote_projects")) for d in docs)
     return {
         "count": len(docs),
         "active_run_id": swarm.run_id if swarm.running else None,
-        "wrote_projects": False,
+        "wrote_projects": any_promoted,
         "items": docs,
     }
 
@@ -65,7 +66,11 @@ async def project_run_status(run_id: str):
     doc = await db.project_runs.find_one({"_id": run_id})
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
-    out = {"run": doc, "wrote_projects": False, "live": swarm.status() if swarm.run_id == run_id else None}
+    out = {
+        "run": doc,
+        "wrote_projects": bool(doc.get("wrote_projects")),
+        "live": swarm.status() if swarm.run_id == run_id else None,
+    }
     st = RUN_STATES.get(run_id)
     if st is not None and st.running:
         out["task"] = st.status()
@@ -127,8 +132,21 @@ async def project_run_report(run_id: str, format: str = "json"):
     return rep
 
 
+class PromoteBody(BaseModel):
+    force: bool = False
+
+
 @router.post("/projects/runs/{run_id}/promote")
-async def project_run_promote(run_id: str):
+async def project_run_promote(run_id: str, body: PromoteBody | None = None):
+    """Promotion manuelle run → carte. Jamais appelée par le swarm."""
     if not await db.project_runs.find_one({"_id": run_id}):
         raise HTTPException(404, f"Run {run_id} unknown")
-    raise HTTPException(501, "promotion manuelle — phase D du CDC Projets")
+    body = body or PromoteBody()
+    settings = await get_settings()
+    try:
+        return await project_review.promote_run(
+            db, run_id, settings=settings, force=body.force)
+    except KeyError:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e

@@ -6,8 +6,9 @@ Un run écrit uniquement dans :
   - project_run_projects    : sites / projets extraits {run_id, …}
   - project_run_events      : journal (RunRecorder, events_coll dédiée)
 
-La collection v1 `projects` n'est JAMAIS écrite (wrote_projects: false).
-Promotion carte = phase D, manuelle, hors de ce module.
+La collection v1 `projects` n'est JAMAIS écrite par ce module
+(wrote_projects: false). Promotion carte = action manuelle
+(`project_review.promote_run`).
 """
 import time
 import uuid
@@ -203,7 +204,7 @@ async def build_run_report(db, run_id: str) -> dict:
     diff = await diff_run_vs_v1(db, run_id)
     return {
         "run_id": run_id,
-        "wrote_projects": False,
+        "wrote_projects": bool(run.get("wrote_projects")),
         "label": run.get("label"),
         "mode": run.get("mode"),
         "state": run.get("state"),
@@ -225,7 +226,7 @@ def report_to_markdown(rep: dict) -> str:
         "",
         f"- état : {rep.get('state')}",
         f"- mode : {rep.get('mode')}",
-        f"- wrote_projects : false",
+        f"- wrote_projects : {str(bool(rep.get('wrote_projects'))).lower()}",
         f"- sites : {counters.get('sites', verdicts.get('site', 0))}",
         f"- unlocated : {counters.get('unlocated', 0)}",
         f"- rejected : {counters.get('rejected', 0)}",
@@ -236,7 +237,7 @@ def report_to_markdown(rep: dict) -> str:
         f"{diff.get('already_in_v1', 0)} déjà connus, "
         f"{diff.get('unlocated_or_rejected', 0)} écartés",
         "",
-        "Promotion carte = phase D (manuelle).",
+        "Promotion carte : POST /api/projects/runs/{id}/promote (manuelle).",
     ]
     return "\n".join(lines) + "\n"
 
