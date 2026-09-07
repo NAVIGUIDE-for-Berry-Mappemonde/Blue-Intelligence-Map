@@ -24,6 +24,7 @@ GET  /api/poe/listing-control/canary
 GET  /api/poe/seeds/union              union bottom-up v1+runs+OSM+listing (aucun crawl)
 POST /api/poe/seeds/build              reconstruit poe_seed_ports (pas poe_ports)
 GET  /api/poe/seeds                    lecture poe_seed_ports
+GET  /api/poe/seeds/gps-audit          audit GPS confirmed (dry-run, pas persist)
 GET  /api/poe/seeds/line               requête TinyFish + résumé inventaire
 POST /api/poe/seeds/verify             classe les graines + run versionné (pas poe_ports)
 POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
@@ -61,6 +62,7 @@ from app.services.poe_seeds import (
     format_seed_line, match_named_seed, persist_seed_database,
     persist_verify_run, public_seed_view, seed_from_files, seed_search_query,
 )
+from app.services.poe_confirmed_gps_audit import audit_from_db
 
 router = APIRouter(prefix="/api")
 
@@ -357,6 +359,12 @@ async def poe_seeds_list(mrgid: int | None = None, verdict: str | None = None,
         "seeds": docs,
         "wrote_poe_ports": False,
     }
+
+
+@router.get("/poe/seeds/gps-audit")
+async def poe_seeds_gps_audit():
+    """Audit GPS des `confirmed` (dry-run). Pas de persist, pas poe_ports, pas build."""
+    return await audit_from_db(_db)
 
 
 @router.get("/poe/seeds/line")

@@ -616,6 +616,12 @@ def classify_poe_point(lat: float, lon: float, geom, prepared=None,
         return {"kind": "unknown", "validated": False, "dist_km": None}
 
 
+def spatial_class_for_point(lat: float, lon: float, geom, prepared=None,
+                            inland: dict | None = None) -> dict:
+    """Nom public pour l'audit GPS confirmed — même contrat que classify_poe_point."""
+    return classify_poe_point(lat, lon, geom, prepared=prepared, inland=inland)
+
+
 # ---------------------------------------------------------------------------
 # Détection d'anomalies spatiales (scikit-learn — bootstrappé sur la BDD)
 # ---------------------------------------------------------------------------
