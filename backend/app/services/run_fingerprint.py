@@ -95,6 +95,8 @@ def build_code_fingerprint(settings: dict | None = None,
                 "app.services.poe_seeds", "persist_seed_database"),
             "seed_search_query": _module_has(
                 "app.services.poe_seeds", "seed_search_query"),
+            "wpi_counterlist": _module_has(
+                "app.services.wpi_ports", "load_wpi_ports"),
         },
     }
 

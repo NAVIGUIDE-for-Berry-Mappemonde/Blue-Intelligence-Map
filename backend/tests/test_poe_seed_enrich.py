@@ -23,12 +23,14 @@ class TestJudgePrompt:
             "seed_sources": ["listing", "v1"], "listing_role": "poe",
             "osm_customs": True, "has_coords": True,
             "verify_verdict": "unverified",
-            "seed_line": "Fort Bay | listing:poe · osm:customs",
+            "wpi_commercial": True,
+            "seed_line": "Fort Bay | listing:poe · osm:customs · wpi_commercial",
         }
         prompt = enr._judge_prompt(doc, {"name": "Saba", "iso2": "BQ"}, "extrait officiel")
         assert "Candidat : Fort Bay" in prompt
         assert "listing:poe" not in prompt
         assert "osm:customs" not in prompt
+        assert "wpi_commercial" not in prompt
         assert "extrait officiel" in prompt
         assert "Uturoa" not in prompt
 
