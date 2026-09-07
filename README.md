@@ -122,7 +122,7 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 - `GET /api/projects` · `GET /api/funders` · `GET /api/categories` — mode Projets
 - `POST /api/swarm/deploy` · `GET /api/swarm/status` — pipeline de découverte
 - `GET /api/marinas` · `POST /api/marinas/build` · `POST /api/marinas/enrich-batch` — mode Marinas
-- `GET /api/poe/zones` · `POST /api/poe/zones/{mrgid}/generate` · `GET /api/poe/ports` — mode Formalités
+- `GET /api/poe/zones` · `GET /api/poe/ports` — mode Formalités (`POST …/generate` et `generate-batch` : 410)
 - `POST /api/poe/runs` · `GET /api/poe/runs/{id}/status` · `GET /api/poe/runs/{id}/diff` · `GET /api/poe/runs/{id}/report` — runs versionnés PoE
 - `GET /api/export/{geojson|marinas.geojson|poe.geojson}` — exports GeoJSON
 

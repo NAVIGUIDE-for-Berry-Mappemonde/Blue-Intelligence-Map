@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from app.core.tasks import TaskState, new_task
+from app.core.tasks import TaskState
 from app.db import db as _db
 from app.services import poe_pipeline as poe
 from app.services import osm_validate
@@ -17,9 +17,13 @@ router = APIRouter(prefix="/api")
 
 
 REF_STATE = TaskState()
-BATCH_STATE = TaskState()
-GEN_TASKS: dict[int, dict] = {}
 GEN_LOCKS: set[int] = set()
+
+# Carte v1 : generate / generate-batch écrasaient poe_ports. 410, pas 404.
+GENERATE_GONE = (
+    "Retiré : Générer / generate-batch n'écrase plus poe_ports. "
+    "Utiliser un run isolé (POST /api/poe/runs) ou l'enrichissement des graines."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +91,8 @@ async def _auto_refresh_cycle():
     summary = {"checked": 0, "unchanged_md5": 0, "updated": 0, "errors_retried": 0, "failed": 0}
     for z, force in todo:
         mrgid = z["mrgid"]
-        if mrgid in GEN_LOCKS or BATCH_STATE.running or REF_STATE.running:
-            _auto_log(f"[{z.get('name')}] SKIP (verrou ou batch manuel en cours)")
+        if mrgid in GEN_LOCKS or REF_STATE.running:
+            _auto_log(f"[{z.get('name')}] SKIP (verrou ou référentiel en cours)")
             continue
         GEN_LOCKS.add(mrgid)
         prev_gen = z.get("generated_at")
@@ -120,7 +124,7 @@ async def _auto_refresh_loop():
     await asyncio.sleep(90)  # laisser l'app démarrer
     while True:
         due = (AUTO_STATE["last_cycle_at"] or 0) + CYCLE_EVERY_H * 3600 <= time.time()
-        busy = REF_STATE.running or BATCH_STATE.running
+        busy = REF_STATE.running
         if AUTO_STATE["enabled"] and due and not busy:
             AUTO_STATE["cycle_running"] = True
             try:
@@ -215,144 +219,31 @@ async def poe_zones_geojson():
 
 
 # ---------------------------------------------------------------------------
-# Génération PoE — unitaire
+# Génération PoE carte — retirée (ne plus upsert poe_ports)
 # ---------------------------------------------------------------------------
-@router.post("/poe/zones/{mrgid}/generate", status_code=202)
+@router.post("/poe/zones/{mrgid}/generate")
 async def poe_generate(mrgid: int, force: bool = False):
-    zone = await _db.eez_zones.find_one({"mrgid": mrgid})
-    if not zone:
-        raise HTTPException(404, f"EEZ mrgid={mrgid} unknown")
-    if mrgid in GEN_LOCKS:
-        raise HTTPException(409, "Generation already running for this EEZ")
-    for k in [k for k, v in GEN_TASKS.items() if v.get("finished_at") and time.time() - v["finished_at"] > 3600]:
-        GEN_TASKS.pop(k, None)
-    GEN_LOCKS.add(mrgid)
-    GEN_TASKS[mrgid] = new_task()
-
-    async def _runner():
-        task = GEN_TASKS[mrgid]
-
-        def log_fn(msg):
-            task["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-            if len(task["logs"]) > 300:
-                task["logs"] = task["logs"][-300:]
-
-        try:
-            doc = await asyncio.wait_for(
-                poe.generate_zone_poe(_db, mrgid, logger=log_fn, force=force),
-                timeout=360,
-            )
-            task["result"] = poe.zone_to_item(doc) if doc else None
-            task["state"] = "done"
-        except Exception as e:
-            task["error"] = f"{type(e).__name__}: {e}"
-            task["state"] = "error"
-            log_fn(f"FATAL: {task['error']}")
-        finally:
-            task["finished_at"] = time.time()
-            GEN_LOCKS.discard(mrgid)
-
-    asyncio.create_task(_runner())
-    return {"status": "started", "mrgid": mrgid}
+    raise HTTPException(410, GENERATE_GONE)
 
 
 @router.get("/poe/zones/{mrgid}/generate/status")
 async def poe_generate_status(mrgid: int):
-    task = GEN_TASKS.get(mrgid)
-    if not task:
-        return {"state": "idle", "mrgid": mrgid}
-    return {"state": task["state"], "mrgid": mrgid, "started_at": task["started_at"],
-            "finished_at": task["finished_at"], "result": task["result"],
-            "error": task["error"], "logs_tail": task["logs"][-40:]}
-
-
-# ---------------------------------------------------------------------------
-# Génération PoE — batch
-# ---------------------------------------------------------------------------
-class PoeBatchBody(BaseModel):
-    limit: int = 10          # 0 = toutes
-    only_missing: bool = True
-    force: bool = False
+    raise HTTPException(410, GENERATE_GONE)
 
 
 @router.post("/poe/generate-batch")
-async def poe_generate_batch(body: PoeBatchBody | None = None):
-    if BATCH_STATE.running:
-        raise HTTPException(409, "A PoE batch is already running")
-    body = body or PoeBatchBody()
-    q = {"status": "non_generee"} if body.only_missing else {}
-    docs = await _db.eez_zones.find(q, {"geometry": 0}).to_list(500)
-    docs.sort(key=lambda d: (d.get("name") or "").lower())
-    if body.limit > 0:
-        docs = docs[: body.limit]
-    if not docs:
-        raise HTTPException(400, "No candidate EEZ (build the referential or uncheck only_missing)")
-
-    BATCH_STATE.reset()
-    BATCH_STATE.running = True
-    BATCH_STATE.started_at = time.time()
-    BATCH_STATE.total = len(docs)
-
-    async def _runner():
-        try:
-            BATCH_STATE.log(f"{len(docs)} ZEE sélectionnées (concurrency=2, only_missing={body.only_missing})")
-            sem = asyncio.Semaphore(2)
-            counter = {"i": 0}
-
-            async def _one(d):
-                mrgid = d["mrgid"]
-                async with sem:
-                    if BATCH_STATE.cancel:
-                        BATCH_STATE.log(f"SKIP {d.get('name')} (batch annulé)")
-                        return
-                    if mrgid in GEN_LOCKS:
-                        BATCH_STATE.log(f"SKIP {d.get('name')} (déjà verrouillée)")
-                        return
-                    GEN_LOCKS.add(mrgid)
-                    try:
-                        doc = await asyncio.wait_for(
-                            poe.generate_zone_poe(
-                                _db, mrgid,
-                                logger=lambda m: BATCH_STATE.log(f"[{d.get('name')}] {m}"),
-                                force=body.force,
-                            ),
-                            timeout=360,
-                        )
-                        BATCH_STATE.results.append({
-                            "mrgid": mrgid, "name": d.get("name"),
-                            "status": (doc or {}).get("status"),
-                            "poe_count": (doc or {}).get("poe_count", 0),
-                        })
-                    except Exception as e:
-                        BATCH_STATE.log(f"[{d.get('name')}] FAILED: {type(e).__name__}: {e}")
-                        BATCH_STATE.results.append({"mrgid": mrgid, "name": d.get("name"),
-                                                    "error": f"{type(e).__name__}: {e}"})
-                    finally:
-                        GEN_LOCKS.discard(mrgid)
-                        counter["i"] += 1
-                        BATCH_STATE.progress = counter["i"]
-
-            await asyncio.gather(*(_one(d) for d in docs))
-            by = {}
-            for r in BATCH_STATE.results:
-                s = r.get("status") or "error"
-                by[s] = by.get(s, 0) + 1
-            BATCH_STATE.summary = by
-            BATCH_STATE.log(f"Batch terminé. Statuts: {by}")
-        except Exception as e:
-            BATCH_STATE.error = f"{type(e).__name__}: {e}"
-            BATCH_STATE.log(f"FATAL: {BATCH_STATE.error}")
-        finally:
-            BATCH_STATE.finished_at = time.time()
-            BATCH_STATE.running = False
-
-    asyncio.create_task(_runner())
-    return {"started": True, "selected": len(docs), "concurrency": 2}
+async def poe_generate_batch():
+    raise HTTPException(410, GENERATE_GONE)
 
 
 @router.get("/poe/generate-batch/status")
 async def poe_generate_batch_status():
-    return BATCH_STATE.status()
+    raise HTTPException(410, GENERATE_GONE)
+
+
+@router.post("/poe/generate-batch/cancel")
+async def poe_generate_batch_cancel():
+    raise HTTPException(410, GENERATE_GONE)
 
 
 @router.get("/poe/claude-usage")
@@ -360,15 +251,6 @@ async def poe_claude_usage():
     from app.core.claude import usage_public
     from app.db import get_settings
     return usage_public(await get_settings())
-
-
-@router.post("/poe/generate-batch/cancel")
-async def poe_generate_batch_cancel():
-    if not BATCH_STATE.running:
-        raise HTTPException(409, "No PoE batch running")
-    BATCH_STATE.cancel = True
-    BATCH_STATE.log("Annulation demandée — les ZEE restantes ne démarreront pas")
-    return {"cancelling": True}
 
 
 # ---------------------------------------------------------------------------

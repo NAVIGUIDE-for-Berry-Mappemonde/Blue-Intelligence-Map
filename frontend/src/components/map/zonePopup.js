@@ -2,7 +2,7 @@ import { ZONE_COLORS, escH, flagEmoji } from "./constants";
 
 /**
  * Popup HTML d'une fiche ZEE (mode Formalités) : statut, compteur de PoE,
- * qualification UNCLOS, sources officielles et bouton Générer / Régénérer.
+ * qualification UNCLOS et sources officielles. Pas de bouton Générer.
  * Lit tRef/zoneItemsRef à l'ouverture (jamais de closure périmée).
  */
 export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef }) {
@@ -29,17 +29,6 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef }) {
   const body = status === "non_generee"
     ? `<div style="margin-top:8px;padding:8px;background:rgba(100,116,139,0.10);border:1px solid rgba(100,116,139,0.30);color:#94a3b8;font-size:11px;line-height:1.5;border-radius:2px;">${escH(t("poeZoneNotGenerated"))}</div>`
     : `${noSourceWarn}${errHtml}${sources ? `<div style="margin-top:8px;"><div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${escH(t("poeSourcesTitle"))}</div>${sources}</div>` : ""}`;
-  const btnLabel = status === "non_generee" ? t("poeGenerateBtn") : t("poeRegenerateBtn");
-  const genRunning = (window.__biPoeGenState || {})[mrgid] === "running";
-  const btnHtml = genRunning
-    ? `<button data-testid="poe-generate-btn" disabled
-        style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;opacity:0.7;cursor:wait;">
-        ↻ ${escH(t("poeGenerating"))}
-      </button>`
-    : `<button data-testid="poe-generate-btn" onclick="window.__biGeneratePoeZone && window.__biGeneratePoeZone(${Number(mrgid)})"
-        style="font-size:10px;font-weight:600;color:#fbbf24;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.45);border-radius:2px;padding:3px 10px;cursor:pointer;">
-        ↻ ${escH(btnLabel)}
-      </button>`;
   const polType = z.pol_type || props?.pol_type;
   // Qualification juridique UNCLOS des ZEE sans PoE
   const unclosHtml = z.unclos && z.unclos.code
@@ -60,9 +49,6 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef }) {
       </div>
       ${gen ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;">${escH(t("poeGeneratedAt"))}: ${escH(gen)}</div>` : ""}
       ${unclosHtml}
-      <div style="margin-top:8px;">
-        ${btnHtml}
-      </div>
       ${body}
       <div style="margin-top:8px;font-size:10px;color:#cbd5e1;">${escH(t("poeEezAttribution"))}</div>
     </div>`;
