@@ -568,6 +568,8 @@ class TestStructuredDiscovery:
         <a href="/sites/default/files/2018-11/10-questions-before-exporting-en.pdf">export</a>
         <a href="/sites/default/files/2019-08/leaflet-trouble-free-travel-french-customs-advices-en.pdf">leaflet</a>
         <a href="/sites/default/files/2021-04/16/Brexit-How-to-make-a-successful-import.pdf">brexit</a>
+        <a href="/sites/default/files/uploads/files/2019-04/customs-clearance-in-france-the-2016-ucc-aeo.pdf">aeo</a>
+        <a href="https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/925140/BordersOpModel.pdf">uk</a>
         """
         base = "https://www.douane.gouv.fr/french-customs-information-available-english"
         atts = official_attachments(html, base)

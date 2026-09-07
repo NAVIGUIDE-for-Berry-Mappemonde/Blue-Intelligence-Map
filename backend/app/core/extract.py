@@ -438,7 +438,7 @@ _LIST_PDF_PATH_RE = re.compile(
     r"liste|listen|plaisance|eligibles|ppf|puerto|terminal|habilit|"
     r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
     r"points-d-entree|points-of-entry|designat|gazett|legislat|"
-    r"decreto|decret|arrete|clearance",
+    r"decreto|decret|arrete",
     re.I,
 )
 _JUNK_PDF_PATH_RE = re.compile(
@@ -623,6 +623,11 @@ def _pdf_path(url: str) -> str:
     return unquote(urlparse(url or "").path or "")
 
 
+def _pdf_stem(url: str) -> str:
+    leaf = Path(_pdf_path(url)).name
+    return leaf.rsplit(".", 1)[0].casefold()
+
+
 def _pdf_recency_bonus(path: str) -> int:
     """Préfère le millésime courant à une carte PPF de 2022 encore en lien."""
     years = [2000 + int(y) for y in _YEAR_IN_PATH_RE.findall(path or "")]
@@ -650,7 +655,8 @@ def _pdf_list_score(url: str) -> int:
             score += pts
     if _JUNK_PDF_PATH_RE.search(path):
         score -= 4
-    score += _pdf_recency_bonus(path)
+    if score > 0:
+        score += _pdf_recency_bonus(path)
     return score
 
 
@@ -682,7 +688,16 @@ def official_attachments(text: str, base_url: str, limit: int = 4) -> list[str]:
         seen.add(u)
         scored.append((-score, u))
     scored.sort()
-    return [u for _, u in scored[:limit]]
+    out, stems = [], set()
+    for _, u in scored:
+        stem = _pdf_stem(u)
+        if stem in stems:
+            continue
+        stems.add(stem)
+        out.append(u)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def should_follow_attachments(text: str, url: str) -> bool:
