@@ -218,6 +218,17 @@ async def poe_zones_geojson():
     )
 
 
+@router.get("/poe/zones/{mrgid}")
+async def poe_zone_fiche(mrgid: int):
+    """Fiche de revue d'une ZEE : PoE + URLs TD/BU. Lecture seule, pas de Générer."""
+    from app.services.poe_zone_fiche import build_zone_fiche
+
+    fiche = await build_zone_fiche(_db, mrgid)
+    if fiche is None:
+        raise HTTPException(404, f"ZEE {mrgid} inconnue")
+    return fiche
+
+
 # ---------------------------------------------------------------------------
 # Génération PoE carte — retirée (ne plus upsert poe_ports)
 # ---------------------------------------------------------------------------

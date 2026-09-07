@@ -1,5 +1,6 @@
 import { Anchor, Clock, ScrollText, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import ZoneFiche from "./ZoneFiche";
 
 // Refactor 2026-06 — Formalities mode = world map [EEZ -> Ports of Entry].
 // The sidebar lists the ~285 world EEZs (VLIZ Marine Regions) with their
@@ -25,7 +26,7 @@ const flagEmoji = (iso2) => {
   return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
 };
 
-export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone }) {
+export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone, fiche, ficheLoading, onFlyToPort }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
@@ -54,11 +55,11 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
 
   return (
     <aside
-      className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface"
+      className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0"
       data-testid="formalities-panel"
     >
       {/* En-tête + recherche — structure uniforme des 3 modes */}
-      <div className="p-4 border-b border-line">
+      <div className="p-4 border-b border-line shrink-0">
         <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />
           {/* Même libellé que le bouton de mode dans l'en-tête (cohérence),
@@ -137,6 +138,12 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
           </p>
         )}
       </div>
+
+      {(selectedZone || ficheLoading) && (
+        <div className="shrink-0 max-h-[46%] overflow-y-auto border-b border-line">
+          <ZoneFiche t={t} fiche={fiche} loading={ficheLoading && !fiche} onFlyToPort={onFlyToPort} />
+        </div>
+      )}
 
       {/* EEZ list */}
       <div className="flex-1 overflow-y-auto" data-testid="poe-zones-list">

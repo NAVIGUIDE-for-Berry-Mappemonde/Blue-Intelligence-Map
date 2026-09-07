@@ -29,6 +29,8 @@ export default function MapView({
   onSelectZone,
   flyToMarina,
   flyToZone,
+  flyToPoe,
+  zoneFiche,
   funderFilter,
   searchQuery,
   t,
@@ -53,6 +55,11 @@ export default function MapView({
   const eezLayersByMrgid = useRef(new Map());
   const zoneItemsRef = useRef(new Map());
   const poeClusterRef = useRef(null);
+  const poeMarkersById = useRef(new Map());
+  const poePortsRef = useRef(poePorts);
+  poePortsRef.current = poePorts;
+  const zoneFicheRef = useRef(zoneFiche);
+  zoneFicheRef.current = zoneFiche;
 
   // Popup content must reflect the CURRENT language + zone statuses — bindPopup(fn)
   // reads these refs at open time instead of capturing stale closures.
@@ -158,8 +165,10 @@ export default function MapView({
       onEachFeature: (feat, lyr) => {
         const mrgid = feat.properties?.mrgid;
         eezLayersByMrgid.current.set(mrgid, lyr);
-        lyr.bindPopup(() => zonePopupHtml(mrgid, feat.properties, { tRef, zoneItemsRef }), {
-          maxWidth: 350, minWidth: 260, maxHeight: 380, autoPan: true, autoPanPadding: [40, 40],
+        lyr.bindPopup(() => zonePopupHtml(mrgid, feat.properties, {
+          tRef, zoneItemsRef, zoneFicheRef, poePortsRef,
+        }), {
+          maxWidth: 360, minWidth: 260, maxHeight: 460, autoPan: true, autoPanPadding: [40, 40],
           className: "bi-formalities-popup",
         });
         lyr.on("click", () => {
@@ -234,6 +243,7 @@ export default function MapView({
   useAnchoragesLayer({ mapObj, anchorClusterRef, anchorages, tRef });
   useFormalitiesLayers({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
+    poeMarkersById,
     mode, poeZones, poePorts, flyToZone, tRef,
   });
   useProjectsLayer({
@@ -275,6 +285,15 @@ export default function MapView({
     setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToMarina]);
 
+  useEffect(() => {
+    if (!flyToPoe) return;
+    const map = mapObj.current;
+    if (!map || flyToPoe.lat == null || flyToPoe.lon == null) return;
+    const m = poeMarkersById.current.get(flyToPoe.id);
+    map.flyTo([flyToPoe.lat, flyToPoe.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
+    setTimeout(() => { if (m) m.openPopup(); }, 900);
+  }, [flyToPoe]);
+
   // ---------- Lang change → refresh any currently open popup ----------
   // When the user toggles FR ↔ EN, `popup.update()` re-invokes the
   // bindPopup(fn) content function, which reads tRef.current — the popup is
@@ -286,7 +305,7 @@ export default function MapView({
     if (popup && typeof popup.update === "function") {
       try { popup.update(); } catch (_) { /* map/popup detached — noop */ }
     }
-  }, [t]);
+  }, [t, zoneFiche]);
 
   return (
     <div className="w-full h-full relative">

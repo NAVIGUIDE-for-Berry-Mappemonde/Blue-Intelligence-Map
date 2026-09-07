@@ -333,6 +333,7 @@ Variantes de recherche (`normalize_variant`) :
 | Fichier | Fonctions clés |
 |---------|----------------|
 | `services/poe_seeds.py` | `union_extracted`, `attach_listing_seeds`, `attach_osm_seeds`, `attach_wpi_commercial`, `verdict_for_seed`, `build_seed_union`, `persist_verify_run` |
+| `services/poe_zone_fiche.py` | fiche de revue ZEE (`sources_td` / `sources_bu` + PoE), lecture seule |
 | `services/poe_seed_enrich.py` | `geocode_one`, `judge_one`, `execute_enrich`, `apply_judge_verdict`. **Écart** : `judge_one` ne lance pas encore le parseur catalogue ni `remember_seed_urls` |
 | `services/osm_seeds.py` | `is_marina_only`, `is_seed_candidate`, `refresh_osm_cache`, `osm_inventory` |
 | `services/wpi_ports.py` | ingest Pub 150, `match_wpi_port`, `wpi_commercial` (contre-liste, pas une preuve) |
@@ -374,6 +375,7 @@ Verdicts de graine (`verdict_for_seed`) :
 
 ### 9.6 API Formalités (rappel)
 
+- `GET /api/poe/zones/{mrgid}` — fiche de revue (PoE + `sources_td` + `sources_bu`, lecture seule)
 - `POST /api/poe/zones/{mrgid}/generate` · `POST /api/poe/generate-batch` — **410** (retirés, n’écrasent plus `poe_ports`)
 - `POST /api/poe/runs` · `/multi` · `/best-of` — runs isolés
 - `GET /api/poe/seeds/union` · `POST /api/poe/seeds/verify` · `POST /api/poe/seeds/enrich`
@@ -473,7 +475,8 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 | **Marinas OSM exclues des graines** | **Recalé (code + tests, pas de rebuild).** `leisure=marina` / CATHAF marina* = graine P si douane / `border_control` / `port_of_entry` à ≤ 800 m (`around.ctrl`, `osm_role=marina_pleasure`). Loin d’un contrôle : toujours exclu. **Ne pas** `POST /api/poe/seeds/build` ni Overpass refresh tant qu’un rebuild n’est pas décidé (4034 / 1280 / 781 figés). |
 | **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI comme preuve).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI : jeton seulement. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
-| **Promotion manuelle** | Pas d’UI de revue → carte. |
+| **Fiche ZEE absente de l’UI** | **Recalé (lecture seule, pas rebuild).** `GET /api/poe/zones/{mrgid}` + bandeau Formalités + popup : liste PoE, URLs TD et BU cliquables, score. Pas de bouton Générer (`POST …/generate` = 410). Noonsite hors fiche. **Ne pas** `POST /api/poe/seeds/build`. |
+| **Promotion manuelle** | Pas d’UI de revue D/P → carte. La fiche ZEE n’écrit pas `poe_ports`. |
 | **Gold Dataset** | N’existe pas. Le listing n’en est pas un. |
 
 ---
@@ -718,8 +721,8 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 
 - Carte mondiale des ZEE colorées par statut (pas encore générée / générée / sans source officielle / erreur).
 - Points ambre = PoE publiés. Clic : nom, ZEE, score, badge OSM, anomalie spatiale, jusqu’à 3 URLs sources, mention « indicatif ».
-- Bandeau gauche : les ~285 ZEE, recherche, filtre de statut, nombre de PoE, confiance moyenne.
-- Popup ZEE : **fiche** — sources officielles cliquables, bloc UNCLOS si pas de port. **Pas** de bouton Générer (`POST …/generate` = 410).
+- Bandeau gauche : les ~285 ZEE, recherche, filtre de statut ; **fiche** de la ZEE sélectionnée (PoE + URLs TD/BU cliquables).
+- Popup ZEE : **fiche** — liste des PoE, URLs TD et BU cliquables, score, bloc UNCLOS. **Pas** de bouton Générer (`POST …/generate` = 410).
 - Mention fixe : *vérifiez auprès des autorités avant le départ.*
 - Tant que §12 n’est pas atteint, l’opérateur peut **changer l’étape affichée** (v1, un run, confirmed…) sans que cela vaille publication.
 
@@ -731,7 +734,7 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 - Diff run ↔ v1, rapport markdown, listing-control, file de revue.
 - Auto-refresh : toutes les 12 h, max 60 ZEE, re-télécharge les sources de plus de 30 jours, ne ré-extrait que si le MD5 a changé ; réessaie les erreurs après 7 jours.
 
-Ce qui **manque** à l’UI (écart de ce cahier) : fiche ZEE complète (PoE + `sources_td` + `sources_bu`) ; écran de revue (D/P, juge, listing) ; comparateur d’étapes ; bouton **Promouvoir vers la carte** seulement après §12.
+Ce qui **manque** à l’UI (écart de ce cahier) : écran de revue D/P + juge + listing ; comparateur d’étapes ; bouton **Promouvoir vers la carte** seulement après §12. La fiche ZEE (PoE + `sources_td` + `sources_bu` cliquables, sans Générer) est en place.
 
 ---
 

@@ -94,6 +94,36 @@ class TestPorts:
         assert r.status_code == 200
         assert r.json()["features"] == []
 
+
+# --- Module: fiche ZEE (revue) ----------------------------------------------
+class TestZoneFiche:
+    def test_fiche_has_ports_and_td_bu(self, client, zones):
+        gen = [z for z in zones["items"] if (z.get("poe_count") or 0) > 0]
+        assert gen, "aucune ZEE avec des PoE"
+        mrgid = gen[0]["mrgid"]
+        r = client.get(f"{BASE_URL}/api/poe/zones/{mrgid}", timeout=60)
+        assert r.status_code == 200, r.text[:300]
+        d = r.json()
+        assert d["mrgid"] == mrgid
+        assert d["wrote_poe_ports"] is False
+        assert "sources_td" in d and "sources_bu" in d and "ports" in d
+        assert isinstance(d["ports"], list)
+        blob = " ".join(
+            [s.get("url") or "" for s in (d.get("urls") or [])]
+            + [u for p in d["ports"] for u in (p.get("source_urls") or [])]
+        ).lower()
+        assert "noonsite.com" not in blob
+        assert all("name" in p for p in d["ports"])
+
+    def test_fiche_unknown_zone_404(self, client):
+        r = client.get(f"{BASE_URL}/api/poe/zones/999999", timeout=60)
+        assert r.status_code == 404
+
+    def test_generate_still_gone_on_same_zone(self, client, zones):
+        mrgid = zones["items"][0]["mrgid"]
+        r = client.post(f"{BASE_URL}/api/poe/zones/{mrgid}/generate", timeout=60)
+        assert r.status_code == 410
+
     def test_export_poe_geojson(self, client):
         r = client.get(f"{BASE_URL}/api/export/poe.geojson", timeout=120)
         assert r.status_code == 200
