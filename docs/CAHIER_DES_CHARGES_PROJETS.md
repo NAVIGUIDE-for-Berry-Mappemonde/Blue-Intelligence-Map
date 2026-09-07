@@ -1,10 +1,12 @@
 # Cahier des charges — Projets de conservation marine
 
 Document de cadrage du mode **Projets** de Blue Intelligence.
-Il relit le code, le PRD, l’architecture, le seed GeoJSON, et le cahier des charges Formalités (PoE).
-Il est écrit en langage simple : c’est le contrat de ce que l’on cherche, et de ce que l’on refuse.
+Il relit le code, le PRD, l’architecture, le seed GeoJSON, le cahier Formalités (PoE),
+et la **revue du 7 septembre 2026** (32 commentaires Berry-Mappemonde sur la v1.0).
 
-Version 1.0 — 7 septembre 2026. Document **complet** (objet, stratégies, règles, outils, code, données, interface, recette, risques, annexes).
+Écrit en langage simple : c’est le contrat de ce que l’on cherche, et de ce que l’on refuse.
+
+Version **2.0** — 7 septembre 2026. Document **complet** + **plan d’implémentation** (phases, fichiers, API, recette).
 
 **Sommaire**
 
@@ -21,12 +23,12 @@ Version 1.0 — 7 septembre 2026. Document **complet** (objet, stratégies, règ
 11. Contraintes dures
 12. Critères d’acceptation
 13. État actuel et écarts
-14. Ordre de travail recommandé
+14. Plan d’implémentation
 15. Documents et conversations dont ce cahier hérite
 16. Qui fait quoi
 17. Cycle de vie d’un projet
 18. Le second livrable : les portails financeurs
-19. Algorithme (découverte, extraction, Follow the Money)
+19. Algorithme (découverte, sites, Follow the Money)
 20. Modèle de données
 21. Ce que voit l’utilisateur
 22. Inventaire des MasterSeeds
@@ -36,22 +38,25 @@ Version 1.0 — 7 septembre 2026. Document **complet** (objet, stratégies, règ
 26. Risques
 27. Hors périmètre
 28. Annexes
+29. Trace des commentaires de revue (v1 → v2)
 
 ---
 
 ## 1. En une phrase
 
-Retrouver **tous les projets de conservation, restauration ou protection marine réellement menés** (un projet = une page, un lieu, un financeur), les poser sur la carte mondiale, et **ne jamais y coller** un programme terrestre, une page d’accueil, ou un point GPS inventé.
+Retrouver tous les projets de conservation, restauration ou protection marine **réellement menés** (une page, un ou plusieurs lieux, plusieurs financeurs possibles), **financés par des fondations**, **reliés à un endroit du monde assez précis et théoriquement accessible en bateau**, les poser sur la carte, et ne jamais y coller un programme terrestre, une page d’accueil, un siège d’ONG, ou un GPS inventé.
+
+Ceci **exclut** les projets trop généraux, ou qui ne sont pas clairement localisés à un ou plusieurs endroits accessibles en bateau. On fait clairement de **l’éco-tourisme** : un skipper doit pouvoir se dire « je peux aller voir ça ».
 
 ---
 
 ## 2. Pourquoi ce travail existe
 
-Les grandes fondations océaniques publient leurs actions sur des dizaines de sites, dans des langues et des structures différentes : listing `/projects`, campagnes, Hope Spots, programmes CORDIS, pages « where we work ». Il n’existe pas de carte mondiale unique, à jour, de ces projets.
+Les fondations océaniques publient leurs actions sur des centaines de sites. La carte v1 (~4 463 points, ~861 financeurs) a déjà ramassé ce web. Beaucoup de points ne sont **pas visitables** : siège à Washington, centroïde de pays, rectangle océanique hashé, recale `snap_to_ocean` à des dizaines de kilomètres du vrai lieu.
 
-Blue Intelligence les cartographie pour l’expédition Berry-Mappemonde et, plus largement, pour quiconque veut voir **où** se fait le travail de conservation marine, **qui** le finance, et **sur quelle page** le lire. Les points restent **indicatifs** : un GPS de projet n’est pas une frontière d’AMP, ni une preuve juridique.
+Blue Intelligence les cartographie pour l’expédition Berry-Mappemonde et pour l’éco-tourisme : **où** aller, **qui** finance, **quelle page** lire. Un GPS n’est pas le périmètre d’une AMP.
 
-Le stock actuel (~4 463 projets, ~860 financeurs) est à la fois le livrable v1 **et** le jeu d’entraînement du gatekeeper marin. Le perdre, c’est perdre les deux.
+Le stock v1 reste un **trésor** (restauration, revue, futur Gold). Le perdre, c’est perdre les deux.
 
 ---
 
@@ -59,26 +64,28 @@ Le stock actuel (~4 463 projets, ~860 financeurs) est à la fois le livrable v1 
 
 Deux livrables, indissociables :
 
-1. **La carte des projets marins.**
-   Pour chaque projet : titre officiel, URL canonique, description courte (impact écologique), financeur(s), lieu, coordonnées en mer ou sur le littoral, catégorie, image si la page en a une, score S_ocean, et d’où vient le GPS.
+1. **La carte des sites visitables.**
+   Un projet peut avoir **plusieurs points** (plusieurs actions d’un même programme).
+   Chaque point : nom du site, GPS du **lieu d’action** (pas le HQ), accessibilité bateau, URL, financeur(s), description, S_ocean, `geo_source`.
 
-2. **Les portails qui les listent.**
-   Pour chaque organisation MasterSeed (et, plus tard, chaque partenaire découvert) : l’URL du listing, la date du dernier scan, les pages projet déjà vues (`deeplink_pages`), pas la home « À propos / Donate ».
+2. **Les portails financeurs.**
+   MasterSeeds = les **~861 financeurs déjà découverts** (plus ceux que Follow the Money ajoutera), pas seulement les 21 portails curés d’origine. Pour chacun : nom, URL de listing si connue, dernier scan, pages vues.
 
-Un projet sans GPS précis n’est pas un échec : on le géocode, on le recale à la côte si besoin, on **étiquette** le recale. Un projet clairement terrestre est un échec du filtre, pas un point à publier.
+Un projet sans site assez précis **n’est pas publié**. Il reste en graine / file de revue (`unlocated`). On ne recale pas vers « une mer proche » pour faire semblant.
 
 ---
 
 ## 4. Ce que l’on ne veut pas
 
-- Des **projets terrestres ou d’eau douce** (montagne, forêt intérieure, lac, bassin fluvial) présentés comme marins, sauf estuaire à impact côtier direct.
-- Des **pages génériques** : home de fondation, actualités, dons, jobs, boutique, FAQ, mentions légales.
-- Un **point dans l’océan au hasard** (`ocean_fallback_coords`) affiché comme un site réel.
-- Une carte qui **écrase** `projects` par un `clear_db` ou un `DELETE /api/projects`.
-- Republier Wikipedia, TripAdvisor, ou un communiqué de presse sans page projet.
-- Inventer un titre, un GPS, ou un partenaire absents de la page.
-- Coller le siège social d’une ONG (Washington, Londres, Paris) à la place du récif / de l’AMP.
-- Le mode Marinas (corridor de route) et le mode Formalités (PoE) : autres produits.
+- Des projets **terrestres ou d’eau douce** (sauf estuaire côtier / mangrove / delta accessibles).
+- Des programmes **trop généraux** (« protéger les océans ») sans site nommé.
+- Des **pages génériques** : home, news, dons, jobs, boutique.
+- Un **GPS inventé** : `ocean_fallback_coords`, estimation au milieu d’un bassin, centroïde de pays.
+- Un **siège social** (Paris, Londres, Washington, Monaco-ville de l’ONG) présenté comme le projet.
+- **`snap_to_ocean`** comme rustine : le point recalé ne veut plus rien dire.
+- Une carte qui **écrase** `projects` (`clear_db`, `DELETE /api/projects`). Ces fonctions **disparaissent**.
+- TinyFish **Agent** en moteur quotidien (crédits). Search et Fetch sont les outils TinyFish normaux.
+- Inventer un titre, un site, ou un financeur absents des sources.
 
 ---
 
@@ -86,759 +93,588 @@ Un projet sans GPS précis n’est pas un échec : on le géocode, on le recale 
 
 | Mot | Sens ici |
 |-----|----------|
-| **Projet** | Une action marine **individuelle** (restauration, AMP, campagne, recherche appliquée, pêche durable…) décrite sur **une** URL. |
-| **Portail / MasterSeed** | Site d’une fondation ou d’un institut dont on parcourt le listing. Les 21 graines sont dans `static_data/seeds.py`. |
-| **Financeur** | Organisation rattachée au projet (`funder` + tableau `funders`). Un même projet peut en avoir plusieurs après fusion. |
-| **Swarm** | Pipeline de découverte + extraction. Mode `test` (3 graines, 6 URLs/graine) ou `full` (21 graines, 20 URLs/graine). |
-| **Carte v1** | Collection `projects` actuellement affichée (~4 463 points). Trésor d’entraînement. Aucune purge. |
-| **DeepLinkCache** | Collection `deeplink_pages` : URLs projet déjà vues, avec financeur et source. |
-| **Gatekeeper** | Filtre marin vs terrestre, avant toute extraction. ML local → LLM → heuristique. |
-| **S_ocean** | Score 0–1 de pertinence marine (technicité + fiabilité de source + localisation océanique). |
-| **Snapped** | Le GPS a été recalé vers la mer (`snap_to_ocean`) parce que le géocodeur a posé le point à terre. |
-| **Follow the Money** | Découverte récursive d’un **partenaire** nommé sur une page projet, hors MasterSeeds, plafonnée. |
-| **Run** | Génération versionnée dans un espace à part. **N’existe pas encore** pour les projets (écart). |
-| **Gold Dataset** | Revue humaine d’un échantillon. Il n’existe pas encore. La carte v1 n’en est pas un, même si elle entraîne le ML. |
+| **Projet** | Une action marine décrite sur une URL, financée par une ou plusieurs fondations. |
+| **Site** | Un lieu d’action **assez précis** et **accessible en bateau** (baie, récif, AMP, marina, île, estuaire). Un projet peut avoir *n* sites. |
+| **Accessible en bateau** | Un skipper peut théoriquement s’y rendre (mer, côte, havre, AMP côtière). Pas un bureau, pas une ville intérieure. |
+| **Financeur** | Organisation dans `funders`. MasterSeed = l’union des ~861 déjà vus. |
+| **Swarm** | Découverte + extraction. N’écrit **plus** la carte v1 : seulement un **run**. |
+| **Carte v1** | Collection `projects` actuelle. Trésor. Revue, pas purge. |
+| **Run** | Génération isolée `project_run_*`, calquée sur `poe_run_*`. Promotion manuelle ensuite. |
+| **Snapped / fallback** | Défauts v1. Interdits en publication nouvelle. Candidats à la revue, exclus du futur Gold. |
+| **Gold Dataset** | N’existe pas encore (aucune cartographie de ce type n’existait). On peut en **créer** un : v1 **moins** snapped **moins** fallback océan, après revue. |
+| **Revue** | UI opérateur : accepter / rejeter / éditer un site, promouvoir un run. |
+| **Règles configurables** | Seuils gatekeeper, distances, plafonds : dans `settings` / JSON, **pas en dur** dans le code. |
 
 ---
 
 ## 6. Les deux stratégies
 
-On ne choisit pas l’une ou l’autre. On les **fait travailler ensemble**.
-
-Le Top-Down répond : *« Ce portail de fondation, quelles pages projet publie-t-il ? »*
-
-Le Bottom-Up répond : *« Cette URL déjà connue, est-ce vraiment un projet marin à cartographier ? »*
+On ne choisit pas. On les fait travailler ensemble.
 
 ### 6.1 Top-Down — du portail vers les pages
 
-On part d’une **organisation**, pas d’un nom de projet.
+On part d’un **financeur** (les ~861, pas seulement 21).
 
-1. Prendre un MasterSeed (nom, URL de listing, pays, priorité, catégorie d’origine).
-2. **Découvrir** les URLs projet : crawler HTTP gratuit d’abord (liens internes `/project`, `/campaign`, `/initiative`…) ; TinyFish Agent seulement si le crawler rend 0 URL (sites JS / pagination).
-3. Écrire chaque URL dans `deeplink_pages` (cache) et la mettre en file.
-4. **Télécharger** la page (cascade N1 trafilatura ∥ N2 Readability → N3 Chromium → miroir Jina / TinyFish Fetch). Jeter les interstitiels anti-bot.
-5. **Filtrer** (gatekeeper marin). Rejeter le terrestre.
-6. **Extraire** (LLM JSON, ou heuristique sans clé) : titre, description ≤ 250 c., lieu, GPS si écrits, catégorie, partenaires.
-7. **Géocoder** si pas de GPS : lieu → Nominatim/GeoNames → estimation LLM → **pas** un océan aléatoire comme point publié.
-8. Recaler à la mer si le point est à terre, **en le marquant** `snapped`.
-9. **Dédupliquer** (URL, ou nom proche + < 500 m) : fusionner les financeurs, ne pas dupliquer.
-10. Stocker **sans détruire** l’existant.
+1. URL de listing si on l’a ; sinon la déduire des `url` déjà en base pour ce financeur.
+2. Découvrir les pages projet : crawler HTTP → TinyFish **Search / Fetch** (gratuits, quotas) → Agent **seulement** si toujours 0.
+3. Cache `deeplink_pages` + file du **run**.
+4. Extraire, juger « est-ce un projet localisable ? », trouver les **sites**.
+5. Écrire dans `project_run_projects`, jamais dans `projects`.
 
-Question métier : *quels projets marins cette organisation mène-t-elle réellement, et où ?*
+### 6.2 Bottom-Up — de l’URL / du point v1 vers le site
 
-Le Top-Down est le seul moyen de **découvrir une page nouvelle**. Il est aussi bruyant : homes, campagnes-pays, sièges sociaux. D’où le gatekeeper et le Bottom-Up.
+On part du stock :
 
-### 6.2 Bottom-Up — de l’URL déjà connue vers la preuve
+- carte v1 (y compris snapped / fallback : à revoir, pas à republier tels quels) ;
+- DeepLinkCache ;
+- signalements skipper ;
+- file `failed` / `unlocated`.
 
-On part des **projets et URLs déjà retrouvés**, et on demande pour chacun : *est-ce que CETTE page est un projet marin cartographiable ?*
+Pour chaque graine : la page décrit-elle **un ou plusieurs lieux accessibles en bateau** ? Si oui, extraire ces sites. Si non, `unlocated` — pas de rustine GPS.
 
-Les graines viennent de l’union :
-
-- la **carte v1** (`projects`) ;
-- le **DeepLinkCache** (`deeplink_pages`) ;
-- les **signalements** skipper (`reported_projects`, file « Projet manquant ? ») ;
-- la **file d’échecs** (`failed` : gatekeeper, extract, discover) ;
-- plus tard un **export GeoJSON** réimporté (upsert non destructif).
-
-Ensuite, pour le résidu (page jamais extraite, ou projet pauvre / périmé) :
-
-1. re-télécharger l’URL (enrich à la demande, ou Force Extract TinyFish si la cascade a échoué) ;
-2. gatekeeper **toujours** (y compris sur Force Extract) ;
-3. extraire et, si les champs nouveaux sont meilleurs, **mettre à jour sans effacer** ce qui était déjà bon ;
-4. ne pas bouger le GPS d’un projet v1 sauf si le nouveau point est clairement meilleur (lieu plus spécifique, pas un siège, pas un fallback).
-
-Le juge (ici : gatekeeper + extracteur) ne reçoit pas le badge « déjà en carte ». On évite le biais de confirmation. La carte v1 sert **après**, pour la dédup et le score.
-
-### 6.3 Comment les deux se recoupent
+### 6.3 Recoupement
 
 | | Top-Down | Bottom-Up |
 |---|---|---|
-| Point de départ | un portail MasterSeed | une URL / un projet déjà vu |
-| Question | quelles pages projet ? | cette page est-elle un projet marin ? |
-| Produit principal | URLs nouvelles + extraits | verdict + enrichissement |
-| Faiblesse | bruit, homes, pagination JS | ne découvre pas un portail inconnu |
-| Force | trouve les listings | capitalise le stock déjà payé |
-
-L’algorithme cible :
-
-- faisceau **L** (listing) : toutes les pages que le portail présente comme projet / campagne / initiative ;
-- faisceau **M** (marin) : celles qui passent le gatekeeper et ont un lieu océanique ou côtier ;
-- on les mène **en parallèle**, on compare, on tranche les discordants.
-- Une page L rejetée par M **ne va pas** sur la carte (elle peut rester dans `failed` / cache).
-- Une page M sans listing MasterSeed (signalement communautaire) reste une **graine**, extraite comme les autres, avec `funder = "Community Report"`.
+| Départ | un financeur / listing | une URL ou un point v1 |
+| Question | quelles pages projet ? | quels **sites visitables** sur cette page ? |
+| Produit | URLs + extraits dans un run | verdict + sites, ou `unlocated` |
+| Faiblesse | bruit, homes | ne découvre pas un portail neuf |
+| Force | trouve les listings | capitalise les 4 463 et les 861 |
 
 ---
 
 ## 7. Règles
 
-### 7.1 Un projet de ce produit est une action marine située
+### 7.1 Règle d’or
 
-Règle d’or : **on ne publie sur la carte Projets que des actions de conservation / restauration / protection / recherche marine, océanique ou côtière, avec une URL et un lieu défendable.**
+On ne publie que des **actions marines financées par des fondations**, avec URL, et **au moins un site assez précis pour qu’un bateau puisse s’y rendre**.
 
 Conséquences :
 
-- Forêt intérieure, montagne, savane, lac : **non**.
-- Estuaire, mangrove, delta, blue carbon côtier : **oui**.
-- Programme mondial sans site unique : **oui**, mais le GPS doit être un site représentatif **écrit** ou un lieu nommé, pas un océan aléatoire ; `location` peut dire « global ».
-- Listing « where we work » pays entier : extraire les **sites**, pas le centroïde du pays.
-- Siège de l’ONG : **jamais** comme GPS du projet.
-- Page actualité / don / recrutement : **non** (blacklist de crawl + gatekeeper).
+- Forêt, montagne, lac intérieur : non.
+- Estuaire, mangrove, delta, blue carbon côtier : oui, si le lieu est nommé.
+- Programme mondial : **chercher chaque lieu d’action**. Plusieurs points > un centroïde « global ». Pas de GPS représentatif inventé.
+- Siège de l’ONG : **jamais** un site. Le géocodeur doit les refuser.
+- Page about / donate / news : non.
+- `snap_to_ocean` : **interdit** pour publier. On cherche le vrai lieu, ou on laisse `unlocated`.
+- `ocean_fallback_coords` : **interdit** en carte et en run promu.
 
 ### 7.2 Sources
 
-- Extraire **depuis la page du projet**. Chaque entrée cite son `url`.
-- Le financeur vient du MasterSeed (ou du signalement), pas d’une invention.
-- OSM, Nominatim, GeoNames **prouvent un lieu**, pas que c’est un projet de conservation.
-- Ne jamais inventer un titre hors page. Conserver l’orthographe officielle.
-- TinyFish Agent = **dernier recours** (découverte JS, Force Extract), pas le moteur quotidien.
+- Preuve = la page projet (`url`) + les pages de sites qu’elle cite.
+- Financeurs = ceux de la page / du seed, fusionnables, jamais inventés.
+- OSM, Nominatim, GeoNames, polygones AMP : **aident à situer**, ne prouvent pas le projet.
+- Claude Haiku **peut** servir (filtre, juge de lieu, second lecteur) si le budget est ouvert. Ce n’est plus réservé aux PoE.
+- TinyFish Search / Fetch : outils normaux. Agent : dernier recours, compteur, cap.
 
 ### 7.3 Géographie
 
-Le point doit être **en mer ou sur le littoral** du site du projet :
+Un site publié a un GPS **du lieu d’action** :
 
-- déjà océanique : on le garde ;
-- à terre : `snap_to_ocean` jusqu’à une distance raisonnable (réglage `max_coast_km`, défaut 50 km **métier** ; le code actuel élargit trop — voir § 13) ;
-- trop loin à l’intérieur : **rejeté** ou laissé en graine sans publication, pas un snap de 500 km ;
-- GPS (0, 0) : invalide ;
-- **interdit en publication** : `ocean_fallback_coords` (quatre rectangles océaniques hashés sur le titre). C’est un filet de debug, pas un lieu.
-
-Contrairement au mode Formalités, le snap côtier **est** légitime ici : un projet « Banc d’Arguin » géocodé sur la ville doit pouvoir glisser vers l’eau adjacente, **badge `snapped` visible**.
+- déjà en mer, ou sur le littoral / havre (quelques kilomètres, seuil **configurable**, défaut serré ~15 km) ;
+- le point reste **là où le géocodeur l’a trouvé** — on ne le fait pas glisser vers l’eau ;
+- trop à l’intérieur, HQ, (0,0), bassin océanique aléatoire : `unlocated` ;
+- plusieurs sites = plusieurs géométries rattachées au même `project_id`.
 
 ### 7.4 Carte et runs
 
-- `projects` : **aucune purge**, upsert / insert non destructif. Les champs déjà remplis (image, catégorie, GPS v1) sont conservés sauf enrichissement **meilleur**.
-- Un run from scratch **devrait** écrire dans `project_run_*`, jamais dans la carte. Aujourd’hui le swarm écrit **directement** dans `projects` : écart majeur, à corriger.
-- Interdit : `clear_db=true` sur `/api/swarm/deploy`, `DELETE /api/projects`, `/api/deploy clear_db=true`.
-- Import GeoJSON : skip URL déjà connue, fusion titre proche + cellule 0,1°, backfill catégorie seulement si vide.
+- `projects` : **aucune purge**. Upsert non destructif à la **promotion** seulement.
+- Tout crawl / swarm écrit dans `project_run_*`.
+- `clear_db` et `DELETE /api/projects` : **supprimés** (API 410 / 400, plus de case Console).
+- Import GeoJSON : skip URL connue, fusion, pas d’écrasement GPS v1 sauf revue.
 
-### 7.5 Page sans projet extractible
+### 7.5 Règles hors du code compilé
 
-Qualifier, ne pas inventer : `rejected` (gatekeeper), `failed` (fetch/extract), `generic` (home / don). Garder l’URL dans le cache ou la file d’échec pour un retry, **ne pas** créer de point.
+Seuils ML (0,85 / 0,12), `min_marine_score`, `max_inland_km`, plafonds TinyFish Agent, `max_partner_orgs` : **`settings` + éventuellement `backend/data/project_rules.json`**. Changer une règle ne doit pas exiger un commit Python, seulement un réglage.
 
 ---
 
 ## 8. Sources et outils
 
-### 8.1 Ce qui nourrit les listes (preuves)
+### 8.1 Preuves (pages)
 
 | Outil | Rôle | Ce que ce n’est pas |
 |-------|------|---------------------|
-| **Pages projet des fondations** | Seule **preuve** du projet (titre, texte, image, liens) | — |
-| **Crawler HTTP N1** | Découverte gratuite des liens internes | Ne rend pas le JS / la pagination infinie |
-| **TinyFish Agent** | Découverte JS si N1 = 0 ; Force Extract d’une URL déjà connue | Pas un crawl mondial quotidien |
-| **Cascade N1/N2/N3** | Texte de la page (trafilatura ∥ Readability → Chromium → miroir) | N’invente pas de champs |
-| **OpenRouter** | Gatekeeper LLM, extraction JSON, géocodage intelligent | Éteint sans `OPENROUTER_API_KEY` |
-| **Gatekeeper ML** | TF-IDF + LogReg entraîné sur la carte v1 ; décision sans LLM si score ≥ 0,85 ou ≤ 0,12 | Biaisé par la v1 : un faux positif v1 se reproduit |
-| **Playwright / Chromium** | Rendu local des pages JS, gratuit | Sauté sur challenge Akamai dur |
-| **RAG local** | Pages > 6 000 c. : seuls les chunks marins partent au LLM | Ne remplace pas le gatekeeper |
+| Pages projet / sites | Preuve du projet et des lieux | — |
+| Crawler HTTP N1 | Listings simples, gratuit | Pagination JS |
+| TinyFish **Search** | Trouver listings et pages site | Pas Agent |
+| TinyFish **Fetch** | Miroir de page (gratuit, quota) | Pas Agent |
+| TinyFish **Agent** | JS / pagination si Search+Fetch+crawler = 0 | Moteur quotidien |
+| Cascade N1/N2/N3 | Texte (trafilatura ∥ Readability → Chromium → miroir) | N’invente pas |
+| OpenRouter | Extraction, gatekeeper zone grise | — |
+| **Claude** | Juge de lieu / second lecteur, budget partagé | Pas obligatoire |
+| RAG local | Pages longues | Pas un GPS |
 
-### 8.2 Ce qui nourrit les graines et le contrôle (signaux)
+### 8.2 Signaux (graines et contrôle)
 
 | Outil | Rôle | Attention |
 |-------|------|-----------|
-| **MasterSeeds** | 21 portails curés (priorité 1 et 2) | Liste courte ; Follow the Money l’étend un peu |
-| **Carte v1** | ~4 463 projets, ~861 financeurs, seed `seed/projects.geojson` | Ne jamais l’écraser |
-| **DeepLinkCache** | URLs déjà vues, rejouées en mode `full` si pas encore en carte | Peut contenir des homes |
-| **Signalements** | Skipper : nom + URL → file + email Resend optionnel | Pas Gold. Gatekeeper au prochain run |
-| **Nominatim** | Géocodage OSM, ~1 req/s, cache Mongo | Peut pointer la ville / le HQ |
-| **GeoNames** | Second géocodeur | Accord < 2 km = bon signal |
-| **snap_to_ocean** | Recale un point terrestre vers l’eau | Trop large aujourd’hui (jusqu’à 500 km) |
-| **dedup_core** | Haversine < 500 m + similarité > 60 %, ou similarité > 90 % | Le swarm ne fusionne que `funders` |
+| Carte v1 | 4 463 projets, ~861 financeurs | Ne jamais l’écraser ; snapped/fallback → revue |
+| MasterSeeds élargis | Union des financeurs v1 + 21 listings curés | URL de listing parfois inconnue : à découvrir |
+| DeepLinkCache | URLs déjà vues | Homes possibles |
+| Signalements | Skipper, `Community Report` | Même contrat de site |
+| Nominatim / GeoNames | Lieu nommé | HQ et villes : à filtrer |
+| Polygones AMP (ex-`/api/mpa`) | Indice de géocodage d’un nom d’AMP | Pas une preuve de projet ; couche carte toujours hors livrable |
+| `dedup_core` | URL, ou nom+distance | Fusionner tous les champs vides (`merge_docs`) |
 
-### 8.3 Ce qui est volontairement exclu de la découverte
+### 8.3 Exclus de la découverte
 
-`CRAWL_BLACKLIST` dans `seeds.py` : contact, about, privacy, donate, blog, news, team, login, shop, event, job, press, faq, cookies, newsletter, sitemap, search, tag.
-
-On peut **lire** une page d’actualité si quelqu’un la signale ; on ne la **parcourt** pas depuis un listing.
-
-Claude Haiku n’est **pas** un outil Projets (budget PoE seulement).
+`CRAWL_BLACKLIST` (configurable) : contact, about, donate, news, shop, jobs…
 
 ---
 
 ## 9. Le code — où vit chaque brique
 
-Le backend est dans `backend/app/`. `backend/server.py` ne fait que charger l’application.
+Aujourd’hui (à faire évoluer, § 14) :
 
-### 9.1 Swarm (pipeline portail → carte)
+| Fichier | Rôle actuel | Cible v2 |
+|---------|-------------|----------|
+| `services/swarm_pipeline.py` | Découvre + **écrit `projects`** | Découvre + écrit **`project_run_*`** ; plus de snap / fallback |
+| `routers/swarm.py` | deploy (`clear_db`), Force Extract | `clear_db` refusé ; Force Extract = même pipeline, gatekeeper, run |
+| `routers/projects.py` | liste, import, enrich, `DELETE` | `DELETE` → 410 ; enrich ne snap pas ; sites[] |
+| `static_data/seeds.py` | 21 portails | Chargeur des ~861 (`data/master_seeds.json`) |
+| `core/llm.py` | `extract_project`, gatekeeper | Sites multiples ; seuils lus dans settings ; Claude optionnel |
+| `core/geo.py` | `snap_to_ocean`, `ocean_fallback_coords` | Conservés pour d’autres usages / debug ; **pipeline Projets ne les appelle plus** |
+| `core/tinyfish.py` | Agent + Search/Fetch | Search/Fetch d’abord ; Agent capé |
+| `services/poe_runs.py` | Modèle de run isolé | **Calquer** `project_runs.py` |
 
-Fichier : `backend/app/services/swarm_pipeline.py`
-
-| Fonction / méthode | Rôle |
-|--------------------|------|
-| `Swarm.deploy` | Démarre test/full ; **refuse** si déjà running ; option `clear_db` (à interdire) |
-| `Swarm.stop` | Annule workers et file |
-| `_run` | Charge les seeds, file, workers, attend Follow the Money |
-| `_discover` | TTL `rescan_after_days` (défaut 7 j) ; N1 crawler puis TinyFish si vide |
-| `_crawl_discover` | Liens internes, motifs `URL_PATTERNS`, sinon 8 liens hors blacklist |
-| `_tinyfish_discover` | SSE d’abord, polling 360 s sinon ; schéma `{projects:[{url,title}]}` |
-| `_extract_worker` | Consomme la file |
-| `_process_url` | Skip si URL déjà en carte → cascade → gatekeeper → RAG → extract → géocode → snap → dédup → insert |
-| `_dedup_merge` | `is_duplicate` puis `$set` des financeurs seulement |
-| `_queue_partner` | Follow the Money, `max_partner_orgs` (défaut 5), depth=1, 6 URLs |
-| `_bump_saturation` | Auto-stop après N extractions sans **nouveau** projet (défaut 50) ; un skip URL ne compte pas |
-
-Modes :
-
-- `test` : `MASTER_SEEDS[:3]`, `test_max_urls_per_seed` (6) ;
-- `full` : 21 seeds, `full_max_urls_per_seed` (20), rejoue le DeepLinkCache.
-
-### 9.2 API Projets et Swarm
-
-| Fichier | Rôle |
-|---------|------|
-| `routers/projects.py` | Liste GeoJSON, financeurs, catégories, import/export, enrich, signalement |
-| `routers/swarm.py` | deploy / stop / status, stats, telemetry, failed, Force Extract |
-| `routers/ml.py` | Entraînement / prédiction gatekeeper (et NER, SERP, anomalies — partagés) |
-
-Endpoints utiles :
-
-- `GET /api/projects` · `GET /api/funders` · `GET /api/categories`
-- `POST /api/import/geojson` · `GET /api/export/geojson`
-- `POST /api/projects/{id}/enrich` · `GET .../enrich/status`
-- `POST /api/report-project` · `GET /api/reports`
-- `POST /api/swarm/deploy` · `POST /api/swarm/stop` · `GET /api/swarm/status`
-- `GET /api/stats?mode=projects` · `GET /api/telemetry` · `GET /api/failed`
-- `POST /api/failed/{id}/force` · `POST /api/failed/force-all`
-- `DELETE /api/projects` — **dangereux**, UI Settings l’a retiré, l’API reste
-
-### 9.3 Cœur partagé
-
-| Fichier | Fonctions utiles aux projets |
-|---------|------------------------------|
-| `core/extract.py` | `extract_cascade`, `looks_blocked`, `page_metadata` (`ext_links`) |
-| `core/geo.py` | `geocode`, `is_ocean`, `snap_to_ocean`, `ocean_fallback_coords` (à ne plus publier) |
-| `core/llm.py` | `gatekeeper_check`, `extract_project`, `heuristic_*`, `llm_geocode` |
-| `core/ml.py` | `train_gatekeeper`, `predict_relevance` — dataset = titres/descriptions v1 |
-| `core/dedup.py` | `is_duplicate`, `merge_docs` (ce dernier **n’est pas** utilisé par le swarm) |
-| `core/rag.py` | `select_context` au-delà de 6 000 caractères |
-| `core/tinyfish.py` | `discovery_goal`, `extract_goal`, `DISCOVERY_SCHEMA`, `EXTRACT_SCHEMA`, SSE |
-| `static_data/seeds.py` | `MASTER_SEEDS`, `URL_PATTERNS`, `CRAWL_BLACKLIST`, `TEST_SEED_COUNT` |
-| `static_data/categories.py` | `CATEGORY_GROUPS`, `normalize_category` |
-
-### 9.4 Frontend
-
-| Fichier | Rôle |
-|---------|------|
-| `components/SwarmPanel.js` | Bandeau : recherche, financeur, légende-filtre, liste, bouton signalement |
-| `components/ProjectList.js` | 100 premières lignes filtrées |
-| `components/map/useProjectsLayer.js` | Clusters, couleur de catégorie, popup, bouton enrich |
-| `components/audit/ProjectsCard.js` | Console : test/full, deploy/stop, réglages swarm + filtre marin |
-| `components/ReportModal.js` | Formulaire « Projet manquant ? » |
-| `components/AuditView.js` | KPIs, télémétrie, Force Extract |
-| `App.js` | `__biEnrichProject` (poll 202) |
-
-Le mode **Marinas** et le mode **Formalités** ne partagent avec Projets que le cœur (extract, geo, LLM, dédup). Un projet n’est pas une marina ; une marina n’est pas un projet.
+Frontend : `SwarmPanel`, `ProjectList`, `useProjectsLayer`, `ProjectsCard`, `ReportModal`, `AuditView`. Cible : case clear_db **disparue** ; écran revue ; un projet = plusieurs marqueurs.
 
 ---
 
 ## 10. Score S_ocean
 
-Ce n’est pas une vérité scientifique. C’est un faisceau 0–1, écrit par l’extracteur (LLM) ou, sans clé, recopié du score heuristique du gatekeeper.
+Faisceau 0–1 (extracteur ou heuristique). Le seuil `min_marine_score` coupe à l’**entrée**. Il ne réécrit pas la v1.
 
-| Brique | Idée |
-|--------|------|
-| Gatekeeper | Le texte est-il marin ? Seuil `min_marine_score` (défaut 0,5). ML local si très sûr. |
-| Extracteur | `s_ocean` : technicité + fiabilité de source + localisation océanique. |
-| Carte | Point océanique ou `snapped` ; géocodeurs d’accord. |
-| Catégorie | Une des 9 familles ; `normalize_category` recase les libellés libres. |
-
-Un projet vu seulement par heuristique (pas de LLM) reste moyen. Une page fondation + lieu nommé + GPS océanique monte.
-
-Le seuil `min_marine_score` **coupe** à l’entrée (gatekeeper). Il ne masque pas a posteriori les points déjà en carte. Changer le curseur Console ne réécrit pas les 4 463 S_ocean.
+Nouveau signal, distinct : **`site_ok`** (bool + raison) — le lieu est-il assez précis et accessible en bateau ? Sans `site_ok`, pas de publication, même si S_ocean est haut.
 
 ---
 
 ## 11. Contraintes dures
 
-1. **Les données en base sont un trésor.** 4 463 projets + 1 171+ PoE : aucune purge.
-2. **Marin seulement.** Le gatekeeper avant l’insert, y compris Force Extract et signalements.
-3. **Une URL = une preuve.** Pas de projet sans `url` http(s). Pas d’invention de titre / GPS.
-4. **OpenRouter est le moteur LLM Projets.** Claude est réservé aux PoE. Sans clé : heuristique + ML, l’app reste utilisable.
-5. **TinyFish est un scalpel** : découverte si crawler vide, Force Extract ciblé, cap d’agents (1–2).
-6. **Un seul chef de file** pour Deploy / Force Extract All / import massif.
-7. Mentions carte : données **indicatives**. Un point n’est pas le périmètre de l’AMP.
+1. **Trésor.** 4 463 projets + 1 171+ PoE : aucune purge.
+2. **Site visitable.** Pas de point sans lieu d’action accessible en bateau.
+3. **Pas de rustine GPS.** Ni snap, ni fallback océan, ni HQ.
+4. **Runs isolés.** Le swarm ne touche pas `projects`.
+5. **Purges supprimées.** Plus de `clear_db`, plus de `DELETE /api/projects`.
+6. **TinyFish Agent = scalpel.** Search/Fetch d’abord.
+7. **Claude autorisé** pour les Projets si le budget est ouvert.
+8. **Règles configurables.** Pas de magie 0,85 / 0,12 / 500 km dans le source.
+9. Carte **indicative**. Un point n’est pas le polygone de l’AMP.
 
 ---
 
 ## 12. Critères d’acceptation
 
-On considère le travail réussi pour un **portail** quand :
+Pour un **financeur** :
 
-1. On a identifié **la page de listing** utile (pas la home), mémorisée dans `discovery_state`.
-2. Les pages projet individuelles sont en DeepLinkCache.
-3. Chaque projet **marin** de ce listing est sur la carte (titre + URL + GPS défendable + financeur + catégorie).
-4. Les pages terrestres / génériques n’y sont pas.
-5. Un visiteur peut cliquer un point et voir **pourquoi** on y croit (URL + S_ocean + badge snapped).
-6. La carte v1 n’a pas été vidée par un batch.
+1. Fiche portail (nom, listing ou « listing inconnu », dernier scan).
+2. Chaque **site** publié : nom, GPS du lieu d’action, URL, financeurs, pas HQ, pas snapped, pas fallback.
+3. Les pages génériques / programmes sans lieu : `unlocated` ou `rejected`, pas sur la carte.
+4. Un programme à 4 îles → jusqu’à 4 points, même `project_id`.
+5. Popup : URL + lieu + S_ocean. Le visiteur comprend où aller.
+6. La v1 n’a perdu aucun document, sauf rejet **écrit** en revue.
 
-À l’échelle monde : couverture des 21 MasterSeeds (et partenaires plafonnés), file `failed` traitée ou volontairement reportée, signalements extraits, **aucun** `geo_source = ocean-region-fallback` publié.
+Pour un **run** : `wrote_projects: false` jusqu’à promotion ; compteurs `sites` / `unlocated` / `rejected` ; pas d’appel à `snap_to_ocean` ni `ocean_fallback_coords`.
 
 ---
 
 ## 13. État actuel et écarts
 
-### Déjà en place
+### Déjà là
 
-- Swarm Top-Down : MasterSeeds, crawler N1, TinyFish N3 de secours, TTL 7 jours, DeepLinkCache, workers concurrents.
-- Cascade d’extraction partagée avec les PoE (N1/N2/N3 + miroir), gatekeeper ML → LLM → heuristique.
-- Géocodage cascade (extrait → lieu → LLM → titre), snap côtier, dédup spatio-textuelle.
-- Follow the Money (max 5 partenaires, depth 1).
-- Auto-stop saturation (défaut 50).
-- Carte Leaflet : catégories, financeurs, recherche, clusters, plafond `max_markers` (1 000).
-- Enrichissement à la demande (popup ↻).
-- Crowdsourcing « Projet manquant ? » + email Resend + file.
-- Import/export GeoJSON non destructif (4 463 dans `seed/projects.geojson`).
-- Console : test/full, logs, télémétrie, Force Extract.
-- Gatekeeper entraîné sur ~4 462 projets (acc. rapportée 1,0 — à relire : le jeu est biaisé).
+- Swarm Top-Down 21 seeds, crawler, TinyFish Agent de secours, DeepLinkCache, saturation.
+- Gatekeeper ML → LLM → heuristique, extraction JSON, catégories 9 familles.
+- Carte, filtres, signalement, enrich ↻ (re-texte, **pas** le GPS).
+- Import/export GeoJSON, seed 4 463.
+- Console test/full.
 
-Répartition seed (7 septembre 2026, 4 463 points) :
+Répartition seed (4 463) : Research 890, Conservation 765, Policy 490, Other 474, MPA 402, Pollution 391, Coastal 389, Fisheries 361, Education 301. ~861 financeurs. ~43 `snapped` dans le GeoJSON d’export (le champ `geo_source` n’y est pas : le fallback océan se voit en base, pas dans le seed).
 
-| Catégorie | n |
-|-----------|---|
-| Research | 890 |
-| Conservation | 765 |
-| Policy & Advocacy | 490 |
-| Other | 474 |
-| MPA | 402 |
-| Pollution | 391 |
-| Coastal & Habitat | 389 |
-| Fisheries | 361 |
-| Education | 301 |
+### Écarts v2 (ce que le code doit rattraper)
 
-### Écarts par rapport à ce cahier
-
-| Écart | Détail |
+| Écart | Cible |
 |-------|--------|
-| **Écriture directe dans `projects`** | Pas d’espace `project_run_*`. Un swarm `full` insère en live. PoE a déjà les runs isolés : à calquer. |
-| **`clear_db` et `DELETE /api/projects`** | Toujours dans l’API / la case Console. Le bouton Settings « tout vider » a été retiré : **garder l’API fermée** (404 ou garde-fou). |
-| **`ocean_fallback_coords` publié** | Si tout géocodage échoue, le swarm pose un point dans un rectangle océanique hashé. Interdit en carte. Laisser `lat/lon` nuls, ou graine `name_only`. |
-| **Snap trop large** | `max_km=max(500, max_coast_km*4)` : un HQ parisien peut atterrir en Manche. Plafonner au `max_coast_km` métier (50). |
-| **Force Extract sans gatekeeper** | TinyFish Agent insère avec `s_ocean=0.7` fixe, sans catégorie. Doit passer par `_process_url`. |
-| **Dédup pauvre** | Fusion = liste de financeurs. `merge_docs` existe et n’est pas appelé (description, image, catégorie perdues). |
-| **Enrich ne géocode pas** | Re-extrait titre/description/lieu/catégorie/image/S_ocean, **ne bouge pas** le GPS. Souvent bien (non-destructif) ; un mauvais fallback v1 n’est jamais corrigé. |
-| **Crawler superficiel** | Une page de listing, même hôte, pas de pagination. D’où TinyFish trop souvent. |
-| **Pas de runs / promotion** | Contrairement aux PoE : pas de diff, pas de best-of, pas de revue → carte. |
-| **Télémétrie sans `dataset`** | Les lignes swarm n’écrivent pas `dataset: "projects"` (le filtre stats rattrape l’absence de champ). À normaliser. |
-| **Gold Dataset** | N’existe pas. La v1 entraîne le ML : les erreurs v1 se **renforcent**. |
-| **Couche AMP retirée** | `/api/mpa` → 410. Le croisement projet ↔ polygone AMP est hors livrable actuel. |
+| Écriture live dans `projects` | `project_run_*` + promotion |
+| `clear_db` / `DELETE` | **Supprimés** |
+| `ocean_fallback` / `snap_to_ocean` dans le swarm | **Plus appelés** ; inland → `unlocated` |
+| 21 MasterSeeds | **~861 financeurs** |
+| Un point par projet | **n sites** |
+| Force Extract sans gatekeeper | Même `_process_url` / run |
+| Dédup = financeurs seulement | `merge_docs` |
+| Seuils en dur | `settings` / `project_rules.json` |
+| Claude Projets « interdit » | Autorisé si budget |
+| Agent TinyFish trop tôt | Search/Fetch d’abord |
+| Pas d’UI revue | File + promouvoir |
+| Catégories figées | Entraînables plus tard (**non prioritaire**) |
+| Télémétrie sans `dataset` | Champ `projects` (cosmétique) |
+| `/api/mpa` 410 | Réutiliser les polygones **en coulisse** pour géocoder un nom d’AMP |
 
 ---
 
-## 14. Ordre de travail recommandé
+## 14. Plan d’implémentation
 
-1. **Neutraliser les purges** : ignorer `clear_db`, désactiver `DELETE /api/projects` (ou le protéger par un secret hors UI).
-2. **Ne plus publier le fallback océan** : insert seulement si GPS géocodé ou extrait ; sinon DeepLinkCache + `failed`.
-3. Caler `snap_to_ocean` sur `max_coast_km` (50 km), badge `snapped` inchangé.
-4. Faire passer Force Extract **et** les signalements par le même `_process_url` (gatekeeper inclus).
-5. Fusionner avec `merge_docs` (champs vides seulement).
-6. Introduire des **runs isolés** (`project_runs` / `project_run_projects`), calqués sur `poe_runs`, puis promotion manuelle.
-7. Approfondir le crawler (pagination, `?page=`, liens « load more » simples) pour moins dépendre de TinyFish.
-8. Revue d’un échantillon v1 (sièges sociaux, fallback, `Other`) → Gold Dataset pour ré-entraîner le gatekeeper.
-9. Enrichissement GPS **opt-in** (bouton déjà là) seulement si `geo_source` est faible.
+Quatre phases. On ne relance **aucun** swarm mondial sur `projects` avant la phase B.
+
+### Phase A — Ne plus casser le contrat (en premier)
+
+Objectif : le prochain clic Deploy ne peut plus vider la base ni poser un îlot fantôme.
+
+| Tâche | Fichiers | Détail |
+|-------|----------|--------|
+| A1. Tuer les purges | `routers/projects.py`, `routers/swarm.py`, `swarm_pipeline.py`, `ProjectsCard.js` | `DELETE /api/projects` → **410**. `clear_db=true` → **400**, ignoré dans `deploy`. Case Console retirée. |
+| A2. Plus de rustine GPS | `swarm_pipeline.py`, `routers/swarm.py` | Ne plus appeler `snap_to_ocean` ni `ocean_fallback_coords`. Si pas de GPS de lieu, ou point trop inland : `failed` stage `unlocated`. Point côtier : on **garde** le GPS géocodé (terre de havre OK). |
+| A3. Règles hors code | `config.py`, `routers/misc.py`, `core/llm.py`, `core/ml.py` | `project_rules` dans settings : `gatekeeper_accept`, `gatekeeper_reject`, `min_marine_score`, `max_inland_km` (défaut 15), `allow_tinyfish_agent`, `max_partner_orgs`. `core` lit ces clés. |
+| A4. Tests | `tests/test_project_contract.py` | 410 sur DELETE ; 400 sur clear_db ; process_url / helper : inland → pas d’insert ; pas d’import de `ocean_fallback` dans le chemin publish. |
+
+Critère de sortie A : pytest du contrat vert ; l’UI n’offre plus « vider la base ».
+
+### Phase B — Runs isolés (avant tout nouveau crawl)
+
+Calquer Formalités. Harmoniser les fonctions de run entre modes (même empreinte, mêmes événements, même Console).
+
+| Tâche | Fichiers | Détail |
+|-------|----------|--------|
+| B1. Collections | `project_runs.py` (nouveau), `main.py` indexes | `project_runs`, `project_run_projects` (1 ligne = 1 site ou 1 projet+sites[]), `project_run_events`. `wrote_projects: false`. |
+| B2. Brancher le swarm | `swarm_pipeline.py` | `deploy` prend `run_id` ; insert → `project_run_projects`. Plus d’`insert_one` dans `projects`. |
+| B3. API | `routers/project_runs.py` ou `/api/projects/runs` | POST run, GET status/diff/report, POST promote (plus tard, manuel). |
+| B4. Console | `ProjectsCard.js`, `FormalitiesCard` comme modèle | Lancer un run, pas « Deploy sur la carte ». |
+| B5. Force Extract / signalements | `swarm.py`, `projects.py` | Même pipeline, même run (ou run `enrich`). Gatekeeper obligatoire. |
+| B6. `dataset: "projects"` | `telemetry()` | Alignement stats. |
+
+Critère de sortie B : un run test (3 seeds) remplit `project_run_*`, `projects.count` inchangé.
+
+### Phase C — Lieux d’action (cœur métier)
+
+| Tâche | Fichiers | Détail |
+|-------|----------|--------|
+| C1. Schéma `sites[]` | `llm.py` `extract_project` | JSON : `sites: [{name, location, lat, lon, evidence}]` + financeurs[]. Un programme mondial → plusieurs sites ou `sites: []` + `unlocated`. |
+| C2. Juge de lieu | `project_geocode.py` (nouveau) | Refus HQ (ville du financeur, mots headquarters/siège). Nominatim + GeoNames. Claude ou OpenRouter : « ce toponyme est-il un lieu d’action marin visitable ? ». Polygone AMP si le nom matche (géocodage, pas couche carte). |
+| C3. Multi-points | `project_to_feature` / couche Leaflet | Un `project_id`, *n* Features, ou GeometryCollection. Popup : nom du **site**. |
+| C4. TinyFish | `_discover` | Crawler → Search → Fetch ; Agent si `allow_tinyfish_agent` et toujours 0. |
+| C5. MasterSeeds 861 | script `scripts/export_master_seeds.py`, `data/master_seeds.json` | Union distincte de `funders` + 21 URLs curées. Listing URL : domaine le plus fréquent des projets de ce financeur, ou à découvrir. Plus de plafond 5 partenaires en dur : même table, `max_partner_orgs` settings. |
+| C6. Dédup | `_dedup_merge` | Appeler `merge_docs`. |
+
+Critère de sortie C : sur un échantillon (Hope Spots, un programme multi-îles, un siège Pew), les sites publiés dans le **run** sont visitables ; 0 HQ ; 0 fallback.
+
+### Phase D — Revue, Gold, ML
+
+| Tâche | Fichiers | Détail |
+|-------|----------|--------|
+| D1. File de revue | collection `project_review`, UI Console | Files : `snapped` v1, `fallback`, `unlocated`, `hq_suspect`, discordances run↔v1. Actions : accepter site, éditer GPS, rejeter, promouvoir run→carte. |
+| D2. Gold | export | v1 **moins** snapped **moins** fallback, **plus** les acceptés revue. Sert au gatekeeper. |
+| D3. Ré-entraîner le gatekeeper | `ml.py` | **Après** D2, pas avant le premier run isolé. Le modèle v1 est biaisé ; le relancer maintenant recopie les sièges. |
+| D4. Catégories | plus tard | Entraîner les indices `normalize_category`. **Non prioritaire** (les 9 familles restent un bonus d’affichage). |
+
+Critère de sortie D : un opérateur peut nettoyer la v1 sans script Mongo ; un Gold exportable existe.
+
+### Ordre et dépendances
+
+```
+A (sûreté) → B (runs) → C (sites + 861 seeds) → D (revue / Gold / ML)
+                ↑
+         aucun crawl carte avant B
+```
+
+On n’implémente **pas** un « snap borné à 50 km » : la revue a tranché, ce n’est plus une étape.
+
+### Charge d’implémentation (technique, pas calendaire)
+
+- **A** : peu de fichiers, risque faible, tests unitaires suffisent.
+- **B** : copie raisonnable du module PoE runs (~même forme, autre collection).
+- **C** : le morceau invasif (prompt, géocode, GeoJSON multi-points, seeds).
+- **D** : surtout frontend + file Mongo.
 
 ---
 
 ## 15. Documents et conversations dont ce cahier hérite
 
-- `docs/PRD.md` — deux pipelines, contrainte non-destructivité, historique 2026-08.
-- `docs/ARCHITECTURE.md` — rangement `swarm_pipeline`, routers `projects` / `swarm`.
-- `docs/CAHIER_DES_CHARGES_POE.md` — même contrat de forme ; Formalités est l’**autre** produit.
-- `README.md` — les trois modes (Projets cyan, Marinas, Formalités).
-- `seed/projects.geojson` — 4 463 features, vérité de restauration.
-- Décisions : cascade N1→N3 pour économiser TinyFish, gatekeeper ML bootstrappé, Follow the Money, saturation auto-stop, retrait du bouton « vider », crowdsourcing projets (le PoE n’en a pas encore).
+- `docs/PRD.md`, `docs/ARCHITECTURE.md`, `README.md`.
+- `docs/CAHIER_DES_CHARGES_POE.md` — même forme ; **modèle des runs** à calquer.
+- `seed/projects.geojson` — 4 463 features.
+- CDC Projets **v1.0** (7 sept. 2026) et **32 commentaires** Berry-Mappemonde (même jour) — § 29.
 
-Ce cahier **prime** sur les détails d’implémentation dès qu’il y a conflit (ex. « fallback océan pour toujours avoir un point » vs « pas de GPS inventé » ; « clear_db pratique en test » vs « trésor »).
+Ce cahier **v2 prime** sur la v1 et sur le code dès qu’il y a conflit.
 
 ---
 
 ## 16. Qui fait quoi
 
-| Acteur | Ce qu’il fait | Ce qu’il ne fait pas |
-|--------|----------------|----------------------|
-| **Visiteur** (carte publique) | Consulte les projets, filtre, ouvre l’URL source, signale un oubli. | Ne lance pas le swarm. Ne vide pas la base. |
-| **Opérateur** (Console) | Lance un swarm **test**, puis full sans `clear_db`, Force Extract ciblé, import GeoJSON, enrich. Un seul chef de file. | N’envoie pas `clear_db`. Ne clique pas Force All à l’aveugle (crédits TinyFish). |
-| **Gatekeeper** (ML / OpenRouter / heuristique) | Dit si **cette page** est marine. | N’invente pas de titre. Ne géocode pas. |
-| **Extracteur LLM** | Remplit titre, description, lieu, GPS écrits, catégorie, partenaires. | N’invente pas de coordonnées hors page (le géocodeur s’en charge ensuite). |
-| **Réviseur humain** | Tranche les `failed`, les sièges sociaux, les `Other`. Promeut un run vers la carte (quand les runs existeront). | Ne « goldise » pas tout le seed d’un coup. |
-| **Pipeline** | Découvre, télécharge, filtre, extrait, géocode, fusionne. | Ne purge jamais `projects`. |
+| Acteur | Fait | Ne fait pas |
+|--------|------|-------------|
+| **Visiteur** | Carte, filtres, URL, signalement | Swarm, revue, purge |
+| **Opérateur** | Run isolé, revue, promotion, import | `clear_db`, Force All à l’aveugle |
+| **Gatekeeper** | Page marine vs non | Inventer un site |
+| **Juge de lieu** | Ce toponyme est-il visitable en bateau ? | Recaler vers n’importe quelle mer |
+| **Réviseur** | Tranche snapped / HQ / unlocated, goldise un échantillon | Goldiser tout le seed d’un coup |
+| **Pipeline** | Découvre, extrait, propose des sites dans un run | Toucher `projects` tout seul |
 
 ---
 
 ## 17. Cycle de vie d’un projet
 
-Une URL ne naît pas projet carte. Elle traverse des états.
-
 ```
-URL (listing, cache, signalement)
-    → téléchargée (cascade, pas un challenge)
-        → acceptée par le gatekeeper
-            → extraite (titre, lieu, catégorie)
-                → géocodée (extrait / Nominatim / LLM) — pas de fallback océan
-                    → recalée mer si besoin (snapped)
-                        → dédupliquée (URL ou nom+distance)
-                            → insérée ou fusionnée
-                                → enrichie plus tard si la page a changé
+URL (listing 861 / cache / signalement)
+    → texte (cascade, pas un challenge)
+        → gatekeeper marin
+            → sites extraits (0..n)
+                → chaque site géocodé (lieu d’action, pas HQ)
+                    → site_ok → écrit dans le run
+                    → sinon unlocated
+                        → revue humaine
+                            → promu vers projects (n Features)
 ```
 
-| État | Sens | Où ça vit |
-|------|------|-----------|
-| `cached` | URL vue, pas encore extraite | `deeplink_pages` |
-| `queued` | Dans la file du swarm vivant | `Swarm.queue` |
-| `rejected` | Gatekeeper : pas marin | `failed` (stage `gatekeeper`) |
-| `failed` | Fetch / extract cassé | `failed` (stage `discover` / `extract`) |
-| `merged` | Doublon : on a ajouté un financeur | `projects` + télémétrie `MERGED` |
-| **sur la carte** | Document `projects` | mode Projets |
-| `enriched` | Re-extrait à la demande | champs `enriched`, `enriched_at` |
-| `reported` | Signalement skipper, pas encore extrait | `reported_projects` + cache |
+| État | Sens | Où |
+|------|------|-----|
+| `cached` | URL vue | `deeplink_pages` |
+| `unlocated` | Marin mais pas de site visitable | run / `failed` |
+| `rejected` | Pas marin / page générique | `failed` gatekeeper |
+| `run_site` | Site proposé | `project_run_projects` |
+| `review` | Discordance ou v1 snapped/fallback | `project_review` |
+| **carte** | Promu | `projects` (+ `sites[]`) |
+| `reported` | Signalement | `reported_projects` |
 
-Un `rejected` **reste en `failed`**. On ne le publie pas, on ne le détruit pas.
-
-Déduplication : même URL, **ou** similarité de titre ≥ 90 %, **ou** < 500 m et similarité ≥ 60 %. On fusionne les financeurs (et, cible, les champs vides via `merge_docs`).
+Dédup : même URL, ou même site (nom+<500 m). Fusion `merge_docs` + union des financeurs.
 
 ---
 
 ## 18. Le second livrable : les portails financeurs
 
-Le visiteur ne doit pas seulement voir des points. L’opérateur doit voir **quel listing** a été lu.
-
-Pour chaque MasterSeed on veut, au minimum :
+Une fiche par financeur (~861+) :
 
 | Champ | Sens |
 |-------|------|
-| `name` / `url` | Identité du portail |
-| `country` / `priority` | Curés dans `seeds.py` |
-| `last_scan` | Dernier passage découverte |
-| `urls_found` / `new_urls` | Compteurs du scan |
-| `listing_kind` | `projects_index` · `campaigns` · `hope_spots` · `grants` · `where_we_work` · `other` |
-| `engine` | `crawler` ou `tinyfish` |
+| `name` | Nom tel que vu en base / page |
+| `url` | Listing si connu, sinon domaine déduit |
+| `priority` | 1 = les 21 listings curés (URLs sûres) ; 2 = le reste des 861 |
+| `last_scan` / `urls_found` | Découverte |
+| `listing_kind` | `projects_index` · `unknown` · … |
 
-Aujourd’hui c’est éparpillé : `MASTER_SEEDS`, `discovery_state`, `deeplink_pages`. Le cahier demande d’en faire **une fiche portail**, visible en Console (nombre de projets par graine, âge du scan, 0 URL = alerte).
-
-Règles de la fiche :
-
-- une home « About / Donate » **n’est pas** un listing ;
-- si le crawler rend 0 et TinyFish aussi : `urls_found = 0`, pas d’invention ;
-- Follow the Money crée une fiche **partenaire** distincte, plafonnée, jamais un 22ᵉ MasterSeed silencieux.
-
-Le Top-Down sert à **remplir ces fiches**. Le Bottom-Up s’en sert pour savoir quelles URLs retry.
+Follow the Money **écrit dans cette table** (plus une liste parallèle plafonnée à 5 en dur). Le plafond settings évite la dérive, il n’empêche pas d’intégrer une fondation déjà vue en v1.
 
 ---
 
-## 19. Algorithme (découverte, extraction, Follow the Money)
+## 19. Algorithme (découverte, sites, Follow the Money)
 
-### Faisceau L — listing
+### Listing (L)
 
-Entrée : URL MasterSeed.
+Financeur → pages projet (crawler, Search, Fetch ; Agent si 0 et autorisé).
 
-Sortie : URLs canoniques (sans `#` ni query), même hôte, chemin qui ressemble à un projet.
+### Marin + sites (M)
 
-Outils : crawler (motifs `/project`, `/campaign`, `/initiative`, `/hope-spot`, `/programs`, `/grants`, `/projets`, `/nos-actions`…) ; TinyFish `discovery_goal` si vide, en mode incrémental (exclure les URLs déjà cachées).
-
-### Faisceau M — marin cartographiable
-
-Entrée : une URL L (ou un signalement).
-
-Sortie : document projet, ou rejet.
-
-Étapes : cascade texte → gatekeeper → RAG si long → `extract_project` → géocode → snap borné → dédup.
-
-### Follow the Money
-
-Si l’extracteur renvoie jusqu’à 3 `partners` avec URL, et que le domaine n’est pas déjà connu, on lance **une** découverte depth=1 (6 URLs) tant que `partner_count < max_partner_orgs`.
-
-Ce n’est pas un crawl du web entier. C’est un saut vers l’ONG **nommée sur la page**.
+Page → gatekeeper → extract `sites[]`.  
+Pour chaque site : juge de lieu → GPS ou `unlocated`.
 
 ### Décision
 
-| L | M | Décision |
-|---|---|----------|
-| oui | oui | **projet carte** (ou fusion) |
-| oui | non | `failed` / `rejected` — listing générique ou terrestre |
-| non | oui | signalement ou partenaire : extraire comme les autres |
+| L | M (au moins 1 site_ok) | Décision |
+|---|------------------------|----------|
+| oui | oui | sites dans le run |
+| oui | non | `unlocated` / `rejected` |
+| non | oui | signalement / partenaire : idem |
 | non | non | ignoré |
 
-Cas Ocean Foundation : listing `/projects/` → beaucoup de L. M écarte les pages « our team ».
-
-Cas siège Pew à Washington : L oui, lieu = HQ → M doit **refuser le GPS ville** et chercher le site marin, ou rester sans point publié.
+Programme mondial : M = la **liste des lieux d’action**, pas « global ».
 
 ---
 
 ## 20. Modèle de données
 
-MongoDB. On n’invente pas une sixième collection à chaque idée : on réutilise, et on ajoute des runs **sur le modèle PoE** le jour où on les code.
+### Carte v1 (ne pas écraser)
 
-### Carte (v1) — ne pas écraser
+`projects` : aujourd’hui 1 document ≈ 1 point. Cible : 1 document projet + `sites: [{name, lat, lon, geo_source, site_ok}]`.  
+Export GeoJSON : **une Feature par site** (même `project_id`).
 
-| Collection | Une ligne = |
-|------------|-------------|
-| `projects` | un projet **publié** (titre, url, lat/lon, financeurs, catégorie, S_ocean) |
+Champs à conserver : `title`, `url`, `funders`, `description`, `s_ocean`, `category_group`, `image`.  
+`snapped` / `geo_source=ocean-region-fallback` : flags de revue, plus des sources de publication.
 
-Clé métier : **`url`** (dédup primaire). Secondaire : titre+distance.
-
-Champs utiles d’un `projects` :
-
-- identité : `_id`, `title`, `url`, `description`, `funder`, `funders`
-- carte : `lat`, `lon`, `location`, `snapped`, `geo_source`
-- preuve : `image`, `engine`, `extract_level`, `s_ocean`
-- classe : `category`, `category_group`
-- dates : `created_at`, `enriched`, `enriched_at`, `enrichment_source`
-
-`geo_source` observé ou cible : `extracted` · `geocoded:location` · `llm-geocoded` · `geocoded:title` · `import` · `tinyfish-force` · ~~`ocean-region-fallback`~~ (à cesser).
-
-GeoJSON public (`project_to_feature`) : Point `[lon, lat]`, propriétés `id`, `title`, `url`, `description`, `funder` (financeurs joints), `location`, `s_ocean`, `snapped`, `image`, `category`, `category_group`.
-
-### Espace de travail
+### Runs (à créer)
 
 | Collection | Une ligne = |
 |------------|-------------|
-| `deeplink_pages` | une URL découverte (`url`, `funder`, `source`, `ts`) |
-| `discovery_state` | un portail scanné (`seed_url`, `last_scan`, compteurs) |
-| `telemetry` | un essai d’agent (`url`, `engine`, `status`, `duration_ms`) — ajouter `dataset: "projects"` |
-| `failed` | une URL en échec (`stage`, `reason`, `funder`) |
-| `reported_projects` | un signalement skipper |
-| `settings` | `_id: global` (concurrence, saturation, seuils marins, clés) |
-| `jobs` | (PoE surtout) — à réutiliser si enrich batch un jour |
-| `geocode_cache` | Nominatim / GeoNames, TTL 180 j / 14 j |
+| `project_runs` | un run (comme `poe_runs`) |
+| `project_run_projects` | un projet/site du run |
+| `project_run_events` | micro-étapes |
+| `project_review` | file de revue |
 
-Cible (pas encore créé) : `project_runs`, `project_run_projects`, sur le modèle `poe_runs` / `poe_run_ports`.
+Réutiliser `run_fingerprint`, `events.RunRecorder`, `TaskState`.
 
-### Fichiers à côté de la base
+### Ailleurs
 
-- `backend/app/static_data/seeds.py` — 21 MasterSeeds + motifs + blacklist
-- `backend/app/static_data/categories.py` — 9 groupes + couleurs + règles
-- `backend/models/gatekeeper_tfidf_logreg.joblib` — classifieur marin
-- `seed/projects.geojson` — restauration 4 463 features
+`deeplink_pages`, `discovery_state`, `telemetry` (+ `dataset`), `failed`, `reported_projects`, `settings`, `geocode_cache`.
 
-Réglages défaut (`DEFAULT_SETTINGS`) : `tinyfish_agents=2`, `extract_concurrency=6`, `max_coast_km=50`, `min_marine_score=0.5`, `test_max_urls_per_seed=6`, `full_max_urls_per_seed=20`, `follow_the_money=true`, `max_partner_orgs=5`, `saturation_limit=50`, `rescan_after_days=7`, `max_markers=1000`.
+Fichiers : `data/master_seeds.json`, `data/project_rules.json` (défauts), `seed/projects.geojson`.
 
 ---
 
 ## 21. Ce que voit l’utilisateur
 
-### Visiteur — mode Projets (cyan)
+**Visiteur.** Carte cyan, clusters, un marqueur **par site**, recherche, financeur, légende catégorie (bonus), liste, signalement, popup (lieu + URL + S_ocean). Plus de badge « snapped » comme qualité : un snapped v1 est à revoir, pas à vanter.
 
-- Carte mondiale, clusters, points colorés par `category_group`.
-- Bandeau gauche : compteur, recherche, filtre organisation (~861 noms), légende cliquable = filtre catégorie, liste (100 lignes).
-- Popup : image, titre, financeur, badge snapped, catégorie, description, lien source, S_ocean, bouton ↻ enrichir.
-- Pied : **Signaler un projet oublié** (nom + URL + description).
-- Plafond d’affichage : `max_markers` (défaut 1 000) — le reste reste en base, pas sur la carte.
+**Opérateur.** Lancer un **run**, logs, télémétrie. Plus de case « vider la base ». File de revue + promouvoir. Import/export. Réglages : seuils, `max_inland_km`, Agent on/off, budget Claude.
 
-### Opérateur — Console
-
-- Test / Full, Deploy, Stop, logs live, agents, file.
-- Case « Vider la base avant de démarrer » : **à traiter comme un piège** jusqu’à suppression.
-- Réglages : agents TinyFish (1–2), concurrence 1–20, Follow the Money, plafond partenaires, auto-stop, TTL rescan, `max_coast_km`, `min_marine_score`.
-- KPIs : extractions, taux de succès, items mapped.
-- Télémétrie + file `failed` + Force Extract (clé TinyFish obligatoire).
-- Paramètres transverses : import/export GeoJSON du mode actif, zoom, clés API.
-
-Ce qui **manque** à l’UI (écart) : fiche par MasterSeed, écran de revue, runs isolés, bouton **Promouvoir vers la carte**, filtre `geo_source`, masquage des fallback océan.
+Manques actuels (= phase B/D) : runs, revue, multi-sites, fiche 861 portails.
 
 ---
 
 ## 22. Inventaire des MasterSeeds
 
-Liste curée au 7 septembre 2026 (`MASTER_SEEDS`, 21 portails). Priorité 1 = cœur ; 2 = extension.
+**Cible : ~861 financeurs** issus de la v1, pas 21 lignes.
 
-| Nom | Pays | Prio | Listing |
-|-----|------|------|---------|
-| The Ocean Foundation | US | 1 | `oceanfdn.org/projects/` |
-| Oceana | US | 1 | `oceana.org/campaigns/` |
-| Blue Marine Foundation | UK | 1 | `bluemarinefoundation.com/projects/` |
-| Fondation de la Mer | FR | 1 | `fondationdelamer.org/` |
-| Pure Ocean Foundation | FR | 1 | `pure-ocean.org/` |
-| Fondation CMA CGM | FR | 1 | `cmacgm-group.com/fr/fondation` |
-| IFREMER | FR | 1 | `ifremer.fr/fr` |
-| Prince Albert II Foundation | MC | 1 | `fpa2.org/en/initiatives` |
-| Institut Océanographique Paul Ricard | FR | 2 | `institut-paul-ricard.org/` |
-| SHOM | FR | 2 | `shom.fr/fr` |
-| CORDIS Europe | EU | 2 | `cordis.europa.eu/projects/en` |
-| Coral Reef Alliance | US | 2 | `coral.org/en/where-we-work/` |
-| Mission Blue | US | 2 | `missionblue.org/hope-spots/` |
-| Seacology | US | 2 | `seacology.org/projects/` |
-| Ocean Conservancy | US | 2 | `oceanconservancy.org/programs/` |
-| Pew Charitable Trusts | US | 2 | `pewtrusts.org/en/projects` |
-| WWF Oceans | INT | 2 | `worldwildlife.org/initiatives/oceans` |
-| Packard Foundation | US | 2 | `packard.org/what-we-fund/ocean/` |
-| Rare Fish Forever | US | 2 | `rare.org/program/fish-forever/` |
-| Fauna & Flora Oceans | UK | 2 | `fauna-flora.org/environments/oceans/` |
-| Wildlife Conservation Society Marine | US | 2 | `wcs.org/our-work/oceans` |
+Les 21 listings curés restent **priority 1** (URL de listing connue) :
 
-Mode **test** = les **3 premiers** seulement.
+The Ocean Foundation, Oceana, Blue Marine Foundation, Fondation de la Mer, Pure Ocean, Fondation CMA CGM, IFREMER, Prince Albert II, Institut Paul Ricard, SHOM, CORDIS, Coral Reef Alliance, Mission Blue, Seacology, Ocean Conservancy, Pew, WWF Oceans, Packard, Rare Fish Forever, Fauna & Flora Oceans, WCS Marine.
 
-Ajouter un 22ᵉ portail se fait **ici** (table) puis dans `seeds.py`, pas en dur dans le swarm. Un partenaire Follow the Money n’entre dans cette table que par revue humaine.
+Les autres ~840 : `priority: 2`, nom tel qu’en base, URL à découvrir (Search sur `"{name}" marine projects`).
 
-Le SHOM et l’IFREMER sont des instituts, pas des fondations : on n’y cherche pas des « grants », on y cherche des **programmes / campagnes** marins. Si le listing n’en a pas, 0 URL est un succès honnête.
+SHOM / IFREMER : instituts — 0 URL projet reste un succès honnête s’il n’y a pas de listing d’actions.
 
 ---
 
 ## 23. Gatekeeper et taxonomie
 
-### Gatekeeper
+Trois étages, **seuils dans settings** :
 
-Trois étages, dans l’ordre :
+1. ML local si assez entraîné : accept / reject selon `gatekeeper_accept` / `gatekeeper_reject` (défauts historiques 0,85 / 0,12).
+2. OpenRouter ou Claude (si budget).
+3. Heuristique mots-clés + `min_marine_score`.
 
-1. **ML local** (`predict_relevance`) si le modèle a ≥ 500 positifs : accepté si score ≥ 0,85, rejeté si ≤ 0,12.
-2. **OpenRouter** : « marine/ocean/coastal conservation, restoration or protection ? » — rejets montagne / lac / rivière sauf estuaire côtier. Seuil `min_marine_score`.
-3. **Heuristique** : compteurs `MARINE_KW` vs `LAND_KW`, au moins 3 hits marins et score ≥ seuil. Repli si pas de clé ou LLM en échec.
+Ré-entraînement : **après** Gold (phase D), pas pour « débloquer » un run.
 
-Le modèle s’entraîne sur les **titres + descriptions déjà en carte** (positifs) et les `failed` gatekeeper + corpus terrestre synthétique (négatifs). Conséquence : **ne pas y mettre de terrestes**, sinon le classifieur les aime.
-
-### Neuf familles (`CATEGORY_GROUPS`)
-
-| Groupe | Couleur carte | Indices (normalize_category) |
-|--------|---------------|------------------------------|
-| MPA | `#00f0ff` | protected area, mpa, hope spot |
-| Conservation | `#39ff14` | conserv, species, wildlife, whale, shark, turtle… |
-| Research | `#c084fc` | research, science, monitor, expedition, survey |
-| Fisheries | `#fbbf24` | fisher, bycatch, aquaculture |
-| Policy & Advocacy | `#f472b6` | policy, advocacy, legislation, governance |
-| Pollution | `#ff4a4a` | pollution, plastic, debris, spill |
-| Coastal & Habitat | `#34d399` | coastal, mangrove, reef, seagrass, blue carbon… |
-| Education | `#60a5fa` | educat, awareness, outreach, citizen |
-| Other | `#94a3b8` | rien n’a matché |
-
-L’extracteur doit renvoyer **exactement** un de ces libellés. `normalize_category` rattrape le libre. 474 `Other` dans le seed : dette de classification, pas un groupe métier noble.
+Neuf familles : utiles à l’affichage, **chantier non prioritaire**. Plus tard : entraîner les indices.
 
 ---
 
 ## 24. Exemples concrets
 
-### Hope Spot Mission Blue
+**Hope Spot.** Chaque spot = un site visitable. Pas le bureau Mission Blue.
 
-Listing `missionblue.org/hope-spots/` : chaque Hope Spot = un projet. Lieu = le spot, GPS en mer ou `snapped` depuis la côte. Catégorie MPA. Pas le bureau de l’ONG.
+**Programme mondial à 4 récifs.** 4 sites, 1 projet, 4 points. Pas un point « Pacifique ».
 
-### CORDIS
+**Pew / siège Washington.** L = pages projet ; M refuse Washington ; cherche l’AMP / la côte nommée ; sinon `unlocated`.
 
-Listing européen bruyant (tous projets UE). Le gatekeeper doit **jeter** l’aéronautique et garder l’océano. Si le crawler ramène des homes CORDIS, M = non.
+**Signalement « Coral Gardeners Moorea ».** Site Moorea si la page le dit. `Community Report` dans `funders`.
 
-### Signalement skipper
-
-Un visiteur envoie « Coral Gardeners Moorea » + URL. → `reported_projects` + `deeplink_pages` (`Community Report`). Si le swarm tourne, file immédiate ; sinon, prochain `full`. Même règle M que les MasterSeeds.
-
-### Siège à terre
-
-Géocodeur pose « Ocean Conservancy » sur Washington D.C. Aujourd’hui : snap vers la baie de Chesapeake à des dizaines/centaines de km, `snapped=true`. Cible : si `coast_distance_km` > `max_coast_km`, **pas de point publié**, `location` textuel conservé.
-
-### Fallback océan
-
-Titre sans toponyme, pas de `location`. Aujourd’hui : point hashé dans un des 4 rectangles (Pacifique, Atlantique, Indien…). Cible : rester `cached` / `failed`, jamais un îlot fantôme au milieu du Pacifique.
+**v1 snapped ou fallback.** Invisible comme « bon point » : file de revue, exclu du Gold tant que non accepté.
 
 ---
 
 ## 25. Recette
 
-On ne « sent » pas que le mode Projets est bon. On coche.
+### Portail / financeur
 
-### Pour un portail (recette unitaire)
+1. Fiche dans MasterSeeds élargis.
+2. Chaque site carte : GPS d’action, URL, financeurs, `site_ok`.
+3. 0 HQ, 0 fallback, 0 snap, 0 (0,0).
+4. Programme multi-lieux : autant de points que de sites extraits.
+5. Compte `projects` v1 non diminué sans revue écrite.
 
-1. Fiche seed : `last_scan` récent, listing URL stable.
-2. Chaque projet carte issu de ce portail a : titre, URL http(s), GPS océanique ou snapped **borné**, `funders` contenant le seed, `category_group` ∈ 9 familles, `s_ocean`.
-3. Aucune page about/donate. Aucun GPS (0,0). Aucun `ocean-region-fallback`.
-4. Popup : lien source cliquable + S_ocean.
-5. `projects` n’a pas perdu un point v1 de ce financeur, sauf rejet **écrit**.
+### Run
 
-### Pour un swarm (recette run)
+1. `wrote_projects: false`.
+2. Aucun appel `snap_to_ocean` / `ocean_fallback_coords` dans les traces.
+3. `clear_db` impossible (400).
+4. Tests : `test_project_contract.py` + suites existantes non-destructives (`>= 4463`).
 
-1. `clear_db` n’a **pas** été envoyé (idéalement : le backend l’ignore).
-2. Mode test : ≤ 3 seeds, ≤ 6 URLs/seed.
-3. Compteurs SUCCESS / MERGED / REJECTED / FAILED journalisés.
-4. Skip URL déjà en carte **sans** incrémenter la saturation.
-5. Gatekeeper : `accepted=false` ⇒ pas d’insert.
-6. Tests automatiques verts (ci-dessous).
+### Interdit
 
-### Interdit pendant la recette
-
-Cocher « Vider la base ». `DELETE /api/projects`. Force Extract All sans quota. Relancer un `full` « pour voir » sur la carte v1.
-
-Commande locale :
+Relancer un `full` sur la carte. Réintroduire une case purge. « Juste un petit snap ».
 
 ```bash
-cd backend && python3 -m pytest tests/test_blue_intelligence.py tests/test_import_and_regression.py tests/test_zoom_and_new_features.py tests/test_refactor_core.py -q
+cd backend && python3 -m pytest tests/test_project_contract.py tests/test_blue_intelligence.py tests/test_import_and_regression.py tests/test_zoom_and_new_features.py tests/test_refactor_core.py -q
 ```
-
-Ces tests exigent souvent l’API et Mongo (données v1 présentes). Ils **vérifient** que le stock n’a pas fondu (`>= 4463`).
 
 ---
 
 ## 26. Risques
 
-| Risque | Effet | Parade déjà là / à faire |
-|--------|--------|---------------------------|
-| Purge `clear_db` / DELETE | Perte du jeu d’entraînement et de la carte | UI Settings déjà sans bouton ; **fermer l’API** ; runs isolés |
-| Fallback océan | Points fantômes au milieu des bassins | Ne plus publier ; filtrer `geo_source` |
-| Snap 500 km | HQ urbain → mer lointaine | Plafond `max_coast_km` |
-| Terrestre en carte | Gatekeeper + ML contaminés | Seuil, revue `Other`, ré-entraînement sur Gold |
-| TinyFish partout | Crédits, lenteur | N1 d’abord ; Agent seulement si 0 URL ou Force |
-| Follow the Money | Dérive hors conservation | Plafond 5, depth 1, gatekeeper sur les pages partenaires |
-| Saturation trop basse | Stop avant d’avoir vidé la file | 50 par défaut ; skip URL ne compte pas |
-| Anti-bot | Texte vide, faux extraits | `looks_blocked`, Chromium, miroir, jamais ingérer l’interstitiel |
-| Biais ML | La v1 se copie elle-même | Gold Dataset ; le LLM tranche la zone grise 0,12–0,85 |
-| Import mal ciblé | GeoJSON marinas dans `projects` | Contrôle UI du mode actif |
-| Enrich qui échoue au gatekeeper | Projet v1 « trop terrestre » à la relecture | Ne pas supprimer le point ; loguer l’erreur (comportement actuel) |
-| Plafond 1 000 marqueurs | Le visiteur croit qu’il n’y a que 1 000 projets | Compteur bandeau = total base ; zoom / filtres |
+| Risque | Parade |
+|--------|--------|
+| Purge | Fonctions **supprimées** (phase A) |
+| Rustine GPS | Plus d’appel ; revue des v1 sales |
+| HQ | Juge de lieu + liste de villes siège |
+| Programme mondial → 0 point | Extraire *n* sites ; `unlocated` honnête > centroïde |
+| 861 seeds = crawl énorme | Runs isolés, TTL, saturation, priority 1 d’abord |
+| TinyFish Agent | Search/Fetch ; flag off |
+| ML v1 biaisé | Ne pas ré-entraîner avant Gold |
+| AMP mal utilisées | Coulisse géocode seulement |
+| Multi-points / perf carte | `max_markers` inchangé ; cluster |
 
 ---
 
 ## 27. Hors périmètre
 
-Ce cahier **ne couvre pas** :
-
-- le mode **Formalités** (PoE, ZEE, UNCLOS) — voir `docs/CAHIER_DES_CHARGES_POE.md` ;
-- le mode **Marinas** / mouillages de la route Berry-Mappemonde ;
-- la **couche polygones AMP** (retirée, `/api/mpa` = 410) ;
-- le crowdsourcing PoE avec lien de loi (backlog P1 du PRD Formalités) ;
-- Claude Haiku comme extracteur de projets ;
-- la promotion automatique depuis un run (les runs n’existent pas encore) ;
-- le croisement « un projet près d’un PoE » (idée P2 du PRD) ;
-- un annuaire exhaustif de **toutes** les ONG marines du monde (seulement MasterSeeds + partenaires plafonnés + signalements).
+- Formalités — `docs/CAHIER_DES_CHARGES_POE.md` (on **harmonise** seulement les runs).
+- Marinas / mouillages de la route.
+- Couche polygones AMP **sur la carte** (l’usage géocode est **dans** le périmètre C2).
+- Crowdsourcing PoE.
+- Promotion automatique run → carte.
+- Croisement projet ↔ PoE (P2 PRD).
+- Entraînement des catégories (plus tard).
+- Annuaire de toutes les ONG marines hors financeurs v1 + signalements + Follow the Money.
 
 ---
 
 ## 28. Annexes
 
-### A. Statuts télémétrie
+### A. Télémétrie
 
-| Status | Sens |
-|--------|------|
-| `SUCCESS` | Projet inséré |
-| `MERGED` | Doublon fusionné |
-| `REJECTED` | Gatekeeper |
-| `FAILED` | Fetch / parse / extract / TinyFish |
-| `CANCELLED` | Stop opérateur |
+`SUCCESS` (sites dans le run), `MERGED`, `REJECTED`, `UNLOCATED`, `FAILED`, `CANCELLED`. Champ `dataset: "projects"`.
 
-### B. API (rappel court)
+### B. API cible
 
-Lecture carte : `GET /api/projects`.  
-Écriture swarm : `POST /api/swarm/deploy` — **dangereux** si `clear_db`.  
-Enrich : `POST /api/projects/{id}/enrich`.  
-Signalement : `POST /api/report-project`.  
-Import : `POST /api/import/geojson` (non destructif).  
-Force : `POST /api/failed/{id}/force` (clé TinyFish).  
-Interdit : `DELETE /api/projects`.
+| Méthode | Effet |
+|---------|--------|
+| `GET /api/projects` | Carte (1 Feature / site) |
+| `POST /api/projects/runs` | Run isolé |
+| `POST /api/projects/runs/{id}/promote` | Manuel, plus tard |
+| `POST /api/swarm/deploy` | Devient un run ; `clear_db` → 400 |
+| `DELETE /api/projects` | **410** |
+| `POST /api/report-project` | File + prochain run |
 
-### C. Restauration
+### C. Restauration v1
 
 ```bash
 curl -X POST http://localhost:8001/api/import/geojson \
   -H "Content-Type: application/json" --data-binary @seed/projects.geojson
 ```
 
-L’import saute les URLs déjà connues. Ce n’est pas une purge.
+Skip des URLs connues. Pas une purge.
 
-### D. Tests automatiques concernés
+### D. Tests
 
-`backend/tests/test_blue_intelligence.py`, `test_import_and_regression.py`, `test_zoom_and_new_features.py` (catégories, report, saturation), `test_refactor_core.py` (compte ≥ 4 463, gatekeeper predict), `test_ml_jobs.py` (non-destructivité).
-
-Il **manque** une suite unitaire du swarm (découverte, `_process_url`, interdiction du fallback) comparable à `test_poe_seeds.py`.
+Actuels : `test_blue_intelligence.py`, `test_import_and_regression.py`, `test_zoom_and_new_features.py`, `test_refactor_core.py`, `test_ml_jobs.py`.  
+À ajouter : `test_project_contract.py` (A), puis tests de runs (B) sur le modèle `test_poe_*`.
 
 ### E. Attribution
 
-Projets : pages des organisations listées au § 22, extraites automatiquement.  
-Géocodage : contributeurs OpenStreetMap (ODbL), Nominatim, GeoNames.  
-Carte : Blue Intelligence / Berry-Mappemonde.  
-Les descriptions sont des **synthèses** de pages publiques, pas des textes officiels des fondations.
+Pages des fondations ; OSM / Nominatim / GeoNames ; AMP en indice si réutilisées. Synthèses, pas textes officiels.
 
 ---
 
-*Fin du cahier des charges. Toute évolution de règle (plus de fallback océan, runs isolés, fermeture des purges, snap borné) se fait d’abord ici, puis dans le code.*
+## 29. Trace des commentaires de revue (v1 → v2)
+
+| # | Décision reprise |
+|---|------------------|
+| 0, 6, 7 | Phrase d’ouverture, éco-tourisme, bateau, plusieurs financeurs |
+| 1, 2, 5, 9, 14 | Abandon de `snap_to_ocean` comme publication |
+| 3, 21 | Agent cher ; Search/Fetch d’abord |
+| 4, 15, 20 | Meilleur géocode + Claude autorisé |
+| 8 | *n* sites pour un programme mondial |
+| 10, 16, 22 | Créer `project_run_*`, harmoniser les modes, avant un nouveau run |
+| 11, 27, 24 | Gold à **créer** (v1 − snapped − fallback) ; ré-entraîner **après** |
+| 12, 13, 29 | MasterSeeds = ~861 financeurs |
+| 17 | Supprimer purges (pas seulement les cacher) |
+| 18, 19 | Plus de fallback ; plus de HQ en sortie de géocode |
+| 23 | Télémétrie `dataset` : cosmétique, champ à ajouter (B6) |
+| 25 | AMP = indice de géocodage (C2) |
+| 26 | UI de revue plutôt qu’un snap borné (D1) |
+| 28 | Enrich ↻ = re-texte aujourd’hui ; le GPS se revoit en C/D, pas par snap |
+| 30 | Seuils configurables (A3) |
+| 31 | Catégories : garder, entraîner plus tard, pas prioritaire |
+
+---
+
+*Fin du cahier des charges v2. Toute évolution de règle se fait d’abord ici, puis dans le code. L’implémentation suit le § 14, phase A en premier.*
