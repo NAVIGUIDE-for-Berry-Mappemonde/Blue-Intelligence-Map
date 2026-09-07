@@ -13,14 +13,14 @@ import pytest
 from app.core import dedup, extract, geo
 from app.core.run_rules import (
     RuleError, attach_rules, bind_rules, catalog_default, get_rule, load_catalog,
-    public_catalog, reset_rules, resolve_rules, rules_for_mode, rules_hash,
-    snapshot_for_run,
+    public_catalog, reload_catalog, reset_rules, resolve_rules, rules_for_mode,
+    rules_hash, snapshot_for_run,
 )
-from app.services import osm_seeds, poe_runs, wpi_ports
+from app.services import marina_world, osm_seeds, poe_runs, wpi_ports
 
 
 def test_catalog_loads_and_intervals():
-    cat = load_catalog()
+    cat = reload_catalog()
     assert cat["version"] == 1
     assert cat["rules"]
     ids = [r["id"] for r in cat["rules"]]
@@ -47,6 +47,7 @@ def test_cdc_numbers_are_catalogued():
         "formalities.wpi_proximity_km", "formalities.catalog_min_coords",
         "formalities.listing_coverage_publish", "formalities.zone_timeout_s",
         "marinas.corridor_radius_nm", "marinas.waypoint_radius_nm",
+        "marinas.overpass_throttle_s",
         "shared.dedup_dist_km", "shared.no_snap",
     ):
         assert rid in ids
@@ -62,6 +63,7 @@ def test_defaults_match_code_constants():
     assert catalog_default("formalities.wpi_proximity_km") == wpi_ports.WPI_PROXIMITY_KM
     assert catalog_default("formalities.marina_control_m") == osm_seeds.MARINA_CONTROL_RADIUS_M
     assert catalog_default("formalities.zone_timeout_s") == poe_runs.ZONE_TIMEOUT_S
+    assert catalog_default("marinas.overpass_throttle_s") == marina_world.OVERPASS_THROTTLE_S
 
 
 def test_loi_cannot_be_overridden():

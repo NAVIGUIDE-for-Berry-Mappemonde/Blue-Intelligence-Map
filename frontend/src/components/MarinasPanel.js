@@ -2,45 +2,19 @@ import { Anchor, ExternalLink, MapPin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
 
-const PRIORITY_LABELS_KEY = {
-  1: "marinasPriority1",
-  2: "marinasPriority2",
-  3: "marinasPriority3",
-};
-
-const SOURCE_LABELS_KEY = {
-  openstreetmap: "marinasSourceOSM",
-  shom: "marinasSourceSHOM",
-  curated: "marinasSourceCurated",
-};
-
-const PRIORITY_COLORS = {
-  1: "bg-alert/20 text-alert border-alert/40",
-  2: "bg-amberx/20 text-amberx border-amberx/40",
-  3: "bg-slate-500/20 text-slate-300 border-slate-500/40",
-};
-
-const SOURCE_COLORS = {
-  openstreetmap: "bg-bio/15 text-bio border-bio/40",
-  shom:          "bg-sonar/15 text-sonar border-sonar/40",
-  curated:       "bg-funder/15 text-funder border-funder/40",
-};
+const LIST_CAP = 250;
 
 export default function MarinasPanel({
   t,
-  marinas,               // GeoJSON FeatureCollection
-  onFlyTo,               // fn(featureId, lat, lon) — used to fly + open popup on the map
-  onRefresh,             // fn() — parent will refetch after build
-  onRefreshAnchorages,   // fn() — refetch anchorages after a build
+  marinas,
+  onFlyTo,
+  onRefresh,
+  onRefreshAnchorages,
 }) {
   const [query, setQuery] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState("All");
-  const [sourceFilter, setSourceFilter] = useState("All");
   const batchPollRef = useRef(null);
-
   const features = marinas?.features || [];
 
-  // Phase 8 — anchorages build poller: refetch the layer when a build finishes.
   useEffect(() => {
     let live = true;
     let iv = null;
@@ -60,8 +34,6 @@ export default function MarinasPanel({
     return () => { live = false; if (iv) clearInterval(iv); };
   }, [onRefreshAnchorages]);
 
-  // Poll build status — kept alive so the sidebar list re-fetches at end of a
-  // build that was kicked off from the Audit view (Phase 5).
   useEffect(() => {
     let live = true;
     let iv = null;
@@ -81,7 +53,6 @@ export default function MarinasPanel({
     return () => { live = false; if (iv) clearInterval(iv); };
   }, [onRefresh]);
 
-  // Enrichment batch poller — same story, refresh the list at the end.
   useEffect(() => {
     let live = true;
     let wasRunning = false;
@@ -105,36 +76,27 @@ export default function MarinasPanel({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    if (!q) return features;
     return features.filter((f) => {
       const p = f.properties || {};
-      if (priorityFilter !== "All" && String(p.priority) !== String(priorityFilter)) return false;
-      if (sourceFilter !== "All" && p.source !== sourceFilter) return false;
-      if (!q) return true;
       return (
         (p.name || "").toLowerCase().includes(q)
-        || (p.nearest_waypoint?.name || "").toLowerCase().includes(q)
+        || String(p.osm_id || "").toLowerCase().includes(q)
       );
     });
-  }, [features, query, priorityFilter, sourceFilter]);
+  }, [features, query]);
 
-  const bySrc = useMemo(() => {
-    const acc = { openstreetmap: 0, shom: 0, curated: 0 };
-    features.forEach((f) => {
-      const src = f.properties?.source;
-      if (src && acc[src] !== undefined) acc[src] += 1;
-    });
-    return acc;
-  }, [features]);
+  const visible = filtered.slice(0, LIST_CAP);
+  const truncated = filtered.length > LIST_CAP;
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface" data-testid="marinas-panel">
-      {/* En-tête + recherche — structure uniforme des 3 modes */}
       <div className="p-4 border-b border-line">
         <div className="flex items-center gap-2 mb-3">
           <Anchor size={18} className="text-alert" />
           <h2 className="font-heading font-bold text-white text-base">{t("modeMarinas")}</h2>
           <span className="ml-auto font-mono text-[10px] text-slate-500" data-testid="marinas-count">
-            {features.length} {t("modeMarinas").toLowerCase()}
+            {features.length} {t("marinasCount")}
           </span>
         </div>
         <div className="relative mb-3">
@@ -150,17 +112,12 @@ export default function MarinasPanel({
           />
         </div>
 
-        {/* Légende — cohérence avec le mode Projets */}
-        <div className="mb-3" data-testid="marinas-legend">
+        <div className="mb-1" data-testid="marinas-legend">
           <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1.5">{t("legend")}</p>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#ff4a4a", boxShadow: "0 0 6px #ff4a4a66" }} />
-              <span className="text-[11px] text-slate-300">{t("legendMarinaP1")}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full shrink-0 opacity-60" style={{ background: "#ff4a4a" }} />
-              <span className="text-[11px] text-slate-300">{t("legendMarinaOther")}</span>
+              <span className="text-[11px] text-slate-300">{t("legendMarinaWorld")}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "#2dd4bf", boxShadow: "0 0 6px #2dd4bf66" }} />
@@ -168,47 +125,8 @@ export default function MarinasPanel({
             </div>
           </div>
         </div>
-
-        {/* Filtres */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="marinas-filter-priority">
-              {t("marinasFilterPriority")}
-            </label>
-            <select
-              id="marinas-filter-priority"
-              data-testid="marinas-filter-priority"
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
-            >
-              <option value="All">{t("marinasAll")}</option>
-              <option value="1">1 · {t("marinasPriority1")}</option>
-              <option value="2">2 · {t("marinasPriority2")}</option>
-              <option value="3">3 · {t("marinasPriority3")}</option>
-            </select>
-          </div>
-          <div>
-            <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1" htmlFor="marinas-filter-source">
-              {t("marinasFilterSource")}
-            </label>
-            <select
-              id="marinas-filter-source"
-              data-testid="marinas-filter-source"
-              value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value)}
-              className="w-full px-2 py-1.5 bg-raised border border-line rounded-sm text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50"
-            >
-              <option value="All">{t("marinasAll")}</option>
-              <option value="openstreetmap">{t("marinasSourceOSM")} ({bySrc.openstreetmap})</option>
-              <option value="shom">{t("marinasSourceSHOM")} ({bySrc.shom})</option>
-              <option value="curated">{t("marinasSourceCurated")} ({bySrc.curated})</option>
-            </select>
-          </div>
-        </div>
       </div>
 
-      {/* List */}
       <div className="flex-1 overflow-y-auto" data-testid="marinas-list">
         {features.length === 0 && (
           <div className="p-6 text-center text-xs text-slate-500 leading-relaxed">
@@ -216,15 +134,17 @@ export default function MarinasPanel({
             {t("marinasEmpty")}
           </div>
         )}
-        {filtered.map((f) => {
+        {truncated && (
+          <p className="px-4 py-2 font-mono text-[10px] text-slate-500" data-testid="marinas-list-truncated">
+            {t("marinasListTruncated").replace("{shown}", String(LIST_CAP)).replace("{total}", String(filtered.length))}
+          </p>
+        )}
+        {visible.map((f) => {
           const p = f.properties || {};
-          const wp = p.nearest_waypoint || {};
           const [lon, lat] = f.geometry?.coordinates || [0, 0];
-          const prioKey = PRIORITY_LABELS_KEY[p.priority] || "marinasPriority3";
-          const srcKey = SOURCE_LABELS_KEY[p.source] || "marinasSourceCurated";
           return (
             <button
-              key={p.id}
+              key={p.id || p.osm_id}
               data-testid={`marina-row-${p.id}`}
               onClick={() => onFlyTo && onFlyTo(p.id, lat, lon)}
               className="w-full text-left px-4 py-3 border-b border-line hover:bg-raised transition-colors group"
@@ -234,22 +154,16 @@ export default function MarinasPanel({
                 <MapPin size={13} className="text-alert mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white">
-                    {p.name}
+                    {p.name || t("marinasUnnamed")}
                   </div>
                   <div className="font-mono text-[10px] text-slate-500 mt-0.5 truncate">
-                    {t("marinasNearest")}: {wp.name || "—"} · {(wp.distance_nm ?? 0).toFixed(1)} {t("marinasDistanceNM")}
+                    {p.osm_id || `${Number(lat).toFixed(3)}, ${Number(lon).toFixed(3)}`}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5">
-                    <span className={`px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest ${PRIORITY_COLORS[p.priority] || PRIORITY_COLORS[3]}`}>
-                      P{p.priority} · {t(prioKey)}
+                    <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-bio/15 text-bio border-bio/40">
+                      {t("marinasSourceOSM")}
                     </span>
-                    <span className={`px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest ${SOURCE_COLORS[p.source] || SOURCE_COLORS.curated}`}>
-                      {t(srcKey)}
-                    </span>
-                    {p.enriched && (
-                      <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-alert/15 text-alert border-alert/40" title={t("marinasEnriched")}>◆</span>
-                    )}
-                    {p.tags?.website && (
+                    {p.website && (
                       <ExternalLink size={11} className="text-slate-500 ml-auto shrink-0" />
                     )}
                   </div>
@@ -260,11 +174,16 @@ export default function MarinasPanel({
         })}
       </div>
 
-      {/* Attributions — pied uniforme avec le mode Formalités
-          (le bouton Refresh a été retiré : la liste se rafraîchit seule toutes les 8 s) */}
       <div className="px-4 py-2 border-t border-line">
         <p className="font-mono text-[10px] text-slate-300 leading-relaxed">
-          © OpenStreetMap (ODbL) · SHOM
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-white"
+          >
+            {t("marinasOdbL")}
+          </a>
         </p>
       </div>
     </aside>

@@ -144,11 +144,10 @@ The header pill lets you switch between three modes. Each mode paints the app wi
   - *Export GeoJSON* button — exports the projects visible in this mode.
 
 ### 2) Marinas (red)
-- **Map**: red-tinted markers grouped into clusters, showing marinas and berthing points curated from OpenStreetMap and other open sources.
-- **Popup**: marina name, tags (fuel · water · haul-out · shore power · repair), coordinates and source link. Enriched fields (VHF channel, phone, website) appear once the enrichment batch has been run.
-- **Left sidebar**: search by name, filter by tag, marina list.
-- *Export GeoJSON* button — exports the marinas visible in this mode.
-- All batch actions (build, enrich) are triggered from the Audit hub (see below), not from the sidebar.
+- **Map**: world catalog of OpenStreetMap `leisure=marina` points, clustered. Each popup has the OSM website tag (unchecked) and a deterministic Google Maps search link.
+- **Left sidebar**: search by name or OSM id (list capped at 250 rows). Attribution: © OpenStreetMap contributors (ODbL).
+- *Export GeoJSON* — slim FeatureCollection, uncapped.
+- The world dump is started from the Console (resumable tiles, no purge). Formalities / Ports of Entry stay a separate job.
 
 ### 3) Formalities (amber)
 - **Map**: world choropleth of the ~285 Exclusive Economic Zones (EEZ, Marine Regions/VLIZ v12) coloured by generation status, plus amber markers for every extracted official Port of Entry (pleasure craft). Click an EEZ to open its sheet.
@@ -166,7 +165,7 @@ The header pill lets you switch between three modes. Each mode paints the app wi
 ## Swarm Intelligence Audit (header toggle)
 Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
 - **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
-- **Marinas — Build & Enrich batch**: rebuild the marinas dataset from open sources, then enrich N marinas at a time (VHF, phone, website) with live progress and per-item status.
+- **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). Anchorages stay on the route corridor.
 - **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
 - **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
@@ -205,11 +204,10 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
   - Bouton *Export GeoJSON* — exporte les projets visibles dans ce mode.
 
 ### 2) Marinas (rouge)
-- **Carte** : marqueurs teintés rouge regroupés en clusters, représentant les marinas et points d'amarrage curatés depuis OpenStreetMap et d'autres sources ouvertes.
-- **Popup** : nom, tags (carburant · eau · levage · courant à quai · réparation), coordonnées et lien source. Les champs enrichis (canal VHF, téléphone, site web) apparaissent une fois le batch d'enrichissement lancé.
-- **Bandeau gauche** : recherche par nom, filtre par tag, liste des marinas.
-- Bouton *Export GeoJSON* — exporte les marinas visibles dans ce mode.
-- Toutes les actions batch (build, enrichissement) sont déclenchées depuis le hub Audit (voir plus bas), plus depuis le bandeau.
+- **Carte** : catalogue mondial OpenStreetMap `leisure=marina`, en clusters. Chaque popup affiche le site tagué OSM (non vérifié) et un lien de recherche Google Maps déterministe.
+- **Bandeau gauche** : recherche par nom ou id OSM (liste plafonnée à 250 lignes). Attribution : © les contributeurs OpenStreetMap (ODbL).
+- *Export GeoJSON* — FeatureCollection maigre, non plafonnée.
+- Le dump mondial se lance depuis la Console (tuiles reprenables, pas de purge). Les Formalités / Ports d'Entrée restent un autre job.
 
 ### 3) Formalités (ambre)
 - **Carte** : choroplèthe mondiale des ~285 Zones Économiques Exclusives (ZEE, Marine Regions/VLIZ v12) colorées par statut de génération, plus des marqueurs ambre pour chaque Port d'Entrée officiel extrait (plaisance). Cliquez une ZEE pour ouvrir sa fiche.
@@ -227,7 +225,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 ## Audit Swarm Intelligence (bascule dans l'en-tête)
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
-- **Marinas — Build & Enrich batch** : reconstruit le jeu marinas depuis les sources ouvertes, puis enrichit N marinas à la fois (VHF, téléphone, site web) avec progression en direct et statut par item.
+- **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Les mouillages restent sur le corridor de la route.
 - **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 

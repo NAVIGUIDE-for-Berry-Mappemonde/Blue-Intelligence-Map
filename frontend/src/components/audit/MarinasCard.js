@@ -60,7 +60,7 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
   const startBuild = async () => {
     if (buildStarting || buildStatus?.running) return;
     setBuildStarting(true);
-    try { await api.post("/marinas/build", { include_corridor: corridorOn, clear_before: false }); }
+    try { await api.post("/marinas/build", { resume: true, clear_before: false }); }
     catch (e) { console.warn("build start failed", e); }
     finally { setTimeout(() => setBuildStarting(false), 800); }
   };
@@ -92,16 +92,9 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
           <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
             {t("auditMarinasBuild")}
           </label>
-          <label className="flex items-center gap-2 mb-2 text-xs text-slate-400 cursor-pointer select-none">
-            <input
-              data-testid="audit-corridor-toggle"
-              type="checkbox"
-              checked={corridorOn}
-              onChange={(e) => setCorridorOn(e.target.checked)}
-              className="accent-teal-400"
-            />
-            {t("auditCorridorToggle")}
-          </label>
+          <p className="mb-2 text-[10px] font-mono text-slate-500 leading-relaxed">
+            {t("auditMarinasWorldHint")}
+          </p>
           <button
             data-testid="audit-marinas-scan-btn"
             onClick={startBuild}
@@ -116,10 +109,20 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
           </button>
           {buildStatus?.summary && !buildStatus.running && (
             <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
-              ✓ OSM {buildStatus.summary.by_source?.openstreetmap ?? 0} · SHOM {buildStatus.summary.by_source?.shom ?? 0} · Curated {buildStatus.summary.by_source?.curated ?? 0}
+              ✓ +{buildStatus.summary.inserted ?? 0} · ~{buildStatus.summary.updated ?? 0} · OSM {buildStatus.summary.fetched_raw ?? 0}
             </p>
           )}
           {/* Phase 8 — anchorages scan (same ±25 NM corridor logic) */}
+          <label className="flex items-center gap-2 mt-3 mb-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input
+              data-testid="audit-corridor-toggle"
+              type="checkbox"
+              checked={corridorOn}
+              onChange={(e) => setCorridorOn(e.target.checked)}
+              className="accent-teal-400"
+            />
+            {t("auditCorridorToggle")}
+          </label>
           <button
             data-testid="audit-anchorages-scan-btn"
             onClick={startAnchBuild}

@@ -94,7 +94,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
       const fc = JSON.parse(text);
       const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
       const isProj = "title" in first && "url" in first;
-      const isMar = "source" in first && "priority" in first;
+      const isMar = "osm_id" in first || "maps_url" in first || ("source" in first && !("title" in first));
       const looksLike = isMar ? "marinas" : isProj ? "projects" : "unknown";
       if (looksLike !== "unknown" && looksLike !== currentMode) {
         throw new Error(

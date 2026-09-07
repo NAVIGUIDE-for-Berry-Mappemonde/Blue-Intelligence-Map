@@ -14,8 +14,13 @@ from app.core.llm import get_llm_key
 from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
 from app.db import db, get_settings
 from app.services.anchorage_build import build_anchorages as run_build_anchorages, anchorages_to_geojson
-from app.services.marina_build import build_marinas as run_build_marinas, marinas_to_geojson
 from app.services.marina_enrich import ENRICH_FIELDS, enrich_marina
+from app.services.marina_world import (
+    SLIM_PROJECTION,
+    marinas_to_slim_geojson,
+    official_website,
+    build_world_marinas as run_build_world_marinas,
+)
 from app.services.swarm_pipeline import now_iso
 from app.state import swarm
 
@@ -52,20 +57,24 @@ async def import_marinas_geojson(fc: dict = Body(...)):
                 continue
             p = f.get("properties") or {}
             name = str(p.get("name") or "").strip()
-            if not name:
+            osm_id = p.get("osm_id")
+            if not name and not osm_id:
                 invalid += 1
                 continue
-            mid = str(p.get("id") or "").strip() or str(uuid.uuid4())
+            mid = str(p.get("id") or osm_id or "").strip() or str(uuid.uuid4())
+            website = p.get("website") or official_website({"tags": p.get("tags") or {}})
             doc = {
                 "_id": mid,
                 "name": name,
                 "lat": lat,
                 "lon": lon,
-                "source": p.get("source") or "curated",
-                "priority": int(p.get("priority") or 3),
-                "nearest_waypoint": p.get("nearest_waypoint") or {},
+                "source": p.get("source") or "openstreetmap",
                 "tags": p.get("tags") or {},
-                "osm_id": p.get("osm_id"),
+                "osm_id": osm_id,
+                "website": website,
+                "website_status": p.get("website_status") or ("unchecked" if website else None),
+                "website_source": p.get("website_source") or ("osm_tag" if website else None),
+                "image": p.get("image"),
                 "enriched": bool(p.get("enriched")),
                 "enrichment_source": p.get("enrichment_source"),
                 "enriched_at": p.get("enriched_at"),
@@ -79,6 +88,10 @@ async def import_marinas_geojson(fc: dict = Body(...)):
                 "resume_avis": p.get("resume_avis"),
                 "fetched_at": p.get("fetched_at") or now_iso(),
             }
+            if p.get("priority") is not None:
+                doc["priority"] = int(p["priority"])
+            if p.get("nearest_waypoint"):
+                doc["nearest_waypoint"] = p["nearest_waypoint"]
             existing = await db.marinas.find_one({"_id": mid})
             if existing:
                 await db.marinas.update_one({"_id": mid}, {"$set": doc})
@@ -98,6 +111,11 @@ MARINA_BUILD_STATE = BuildState()
 ANCHORAGE_BUILD_STATE = BuildState()
 
 
+async def _all_marinas(q: dict | None = None, projection: dict | None = None) -> list[dict]:
+    cur = db.marinas.find(q or {}, projection or SLIM_PROJECTION).sort("name", 1)
+    return [doc async for doc in cur]
+
+
 @router.get("/marinas")
 async def list_marinas(
     priority: int | None = None,
@@ -108,27 +126,29 @@ async def list_marinas(
         q["priority"] = int(priority)
     if source:
         q["source"] = source
-    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
-    return marinas_to_geojson(docs)
+    docs = await _all_marinas(q)
+    return marinas_to_slim_geojson(docs)
 
 
 @router.get("/export/marinas.geojson")
 async def export_marinas():
-    docs = await db.marinas.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
-    fc = marinas_to_geojson(docs)
+    docs = await _all_marinas({})
+    fc = marinas_to_slim_geojson(docs)
     return JSONResponse(
         fc,
         headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
     )
 
 class MarinasBuildBody(BaseModel):
-    radius_nm: float | None = None
     clear_before: bool = False
-    include_corridor: bool = True
-    corridor_step_nm: float | None = None
-    corridor_radius_nm: float | None = None
+    resume: bool = True
     profile: str | None = None
     rules: dict | None = None
+    # Conservés pour ne pas casser les anciens clients / la carte Audit mouillages.
+    radius_nm: float | None = None
+    include_corridor: bool | None = None
+    corridor_step_nm: float | None = None
+    corridor_radius_nm: float | None = None
 
 
 async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | None = None):
@@ -175,7 +195,7 @@ async def _persist_marina_run(kind: str, rules: dict, radii: dict) -> str:
         "state": "running",
         "params": {"rules": rules, **radii},
         "created_at": now_iso(),
-        "wrote_marinas": kind == "marinas",
+        "wrote_marinas": kind in ("marinas", "marinas_world"),
         "wrote_anchorages": kind == "anchorages",
     })
     return rid
@@ -187,36 +207,24 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         raise HTTPException(409, "A marinas build is already running")
     body = body or MarinasBuildBody()
     settings = await get_settings()
-    extra = {}
-    if body.corridor_step_nm is not None:
-        extra["marinas.corridor_step_nm"] = body.corridor_step_nm
-    if body.corridor_radius_nm is not None:
-        extra["marinas.corridor_radius_nm"] = body.corridor_radius_nm
-    if body.radius_nm is not None:
-        extra["marinas.waypoint_radius_nm"] = body.radius_nm
-    rules, radius_nm, step, rad = await _marina_rules_and_radii(body, settings, extra)
+    rules, _radius_nm, _step, _rad = await _marina_rules_and_radii(body, settings)
 
     if body.clear_before:
-        await db.marinas.delete_many({})
+        raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
 
-    run_id = await _persist_marina_run("marinas", rules, {
-        "radius_nm": radius_nm,
-        "include_corridor": body.include_corridor,
-        "corridor_step_nm": step,
-        "corridor_radius_nm": rad,
+    run_id = await _persist_marina_run("marinas_world", rules, {
+        "resume": body.resume,
         "profile": rules.get("profile"),
+        "kind": "world_leisure_marina",
     })
 
     async def _runner():
         try:
-            await run_build_marinas(
+            await run_build_world_marinas(
                 marinas_coll=db.marinas,
-                route_path=ROUTE_FILE,
-                radius_nm=radius_nm,
+                cursor_coll=db.marina_world_cursor,
                 state=MARINA_BUILD_STATE,
-                include_corridor=body.include_corridor,
-                corridor_step_nm=step,
-                corridor_radius_nm=rad,
+                resume=body.resume,
             )
             await db.marina_runs.update_one({"_id": run_id}, {"$set": {
                 "state": "done", "summary": MARINA_BUILD_STATE.summary,
@@ -230,11 +238,8 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     return {
         "started": True,
         "run_id": run_id,
-        "radius_nm": radius_nm,
-        "include_corridor": body.include_corridor,
-        "corridor_step_nm": step,
-        "corridor_radius_nm": rad,
-        "corridor_band_nm": rad * 2,
+        "kind": "world_leisure_marina",
+        "resume": body.resume,
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
     }
@@ -259,11 +264,8 @@ async def marinas_build_status():
 async def marinas_count():
     return {
         "total": await db.marinas.count_documents({}),
-        "by_priority": {
-            "1": await db.marinas.count_documents({"priority": 1}),
-            "2": await db.marinas.count_documents({"priority": 2}),
-            "3": await db.marinas.count_documents({"priority": 3}),
-        },
+        "named": await db.marinas.count_documents({"name": {"$nin": ["", None]}}),
+        "with_website": await db.marinas.count_documents({"website": {"$nin": ["", None]}}),
         "by_source": {
             "openstreetmap": await db.marinas.count_documents({"source": "openstreetmap"}),
             "shom": await db.marinas.count_documents({"source": "shom"}),

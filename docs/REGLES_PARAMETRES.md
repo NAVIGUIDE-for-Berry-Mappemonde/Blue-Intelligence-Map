@@ -144,11 +144,16 @@ Déjà dans `settings` Mongo : inland, scores, partenaires, URLs, saturation, Ag
 | `formalities.noonsite_blacklist` | true | **loi** | |
 | `formalities.wpi_first_port_ignored` | true | **loi** | |
 
-### 3.3 Marinas (pas de CDC dédié — README + code + hors-périmètre PoE §27)
+### 3.3 Marinas (dump mondial — corridor = mouillages seulement)
+
+Le mode Marinas charge le catalogue OSM mondial (`leisure=marina`), identité
+`osm_id`, upsert sans purge. Les règles `corridor_*` / `waypoint_*` /
+`priority_escale_*` restent pour les **mouillages** (et l'historique).
 
 | Id | Défaut | Famille | Phénomène / ancrage |
 |----|--------|---------|---------------------|
-| `marinas.corridor_radius_nm` | 25 NM | géométrie | 4–5 h à 5–6 nœuds = saut côtier. Bande ±25 = 50 NM. |
+| `marinas.overpass_throttle_s` | 3 s | budget | AUP Overpass, une tuile à la fois. |
+| `marinas.corridor_radius_nm` | 25 NM | géométrie | 4–5 h à 5–6 nœuds = saut côtier. Bande ±25 = 50 NM. **Mouillages.** |
 | `marinas.corridor_step_nm` | 25 NM | géométrie | Pas ≤ 2× rayon pour recouvrement des disques. |
 | `marinas.waypoint_radius_nm` | 10 NM | géométrie | ~2 h d’approche d’escale. Settings `marina_search_radius_nm`. |
 | `marinas.priority_escale_nm` | 15 NM | géométrie | « Près de cette escale » (prio 1/2). |
