@@ -59,7 +59,7 @@ Blue Intelligence cartographie ces listes pour l’expédition Berry-Mappemonde 
 
 ## 3. Ce que l’on veut obtenir
 
-Deux livrables, indissociables, **par ZEE** (identifiant VLIZ `mrgid`) :
+Deux livrables, indissociables, **par ZEE** (identifiant VLIZ `mrgid`, un polygone — pas un pays) :
 
 1. **La liste des Ports d’Entrée (PoE) officiels pour la plaisance.**
    Pour chaque port : nom officiel, ville si connue, coordonnées, ZEE d’appartenance, URLs des sources, score de confiance, et d’où vient le signal (extraction, OSM, listing, run, juge).
@@ -86,7 +86,7 @@ Une ZEE sans port physique n’est pas un échec : on la qualifie en droit (UNCL
 
 | Mot | Sens ici |
 |-----|----------|
-| **ZEE** | Polygone maritime d’un État ou territoire, référentiel Marine Regions / VLIZ v12 (~285 zones). Clé : `mrgid`. |
+| **ZEE** | Polygone maritime d’un État ou territoire, référentiel Marine Regions / VLIZ v12 (~285 zones). Clé : `mrgid`. Un État peut avoir **plusieurs** polygones (hexagone, outre-mer, régime conjoint, revendication) : **une fiche par polygone**, jamais un agrégat pays. |
 | **PoE** | Port d’Entrée : lieu **désigné** où un navire étranger de **plaisance** peut accomplir ses formalités. |
 | **Port de plaisance** | Infrastructure qui accueille des yachts (marina, port mixte, havre avec formalités plaisance). Ce n’est pas forcément un PoE. |
 | **Port de commerce / industriel** | Infrastructure fret, pêche industrielle, militaire. Utile comme **contre-liste**, pas comme livrable carte Formalités. |
@@ -475,7 +475,7 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 | **Marinas OSM exclues des graines** | **Recalé (code + tests, pas de rebuild).** `leisure=marina` / CATHAF marina* = graine P si douane / `border_control` / `port_of_entry` à ≤ 800 m (`around.ctrl`, `osm_role=marina_pleasure`). Loin d’un contrôle : toujours exclu. **Ne pas** `POST /api/poe/seeds/build` ni Overpass refresh tant qu’un rebuild n’est pas décidé (4034 / 1280 / 781 figés). |
 | **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI comme preuve).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI : jeton seulement. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
-| **Fiche ZEE absente de l’UI** | **Recalé (lecture seule, pas rebuild).** `GET /api/poe/zones/{mrgid}` + bandeau Formalités + popup : liste PoE, URLs TD et BU cliquables, score. Pas de bouton Générer (`POST …/generate` = 410). Noonsite hors fiche. **Ne pas** `POST /api/poe/seeds/build`. |
+| **Fiche ZEE absente de l’UI** | **Recalé (lecture seule, pas rebuild).** `GET /api/poe/zones/{mrgid}` + bandeau Formalités + popup : liste PoE, URLs TD et BU cliquables, score. **Une fiche = un polygone VLIZ** : `France (hexagone)` (5677) ≠ `France (Mayotte)` (48944), valable pour tout souverain à plusieurs zones. Pas de bouton Générer (`POST …/generate` = 410). Noonsite hors fiche. **Ne pas** `POST /api/poe/seeds/build`. |
 | **Promotion manuelle** | Pas d’UI de revue D/P → carte. La fiche ZEE n’écrit pas `poe_ports`. |
 | **Gold Dataset** | N’existe pas. Le listing n’en est pas un. |
 

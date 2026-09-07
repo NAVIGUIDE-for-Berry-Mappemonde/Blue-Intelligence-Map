@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from app.config import DATA_DIR
 from app.services.poe_pipeline import domain_of, list_url_bonus, zone_to_item
+from app.services.poe_zone_label import attach_zone_labels
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, url_is_excluded_search
 
 FICHE_URL_CAP = 12
@@ -201,11 +202,40 @@ async def _find_mrgid(coll, mrgid: int) -> list[dict]:
         return []
 
 
+_LABEL_PROJ = {
+    "_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
+    "iso2": 1, "sov_iso2": 1, "pol_type": 1,
+}
+
+
+async def _label_zone(db, zone: dict) -> dict:
+    """Une fiche = ce mrgid. Le libellé tient compte des autres polygones du souverain."""
+    sov = (zone.get("sovereign") or "").strip()
+    if not sov:
+        attach_zone_labels([zone])
+        return zone
+    try:
+        sibs = await db.eez_zones.find({"sovereign": sov}, _LABEL_PROJ).to_list(500)
+    except Exception:
+        sibs = []
+    if not sibs:
+        sibs = [{k: zone.get(k) for k in (
+            "mrgid", "name", "geoname", "sovereign", "iso2", "sov_iso2", "pol_type")}]
+    attach_zone_labels(sibs)
+    want = int(zone.get("mrgid") or 0)
+    hit = next((s for s in sibs if int(s.get("mrgid") or 0) == want), None)
+    if hit:
+        for key in ("label", "qualifier", "qualifier_key", "disambiguated"):
+            zone[key] = hit.get(key)
+    return zone
+
+
 async def build_zone_fiche(db, mrgid: int) -> dict | None:
     """Charge Atlas en lecture seule et assemble la fiche."""
     zone = await db.eez_zones.find_one({"mrgid": int(mrgid)}, {"geometry": 0})
     if not zone:
         return None
+    zone = await _label_zone(db, zone)
     ports = await db.poe_ports.find({"mrgid": int(mrgid)}).to_list(2000)
     seeds = await _find_mrgid(getattr(db, "poe_seed_ports", None), int(mrgid))
     run_ports = await _find_mrgid(getattr(db, "poe_run_ports", None), int(mrgid))

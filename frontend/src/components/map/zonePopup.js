@@ -1,4 +1,5 @@
 import { ZONE_COLORS, escH, flagEmoji } from "./constants";
+import { zoneDisplayName, zoneSubtitle } from "./zoneLabel";
 
 /**
  * Popup HTML d'une fiche ZEE (mode Formalités) : liste PoE, URLs TD et BU
@@ -93,8 +94,8 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef, zoneFicheRef, 
     : "";
   return `
     <div data-testid="poe-zone-fiche-popup" style="min-width:260px;max-width:340px;font-family:Manrope,sans-serif;">
-      <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">${flag} ${escH(z.name || props?.name || props?.geoname || "")}</div>
-      <div style="font-size:11px;color:#94a3b8;margin:3px 0 6px;">${escH(z.sovereign || props?.sovereign || "")}${polType && polType !== "200NM" ? " · " + escH(polType) : ""}</div>
+      <div data-testid="poe-fiche-popup-title" style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">${flag} ${escH(zoneDisplayName({ ...props, ...z }, t))}</div>
+      <div style="font-size:11px;color:#94a3b8;margin:3px 0 6px;">${escH(zoneSubtitle({ ...props, ...z }) || (polType && polType !== "200NM" ? polType : ""))}</div>
       <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
         <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:2px 6px;border-radius:2px;">${escH(statusLabel)}</span>
         <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#f8fafc;border:1px solid #f8fafc55;padding:2px 6px;border-radius:2px;">⚓ ${ports.length || z.poe_count || 0} ${escH(t("poePortsCount"))}</span>

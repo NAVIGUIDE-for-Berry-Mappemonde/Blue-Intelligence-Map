@@ -151,6 +151,39 @@ def test_build_zone_fiche_reads_only():
     assert missing is None
 
 
+def test_france_hexagon_fiche_does_not_absorb_mayotte():
+    from app.services.poe_zone_fiche import build_zone_fiche
+
+    hexagon = {
+        "mrgid": 5677, "name": "France", "geoname": "French Exclusive Economic Zone",
+        "iso2": "FR", "sov_iso2": "FR", "sovereign": "France", "pol_type": "200NM",
+        "status": "ia", "poe_count": 1, "sources": [],
+    }
+    mayotte = {
+        "mrgid": 48944, "name": "Mayotte",
+        "geoname": "Overlapping claim Mayotte: France / Comores",
+        "iso2": "YT", "sov_iso2": "FR", "sovereign": "France",
+        "pol_type": "Overlapping claim", "status": "non_generee", "poe_count": 0,
+        "sources": [],
+    }
+    db = _FakeDB(
+        zones=[hexagon, mayotte],
+        ports=[
+            {"_id": "p1", "name": "Marseille", "mrgid": 5677, "lat": 43.3, "lon": 5.3,
+             "source_urls": ["https://douane.gouv.fr/marseille"]},
+            {"_id": "p2", "name": "Mamoudzou", "mrgid": 48944, "lat": -12.78, "lon": 45.23,
+             "source_urls": ["https://douane.gouv.fr/mayotte"]},
+        ],
+    )
+    f1 = asyncio.run(build_zone_fiche(db, 5677))
+    f2 = asyncio.run(build_zone_fiche(db, 48944))
+    assert f1["label"] == "France (hexagone)"
+    assert f2["label"] == "France (Mayotte)"
+    assert [p["name"] for p in f1["ports"]] == ["Marseille"]
+    assert [p["name"] for p in f2["ports"]] == ["Mamoudzou"]
+    assert f1["wrote_poe_ports"] is False
+
+
 def test_frontend_fiche_has_no_generate_button():
     root = Path(__file__).resolve().parents[2] / "frontend" / "src"
     popup = (root / "components" / "map" / "zonePopup.js").read_text(encoding="utf-8")
@@ -164,4 +197,8 @@ def test_frontend_fiche_has_no_generate_button():
     assert "sources_td" in popup or "poeSourcesTd" in popup
     assert "poe-zone-fiche" in fiche
     assert "ExternalLink" in fiche
+    assert "zoneDisplayName" in fiche
+    label_js = (root / "components" / "map" / "zoneLabel.js").read_text(encoding="utf-8")
+    assert "disambiguated" in label_js
+    assert "qualifier_key" in label_js
 

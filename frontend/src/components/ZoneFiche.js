@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { zoneDisplayName, zoneSubtitle } from "./map/zoneLabel";
 
 function hostOf(url) {
   try {
@@ -76,6 +77,14 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
             {t("poeConfidenceAvg")} {fiche.confidence_avg}
           </span>
         )}
+      </div>
+      <div>
+        <p className="font-heading text-sm text-white leading-snug" data-testid="poe-fiche-zone-label">
+          {zoneDisplayName(fiche, t)}
+        </p>
+        {zoneSubtitle(fiche) ? (
+          <p className="font-mono text-[10px] text-slate-500 mt-0.5">{zoneSubtitle(fiche)}</p>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-3">

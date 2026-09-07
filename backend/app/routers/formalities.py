@@ -12,6 +12,7 @@ from app.core.tasks import TaskState
 from app.db import db as _db
 from app.services import poe_pipeline as poe
 from app.services import osm_validate
+from app.services.poe_zone_label import attach_zone_labels, zone_sort_key
 
 router = APIRouter(prefix="/api")
 
@@ -195,7 +196,8 @@ async def poe_referential_status():
 @router.get("/poe/zones")
 async def poe_zones():
     docs = await _db.eez_zones.find({}, {"geometry": 0}).to_list(500)
-    items = sorted((poe.zone_to_item(d) for d in docs), key=lambda z: (z.get("name") or "").lower())
+    attach_zone_labels(docs)
+    items = sorted((poe.zone_to_item(d) for d in docs), key=zone_sort_key)
     by_status: dict[str, int] = {}
     for z in items:
         by_status[z["status"]] = by_status.get(z["status"], 0) + 1

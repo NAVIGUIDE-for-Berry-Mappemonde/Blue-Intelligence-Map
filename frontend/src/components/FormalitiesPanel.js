@@ -1,6 +1,7 @@
 import { Anchor, Clock, ScrollText, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import ZoneFiche from "./ZoneFiche";
+import { zoneDisplayName, zoneSearchHaystack, zoneSubtitle } from "./map/zoneLabel";
 
 // Refactor 2026-06 — Formalities mode = world map [EEZ -> Ports of Entry].
 // The sidebar lists the ~285 world EEZs (VLIZ Marine Regions) with their
@@ -40,7 +41,7 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone,
     return items.filter((z) => {
       if (statusFilter !== "All" && (z.status || "non_generee") !== statusFilter) return false;
       if (!needle) return true;
-      return `${z.name || ""} ${z.geoname || ""} ${z.sovereign || ""}`.toLowerCase().includes(needle);
+      return zoneSearchHaystack(z).includes(needle);
     });
   }, [items, q, statusFilter]);
 
@@ -160,7 +161,7 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone,
               key={z.mrgid}
               data-testid={`poe-zone-row-${z.mrgid}`}
               onClick={() => onSelectZone && onSelectZone(z.mrgid, z.bbox, z.anchor)}
-              title={z.status === "erreur" && z.last_error ? z.last_error : undefined}
+              title={z.status === "erreur" && z.last_error ? z.last_error : zoneDisplayName(z, t)}
               className={`w-full text-left px-4 py-2.5 border-b border-line hover:bg-raised transition-colors group ${
                 isSelected ? "bg-amberx/5 border-l-2 border-l-amberx" : ""
               }`}
@@ -168,12 +169,11 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone,
               <div className="flex items-start gap-2">
                 <span className="text-base leading-none mt-0.5">{flagEmoji(z.iso2 || z.sov_iso2)}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white">
-                    {z.name || z.geoname}
+                  <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white" data-testid="poe-zone-row-label">
+                    {zoneDisplayName(z, t)}
                   </div>
                   <div className="font-mono text-[10px] text-slate-500 mt-0.5 truncate">
-                    {z.sovereign || "—"}
-                    {z.pol_type && z.pol_type !== "200NM" ? ` · ${z.pol_type}` : ""}
+                    {zoneSubtitle(z)}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {statusBadge(z.status)}

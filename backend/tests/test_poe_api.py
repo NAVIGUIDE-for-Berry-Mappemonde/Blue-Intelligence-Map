@@ -39,11 +39,19 @@ class TestZones:
 
     def test_zone_item_shape_and_sort(self, zones):
         items = zones["items"]
-        names = [(i.get("name") or "").lower() for i in items]
-        assert names == sorted(names), "items not sorted by name"
+
+        def _sk(z):
+            return (
+                (z.get("sovereign") or z.get("name") or "").lower(),
+                0 if z.get("qualifier_key") in ("hexagone", "metropole") else 1,
+                (z.get("label") or z.get("name") or "").lower(),
+            )
+
+        assert [_sk(z) for z in items] == sorted(_sk(z) for z in items)
         for it in items:
             assert isinstance(it["mrgid"], int)
             assert "name" in it and "iso2" in it and "status" in it
+            assert "label" in it
             assert "poe_count" in it and "bbox" in it and "anchor" in it
             assert "_id" not in it, "MongoDB _id leaked"
 
@@ -129,6 +137,32 @@ class TestZoneFiche:
         assert r.status_code == 200
         assert "attachment" in r.headers.get("content-disposition", "")
         assert r.json()["type"] == "FeatureCollection"
+
+    def test_france_subzones_are_separate_fiches(self, client, zones):
+        """France hexagone ≠ Mayotte : deux mrgid, deux libellés, pas d'agrégat."""
+        by_id = {z["mrgid"]: z for z in zones["items"]}
+        hexagon = by_id[5677]
+        mayotte = by_id[48944]
+        assert hexagon["qualifier_key"] == "hexagone"
+        assert hexagon["label"] == "France (hexagone)"
+        assert mayotte["label"] == "France (Mayotte)"
+        fr_labels = [z["label"] for z in zones["items"] if z.get("sovereign") == "France"]
+        assert len(fr_labels) == len(set(fr_labels))
+        r = client.get(f"{BASE_URL}/api/poe/zones/5677", timeout=60)
+        assert r.status_code == 200, r.text[:300]
+        fiche = r.json()
+        assert fiche["mrgid"] == 5677
+        assert fiche["label"] == "France (hexagone)"
+        assert fiche["wrote_poe_ports"] is False
+        blob = " ".join(p.get("name") or "" for p in fiche["ports"]).lower()
+        assert "mamoudzou" not in blob
+        assert "dzaoudzi" not in blob
+        r2 = client.get(f"{BASE_URL}/api/poe/zones/48944", timeout=60)
+        assert r2.status_code == 200
+        f2 = r2.json()
+        assert f2["mrgid"] == 48944
+        assert f2["label"] == "France (Mayotte)"
+        assert f2["mrgid"] != fiche["mrgid"]
 
 
 # --- Module: task status endpoints ------------------------------------------
