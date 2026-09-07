@@ -100,6 +100,9 @@ Mesure Atlas du 2026-09-06 (v1 + 5 runs + listing + priors OSM, cache OSM
 Mongo vide) : **4027** graines — 592 confirmed, 1805 probable, 1058
 unverified, 572 name_only.
 
+Après le run name_only + reprise unverified : 33 `name_only` restants
+(échec géocode). Dossier de revue : [`poe-name-only-33.md`](poe-name-only-33.md).
+
 ---
 
 ## Recherche : la graine pilote TinyFish
