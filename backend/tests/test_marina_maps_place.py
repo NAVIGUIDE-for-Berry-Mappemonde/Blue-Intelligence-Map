@@ -44,6 +44,39 @@ def test_pick_minimes_place_rejects_search_and_restaurant():
     assert mp.pick_google_place("Bassin du Bout Blanc", hits, 46.14687, -1.16452) is None
 
 
+def test_stored_place_revalidate_drops_town():
+    assert mp.stored_place_still_valid({
+        "name": "Port des Minimes",
+        "lat": 46.14676,
+        "lon": -1.16606,
+        "maps_place_url": (
+            "https://www.google.com/maps/place/Port+Des+Minimes/"
+            "@46.1445053,-1.1676049,17z"
+        ),
+    }) is True
+    assert mp.stored_place_still_valid({
+        "name": "Port de La Faute-sur-mer",
+        "lat": 46.33,
+        "lon": -1.32,
+        "maps_place_url": "https://www.google.com/maps/place/La+Faute-sur-Mer/@46.331,-1.321,12z",
+    }) is False
+
+
+def test_rejects_town_and_bridge_place_pages():
+    town = {
+        "url": "https://www.google.com/maps/place/La+Faute-sur-Mer/@46.331,-1.321,12z",
+        "title": "La Faute-sur-Mer",
+        "snippet": "La Faute-sur-Mer",
+    }
+    bridge = {
+        "url": "https://www.google.com/maps/place/Passerelle+du+Bassin+des+Chalutiers/",
+        "title": "Passerelle du Bassin des Chalutiers",
+        "snippet": "Bassin des Chalutiers",
+    }
+    assert mp.pick_google_place("Port de La Faute-sur-mer", [town], 46.33, -1.32) is None
+    assert mp.pick_google_place("Bassin des Chalutiers", [bridge], 46.15, -1.15) is None
+
+
 def test_bout_blanc_does_not_inherit_nearby_minimes_place():
     hits = [{
         "url": MINIMES_PLACE,

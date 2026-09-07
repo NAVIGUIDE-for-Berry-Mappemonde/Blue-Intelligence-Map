@@ -26,7 +26,15 @@ NON_MARINA_RE = re.compile(
     re.I,
 )
 MARINA_HINT_RE = re.compile(
-    r"marina|port de plaisance|yacht\s*(club|harbour|harbor)|harbour|harbor",
+    r"marina|port de plaisance|port of |yacht\s*(club|harbour|harbor)|harbour|harbor|nautique|ostréicole|ostreicole|capitainerie",
+    re.I,
+)
+PLACE_KIND_BAD_RE = re.compile(
+    r"\b(passerelle|parking|pont|hôtel|hotel|restaurant|mairie|église|eglise)\b",
+    re.I,
+)
+PLACE_KIND_OK_RE = re.compile(
+    r"\b(marina|port|harbour|harbor|yacht|nautique|plaisance|ostréicole|ostreicole|capitainerie)\b",
     re.I,
 )
 STOPWORDS = frozenset({
@@ -89,6 +97,19 @@ def hit_blob(hit: dict) -> str:
     return " ".join(_norm_phrase(str(p)) for p in parts if p)
 
 
+def place_slug(url: str | None) -> str:
+    path = unquote(urlparse(url or "").path or "")
+    parts = [p for p in path.split("/") if p]
+    try:
+        i = next(n for n, p in enumerate(parts) if p.lower() == "place")
+        slug = parts[i + 1] if i + 1 < len(parts) else ""
+    except StopIteration:
+        slug = ""
+    if slug.lower().startswith("data="):
+        return ""
+    return slug.replace("+", " ")
+
+
 def place_coords(url: str | None) -> tuple[float, float] | None:
     raw = unquote(url or "")
     match = COORDS_RE.search(raw) or DATA_COORDS_RE.search(raw)
@@ -122,6 +143,13 @@ def place_hit_matches(
     if not blob:
         return False
     if NON_MARINA_RE.search(blob) and not MARINA_HINT_RE.search(blob):
+        return False
+    slug = place_slug(hit.get("url"))
+    slug_norm = _norm_phrase(slug)
+    if slug_norm and PLACE_KIND_BAD_RE.search(slug_norm):
+        return False
+    if slug_norm and not PLACE_KIND_OK_RE.search(slug_norm):
+        # « La Faute-sur-Mer » / « Soubise » = la commune, pas le port.
         return False
     phrase = _norm_phrase(name)
     name_ok = bool(phrase and phrase in blob)
@@ -281,6 +309,38 @@ async def resolve_google_place(
             "maps_place_checked_at": checked,
         }
     return empty
+
+
+async def revalidate_stored_places(coll) -> dict:
+    cur = coll.find({"maps_place_url": {"$regex": "/maps/place/"}})
+    if hasattr(cur, "to_list"):
+        docs = await cur.to_list(200_000)
+    else:
+        docs = [d async for d in cur]
+    kept = cleared = 0
+    for marina in docs:
+        if stored_place_still_valid(marina):
+            kept += 1
+            continue
+        await coll.update_one({"_id": marina["_id"]}, {"$set": {
+            "maps_place_url": None,
+            "maps_place_status": "none",
+            "maps_place_source": None,
+        }})
+        cleared += 1
+    return {"kept": kept, "cleared": cleared, "checked": len(docs)}
+
+
+def stored_place_still_valid(marina: dict) -> bool:
+    url = marina.get("maps_place_url")
+    if not is_google_place_url(url):
+        return False
+    return place_hit_matches(
+        marina.get("name") or "",
+        {"url": url, "title": place_slug(url), "snippet": url},
+        lat=marina.get("lat"),
+        lon=marina.get("lon"),
+    )
 
 
 async def apply_maps_place(coll, marina: dict, patch: dict) -> None:
