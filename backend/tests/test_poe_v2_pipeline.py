@@ -18,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core import geo  # noqa: E402
 from app.core.events import RunRecorder, RUNS_DIR  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _keep_unit_tests_off_nvidia(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
 from app.core.extract import dual_parse_html, looks_blocked, serp_filter  # noqa: E402
 from app.services import poe_pipeline as poe  # noqa: E402
 from app.services.poe_diff import diff_ports  # noqa: E402

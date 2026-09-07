@@ -107,6 +107,7 @@ def test_settings_defaults(s):
     assert isinstance(d["openrouter_api_key_set"], bool)
     assert isinstance(d["tinyfish_api_key_set"], bool)
     assert isinstance(d["anthropic_api_key_set"], bool)
+    assert isinstance(d["nvidia_api_key_set"], bool)
     assert "claude_budget_usd" in d
     assert "_id" not in d
     assert "extract_concurrency" in d

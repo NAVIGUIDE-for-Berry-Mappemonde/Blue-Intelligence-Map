@@ -755,8 +755,9 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - noms vus par le NER seul → journalisés comme candidats à vérifier ;
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
     Une vraie table (noms + coords) court-circuite le LLM ; les fragments
-    « port de X » ne suffisent plus — Haiku et OpenRouter lisent ces pages.
-    Claude, s'il est allumé, est un second lecteur à côté d'OpenRouter.
+    « port de X » ne suffisent plus — les lecteurs JSON lisent ces pages.
+    Second lecteur : Muse (ou Kimi si décret) si NVIDIA est allumé,
+    sinon Claude s'il est allumé, à côté du lecteur principal.
     """
     raw_catalog = catalog_text if catalog_text is not None else context
     catalog = extract_structured_ports(raw_catalog)
@@ -767,14 +768,26 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                    catalog_n=len(kept), fallback="catalog", skipped_llm=True)
         return kept
 
-    async def _openrouter():
+    _KNOWN_ENGINES = (
+        "claude", "openrouter", "catalog", "ner",
+        "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "llm",
+    )
+
+    async def _primary():
         try:
             return await extract_ports(context, zone, settings=settings, log=log), None
         except Exception as e:
             return None, e
 
-    async def _claude():
+    async def _second():
         try:
+            from app.core import nvidia
+            if nvidia.nvidia_enabled(settings):
+                model, engine = nvidia.second_extract_choice(context)
+                ports = await nvidia.extract_ports_nvidia(
+                    context, zone, settings=settings, log=log,
+                    model=model, engine=engine)
+                return ports
             from app.core import claude
             if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):
                 return None
@@ -784,7 +797,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
             return ports
         except Exception as e:
             if log:
-                log(f"Claude second lecteur: échec ({type(e).__name__})")
+                log(f"second lecteur: échec ({type(e).__name__})")
             return None
 
     async def _ner():
@@ -795,13 +808,19 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         except Exception:
             return None  # NER indisponible (modèle absent) — signal neutre
 
-    (llm_ports, llm_err), claude_ports, ner_names = await asyncio.gather(
-        _openrouter(), _claude(), _ner())
+    (llm_ports, llm_err), second_ports, ner_names = await asyncio.gather(
+        _primary(), _second(), _ner())
     ner_names = list(dict.fromkeys(ner_names)) if ner_names is not None else None
+    claude_ports = second_ports
     claude_names = [p["name"] for p in (claude_ports or []) if p.get("name")]
+    second_engine = next(
+        (p.get("extraction_engine") for p in (claude_ports or [])
+         if p.get("extraction_engine")),
+        "claude",
+    )
 
     if llm_ports is None and claude_ports:
-        log("OpenRouter indisponible — liste Claude retenue comme lecture principale")
+        log("lecteur principal indisponible — second lecteur retenu")
         llm_ports, llm_err = claude_ports, None
         claude_names = []  # déjà la liste principale
     if llm_ports is None:
@@ -834,7 +853,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
     has_ner_signal = bool(ner_names)
     has_claude = bool(claude_names)
     for p in llm_ports:
-        if p.get("extraction_engine") not in ("claude", "openrouter", "catalog", "ner"):
+        if p.get("extraction_engine") not in _KNOWN_ENGINES:
             p["extraction_engine"] = "llm"
         p["extraction_agreement"] = (
             any(text_similarity(p["name"], n) >= 0.6 for n in ner_names)
@@ -856,13 +875,14 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         log(f"extraction comparée: {len(both)} port(s) confirmés LLM∩NER, "
             f"{len(llm_only)} LLM seul, {len(ner_only)} NER seul (candidats à vérifier)")
     if has_claude:
-        log(f"second lecteur Claude: {sum(1 for p in llm_ports if p.get('claude_agreement'))} "
-            f"accord(s), {len(claude_only)} nom(s) Claude seul")
+        log(f"second lecteur {second_engine}: "
+            f"{sum(1 for p in llm_ports if p.get('claude_agreement'))} "
+            f"accord(s), {len(claude_only)} nom(s) second lecteur seul")
     for n in claude_only:
         llm_ports.append({
             "name": n, "city": None,
-            "note": "vu par Claude seulement (à recouper)",
-            "extraction_engine": "claude",
+            "note": f"vu par {second_engine} seulement (à recouper)",
+            "extraction_engine": second_engine,
             "extraction_agreement": (
                 any(text_similarity(n, x) >= 0.6 for x in ner_names)
                 if has_ner_signal else None

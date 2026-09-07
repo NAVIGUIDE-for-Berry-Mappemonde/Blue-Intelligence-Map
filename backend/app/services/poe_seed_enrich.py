@@ -2,7 +2,8 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge Haiku → Sonnet (listing / inconclusive) → OpenRouter.
+juge Laguna → Muse (listing / inconclusive) si NVIDIA, sinon
+Haiku → Sonnet → OpenRouter.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
 
@@ -513,9 +514,20 @@ def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
 
 
 async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -> dict:
-    from app.core import claude
+    from app.core import claude, nvidia
     prompt = _judge_prompt(doc, zone, context)
     result = None
+
+    async def _nvidia(model: str, engine: str) -> dict | None:
+        try:
+            parsed = await nvidia.complete_json_nvidia(
+                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=400, log=log)
+            out = parse_judge(parsed)
+            out["judge_engine"] = engine
+            return out
+        except Exception as e:
+            log(f"NVIDIA {engine}: {type(e).__name__}: {str(e)[:80]}")
+            return None
 
     async def _claude(model: str, engine: str) -> dict | None:
         if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):
@@ -529,6 +541,15 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
         except Exception as e:
             log(f"Claude {engine}: {type(e).__name__}: {str(e)[:80]}")
             return None
+
+    if nvidia.nvidia_enabled(settings):
+        result = await _nvidia(nvidia.primary_model(), "nvidia-laguna")
+        if should_escalate_sonnet(result, doc):
+            muse = await _nvidia(nvidia.secondary_model(), "nvidia-muse")
+            if muse:
+                result = muse
+        if result is not None:
+            return result
 
     result = await _claude(claude.CLAUDE_HAIKU_MODEL, "claude-haiku")
     if should_escalate_sonnet(result, doc):

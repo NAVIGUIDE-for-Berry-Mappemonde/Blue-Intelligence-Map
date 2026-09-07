@@ -48,6 +48,8 @@ async def read_run_rules(mode: str | None = None, profile: str | None = None):
     return catalog
 
 class SettingsBody(BaseModel):
+    nvidia_api_key: str | None = None
+    llm_provider: str | None = None
     openrouter_api_key: str | None = None
     tinyfish_api_key: str | None = None
     tinyfish_agents: int | None = None
@@ -81,6 +83,11 @@ async def read_settings():
     for legacy in ("gemini_api_key", "cloudflare_model",
                    "gatekeeper_model", "extract_model", "extraction_engine"):
         s.pop(legacy, None)
+    if s.get("nvidia_api_key") or os.environ.get("NVIDIA_API_KEY"):
+        s["nvidia_api_key_set"] = True
+        s["nvidia_api_key"] = ""
+    else:
+        s["nvidia_api_key_set"] = False
     if s.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY"):
         s["openrouter_api_key_set"] = True
         s["openrouter_api_key"] = ""
@@ -108,7 +115,8 @@ async def read_settings():
 @router.put("/settings")
 async def write_settings(body: SettingsBody):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("openrouter_api_key", "tinyfish_api_key", "anthropic_api_key"):
+    for k in ("openrouter_api_key", "tinyfish_api_key", "anthropic_api_key",
+              "nvidia_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
     if updates:

@@ -19,10 +19,12 @@ ROUTE_FILE = DATA_DIR / "route.geojson"
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 
-# Tous les appels IA passent par OpenRouter (clé UI prioritaire, sinon
-# OPENROUTER_API_KEY ; modèle via OPENROUTER_MODEL, défaut openai/gpt-4o-mini).
+# Complétions : NVIDIA NIM si NVIDIA_API_KEY (Laguna / Muse / Kimi).
+# OpenRouter reste pour la recherche web (:online) et le fallback.
 DEFAULT_SETTINGS = {
     "_id": "global",
+    "nvidia_api_key": "",
+    "llm_provider": "auto",
     "openrouter_api_key": "",
     "tinyfish_api_key": "",
     "tinyfish_agents": 2,

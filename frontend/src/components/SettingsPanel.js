@@ -48,7 +48,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", anthropic_api_key: "" });
+    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", anthropic_api_key: "", nvidia_api_key: "" });
   }, [settings]);
 
   if (!form) return null;
@@ -60,6 +60,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     delete body.openrouter_api_key_set;
     delete body.tinyfish_api_key_set;
     delete body.anthropic_api_key_set;
+    delete body.nvidia_api_key_set;
     ["claude_enabled", "claude_spend_usd", "claude_calls", "claude_cache_read_tokens",
      "claude_cache_write_tokens", "claude_stop_ratio", "claude_remaining_usd",
      "claude_allows_call", "claude_model"].forEach((k) => { delete body[k]; });
@@ -194,6 +195,19 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
         {/* API keys — transverse */}
         <section className="space-y-2.5">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("apiKeys")}</p>
+          <Field label={
+            <>
+              {t("nvidiaKey")}{" "}
+              <span className={form.nvidia_api_key_set ? "text-bio" : "text-amberx"}>
+                ({form.nvidia_api_key_set ? t("keySet") : t("keyNotSet")})
+              </span>
+            </>
+          }>
+            <input data-testid="nvidia-key-input" type="password" value={form.nvidia_api_key || ""}
+              placeholder={t("leavePlaceholder")}
+              onChange={(e) => set("nvidia_api_key", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("nvidiaKeyHint")}</p>
           <Field label={
             <>
               {t("openrouterKey")}{" "}
