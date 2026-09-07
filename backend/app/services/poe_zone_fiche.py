@@ -12,8 +12,10 @@ from functools import lru_cache
 from urllib.parse import urlparse
 
 from app.config import DATA_DIR
-from app.services.poe_pipeline import domain_of, zone_to_item
+from app.services.poe_pipeline import domain_of, list_url_bonus, zone_to_item
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, url_is_excluded_search
+
+FICHE_URL_CAP = 12
 
 
 @lru_cache(maxsize=1)
@@ -84,6 +86,22 @@ def _collect(raw_lists, arm: str) -> dict[str, dict]:
     return out
 
 
+def _url_rank(rec: dict) -> float:
+    return list_url_bonus(rec.get("url") or "") + (1.0 if rec.get("official") else 0.0)
+
+
+def _cap_sources(recs: list[dict], limit: int = FICHE_URL_CAP) -> list[dict]:
+    """Un URL par domaine, les pages liste/PDF d'abord — comme une fiche projets."""
+    by_dom: dict[str, dict] = {}
+    for rec in recs or []:
+        dom = (rec.get("domain") or domain_of(rec.get("url") or "") or rec.get("url") or "").lower()
+        prev = by_dom.get(dom)
+        if prev is None or _url_rank(rec) > _url_rank(prev):
+            by_dom[dom] = rec
+    ranked = sorted(by_dom.values(), key=_url_rank, reverse=True)
+    return ranked[:limit]
+
+
 def _port_row(doc: dict) -> dict | None:
     name = (doc.get("name") or "").strip()
     if not name:
@@ -137,18 +155,24 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
     td_map = _collect(td_raw, "td")
     bu_map = _collect(bu_raw, "bu")
     union_urls = sorted(set(td_map) | set(bu_map))
-    sources_td, sources_bu, urls = [], [], []
+    sources_td, sources_bu = [], []
     for url in union_urls:
         in_td = url in td_map
         in_bu = url in bu_map
         arm = "both" if in_td and in_bu else ("td" if in_td else "bu")
         base = dict(td_map.get(url) or bu_map.get(url) or {"url": url})
         base["from_arm"] = arm
-        urls.append(base)
         if in_td:
             sources_td.append({**base, "from_arm": arm})
         if in_bu:
             sources_bu.append({**base, "from_arm": arm})
+    td_total, bu_total = len(sources_td), len(sources_bu)
+    sources_td = _cap_sources(sources_td)
+    sources_bu = _cap_sources(sources_bu)
+    urls_map: dict[str, dict] = {}
+    for rec in sources_td + sources_bu:
+        urls_map.setdefault(rec["url"], rec)
+    urls = list(urls_map.values())
     rows = []
     for doc in ports or []:
         row = _port_row(doc)
@@ -158,8 +182,10 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
     item = zone_to_item(zone)
     item["sources_td"] = sources_td
     item["sources_bu"] = sources_bu
+    item["sources_td_total"] = td_total
+    item["sources_bu_total"] = bu_total
     item["urls"] = urls
-    item["kind"] = _fiche_kind(zone, len(urls), len(rows))
+    item["kind"] = _fiche_kind(zone, td_total + bu_total, len(rows))
     item["ports"] = rows
     item["wrote_poe_ports"] = False
     item["crawled"] = False

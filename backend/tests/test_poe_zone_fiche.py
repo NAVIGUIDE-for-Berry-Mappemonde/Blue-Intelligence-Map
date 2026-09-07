@@ -121,6 +121,20 @@ def test_empty_seeds_create_zero_ports():
     assert fiche["wrote_poe_ports"] is False
 
 
+def test_one_url_per_domain_prefers_list_pdf():
+    zone = {
+        **_ZONE,
+        "sources": [
+            {"url": "https://douane.gouv.fr/accueil", "domain": "douane.gouv.fr"},
+            {"url": "https://douane.gouv.fr/ports-entree.pdf", "domain": "douane.gouv.fr"},
+        ],
+    }
+    fiche = assemble_zone_fiche(zone, [])
+    assert fiche["sources_td_total"] == 2
+    assert len(fiche["sources_td"]) == 1
+    assert fiche["sources_td"][0]["url"].endswith(".pdf")
+
+
 def test_build_zone_fiche_reads_only():
     from app.services.poe_zone_fiche import build_zone_fiche
 

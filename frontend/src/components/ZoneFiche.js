@@ -8,13 +8,16 @@ function hostOf(url) {
   }
 }
 
-function SourceList({ t, arm, items }) {
+function SourceList({ t, arm, items, total }) {
   const title = arm === "td" ? t("poeSourcesTd") : t("poeSourcesBu");
   const empty = arm === "td" ? t("poeFicheEmptyTd") : t("poeFicheEmptyBu");
   return (
     <div data-testid={`poe-fiche-sources-${arm}`}>
       <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1.5">
         {title}
+        {total != null && total > (items || []).length ? (
+          <span className="text-slate-600"> ({(items || []).length}/{total})</span>
+        ) : null}
       </p>
       {(!items || items.length === 0) ? (
         <p className="text-[11px] text-slate-500 leading-relaxed">{empty}</p>
@@ -76,8 +79,8 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
       </div>
 
       <div className="grid grid-cols-1 gap-3">
-        <SourceList t={t} arm="td" items={fiche.sources_td} />
-        <SourceList t={t} arm="bu" items={fiche.sources_bu} />
+        <SourceList t={t} arm="td" items={fiche.sources_td} total={fiche.sources_td_total} />
+        <SourceList t={t} arm="bu" items={fiche.sources_bu} total={fiche.sources_bu_total} />
       </div>
 
       <div data-testid="poe-fiche-ports">
