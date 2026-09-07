@@ -11,7 +11,6 @@ import CardShell, { smallInput } from "./CardShell";
  */
 export default function ProjectsCard({ t, status, refresh, settings, onSettingsSaved }) {
   const [swarmMode, setSwarmMode] = useState("test");
-  const [clearDb, setClearDb] = useState(false);
   const [busy, setBusy] = useState(false);
   const running = status?.running;
   // Extraction + marine filtering settings form
@@ -39,7 +38,7 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
   const deploy = async () => {
     setBusy(true);
     try {
-      await api.post("/swarm/deploy", { mode: swarmMode, clear_db: clearDb });
+      await api.post("/swarm/deploy", { mode: swarmMode, clear_db: false });
       refresh && refresh();
     } catch (e) {
       alert(e.response?.data?.detail || e.message);
@@ -114,10 +113,6 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
             className={`flex-1 py-1.5 text-xs font-semibold border rounded-sm ${swarmMode === "full" ? "border-sonar/50 bg-sonar/10 text-sonar" : "border-line text-slate-400 hover:bg-raised"}`}
           >{t("modeFull")}</button>
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-          <input data-testid="clear-db-checkbox" type="checkbox" checked={clearDb} onChange={(e) => setClearDb(e.target.checked)} className="accent-cyan-400" />
-          {t("clearBefore")}
-        </label>
         <button
           data-testid="deploy-swarm-btn"
           onClick={deploy}

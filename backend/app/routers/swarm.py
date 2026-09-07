@@ -8,7 +8,8 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.core.geo import is_ocean, ocean_fallback_coords, snap_to_ocean, geocode
+from app.core.geo import geocode
+from app.core.project_geo import site_publishable
 from app.core.tinyfish import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 from app.db import db, get_settings
 from app.services.swarm_pipeline import Swarm, now_iso
@@ -25,9 +26,11 @@ class DeployBody(BaseModel):
 async def deploy(body: DeployBody):
     if body.mode not in ("test", "full"):
         raise HTTPException(400, "mode must be test|full")
+    if body.clear_db:
+        raise HTTPException(400, "clear_db is disabled")
     settings = await get_settings()
     try:
-        await swarm.deploy(body.mode, body.clear_db, settings, body.force_rescan)
+        await swarm.deploy(body.mode, False, settings, body.force_rescan)
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"status": "deployed", "mode": body.mode}
@@ -141,11 +144,10 @@ async def _force_extract_one(row: dict, settings: dict):
                 g = await geocode(title)
                 if g:
                     lat, lon = g
-            if lat is None:
-                lat, lon = ocean_fallback_coords(title)
+        ok, kind = site_publishable(lat, lon, settings)
+        if not ok:
+            raise ValueError(f"unlocated:{kind}")
         snapped = False
-        if not is_ocean(lat, lon):
-            lat, lon, snapped = snap_to_ocean(lat, lon)
         existing = await db.projects.find_one({"url": url})
         if not existing:
             await db.projects.insert_one({

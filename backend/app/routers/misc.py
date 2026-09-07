@@ -31,7 +31,11 @@ class SettingsBody(BaseModel):
     tinyfish_agents: int | None = None
     extract_concurrency: int | None = None
     max_coast_km: float | None = None
+    max_inland_km: float | None = None
     min_marine_score: float | None = None
+    gatekeeper_accept: float | None = None
+    gatekeeper_reject: float | None = None
+    allow_tinyfish_agent: bool | None = None
     test_max_urls_per_seed: int | None = None
     full_max_urls_per_seed: int | None = None
     min_zoom: int | None = None
