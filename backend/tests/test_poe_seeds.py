@@ -6,8 +6,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.listing_ref import project_listing  # noqa: E402
 from app.services.poe_seeds import (  # noqa: E402
-    attach_listing_seeds, attach_osm_seeds, build_seed_report,
-    listing_name_seeds, union_extracted, verdict_for_seed,
+    attach_listing_other, attach_listing_seeds, attach_osm_priors,
+    attach_osm_seeds, build_seed_report, build_seeds_offline,
+    format_seed_line, listing_name_parts, listing_name_seeds,
+    persist_seed_database, seed_db_doc, seed_search_query, union_extracted,
+    url_is_excluded_search, verdict_for_seed,
 )
 
 ZONES = [
@@ -97,6 +100,51 @@ class TestListingSeeds:
         assert rep["summary"]["extracted_geocoded"] == 1
         assert rep["summary"]["by_verdict"]["confirmed"] == 1
         assert rep["summary"]["by_verdict"]["name_only"] == 1
+
+    def test_compound_listing_attaches_to_both(self):
+        extracted = union_extracted([
+            ("v1", [
+                _port(8457, "Big Creek", lat=16.52, lon=-88.41),
+                _port(8457, "Placencia", lat=16.51, lon=-88.36),
+            ]),
+        ])
+        ports = [{
+            "name": "Big Creek / Placencia", "role": "poe",
+            "mrgid": 8457, "mrgids": [8457],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_novel"] == []
+        assert packed["listing_attached"] == 1
+        assert all("listing" in p["seed_sources"] for p in extracted)
+
+    def test_short_name_matches_longer_twin(self):
+        extracted = union_extracted([
+            ("v1", [_port(8463, "Ketchikan Small Boat Harbor", lat=55.3, lon=-131.6)]),
+        ])
+        ports = [{
+            "name": "Ketchikan", "role": "poe",
+            "mrgid": 8456, "mrgids": [8456, 8463],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_attached"] == 1
+        assert packed["listing_novel"] == []
+
+    def test_listing_typo_alias(self):
+        extracted = union_extracted([
+            ("v1", [_port(8345, "Kulhudhuffushi Port", lat=6.62, lon=73.06)]),
+        ])
+        ports = [{
+            "name": "Khuludhufushi", "role": "poe",
+            "mrgid": 8345, "mrgids": [8345],
+        }]
+        packed = attach_listing_seeds(extracted, ports)
+        assert packed["listing_attached"] == 1
+
+    def test_listing_name_parts(self):
+        assert "Newcastle" in listing_name_parts("Newcastle and Port Stephen")
+        assert "Port Stephen" in listing_name_parts("Newcastle and Port Stephen")
+        assert "Placencia" in listing_name_parts("Big Creek / Placencia")
+        assert "Kiritimati" in listing_name_parts("Christmas Island/Kiritimati")
 
     def test_listing_name_seeds_skip_other_ports(self):
         ports = [
@@ -240,3 +288,211 @@ class TestOsmUnion:
         assert "listing" in extracted[0]["seed_sources"]
         extracted[0]["has_coords"] = True
         assert verdict_for_seed(extracted[0]) == "confirmed"
+
+
+class TestSeedLineAndListingOther:
+    def test_line_keeps_present_tokens_only(self):
+        seed = _port(26518, "Fort Bay", lat=17.62, lon=-63.25)
+        seed.update({
+            "seed_sources": ["v1", "listing"],
+            "listing_role": "poe",
+            "osm_customs": True,
+            "osm_kinds": ["port"],
+            "has_coords": True,
+            "verify_verdict": "confirmed",
+        })
+        line = format_seed_line(seed)
+        assert line.startswith("Fort Bay | 17.620,-63.250 | ")
+        assert "listing:poe" in line
+        assert "osm:customs" in line
+        assert "osm:port" in line
+        assert "runs:1" in line
+        assert "listing:other" not in line
+        assert "osm:border" not in line
+
+    def test_listing_other_does_not_confirm(self):
+        seed = _port(26518, "Well's", lat=17.63, lon=-63.23)
+        seed["seed_sources"] = ["v1", "listing"]
+        seed["listing_role"] = "other"
+        seed["has_coords"] = True
+        assert verdict_for_seed(seed) == "unverified"
+        assert "listing:other" in format_seed_line(seed)
+
+    def test_listing_other_attaches_to_existing_only(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Well's Bay", lat=17.63, lon=-63.23)]),
+        ])
+        ports = [
+            {"name": "Fort Bay", "role": "poe", "mrgid": 26518, "mrgids": [26518]},
+            {"name": "Well's Bay", "role": "other", "mrgid": 26518, "mrgids": [26518]},
+        ]
+        n = attach_listing_other(extracted, ports)
+        assert n == 1
+        assert extracted[0]["listing_role"] == "other"
+        assert len(extracted) == 1
+
+
+class TestOsmPriors:
+    def test_marina_near_customs_is_a_seed(self):
+        extracted = union_extracted([("v1", [])])
+        priors = {
+            "ports": [{
+                "id": "way/1",
+                "name": "Yacht Basin",
+                "lat": 17.80,
+                "lon": -63.10,
+                "kinds": ["marina"],
+                "customs": True,
+                "border_control": False,
+                "port_of_entry": None,
+                "eez": [{"mrgid": 26518, "name": "Saba", "iso2": "BQ",
+                         "relation": "in_eez"}],
+            }],
+        }
+        stats = attach_osm_priors(extracted, priors)
+        assert stats["osm_created"] == 1
+        seed = extracted[0]
+        assert seed["osm_customs"] is True
+        assert "marina" in seed["osm_kinds"]
+        assert seed["observations"][0]["origin"] == "osm"
+        assert "osm:customs" in format_seed_line(seed)
+        assert "osm:marina" in format_seed_line(seed)
+
+    def test_prior_merges_on_v1_name(self):
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.62, lon=-63.25)]),
+        ])
+        attach_osm_priors(extracted, {
+            "ports": [{
+                "id": "node/9",
+                "name": "Fort Bay",
+                "lat": 17.621,
+                "lon": -63.249,
+                "kinds": ["port"],
+                "customs": True,
+                "border_control": True,
+                "port_of_entry": "yes",
+                "eez": [{"mrgid": 26518, "name": "Saba", "iso2": "BQ",
+                         "relation": "in_eez"}],
+            }],
+        })
+        assert len(extracted) == 1
+        assert extracted[0]["osm_customs"] is True
+        assert extracted[0]["osm_border"] is True
+        assert extracted[0]["osm_port_of_entry"] == "yes"
+        assert "osm" in extracted[0]["seed_sources"]
+        assert len(extracted[0]["observations"]) >= 2
+
+
+class TestSeedDatabase:
+    def test_doc_keeps_observations_and_line(self):
+        seed = _port(26518, "Fort Bay", lat=17.62, lon=-63.25)
+        seed.update({
+            "seed_sources": ["v1", "listing", "osm"],
+            "listing_role": "poe",
+            "has_coords": True,
+            "osm_customs": True,
+            "observations": [{"source": "run", "origin": "v1", "name": "Fort Bay"}],
+            "verify_verdict": "confirmed",
+            "dedup_key": "26518:fortbay",
+        })
+        doc = seed_db_doc(seed, "t")
+        assert doc["seed_line"].startswith("Fort Bay")
+        assert doc["search_query"].startswith("Fort Bay ")
+        assert "noonsite" not in doc["search_query"].lower()
+        assert doc["search_exclude_domains"] == ["noonsite.com"]
+        assert doc["observations"]
+        assert doc["osm_customs"] is True
+        assert doc["verify_verdict"] == "confirmed"
+
+    def test_search_query_names_the_port(self):
+        q = seed_search_query({"name": "Alofi", "zone_name": "Niue"})
+        assert "Alofi" in q
+        assert "Niue" in q
+        assert "port of entry" in q
+        assert url_is_excluded_search("https://www.noonsite.com/pacific/niue")
+        assert not url_is_excluded_search("https://customs.gov.nu/ports")
+
+    def test_persist_replaces_seed_collection_not_poe_ports(self):
+        import asyncio
+
+        class _Coll:
+            def __init__(self, docs=None):
+                self.docs = list(docs or [])
+                self.deleted = 0
+
+            async def create_index(self, *a, **k):
+                return None
+
+            async def delete_many(self, q):
+                self.deleted += 1
+                self.docs = []
+
+            async def insert_many(self, docs):
+                self.docs.extend(docs)
+
+        class _DB:
+            def __init__(self):
+                self.poe_seed_ports = _Coll()
+                self.poe_ports = _Coll([{"_id": "v1", "name": "keep"}])
+
+        extracted = union_extracted([
+            ("v1", [_port(26518, "Fort Bay", lat=17.62, lon=-63.25)]),
+        ])
+        proj = project_listing(_listing(), zones=ZONES, overrides={})
+        report = build_seed_report(extracted, proj["ports"])
+        db = _DB()
+        out = asyncio.run(persist_seed_database(db, report))
+        assert out["wrote_poe_ports"] is False
+        assert out["collection"] == "poe_seed_ports"
+        assert out["ports"] == len(report["seeds"])
+        assert db.poe_ports.docs == [{"_id": "v1", "name": "keep"}]
+        assert db.poe_ports.deleted == 0
+        assert db.poe_seed_ports.deleted == 1
+        stored = db.poe_seed_ports.docs[0]
+        assert stored["seed_line"]
+        assert stored["search_query"]
+        assert stored["observations"]
+
+    def test_offline_listing_and_priors_union(self):
+        proj = project_listing(_listing(), zones=ZONES, overrides={})
+        priors = {
+            "ports": [{
+                "id": "node/1",
+                "name": "Fort Bay",
+                "lat": 17.62,
+                "lon": -63.25,
+                "kinds": ["port"],
+                "customs": True,
+                "border_control": False,
+                "port_of_entry": None,
+                "eez": [{"mrgid": 26518, "name": "Saba", "iso2": "BQ",
+                         "relation": "in_eez"}],
+            }],
+        }
+        report = build_seeds_offline(
+            extracted=[], listing_ports=proj["ports"], priors_doc=priors)
+        assert report["summary"]["by_verdict"]["confirmed"] == 1
+        assert report["summary"]["by_verdict"]["name_only"] == 1
+        fort = next(s for s in report["seeds"] if s["name"] == "Fort Bay")
+        assert fort["osm_customs"] is True
+        assert any(o["origin"] == "listing" for o in fort["observations"])
+        assert any(o["origin"] == "osm" for o in fort["observations"])
+        assert "listing:poe" in fort["seed_line"]
+        assert "osm:customs" in fort["seed_line"]
+
+
+class TestRealFiles:
+    def test_listing_and_osm_priors_build(self):
+        report = build_seeds_offline()
+        summary = report["summary"]
+        assert summary["seed_ports"] > 1500
+        assert summary["by_verdict"]["confirmed"] >= 1
+        assert summary["by_verdict"]["name_only"] >= 1
+        multi = [s for s in report["seeds"] if len(s.get("observations") or []) >= 2]
+        assert multi
+        sample = multi[0]
+        assert sample.get("seed_line")
+        assert "is_poe" not in sample
+        assert {o.get("source") for o in sample["observations"]} <= {
+            "listing", "osm", "run"}

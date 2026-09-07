@@ -1,0 +1,1076 @@
+{
+  "generated_at": "2026-09-07T05:30:00Z",
+  "reviewer": "cursor-agent",
+  "branch": "cursor/poe-osm-listing-seeds-fff7",
+  "mongo_written": true,
+  "applied_at": "2026-09-07T05:53:15Z",
+  "applied_summary": {
+    "applied": 33,
+    "total": 33,
+    "poe_ports": 1280,
+    "wrote_poe_ports": false,
+    "poe_seed_ports_after": 4034,
+    "inserted_split_seeds": 7,
+    "kiritimati_target": "8441:kiritimatiseaport"
+  },
+  "method": "Revue manuelle documentée : Mongo Atlas poe_seed_ports/poe_ports, Nominatim OSM 2026-09-07, sources officielles publiques. Pas de POST /api/poe/seeds/build, pas d’écriture poe_ports.",
+  "summary": {
+    "n": 33,
+    "fusion": 16,
+    "scinder": 5,
+    "nouveau_point": 10,
+    "corriger_zee": 1,
+    "abandonner": 1,
+    "doute": 0
+  },
+  "how_to_apply": {
+    "do_not": [
+      "POST /api/poe/seeds/build",
+      "écrire dans poe_ports",
+      "changer mrgid sans changer dedup_key (_id unique = {mrgid}:{nom})"
+    ],
+    "fusion": "Noter review_target_dedup_key. Ne pas recréer de point. Option : $set review_action/review_target sur la name_only ; copier une observation listing sur la cible. Un judge rejected sur name_only sans coords laisse verify_verdict=name_only (voir apply_judge_verdict).",
+    "nouveau_point": "$set lat, lon, has_coords=true, geocode_source='manual_review'. Ne pas unset geocoded_at si le GPS manuel doit rester. Ensuite enrich/juge si un extrait est rattaché, ou passer confirmed à la main si listing+GPS+source.",
+    "corriger_zee": "Insérer un nouveau document avec le nouveau dedup_key, $set lat/lon, puis retirer l’ancien _id. Collision si on change seulement mrgid.",
+    "scinder": "Abandonner la name_only composée ; rattacher chaque lieu à une graine existante ou créer un nouveau_point par lieu.",
+    "abandonner": "$set review_action='abandonner' + motif. Ne pas poser de GPS de l’homonyme."
+  },
+  "verifications": [
+    {
+      "n": 1,
+      "dedup_key": "8323:geelong",
+      "name": "Geelong",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8323,
+      "mrgid_correct": 8323,
+      "zone_correcte": "Australia",
+      "lat": -38.1418881,
+      "lon": 144.3621583,
+      "label_point": "Cunningham Pier (quai Geelong)",
+      "alt_points": [
+        {
+          "lat": -38.15,
+          "lon": 144.366667,
+          "label": "Port of Geelong FPOE DAFF",
+          "source": "https://www.agriculture.gov.au/biosecurity/avm/vessels/first-point-entry-and-non-first-point-entry/seaport-locations"
+        }
+      ],
+      "sources": [
+        "Nominatim OSM way/node Cunningham Pier -38.1418881, 144.3621583 (2026-09-07)",
+        "DAFF First Point of Entry — Port of Geelong Determination 2019 (−38.15, 144.366667)",
+        "geocode_cache Nominatim Geelong, Australia −38.1493248, 144.3598241 (rejeté other_water 3,4 km)"
+      ],
+      "notes": "1 ville / 1 port. ZEE 8323 OK. Le géocode ville a été jeté (sliver 3,4 km). DAFF : FPOE commercial + passenger, pas non-commercial (yacht = permission préalable). Pas de jumeau v1/graine.",
+      "set_example": {
+        "filter": {"dedup_key": "8323:geelong"},
+        "$set": {
+          "lat": -38.1418881,
+          "lon": 144.3621583,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 2,
+      "dedup_key": "8323:newcastleandportstephen",
+      "name": "Newcastle and Port Stephen",
+      "kind": "2_lieux_listing_1_poe_officiel",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8323,
+      "mrgid_correct": 8323,
+      "fusion_target": "8323:newcastle",
+      "lat": -32.9265876,
+      "lon": 151.7839674,
+      "label_point": "Newcastle (v1 + probable)",
+      "alt_points": [
+        {
+          "lat": -32.7218138,
+          "lon": 152.1440889,
+          "label": "Nelson Bay / Port Stephens (mouillage, pas FPOE DAFF)",
+          "source": "Nominatim Nelson Bay, New South Wales"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Newcastle −32.9265876, 151.7839674 mrgid 8323",
+        "DAFF FPOE Port of Newcastle (−32.933333, 151.766667) — non-commercial autorisé",
+        "DAFF seaport-locations : Port Stephens et Shellharbour absents"
+      ],
+      "notes": "Nom composé. Newcastle = vrai PoE (v1 + DAFF non-commercial). Port Stephens (~45 km, Nelson Bay) n’est pas un First Point of Entry DAFF : ne pas créer un 2e PoE. Faux ami Port Kennedy (WA / Torres) déjà noté.",
+      "set_example": {
+        "filter": {"dedup_key": "8323:newcastleandportstephen"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8323:newcastle",
+          "review_note": "listing composé ; PoE officiel = Newcastle uniquement"
+        }
+      }
+    },
+    {
+      "n": 3,
+      "dedup_key": "8323:portkemblashellharbour",
+      "name": "Port Kembla / Shellharbour",
+      "kind": "2_toponymes_1_poe_officiel",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8323,
+      "mrgid_correct": 8323,
+      "fusion_target": "8323:portkemblawollongong",
+      "lat": -34.480919,
+      "lon": 150.9012821,
+      "label_point": "Port Kembla / Wollongong (v1 + probable)",
+      "alt_points": [
+        {
+          "lat": -34.5788697,
+          "lon": 150.8672489,
+          "label": "Shellharbour (ville, ~13 km, pas FPOE DAFF)",
+          "source": "Nominatim Shellharbour NSW"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Port Kembla / Wollongong −34.480919, 150.9012821",
+        "Nominatim harbour Port Kembla −34.46346, 150.90148",
+        "DAFF FPOE Port Kembla (−34.466667, 150.9) — commercial + passenger, pas non-commercial"
+      ],
+      "notes": "Shellharbour est la ville voisine / marina Shell Cove, pas un FPOE distinct. Fusionner vers Port Kembla / Wollongong. Ne pas scinder un 2e PoE.",
+      "set_example": {
+        "filter": {"dedup_key": "8323:portkemblashellharbour"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8323:portkemblawollongong"
+        }
+      }
+    },
+    {
+      "n": 4,
+      "dedup_key": "8457:bigcreekplacencia",
+      "name": "Big Creek / Placencia",
+      "kind": "2_lieux",
+      "action": "scinder",
+      "confidence": "haute",
+      "mrgid_actuel": 8457,
+      "mrgid_correct": 8457,
+      "fusion_targets": ["8457:bigcreek", "8457:placencia"],
+      "points": [
+        {
+          "name": "Big Creek",
+          "dedup_key": "8457:bigcreek",
+          "lat": 16.5203083,
+          "lon": -88.4103792,
+          "source": "v1 + poe_seed_ports probable"
+        },
+        {
+          "name": "Placencia",
+          "dedup_key": "8457:placencia",
+          "lat": 16.5156113,
+          "lon": -88.3671785,
+          "source": "poe_seed_ports probable"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Big Creek 16.5203083, −88.4103792",
+        "poe_seed_ports Placencia probable 16.5156113, −88.3671785"
+      ],
+      "notes": "Deux ports Belize (~4 km). La fiche listing colle les deux. Rattacher le listing aux deux graines existantes ; ne pas créer 8457:bigcreekplacencia comme 3e point.",
+      "set_example": {
+        "filter": {"dedup_key": "8457:bigcreekplacencia"},
+        "$set": {
+          "review_action": "scinder",
+          "review_target_dedup_keys": ["8457:bigcreek", "8457:placencia"]
+        }
+      }
+    },
+    {
+      "n": 5,
+      "dedup_key": "8411:westendsopershole",
+      "name": "West End/Sopers Hole",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8411,
+      "mrgid_correct": 8411,
+      "fusion_target": "8411:sopersholedockwestendferryterminal",
+      "lat": 18.3875292,
+      "lon": -64.7033916,
+      "label_point": "Soper’s Hole Dock / West End Ferry Terminal",
+      "sources": [
+        "poe_ports v1 Soper’s Hole Dock / West End Ferry Terminal 18.3875292, −64.7033916",
+        "poe_seed_ports West End probable mêmes coords"
+      ],
+      "notes": "Un seul lieu Tortola (Soper’s Hole = West End). Pas Bahamas West End. Fusion, pas nouveau port.",
+      "set_example": {
+        "filter": {"dedup_key": "8411:westendsopershole"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8411:sopersholedockwestendferryterminal"
+        }
+      }
+    },
+    {
+      "n": 6,
+      "dedup_key": "8493:grandmannanharbourgrandmananisland",
+      "name": "Grand Mannan Harbour (Grand Manan Island)",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8493,
+      "mrgid_correct": 8493,
+      "lat": 44.7633421,
+      "lon": -66.7455097,
+      "label_point": "North Head Ferry Terminal / North Head Wharf",
+      "sources": [
+        "Nominatim OSM North Head Ferry Terminal 44.7633421, −66.7455097 (2026-09-07)",
+        "CBSA small marine vessel reporting site : North Head Wharf, Grand Manan (Newswire 2020 + CCA cruising guide)",
+        "Nominatim Grand Harbour (autre anse) 44.6704433, −66.7561930 — ne pas confondre"
+      ],
+      "notes": "Faute listing Mannan → Manan. Le PoE CBSA documenté est North Head Wharf (aussi Seal Cove). Grand Harbour est une autre baie. ZEE Canada 8493 OK.",
+      "set_example": {
+        "filter": {"dedup_key": "8493:grandmannanharbourgrandmananisland"},
+        "$set": {
+          "lat": 44.7633421,
+          "lon": -66.7455097,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 7,
+      "dedup_key": "8495:marigotbaystmartin",
+      "name": "Marigot Bay (St Martin)",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8495,
+      "mrgid_correct": 8495,
+      "fusion_target": "8495:marinamarigot",
+      "lat": 18.0700053,
+      "lon": -63.0884097,
+      "label_point": "Marina Fort Louis, Marigot",
+      "sources": [
+        "Nominatim OSM Marina Fort Louis 18.0700053, −63.0884097 (2026-09-07)",
+        "Nominatim Marigot town 18.0668544, −63.0848869",
+        "marinafortlouis.com GPS 18.069901, −63.087788"
+      ],
+      "notes": "Capitale FR de Saint-Martin, pas Marigot Bay Sainte-Lucie (8416:marigotbaymarina 13.9657, −61.0260). Graine 8495:marinamarigot déjà probable/accepted sans coords : fusion + poser ce GPS sur la cible. Anse Marcel est un autre PoE listing.",
+      "set_example": {
+        "filter": {"dedup_key": "8495:marinamarigot"},
+        "$set": {
+          "lat": 18.0700053,
+          "lon": -63.0884097,
+          "has_coords": true,
+          "geocode_source": "manual_review"
+        }
+      }
+    },
+    {
+      "n": 8,
+      "dedup_key": "8495:oysterpondstmartin",
+      "name": "Oyster Pond - St Martin",
+      "kind": "1_lieu_frontalier",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8495,
+      "mrgid_correct": 8495,
+      "lat": 18.0549308,
+      "lon": -63.0155268,
+      "label_point": "Oyster Pond (baie, frontière FR/NL)",
+      "sources": [
+        "Nominatim OSM bay Oyster Pond 18.0549308, −63.0155268",
+        "Nominatim suburb FR 18.0582808, −63.0149083 / village SX 18.0531951, −63.0199401",
+        "Listing Sint Maarten : Oyster Pond other_port is_port_of_entry=false ; le PoE listing est le côté FR"
+      ],
+      "notes": "1 étang frontalier, 2 toponymes admin. Garder mrgid 8495 (Collectivity of Saint Martin). Pas un doublon de Marigot (~8 km). Pas Sainte-Lucie.",
+      "set_example": {
+        "filter": {"dedup_key": "8495:oysterpondstmartin"},
+        "$set": {
+          "lat": 18.0549308,
+          "lon": -63.0155268,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 9,
+      "dedup_key": "8406:marinalosmorros",
+      "name": "Marina Los Morros",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8406,
+      "mrgid_correct": 8406,
+      "lat": 21.8999934,
+      "lon": -84.9074329,
+      "label_point": "Marina Cabo San Antonio / Los Morros",
+      "sources": [
+        "Nominatim OSM Marina Cabo San Antonio (fuel) 21.8999934, −84.9074329",
+        "Listing Noonsite position 21°54′07″N, 84°54′30″W = 21.90194, −84.90833",
+        "Ocean Posse ~21°52′N, 84°56′W (pointe, moins précis)"
+      ],
+      "notes": "Pointe ouest de Cuba (Guanahacabibes), ex-Club Náutico Cabo San Antonio. Ne pas prendre Los Morros / Tazacorte (Canaries) que Nominatim renvoie sur la requête nue « Marina Los Morros ».",
+      "set_example": {
+        "filter": {"dedup_key": "8406:marinalosmorros"},
+        "$set": {
+          "lat": 21.8999934,
+          "lon": -84.9074329,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 10,
+      "dedup_key": "5677:cassis",
+      "name": "Cassis",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 5677,
+      "mrgid_correct": 5677,
+      "lat": 43.2139518,
+      "lon": 5.5360613,
+      "label_point": "Port de Cassis (marina OSM)",
+      "sources": [
+        "Nominatim OSM Port de Cassis marina 43.2139518, 5.5360613 (2026-09-07)",
+        "geocode_cache Nominatim Cassis admin 43.2140359, 5.5396318 (rejeté other_water 2,3 km)",
+        "GeoNames Cassis 43.21571"
+      ],
+      "notes": "1 port calanque. ZEE France 5677 OK. Quasi-succès spatial : poser le quai (marina) plutôt que le centroïde admin.",
+      "set_example": {
+        "filter": {"dedup_key": "5677:cassis"},
+        "$set": {
+          "lat": 43.2139518,
+          "lon": 5.5360613,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 11,
+      "dedup_key": "5677:girondeestuarybordeaux",
+      "name": "Gironde Estuary & Bordeaux",
+      "kind": "region_plus_ville",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 5677,
+      "mrgid_correct": 5677,
+      "fusion_target": "5677:bordeaux",
+      "lat": 44.841225,
+      "lon": -0.5800364,
+      "label_point": "Bordeaux (v1 + probable)",
+      "alt_points": [
+        {
+          "lat": 45.547543,
+          "lon": -1.0622993,
+          "label": "Le Verdon-sur-Mer (embouchure, si on veut un point côtier)",
+          "source": "Nominatim Le Verdon-sur-Mer"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Bordeaux 44.841225, −0.5800364",
+        "Nominatim Bordeaux identique"
+      ],
+      "notes": "L’estuaire n’est pas un quai. Le listing nomme Bordeaux. Fusionner. Le Verdon / Pauillac = bureaux possibles en aval, pas un second PoE listing.",
+      "set_example": {
+        "filter": {"dedup_key": "5677:girondeestuarybordeaux"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "5677:bordeaux"
+        }
+      }
+    },
+    {
+      "n": 12,
+      "dedup_key": "5677:gulfedefosportstlouisportnapoleonstgerva",
+      "name": "Gulfe de Fos (Port St Louis, Port Napoleon, St-Gervais)",
+      "kind": "3_noms_2_ports_plaisance",
+      "action": "scinder",
+      "confidence": "haute",
+      "mrgid_actuel": 5677,
+      "mrgid_correct": 5677,
+      "points": [
+        {
+          "name": "Port Napoléon (Port-Saint-Louis-du-Rhône)",
+          "lat": 43.3758376,
+          "lon": 4.8316198,
+          "source": "Nominatim OSM marina Port Napoléon"
+        },
+        {
+          "name": "Port Saint-Gervais / Claude Rossi (Fos-sur-Mer)",
+          "lat": 43.4277969,
+          "lon": 4.9420273,
+          "source": "Nominatim OSM marina Port Saint-Gervais ; fossurmer.fr"
+        }
+      ],
+      "sources": [
+        "Nominatim Port Napoléon 43.3758376, 4.8316198",
+        "Nominatim Port Saint-Gervais 43.4277969, 4.9420273",
+        "Navily / MarinaSpots Port Napoleon 43°22.56′N, 4°49.86′E",
+        "Mairie Fos-sur-Mer : port Claude Rossi pointe Saint-Gervais (ex-Saint-Gervais)"
+      ],
+      "notes": "Faute Gulfe → Golfe. Port Napoléon est DANS Port-Saint-Louis-du-Rhône (1 commune, 1 marina plaisance). Saint-Gervais = Fos-sur-Mer, ~8 km. Scinder en 2 points yacht. Pas de jumeau v1. Sibling listing « Fos » = cette fiche, pas un 4e port.",
+      "set_example": {
+        "filter": {"dedup_key": "5677:gulfedefosportstlouisportnapoleonstgerva"},
+        "$set": {
+          "review_action": "scinder",
+          "review_note": "créer Port Napoléon 43.3758376,4.8316198 et Saint-Gervais 43.4277969,4.9420273 ; abandonner le nom composé"
+        }
+      }
+    },
+    {
+      "n": 13,
+      "dedup_key": "8488:christmasislandkiritimati",
+      "name": "Christmas Island/Kiritimati",
+      "kind": "1_lieu_mauvaise_zee",
+      "action": "corriger_zee",
+      "confidence": "haute",
+      "mrgid_actuel": 8488,
+      "mrgid_correct": 8441,
+      "zone_correcte": "Line Group",
+      "new_dedup_key": "8441:christmasislandkiritimati",
+      "fusion_target_optional": "8441:kiritimatiseaport",
+      "lat": 2.0075,
+      "lon": -157.48583333,
+      "label_point": "Port of Navy Harbour, London / Ronton, Kiritimati",
+      "alt_points": [
+        {
+          "lat": 2.003017,
+          "lon": -157.4820927,
+          "label": "London village OSM",
+          "source": "Nominatim London, Kiritimati"
+        }
+      ],
+      "sources": [
+        "LogCluster / KPA Port of Navy Harbour 2.0075°N, 157.48583333°W",
+        "Nominatim London, Kiritimati 2.003017, −157.4820927 (Line Islands, KI)",
+        "Wikipedia London, Kiribati 1.98333°N, 157.47500°W",
+        "eez_index mrgid 8441 Line Group ; listing group = Line Islands"
+      ],
+      "notes": "PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). Le jumeau Line Group est 8441:kiritimatiseaport (unverified/inconclusive, sans GPS) : fusionner et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.",
+      "set_example": {
+        "warning": "dedup_key unique : insérer 8441:… puis retirer 8488:christmasislandkiritimati",
+        "insert": {
+          "_id": "8441:christmasislandkiritimati",
+          "dedup_key": "8441:christmasislandkiritimati",
+          "mrgid": 8441,
+          "zone_name": "Line Group",
+          "lat": 2.0075,
+          "lon": -157.48583333,
+          "has_coords": true,
+          "country_iso2": "KI",
+          "review_action": "corriger_zee"
+        }
+      }
+    },
+    {
+      "n": 14,
+      "dedup_key": "8419:tyrellbayhillsboroughcarriacou",
+      "name": "Tyrell Bay & Hillsborough (Carriacou)",
+      "kind": "2_lieux",
+      "action": "scinder",
+      "confidence": "haute",
+      "mrgid_actuel": 8419,
+      "mrgid_correct": 8419,
+      "points": [
+        {
+          "name": "Port of Hillsborough",
+          "dedup_key": "8419:portofhillsborough",
+          "lat": 12.4833286,
+          "lon": -61.4567557,
+          "source": "v1 poe_ports"
+        },
+        {
+          "name": "Tyrrel / Tyrell Bay Marina",
+          "lat": 12.4621,
+          "lon": -61.4860667,
+          "source": "tyrellbaymarinacarriacou.com 12°27.726′N, 61°29.164′W"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Port of Hillsborough 12.4833286, −61.4567557",
+        "Tyrell Bay Marina site officiel 12°27.726′N 61°29.164′W",
+        "Nominatim OSM Tyrrel Bay 12.4580658, −61.4870166"
+      ],
+      "notes": "Deux baies Carriacou (~4 km). Hillsborough = PoE v1. Tyrell/Tyrrel Bay = marina/boatyard (Harvey Vale). Scinder : fusion Hillsborough + nouveau_point Tyrell.",
+      "set_example": {
+        "filter": {"dedup_key": "8419:tyrellbayhillsboroughcarriacou"},
+        "$set": {
+          "review_action": "scinder",
+          "review_target_dedup_key": "8419:portofhillsborough",
+          "review_note": "créer Tyrrel Bay 12.4621, −61.48607"
+        }
+      }
+    },
+    {
+      "n": 15,
+      "dedup_key": "8453:barberspointharbourkoolina",
+      "name": "Barbers Point Harbour (Ko Olina)",
+      "kind": "1_complexe_adjacent",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8453,
+      "mrgid_correct": 8453,
+      "lat": 21.3278642,
+      "lon": -158.1196613,
+      "label_point": "KoʻOlina Marina (yacht)",
+      "alt_points": [
+        {
+          "lat": 21.325,
+          "lon": -158.1177778,
+          "label": "Kalaeloa Barbers Point Harbor (commercial USNAX)",
+          "source": "kalaeloaharbor.com 21°19′30″N, 158°07′04″W"
+        }
+      ],
+      "sources": [
+        "Nominatim OSM Ko'Olina Marina 21.3278642, −158.1196613",
+        "kalaeloaharbor.com 21°19′30″N, 158°07′04″W",
+        "MarineRadar USNAX ~21.3147, −158.0942"
+      ],
+      "notes": "ZEE Hawaii 8453 déjà correcte (iso2 VLIZ null = normal). Ko Olina et Barbers Point sont adjacents (~400 m–2 km). 1 complexe ouest Oahu, distinct d’Honolulu v1 (21.3045, −157.8557). CBP liste Honolulu comme PoE Hawaii ; Barbers Point = port commercial. Listing les traite à part : nouveau_point yacht à Ko Olina.",
+      "set_example": {
+        "filter": {"dedup_key": "8453:barberspointharbourkoolina"},
+        "$set": {
+          "lat": 21.3278642,
+          "lon": -158.1196613,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 16,
+      "dedup_key": "8480:andamanislands",
+      "name": "Andaman Islands",
+      "kind": "region",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8480,
+      "mrgid_correct": 8333,
+      "zone_correcte": "Andaman and Nicobar",
+      "fusion_target": "8333:portofportblair",
+      "lat": 11.6730477,
+      "lon": 92.7460414,
+      "label_point": "Port of Port Blair",
+      "sources": [
+        "poe_ports v1 Port of Port Blair 11.6730477, 92.7460414 mrgid 8333",
+        "Nominatim Port Blair 11.6645348, 92.7390448",
+        "eez_index 8333 Andaman and Nicobar"
+      ],
+      "notes": "Archipel, pas un quai. Inland 698 km = mauvais polygone 8480 (Inde continentale). Ne pas recréer sur 8480. Fusionner vers Port Blair 8333. Car Nicobar (8333) est un autre lieu.",
+      "set_example": {
+        "filter": {"dedup_key": "8480:andamanislands"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8333:portofportblair",
+          "review_note": "région ; ZEE correcte 8333 déjà portée par la cible"
+        }
+      }
+    },
+    {
+      "n": 17,
+      "dedup_key": "8492:bandarbintantelanibbtbintanisland",
+      "name": "Bandar Bintan Telani (BBT) – Bintan Island",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8492,
+      "mrgid_correct": 8492,
+      "fusion_target": "8492:bandarbintantelani",
+      "lat": 1.1605006,
+      "lon": 104.3201677,
+      "label_point": "Bandar Bentan Telani ferry terminal",
+      "sources": [
+        "poe_seed_ports Bandar Bintan Telani probable 1.1605006, 104.3201677",
+        "Nominatim Bandar Bentan Telani identique"
+      ],
+      "notes": "Même terminal. Tanjung Pinang confirmed (−3.3564491, 104.6571166) est un autre port ET un GPS suspect (Bintan ≈ 1,16°N ; −3,36° / 104,66° ≈ Sumatra sud / Palembang). Ne pas fusionner vers Tanjung Pinang.",
+      "set_example": {
+        "filter": {"dedup_key": "8492:bandarbintantelanibbtbintanisland"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8492:bandarbintantelani"
+        }
+      }
+    },
+    {
+      "n": 18,
+      "dedup_key": "8459:bowdenharbourportmorant",
+      "name": "Bowden Harbour/Port Morant",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8459,
+      "mrgid_correct": 8459,
+      "lat": 17.88718,
+      "lon": -76.31667,
+      "label_point": "Bowden Wharf / Coast Guard, Port Morant",
+      "sources": [
+        "Cruiserswiki Port Morant Bowden Wharf 17.88718, −76.31667",
+        "Nominatim Bowden hamlet 17.8895747, −76.3130602 (dans Port Morant)",
+        "Listing Noonsite 17°53.11′N, 76°19.06′W = 17.88517, −76.31767"
+      ],
+      "notes": "Un seul havre (côte SE Jamaïque). Bowden est le hameau / wharf dans Port Morant. Pas deux PoE. ZEE 8459 OK.",
+      "set_example": {
+        "filter": {"dedup_key": "8459:bowdenharbourportmorant"},
+        "$set": {
+          "lat": 17.88718,
+          "lon": -76.31667,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 19,
+      "dedup_key": "8345:khuludhufushi",
+      "name": "Khuludhufushi",
+      "kind": "1_lieu_faute",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8345,
+      "mrgid_correct": 8345,
+      "fusion_target": "8345:kulhudhuffushiport",
+      "lat": 6.6233167,
+      "lon": 73.0694663,
+      "label_point": "Kulhudhuffushi Port",
+      "sources": [
+        "poe_ports v1 Kulhudhuffushi Port 6.6233167, 73.0694663",
+        "Nominatim Kulhudhuffushi 6.6233167, 73.0694663"
+      ],
+      "notes": "Faute listing Khuludhufushi → Kulhudhuffushi (Haa Dhaalu). Le jumeau v1+probable existe déjà. Fusion, pas nouveau point.",
+      "set_example": {
+        "filter": {"dedup_key": "8345:khuludhufushi"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8345:kulhudhuffushiport"
+        }
+      }
+    },
+    {
+      "n": 20,
+      "dedup_key": "8429:puertovallartabanderasbay",
+      "name": "Puerto Vallarta/ Banderas Bay",
+      "kind": "1_lieu_plus_baie",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8429,
+      "mrgid_correct": 8429,
+      "fusion_target": "8429:puertovallarta",
+      "lat": 20.6561446,
+      "lon": -105.243527,
+      "label_point": "Puerto Vallarta",
+      "sources": [
+        "poe_ports v1 Puerto Vallarta 20.6561446, −105.243527",
+        "Nuevo Vallarta v1 20.6913097, −105.291834 est un autre marina (ne pas fusionner)"
+      ],
+      "notes": "Banderas Bay = la baie, pas un 2e PoE. Fusion vers Puerto Vallarta. Nuevo Vallarta reste à part.",
+      "set_example": {
+        "filter": {"dedup_key": "8429:puertovallartabanderasbay"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8429:puertovallarta"
+        }
+      }
+    },
+    {
+      "n": 21,
+      "dedup_key": "8316:coloniayapisland",
+      "name": "Colonia, Yap Island",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8316,
+      "mrgid_correct": 8316,
+      "lat": 9.5162421,
+      "lon": 138.121629,
+      "label_point": "Colonia (Yap)",
+      "sources": [
+        "Nominatim OSM Colonia, Yap 9.5162421, 138.121629",
+        "UN/LOCODE FMYAP / MagicPort 9.52, 138.13"
+      ],
+      "notes": "Capitale de Yap / Tomil Harbour. NE PAS fusionner avec Colonia del Sacramento (Uruguay v1 −34.47, −57.84) ni Yap International Airport (9.4979, 138.0864).",
+      "set_example": {
+        "filter": {"dedup_key": "8316:coloniayapisland"},
+        "$set": {
+          "lat": 9.5162421,
+          "lon": 138.121629,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 22,
+      "dedup_key": "8316:leleleluhharbour",
+      "name": "Lele/Leluh Harbour",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8316,
+      "mrgid_correct": 8316,
+      "fusion_target": "8316:leluharbor",
+      "lat": 5.3324023,
+      "lon": 163.0241705,
+      "label_point": "Lelu Harbor, Kosrae",
+      "sources": [
+        "poe_seed_ports Lelu Harbor probable 5.3324023, 163.0241705",
+        "Nominatim Lelu, Kosrae identique"
+      ],
+      "notes": "Lele / Lelu / Leluh = même havre Kosrae. Okat Harbour (8316:okatharbor confirmed 5.3233, 162.97) est l’autre PoE listing du groupe Kosrae — ne pas fusionner.",
+      "set_example": {
+        "filter": {"dedup_key": "8316:leleleluhharbour"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8316:leluharbor"
+        }
+      }
+    },
+    {
+      "n": 23,
+      "dedup_key": "48980:tanapagharboursaipan",
+      "name": "Tanapag Harbour (Saipan)",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 48980,
+      "mrgid_correct": 48980,
+      "fusion_target": "48980:saipan",
+      "lat": 15.22667,
+      "lon": 145.73667,
+      "label_point": "Tanapag Harbor (plus précis que le centroïde Saipan)",
+      "sources": [
+        "Wikipedia Tanapag Harbor 15°13′36″N 145°44′12″E = 15.22667, 145.73667",
+        "poe_seed_ports Saipan probable/accepted 15.16847, 145.74081 (île / Garapan)",
+        "Nominatim Tanapag locality 15.2418863, 145.7572312"
+      ],
+      "notes": "Tanapag = port commercial de Saipan (seul PoE listing du pays). Fusion vers 48980:saipan. Option : $set le GPS Saipan vers 15.22667, 145.73667 (quai plutôt que centroïde).",
+      "set_example": {
+        "filter": {"dedup_key": "48980:tanapagharboursaipan"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "48980:saipan",
+          "review_note": "option : affiner Saipan à 15.22667, 145.73667"
+        }
+      }
+    },
+    {
+      "n": 24,
+      "dedup_key": "5686:longyearbyen",
+      "name": "Longyearbyen",
+      "kind": "1_lieu_mauvaise_zee",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 5686,
+      "mrgid_correct": 33181,
+      "zone_correcte": "Svalbard",
+      "fusion_target": "33181:longyearbyen",
+      "lat": 78.22334,
+      "lon": 15.64689,
+      "label_point": "Longyearbyen (déjà en base sur 33181)",
+      "sources": [
+        "poe_seed_ports 33181:longyearbyen probable 78.22334, 15.64689",
+        "Nominatim Longyearbyen 78.2231558, 15.6463656 (Svalbard, Norge)",
+        "eez_index mrgid 33181 Svalbard iso2=SJ"
+      ],
+      "notes": "Le point existe déjà sur la bonne ZEE. La name_only 5686 est le doublon continental (inland 520 km). Fusionner / abandonner 5686:longyearbyen. Ne pas recréer. Svalbard manquait dans slug_overrides norway.",
+      "set_example": {
+        "filter": {"dedup_key": "5686:longyearbyen"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "33181:longyearbyen",
+          "review_note": "ZEE Svalbard 33181 ; ne pas garder 5686"
+        }
+      }
+    },
+    {
+      "n": 25,
+      "dedup_key": "8423:sancarlosvistamarmarina",
+      "name": "San Carlos - Vista Mar Marina",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 8423,
+      "mrgid_correct": 8423,
+      "lat": 8.4823008,
+      "lon": -79.9435075,
+      "label_point": "Vista Mar Marina, San Carlos, Panamá Oeste",
+      "sources": [
+        "Nominatim OSM Vista Mar Marina 8.4823008, −79.9435075",
+        "Listing Noonsite 08°29.10′N, 79°56.40′W = 8.485, −79.94 (carte 8.48611, −79.94444)"
+      ],
+      "notes": "Pacifique Panama, pas San Carlos Baja (24.79, −112.12) ni Sonora (27.95, −111.06). Immigration sur place ; cruising permit à Panama City d’après le listing. ZEE 8423 OK.",
+      "set_example": {
+        "filter": {"dedup_key": "8423:sancarlosvistamarmarina"},
+        "$set": {
+          "lat": 8.4823008,
+          "lon": -79.9435075,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 26,
+      "dedup_key": "8384:princeedwardisland",
+      "name": "Prince Edward Island",
+      "kind": "region_pas_poe",
+      "action": "abandonner",
+      "confidence": "haute",
+      "mrgid_actuel": 8384,
+      "mrgid_correct": 8384,
+      "lat": null,
+      "lon": null,
+      "ref_island": {
+        "lat": -46.6365552,
+        "lon": 37.946448,
+        "label": "Prince Edward Island (subantarctique ZA) — île, pas un port",
+        "source": "Nominatim Prince Edward Island South Africa"
+      },
+      "sources": [
+        "Nominatim Prince Edward Island ZA −46.6365552, 37.946448",
+        "Marion Island OSM −46.9029708, 37.7527452",
+        "SANAP / Prince Edward Islands Management Plan : Special Nature Reserve, pas de tourisme à terre",
+        "Règlement AMP : Sanctuary 12 NM, entrée navires interdite hors État / force majeure"
+      ],
+      "notes": "Listing « Marion & Prince Edward Island » = archipel ZA, ZEE 8384 correcte. Le géocodeur a visé le Canada (inland 13 907 km). Pas de PoE plaisance. Ne pas poser le GPS canadien. Abandonner la fiche.",
+      "set_example": {
+        "filter": {"dedup_key": "8384:princeedwardisland"},
+        "$set": {
+          "review_action": "abandonner",
+          "review_note": "réserve naturelle subantarctique ; pas un PoE yacht ; homonyme Canada"
+        }
+      }
+    },
+    {
+      "n": 27,
+      "dedup_key": "8421:britanniabaylovell",
+      "name": "Britannia Bay, Lovell",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8421,
+      "mrgid_correct": 8421,
+      "fusion_target": "8421:mustique",
+      "lat": 12.8760094,
+      "lon": -61.1828409,
+      "label_point": "Mustique (v1) — mouillage Britannia Bay",
+      "alt_points": [
+        {
+          "lat": 12.8792913,
+          "lon": -61.1889553,
+          "label": "Britannia Bay (OSM bay, plus précis)",
+          "source": "Nominatim Britannia Bay, Saint Vincent"
+        }
+      ],
+      "sources": [
+        "poe_ports v1 Mustique 12.8760094, −61.1828409",
+        "Nominatim Britannia Bay 12.8792913, −61.1889553"
+      ],
+      "notes": "Listing group Mustique. Britannia Bay / Lovell Village = le mouillage principal. Pas Britannia Bay Afrique du Sud ni Ontario. Fusion vers Mustique ; option affiner vers la baie.",
+      "set_example": {
+        "filter": {"dedup_key": "8421:britanniabaylovell"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8421:mustique"
+        }
+      }
+    },
+    {
+      "n": 28,
+      "dedup_key": "8314:latandendoislandsantacruzislands",
+      "name": "Lata, Ndendo Island (Santa Cruz Islands)",
+      "kind": "1_lieu",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8314,
+      "mrgid_correct": 8314,
+      "fusion_target": "8314:lata",
+      "lat": -10.7244151,
+      "lon": 165.7982204,
+      "label_point": "Lata (Ndendo / Temotu)",
+      "sources": [
+        "poe_seed_ports Lata probable −10.7244151, 165.7982204",
+        "poe_ports v1 Lata mêmes coords",
+        "Nominatim Lata, Solomon Islands −10.7241726, 165.7977641"
+      ],
+      "notes": "Même ville. Ne pas matcher les Santa Cruz des Canaries / Açores. Fusion.",
+      "set_example": {
+        "filter": {"dedup_key": "8314:latandendoislandsantacruzislands"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8314:lata"
+        }
+      }
+    },
+    {
+      "n": 29,
+      "dedup_key": "5693:riadevigoandbaiona",
+      "name": "Ria de Vigo and Baiona",
+      "kind": "2_lieux",
+      "action": "scinder",
+      "confidence": "haute",
+      "mrgid_actuel": 5693,
+      "mrgid_correct": 5693,
+      "points": [
+        {
+          "name": "Porto de Vigo",
+          "lat": 42.2413406,
+          "lon": -8.7265604,
+          "source": "Nominatim OSM marina Porto de Vigo"
+        },
+        {
+          "name": "Porto Deportivo de Baiona",
+          "lat": 42.1184779,
+          "lon": -8.8451206,
+          "source": "Nominatim OSM Puerto Deportivo de Baiona"
+        }
+      ],
+      "sources": [
+        "Nominatim Porto de Vigo 42.2413406, −8.7265604 (Galice, pas le hameau Vigo/Asturies)",
+        "Nominatim Porto Deportivo de Baiona 42.1184779, −8.8451206"
+      ],
+      "notes": "Ría = plan d’eau. Deux ports ~16 km. Aucun jumeau v1. Scinder en 2 nouveau_point. Requête « Puerto de Vigo » sans Galice tombe sur Asturies.",
+      "set_example": {
+        "filter": {"dedup_key": "5693:riadevigoandbaiona"},
+        "$set": {
+          "review_action": "scinder",
+          "review_note": "Vigo 42.2413406, −8.7265604 + Baiona 42.1184779, −8.8451206"
+        }
+      }
+    },
+    {
+      "n": 30,
+      "dedup_key": "5696:cowesrmedinaisleofwight",
+      "name": "Cowes & R. Medina (Isle of Wight)",
+      "kind": "1_lieu",
+      "action": "nouveau_point",
+      "confidence": "haute",
+      "mrgid_actuel": 5696,
+      "mrgid_correct": 5696,
+      "lat": 50.7614678,
+      "lon": -1.2966036,
+      "label_point": "Cowes Yacht Haven",
+      "sources": [
+        "Nominatim OSM Cowes Yacht Haven marina 50.7614678, −1.2966036",
+        "Nominatim Cowes town 50.7633176, −1.2985186",
+        "cowes.co.uk Cowes Harbour"
+      ],
+      "notes": "Cowes + Medina = un estuaire, un PoE. La rivière mène à Newport mais le clearance yacht est Cowes. Pas de v1. nouveau_point unique.",
+      "set_example": {
+        "filter": {"dedup_key": "5696:cowesrmedinaisleofwight"},
+        "$set": {
+          "lat": 50.7614678,
+          "lon": -1.2966036,
+          "has_coords": true,
+          "geocode_source": "manual_review",
+          "review_action": "nouveau_point"
+        }
+      }
+    },
+    {
+      "n": 31,
+      "dedup_key": "5696:obandunstaffnage",
+      "name": "Oban/Dunstaffnage",
+      "kind": "2_lieux",
+      "action": "scinder",
+      "confidence": "haute",
+      "mrgid_actuel": 5696,
+      "mrgid_correct": 5696,
+      "points": [
+        {
+          "name": "Oban North Pier",
+          "lat": 56.4148317,
+          "lon": -5.474593,
+          "source": "Nominatim OSM North Pier Oban"
+        },
+        {
+          "name": "Dunstaffnage Marina",
+          "lat": 56.4498834,
+          "lon": -5.4325487,
+          "source": "Nominatim OSM Dunstaffnage Marina"
+        }
+      ],
+      "sources": [
+        "Nominatim North Pier Oban 56.4148317, −5.4745930",
+        "Nominatim Dunstaffnage Marina 56.4498834, −5.4325487"
+      ],
+      "notes": "Deux sites ~4,5 km. Oban = ville / pier ; Dunstaffnage = marina (Dunbeg). Scinder. « Oban Harbour » Nominatim a renvoyé un salon de manucure — ignorer.",
+      "set_example": {
+        "filter": {"dedup_key": "5696:obandunstaffnage"},
+        "$set": {
+          "review_action": "scinder",
+          "review_note": "Oban 56.4148317, −5.474593 + Dunstaffnage 56.4498834, −5.4325487"
+        }
+      }
+    },
+    {
+      "n": 32,
+      "dedup_key": "8456:ketchikan",
+      "name": "Ketchikan",
+      "kind": "1_lieu_mauvaise_zee",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8456,
+      "mrgid_correct": 8463,
+      "zone_correcte": "Alaska",
+      "fusion_target": "8463:ketchikansmallboatharbor",
+      "lat": 55.3430696,
+      "lon": -131.6466819,
+      "label_point": "Ketchikan Small Boat Harbor",
+      "sources": [
+        "poe_ports v1 Ketchikan Small Boat Harbor 55.3430696, −131.6466819 mrgid 8463",
+        "Nominatim Ketchikan 55.3430696, −131.6466819",
+        "8456:ketchikanalaska unverified/rejected (ne pas republier)"
+      ],
+      "notes": "slug usa→[8456,8463,8453] a pris le 1er. Inland 920 km hors ZEE continentale. Le lieu existe déjà en Alaska 8463. Fusionner. Ne pas corriger 8456:ketchikan sur place (collision / mauvais polygone).",
+      "set_example": {
+        "filter": {"dedup_key": "8456:ketchikan"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8463:ketchikansmallboatharbor"
+        }
+      }
+    },
+    {
+      "n": 33,
+      "dedup_key": "8456:unalaskaportofdutchharbor",
+      "name": "Unalaska/Port of Dutch Harbor",
+      "kind": "1_lieu_mauvaise_zee",
+      "action": "fusion",
+      "confidence": "haute",
+      "mrgid_actuel": 8456,
+      "mrgid_correct": 8463,
+      "zone_correcte": "Alaska",
+      "fusion_target": "8463:dutchharborsmallboatharbor",
+      "lat": 53.8831064,
+      "lon": -166.552545,
+      "label_point": "Dutch Harbor Small Boat Harbor",
+      "sources": [
+        "poe_ports v1 Dutch Harbor Small Boat Harbor 53.8831064, −166.552545 mrgid 8463",
+        "Nominatim Dutch Harbor, Unalaska 53.8867533, −166.5418000 (Alaska, pas WA/MD)"
+      ],
+      "notes": "Unalaska = la ville, Dutch Harbor = le port, même île. Même bug 8456 vs 8463. Fusionner vers v1 8463. 19 CFR : Dutch Harbor est une Customs station sous Anchorage, pas un PoE CBP autonome — le listing Noonsite le traite quand même comme PoE yacht.",
+      "set_example": {
+        "filter": {"dedup_key": "8456:unalaskaportofdutchharbor"},
+        "$set": {
+          "review_action": "fusion",
+          "review_target_dedup_key": "8463:dutchharborsmallboatharbor"
+        }
+      }
+    }
+  ]
+}

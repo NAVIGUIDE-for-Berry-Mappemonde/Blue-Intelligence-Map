@@ -234,20 +234,28 @@ def _tf_domain(url: str) -> str:
         return ""
 
 
+def _join_domains(domains) -> str:
+    if not domains:
+        return ""
+    if isinstance(domains, (list, tuple, set)):
+        return ",".join(str(d).strip() for d in domains if d)
+    return str(domains).strip()
+
+
 def _search_params(query: str, location=None, language=None,
-                   include_domains=None, purpose=None, page: int = 0) -> dict:
+                   include_domains=None, exclude_domains=None,
+                   purpose=None, page: int = 0) -> dict:
     params = {"query": query}
     if location:
         params["location"] = str(location).upper()
     if language:
         params["language"] = str(language)
-    if include_domains:
-        if isinstance(include_domains, (list, tuple, set)):
-            params["include_domains"] = ",".join(str(d).strip() for d in include_domains if d)
-        else:
-            params["include_domains"] = str(include_domains)
-        if not params.get("include_domains"):
-            params.pop("include_domains", None)
+    included = _join_domains(include_domains)
+    if included:
+        params["include_domains"] = included
+    excluded = _join_domains(exclude_domains)
+    if excluded:
+        params["exclude_domains"] = excluded
     if purpose:
         params["purpose"] = purpose
     page = max(0, min(SEARCH_PAGE_MAX, int(page or 0)))
@@ -274,13 +282,15 @@ def _map_search_hits(payload: dict) -> list[dict]:
 
 async def tf_search(query: str, key: str, *, location: str | None = None,
                     language: str | None = None, include_domains=None,
-                    purpose: str | None = POE_PURPOSE, page: int = 0,
-                    log=None) -> list[dict]:
+                    exclude_domains=None, purpose: str | None = POE_PURPOSE,
+                    page: int = 0, log=None) -> list[dict]:
     """GET Search API. 401/402/429/timeout → [] (jamais d'exception)."""
     log = log or (lambda m: None)
     if not (key or "").strip() or not (query or "").strip():
         return []
-    params = _search_params(query, location, language, include_domains, purpose, page)
+    params = _search_params(
+        query, location, language, include_domains, exclude_domains,
+        purpose, page)
     await _search_bucket.acquire()
     last_status = None
     for attempt in range(2):
@@ -387,7 +397,7 @@ async def tf_fetch(urls: list[str], key: str, *, ttl: int = 0, links: bool = Tru
 
 async def tf_search_pages(query: str, key: str, *, location: str | None = None,
                           language: str | None = None, include_domains=None,
-                          purpose: str | None = POE_PURPOSE,
+                          exclude_domains=None, purpose: str | None = POE_PURPOSE,
                           max_pages: int = SEARCH_PAGE_CAP,
                           stop_when=None, log=None) -> list[dict]:
     """Enchaîne les pages Search (0..max_pages-1) jusqu'à stop_when(hits)."""
@@ -397,7 +407,8 @@ async def tf_search_pages(query: str, key: str, *, location: str | None = None,
     for page in range(pages):
         batch = await tf_search(
             query, key, location=location, language=language,
-            include_domains=include_domains, purpose=purpose, page=page, log=log)
+            include_domains=include_domains, exclude_domains=exclude_domains,
+            purpose=purpose, page=page, log=log)
         if not batch:
             break
         added = 0

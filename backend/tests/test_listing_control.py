@@ -17,7 +17,7 @@ from app.services.listing_control import (  # noqa: E402
     suggest_canary_zones,
 )
 from app.services.listing_ref import (  # noqa: E402
-    project_listing, resolve_slug,
+    pick_listing_mrgid, project_listing, resolve_slug,
 )
 
 ZONES = [
@@ -60,6 +60,34 @@ def _run_port(mrgid, name, zone="Saba"):
         "dedup_key": f"{mrgid}:{normalize_name(name)}",
         "extraction_engine": "llm",
     }
+
+
+class TestPickListingMrgid:
+    def test_usa_alaska_group_not_first_override(self):
+        res = {"slug": "usa", "mrgids": [8456, 8463, 8453]}
+        mid = pick_listing_mrgid(res, {"name": "Ketchikan", "group": "USA - Alaska"})
+        assert mid == 8463
+
+    def test_kiribati_line_islands(self):
+        res = {"slug": "kiribati", "mrgids": [8488, 8450, 8441]}
+        mid = pick_listing_mrgid(
+            res, {"name": "Christmas Island/Kiritimati", "group": "Line Islands"})
+        assert mid == 8441
+
+    def test_norway_svalbard(self):
+        res = {"slug": "norway", "mrgids": [5686, 33181]}
+        mid = pick_listing_mrgid(
+            res, {"name": "Longyearbyen", "group": "Svalbard (Spitsbergen)"})
+        assert mid == 33181
+
+    def test_plain_slug_keeps_first(self):
+        res = {"slug": "saba", "mrgids": [26518]}
+        assert pick_listing_mrgid(res, {"name": "Fort Bay", "group": None}) == 26518
+
+    def test_india_andaman_by_name_without_group(self):
+        res = {"slug": "india", "mrgids": [8480, 8333]}
+        mid = pick_listing_mrgid(res, {"name": "Andaman Islands", "group": None})
+        assert mid == 8333
 
 
 class TestResolveSlug:
@@ -151,6 +179,11 @@ class TestRealListingProjection:
         assert ("saba", "Fort Bay (Fort Baai)", "poe") in names
         assert ("saba", "Well's and Ladder Bays", "other") in names
         assert ("niue", "Alofi", "poe") in names
+        by_name = {(p["slug"], p["name"]): p for p in proj["ports"] if p["role"] == "poe"}
+        assert by_name[("usa", "Ketchikan")]["mrgid"] == 8463
+        assert by_name[("kiribati", "Christmas Island/Kiritimati")]["mrgid"] == 8441
+        assert by_name[("norway", "Longyearbyen")]["mrgid"] == 33181
+        assert by_name[("india", "Andaman Islands")]["mrgid"] == 8333
 
 
 @pytest.fixture

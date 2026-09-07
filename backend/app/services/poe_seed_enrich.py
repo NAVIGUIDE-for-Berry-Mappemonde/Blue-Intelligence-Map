@@ -30,7 +30,10 @@ from app.core.tinyfish import (
 from app.services.poe_pipeline import (
     build_whitelist, load_exceptions, now_iso, url_allowed,
 )
-from app.services.poe_seeds import verdict_for_seed
+from app.services.poe_seeds import (
+    SEARCH_EXCLUDE_DOMAINS, listing_is_poe, seed_search_query,
+    url_is_excluded_search, verdict_for_seed,
+)
 
 JUDGE_SYSTEM = (
     "Tu es un juge Ports d'Entrée. Réponds uniquement en JSON strict : "
@@ -38,7 +41,9 @@ JUDGE_SYSTEM = (
     "is_poe=true seulement si une source officielle désigne CE lieu comme "
     "port d'entrée / clearance / puerto habilitado / designated port. "
     "false si les sources parlent d'autre chose (marina, ville, autre pays). "
-    "null si les extraits ne permettent pas de décider."
+    "null si les extraits ne permettent pas de décider. "
+    "Juge uniquement le lieu nommé. Ne liste aucun autre port. "
+    "Ignore listing communautaire et forums."
 )
 
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
@@ -74,8 +79,7 @@ def apply_judge_verdict(seed: dict, judge: dict) -> str:
     if current == "confirmed":
         return "confirmed"
     status = judge.get("judge_status")
-    srcs = set(seed.get("seed_sources") or [])
-    has_listing = "listing" in srcs
+    has_listing = listing_is_poe(seed)
     has_coords = bool(seed.get("has_coords") or (
         seed.get("lat") is not None and seed.get("lon") is not None))
     if status == "accepted" and has_listing and has_coords:
@@ -106,6 +110,8 @@ def select_fetch_urls(hits: list[dict], whitelist: list[str],
     for h in hits or []:
         u = (h.get("url") or "").strip()
         if not u.startswith("http") or u in seen:
+            continue
+        if url_is_excluded_search(u):
             continue
         if whitelist and not url_allowed(u, whitelist):
             continue
@@ -153,11 +159,30 @@ def pick_geocode(dual: dict, port: dict, zone: dict, geom, prepared) -> dict:
         if other:
             chosen, arb = other, "spatial_switch"
         else:
-            return {"lat": None, "lon": None, "geocode_source": None,
-                    "validated": False, "spatial_kind": chosen.get("kind"),
-                    "distance_km": chosen.get("dist_km"),
-                    "geocode_agree": (dual or {}).get("agree"),
-                    "geocode_arbitration": "spatial_rejected"}
+            dist = chosen.get("dist_km")
+            # Accords Nominatim/GeoNames juste hors sliver 2,2 km (Cassis, Geelong).
+            if ((dual or {}).get("agree") and dist is not None
+                    and float(dist) <= 4.0):
+                return {
+                    "lat": chosen["lat"], "lon": chosen["lon"],
+                    "geocode_source": chosen["source"],
+                    "validated": True, "spatial_kind": chosen.get("kind"),
+                    "distance_km": dist,
+                    "geocode_agree": True,
+                    "geocode_arbitration": "agree_near_eez",
+                    "has_coords": True,
+                }
+            return {
+                "lat": None, "lon": None, "geocode_source": None,
+                "validated": False, "spatial_kind": chosen.get("kind"),
+                "distance_km": dist,
+                "geocode_agree": (dual or {}).get("agree"),
+                "geocode_arbitration": "spatial_rejected",
+                "geocode_rejected_lat": chosen["lat"],
+                "geocode_rejected_lon": chosen["lon"],
+                "geocode_rejected_source": chosen["source"],
+                "has_coords": False,
+            }
     return {
         "lat": chosen["lat"], "lon": chosen["lon"],
         "geocode_source": chosen["source"],
@@ -228,11 +253,14 @@ async def geocode_one(doc: dict, zone: dict, log) -> dict:
 
 
 def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
+    """Nom + zone + extraits. Pas de jetons listing/OSM (ça biaiserait)."""
+    name = (doc.get("name") or "").strip()
     return (
-        f"Candidat : {doc.get('name')}\n"
+        f"Candidat : {name}\n"
         f"Zone VLIZ : {zone.get('name') or zone.get('geoname')} "
         f"({zone.get('iso2') or ''})\n"
-        f"Sources graines : {', '.join(doc.get('seed_sources') or [])}\n\n"
+        f"Juge uniquement CE lieu à partir des extraits. "
+        f"Ne liste aucun autre port.\n\n"
         f"EXTRAITS:\n{(context or '')[:8000]}"
     )
 
@@ -275,31 +303,39 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
     return result
 
 
-async def _search_hits(name: str, zone: dict, whitelist: list[str], key: str, log) -> list[dict]:
+def drop_excluded_hits(hits: list[dict]) -> list[dict]:
+    return [h for h in (hits or []) if not url_is_excluded_search(h.get("url") or "")]
+
+
+async def _search_hits(doc: dict, zone: dict, whitelist: list[str], key: str, log) -> list[dict]:
     iso = (zone.get("iso2") or "").lower() or None
-    query = (
-        f'{name} official port of entry OR clearance OR "puerto habilitado" '
-        f'{zone.get("name") or ""}'
-    )
+    query = (doc.get("search_query") or "").strip() or seed_search_query({
+        **doc,
+        "zone_name": doc.get("zone_name") or zone.get("name") or zone.get("geoname"),
+    })
 
     def enough(hs):
-        return sum(1 for h in hs if url_allowed(h.get("url") or "", whitelist)) >= FETCH_URL_CAP
+        kept = drop_excluded_hits(hs)
+        return sum(1 for h in kept if url_allowed(h.get("url") or "", whitelist)) >= FETCH_URL_CAP
 
     domains = whitelist[:WHITELIST_DOMAIN_CAP] or None
     hits = await tf_search_pages(
         query, key, location=iso, language="en",
-        include_domains=domains, max_pages=SEARCH_PAGE_CAP,
-        stop_when=enough, log=log)
-    official_n = sum(1 for h in hits if url_allowed(h.get("url") or "", whitelist))
+        include_domains=domains, exclude_domains=SEARCH_EXCLUDE_DOMAINS,
+        max_pages=SEARCH_PAGE_CAP, stop_when=enough, log=log)
+    official_n = sum(
+        1 for h in drop_excluded_hits(hits)
+        if url_allowed(h.get("url") or "", whitelist))
     if official_n == 0:
         extra = await tf_search_pages(
             query, key, location=iso, language="en",
+            exclude_domains=SEARCH_EXCLUDE_DOMAINS,
             max_pages=SEARCH_PAGE_CAP, stop_when=enough, log=log)
         seen = {h.get("url") for h in hits}
         for h in extra:
             if h.get("url") not in seen:
                 hits.append(h)
-    return hits
+    return drop_excluded_hits(hits)
 
 
 async def judge_one(doc: dict, zone: dict, settings: dict, log,
@@ -308,7 +344,7 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
     exc = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exc)
     key = tf_api_key(settings) or (os.environ.get("TINYFISH_API_KEY") or "")
-    hits = await _search_hits(name, zone, whitelist, key, log) if key else []
+    hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
     urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
     texts = []
     blocked_official = []
@@ -371,12 +407,16 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
     return judged
 
 
-async def execute_enrich(db, state, *, run_id: str,
+async def execute_enrich(db, state, *, run_id: str = "",
+                         source: str = "run",
                          do_geocode: bool = True, do_verify: bool = True,
                          verdicts: list[str] | None = None,
                          limit: int = 0, concurrency: int = 2,
                          use_agent: bool = True) -> dict:
-    """Géocode puis juge. Reprise sur le même run_id. Pas de poe_ports."""
+    """Géocode puis juge. Reprise. Pas de poe_ports.
+
+    source=seeds lit/écrit poe_seed_ports. source=run utilise poe_run_ports.
+    """
     from app.db import get_settings
 
     wanted = tuple(v for v in (verdicts or list(VERIFY_ORDER)) if v in VERIFY_ORDER)
@@ -385,10 +425,20 @@ async def execute_enrich(db, state, *, run_id: str,
         settings = await get_settings()
     except Exception:
         pass
-    q = {"run_id": run_id}
-    ports = await db.poe_run_ports.find(q).to_list(20000)
-    if not ports:
-        raise ValueError(f"run {run_id} sans ports — lancer POST /api/poe/seeds/verify")
+    from_seeds = source == "seeds"
+    if from_seeds:
+        coll = db.poe_seed_ports
+        ports = await coll.find({}).to_list(20000)
+        if not ports:
+            raise ValueError("poe_seed_ports vide — lancer POST /api/poe/seeds/build")
+        task_id = "seed-enrich"
+    else:
+        coll = db.poe_run_ports
+        q = {"run_id": run_id}
+        ports = await coll.find(q).to_list(20000)
+        if not ports:
+            raise ValueError(f"run {run_id} sans ports — lancer POST /api/poe/seeds/verify")
+        task_id = run_id
     geo_todo = [p for p in ports if do_geocode and _needs_geocode(p)]
     judge_pool = [p for p in ports if do_verify and _needs_judge(p, wanted)]
     if limit and limit > 0:
@@ -398,13 +448,16 @@ async def execute_enrich(db, state, *, run_id: str,
             judge_pool = []
         else:
             judge_pool = judge_pool[:limit]
+    else:
+        # Run complet : géocoder d'abord, ne pas juger deux fois la même graine.
+        judge_pool = [p for p in judge_pool if not _needs_geocode(p)]
     mrgids = {int(p["mrgid"]) for p in geo_todo + judge_pool if p.get("mrgid") is not None}
     zones = await _zone_cache(db, mrgids)
     state.total = len(geo_todo) + len(judge_pool)
     state.progress = 0
     log = state.log
-    log(f"enrich {run_id}: géocode {len(geo_todo)} · juge {len(judge_pool)} "
-        f"(concurrency={concurrency} agent={use_agent})")
+    log(f"enrich {task_id}: géocode {len(geo_todo)} · juge {len(judge_pool)} "
+        f"(concurrency={concurrency} agent={use_agent} source={'seeds' if from_seeds else 'run'})")
     counts = Counter()
     just_geocoded = []
     sem = asyncio.Semaphore(max(1, concurrency))
@@ -433,7 +486,7 @@ async def execute_enrich(db, state, *, run_id: str,
                 just_geocoded.append(doc)
             else:
                 counts["geo_miss"] += 1
-            await db.poe_run_ports.update_one(
+            await coll.update_one(
                 {"_id": doc["_id"]}, {"$set": upd})
             state.progress += 1
 
@@ -459,7 +512,7 @@ async def execute_enrich(db, state, *, run_id: str,
             new_v = apply_judge_verdict(doc, judged)
             judged["verify_verdict"] = new_v
             counts[f"judge_{judged.get('judge_status')}"] += 1
-            await db.poe_run_ports.update_one(
+            await coll.update_one(
                 {"_id": doc["_id"]}, {"$set": judged})
             state.progress += 1
 
@@ -480,7 +533,8 @@ async def execute_enrich(db, state, *, run_id: str,
         await asyncio.gather(*[_judge_one(p) for p in judge_pool])
 
     summary = {
-        "run_id": run_id,
+        "run_id": task_id,
+        "source": "seeds" if from_seeds else "run",
         "geocode_todo": len(geo_todo),
         "judge_todo": len(judge_pool),
         "counts": dict(counts),
@@ -490,8 +544,9 @@ async def execute_enrich(db, state, *, run_id: str,
         "finished_at": now_iso(),
     }
     await db.poe_runs.update_one(
-        {"_id": run_id},
-        {"$set": {"enrich": summary, "enriched_at": now_iso()}})
+        {"_id": task_id},
+        {"$set": {"enrich": summary, "enriched_at": now_iso()}},
+        upsert=from_seeds)
     state.summary = summary
     log(f"enrich terminé: {summary['counts']}")
     return summary

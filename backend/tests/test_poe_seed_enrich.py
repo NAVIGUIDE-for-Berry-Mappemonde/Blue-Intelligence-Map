@@ -9,10 +9,57 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.tasks import TaskState  # noqa: E402
 from app.services import poe_seed_enrich as enr  # noqa: E402
+from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, seed_search_query  # noqa: E402
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+class TestJudgePrompt:
+    def test_name_and_extracts_not_seed_tokens(self):
+        doc = {
+            "name": "Fort Bay", "lat": 17.62, "lon": -63.25,
+            "seed_sources": ["listing", "v1"], "listing_role": "poe",
+            "osm_customs": True, "has_coords": True,
+            "verify_verdict": "unverified",
+            "seed_line": "Fort Bay | listing:poe · osm:customs",
+        }
+        prompt = enr._judge_prompt(doc, {"name": "Saba", "iso2": "BQ"}, "extrait officiel")
+        assert "Candidat : Fort Bay" in prompt
+        assert "listing:poe" not in prompt
+        assert "osm:customs" not in prompt
+        assert "extrait officiel" in prompt
+        assert "Uturoa" not in prompt
+
+
+class TestSearchFromSeed:
+    def test_query_is_the_port_name(self):
+        q = seed_search_query({
+            "name": "Fort Bay", "zone_name": "Saba", "listing_role": "poe",
+        })
+        assert q.startswith("Fort Bay ")
+        assert "port of entry" in q
+        assert "Saba" in q
+        assert "noonsite" not in q.lower()
+        assert "listing:poe" not in q
+
+    def test_drop_noonsite_hits(self):
+        hits = [
+            {"url": "https://www.noonsite.com/country/bq/fort-bay"},
+            {"url": "https://douane.gouv.fr/ports"},
+        ]
+        kept = enr.drop_excluded_hits(hits)
+        assert [h["url"] for h in kept] == ["https://douane.gouv.fr/ports"]
+        assert SEARCH_EXCLUDE_DOMAINS == ("noonsite.com",)
+
+    def test_select_fetch_skips_noonsite(self, monkeypatch):
+        monkeypatch.setattr(enr, "url_allowed", lambda u, wl: True)
+        urls = enr.select_fetch_urls([
+            {"url": "https://www.noonsite.com/x"},
+            {"url": "https://douane.gouv.fr/y"},
+        ], ["gouv.fr"], cap=10)
+        assert urls == ["https://douane.gouv.fr/y"]
 
 
 class TestParseAndVerdict:
@@ -99,8 +146,10 @@ class TestSelectFetchUrls:
 class TestJudgeAgentOnlyIfBlocked:
     def test_no_agent_when_fetch_ok(self, monkeypatch):
         agent_calls = []
+        seen_search = []
 
-        async def fake_search(*a, **k):
+        async def fake_search(query, key, **k):
+            seen_search.append({"query": query, **k})
             return [{"url": "https://douane.gouv.fr/list", "title": "t", "snippet": "s"}]
 
         async def fake_fetch(urls, key, **k):
@@ -124,13 +173,16 @@ class TestJudgeAgentOnlyIfBlocked:
         monkeypatch.setattr(enr, "_judge_llm", fake_llm)
 
         out = _run(enr.judge_one(
-            {"name": "Nouméa", "seed_sources": ["listing"]},
+            {"name": "Nouméa", "seed_sources": ["listing"],
+             "search_query": "Nouméa official port of entry OR clearance NC"},
             {"name": "NC", "iso2": "NC", "sov_iso2": "FR"},
             {}, lambda m: None))
         assert agent_calls == []
         assert out["judge_agent"] is False
         assert out["judge_status"] == "accepted"
         assert len(out["judge_sources"]) == 1
+        assert seen_search[0]["query"].startswith("Nouméa")
+        assert seen_search[0]["exclude_domains"] == ("noonsite.com",)
 
     def test_agent_when_bot_blocked(self, monkeypatch):
         agent_calls = []
@@ -217,8 +269,8 @@ class _FakeColl:
                     out.append(d)
         return _FakeCursor(out)
 
-    async def update_one(self, q, upd):
-        self.updates.append((q, upd))
+    async def update_one(self, q, upd, upsert=False):
+        self.updates.append((q, upd, upsert))
         return None
 
 
@@ -280,9 +332,118 @@ class TestExecuteEnrich:
 
         state = TaskState()
         summary = _run(enr.execute_enrich(
-            db, state, run_id="r1", limit=200, verdicts=["name_only"],
-            use_agent=False))
+            db, state, run_id="r1", source="run", limit=200,
+            verdicts=["name_only"], use_agent=False))
         assert summary["wrote_poe_ports"] is False
         assert db.poe_ports.updates == []
         assert db.poe_run_ports.updates
         assert summary["counts"].get("geo_ok") == 1
+
+    def test_seeds_source_writes_seed_collection(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([{
+            "_id": "s1", "name": "Nouméa", "mrgid": 1,
+            "verify_verdict": "name_only", "seed_sources": ["listing"],
+            "search_query": "Nouméa official port of entry",
+        }])
+
+        async def fake_geo(doc, zone, log):
+            return {"lat": -22.27, "lon": 166.44, "has_coords": True,
+                    "geocoded_at": "t", "validated": True}
+
+        async def fake_judge(*a, **k):
+            return {**enr.parse_judge({"is_poe": True, "confidence": 80, "reason": "ok"}),
+                    "judge_engine": "claude-haiku", "judge_at": "t"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "geocode_one", fake_geo)
+        monkeypatch.setattr(enr, "judge_one", fake_judge)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.execute_enrich(
+            db, state, source="seeds", limit=200,
+            verdicts=["name_only"], use_agent=False))
+        assert summary["source"] == "seeds"
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert db.poe_run_ports.updates == []
+        assert db.poe_seed_ports.updates
+
+    def test_limit_zero_geocodes_before_judge_without_duplicate(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "n1", "name": "OnlyName", "mrgid": 1,
+             "verify_verdict": "name_only", "seed_sources": ["listing"]},
+            {"_id": "u1", "name": "AlreadyXY", "mrgid": 1, "lat": 1, "lon": 2,
+             "has_coords": True, "verify_verdict": "unverified",
+             "seed_sources": ["v1"]},
+        ])
+        judged = []
+
+        async def fake_geo(doc, zone, log):
+            return {"lat": -22.27, "lon": 166.44, "has_coords": True,
+                    "geocoded_at": "t", "validated": True}
+
+        async def fake_judge(doc, *a, **k):
+            judged.append(doc["name"])
+            return {**enr.parse_judge({"is_poe": False, "confidence": 10, "reason": "x"}),
+                    "judge_engine": "claude-haiku", "judge_at": "t"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "geocode_one", fake_geo)
+        monkeypatch.setattr(enr, "judge_one", fake_judge)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.execute_enrich(
+            db, state, source="seeds", limit=0,
+            verdicts=["name_only", "unverified"], use_agent=False))
+        assert judged.count("OnlyName") == 1
+        assert judged.count("AlreadyXY") == 1
+        assert set(judged) == {"OnlyName", "AlreadyXY"}
+
+
+class TestPickGeocode:
+    def test_agree_near_eez_keeps_point(self, monkeypatch):
+        monkeypatch.setattr(enr, "classify_poe_point", lambda *a, **k: {
+            "validated": False, "kind": "other_water", "dist_km": 3.4,
+        })
+        out = enr.pick_geocode(
+            {"nominatim": [-38.147, 144.361],
+             "geonames": [-38.149, 144.357],
+             "agree": True},
+            {"name": "Geelong"},
+            {"iso2": "AU"},
+            object(),
+            None,
+        )
+        assert out["lat"] == -38.147
+        assert out["has_coords"] is True
+        assert out["geocode_arbitration"] == "agree_near_eez"
+        assert out["validated"] is True
+
+    def test_outside_persists_rejected_coords(self, monkeypatch):
+        monkeypatch.setattr(enr, "classify_poe_point", lambda *a, **k: {
+            "validated": False, "kind": "other_water", "dist_km": 2.3,
+        })
+        out = enr.pick_geocode(
+            {"nominatim": [43.216, 5.537], "agree": False},
+            {"name": "Cassis"},
+            {"iso2": "FR"},
+            object(),
+            None,
+        )
+        assert out["lat"] is None
+        assert out["has_coords"] is False
+        assert out["geocode_arbitration"] == "spatial_rejected"
+        assert out["geocode_rejected_lat"] == 43.216
+        assert out["geocode_rejected_lon"] == 5.537
+        assert out["geocode_rejected_source"] == "nominatim"

@@ -55,6 +55,8 @@ class TestFingerprint:
         assert fp["features"]["seed_enrich"] is True
         assert fp["features"]["tinyfish_poe_agent"] is True
         assert fp["features"]["claude_sonnet_judge"] is True
+        assert fp["features"]["seed_database"] is True
+        assert fp["features"]["seed_search_query"] is True
         assert fp["git_sha"]
 
     def test_claude_off_without_budget(self, monkeypatch):

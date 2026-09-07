@@ -91,6 +91,10 @@ def build_code_fingerprint(settings: dict | None = None,
             "seed_enrich": _module_has("app.services.poe_seed_enrich", "execute_enrich"),
             "tinyfish_poe_agent": _module_has("app.core.tinyfish", "tf_poe_agent"),
             "claude_sonnet_judge": _module_has("app.core.claude", "complete_json_claude"),
+            "seed_database": _module_has(
+                "app.services.poe_seeds", "persist_seed_database"),
+            "seed_search_query": _module_has(
+                "app.services.poe_seeds", "seed_search_query"),
         },
     }
 
