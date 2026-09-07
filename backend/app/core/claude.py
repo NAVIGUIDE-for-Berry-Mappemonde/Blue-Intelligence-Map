@@ -248,6 +248,9 @@ Règles absolues :
   Sint Maarten : extraire tous les exemples de la page douane (Simpsonbay,
   Port de Plaisance, Il de Sol, Cupecoy, Captain Olivers, Greatbay harbor,
   Cruise Terminal). Ignorer aéroport, poste et coastline.
+  Égypte : titres de la liste SIS yacht tourism (Hurghada Marina, Marassi,
+  Taba Heights, Abu Teeg / El Gouna, Porto Marina North Coast). Ne pas inventer
+  d'autres ports (la liste officielle n'est pas exhaustive).
 - La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé :
   {"ports": []}.

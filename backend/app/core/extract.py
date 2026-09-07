@@ -389,8 +389,31 @@ def internal_followups(html: str, base_url: str, patterns=FOLLOWUP_PATTERNS, lim
 # ---------------------------------------------------------------------------
 # Cascade principale
 # ---------------------------------------------------------------------------
+def _is_ssl_cert_error(exc: BaseException) -> bool:
+    """Chaîne intermédiaire manquante (leçon SIS Égypte / Sectigo)."""
+    blob = ""
+    cur: BaseException | None = exc
+    for _ in range(6):
+        if cur is None:
+            break
+        blob += f" {type(cur).__name__} {cur}".lower()
+        cur = cur.__cause__ or getattr(cur, "__context__", None)
+    return any(tok in blob for tok in (
+        "certificate", "sslcert", "cert verify", "ssl: certificate",
+    ))
+
+
 async def fetch_raw(url: str, timeout: int = 25):
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=UA_BROWSER) as client:
+    kwargs = dict(timeout=timeout, follow_redirects=True, headers=UA_BROWSER)
+    try:
+        async with httpx.AsyncClient(**kwargs) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return r.content, (r.headers.get("content-type") or "").lower()
+    except httpx.RequestError as e:
+        if not _is_ssl_cert_error(e):
+            raise
+    async with httpx.AsyncClient(**kwargs, verify=False) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content, (r.headers.get("content-type") or "").lower()
@@ -563,6 +586,27 @@ _SX_SKIP_PLACE_RE = re.compile(
     r"(?i)\b(airport|aeroport|a[eé]roport|post office|coastline|"
     r"entire coastline|juliana)\b",
 )
+# SIS Égypte : titres « Hurghada Marina: » dans « specialized marinas … including »
+_EG_SIS_LIST_RE = re.compile(
+    r"specialized marinas.{0,160}?including\s*:?\s*(.+?)"
+    r"(?:The State Sets|legislative framework|"
+    r"Prime Minister.?s decision No\.?\s*2721|\Z)",
+    re.I | re.S,
+)
+_EG_MARINA_HEAD_RE = re.compile(
+    r"(?<![A-Za-z])("
+    r"[A-Z][A-Za-z][\w'’-]*"
+    r"(?:\s+[A-Z][A-Za-z0-9][\w'’-]*){0,4}"
+    r"\s+Marina"
+    r"(?:\s*\([^)]{0,50}\))?"
+    r"(?:\s+North\s+Coast)?"
+    r")\s*:",
+)
+_EG_SKIP_MARINA_RE = re.compile(
+    r"(?i)\b(proposed|planned|establishing|existing|airport|"
+    r"specialized marinas|egyptian marinas|international marinas|"
+    r"tourist harbou?rs?)\b",
+)
 _JORF_READERS = {
     "JORFTEXT000030235682": [
         # Même arrêté (NOR INTV1430080A) : Légifrance est derrière Cloudflare.
@@ -647,6 +691,10 @@ def looks_like_port_catalog(text: str) -> bool:
         return True
     if (re.search(r"examples include", text, re.I)
             and len(re.findall(r"\bmarina\b", text, re.I)) >= 3):
+        return True
+    if (re.search(r"specialized marinas.{0,200}?including", text, re.I)
+            and sum(1 for raw in _EG_MARINA_HEAD_RE.findall(text)
+                    if _eg_normalize_marina(raw)) >= 3):
         return True
     return False
 
@@ -898,6 +946,40 @@ def _sx_normalize_place(raw: str) -> str | None:
     return None
 
 
+def _eg_normalize_marina(raw: str) -> str | None:
+    """Titre SIS « Hurghada Marina: » — pas une ville citée en prose."""
+    n = " ".join(html.unescape(raw or "").split()).strip(" .;:*")
+    n = re.sub(r"^\*+", "", n).strip()
+    if not n or len(n) < 8 or len(n) > 80:
+        return None
+    if not re.search(r"\bmarina\b", n, re.I):
+        return None
+    if _EG_SKIP_MARINA_RE.search(n) or n.casefold() in _GENERIC_PORT_NAMES:
+        return None
+    return n[:120]
+
+
+def _extract_eg_sis_yacht_marinas(text: str) -> list[dict]:
+    """Liste SIS « specialized marinas … including » (non exhaustive)."""
+    out, seen = [], set()
+    text = html.unescape(text or "")
+    block = text
+    m = _EG_SIS_LIST_RE.search(text)
+    if m:
+        block = m.group(1)
+    for raw in _EG_MARINA_HEAD_RE.findall(block):
+        name = _eg_normalize_marina(raw)
+        if not name or name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "marina SIS (liste yacht tourism, Égypte — non exhaustive)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
 def _extract_sx_customs_examples(text: str) -> list[dict]:
     """Lieux d'autorité listés par la douane de Sint Maarten (pas l'aéroport)."""
     out, seen = [], set()
@@ -976,6 +1058,7 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         _extract_annexe_ppc_maritime(text),
         _extract_uk_pleasure_ports(text),
         _extract_sx_customs_examples(text),
+        _extract_eg_sis_yacht_marinas(text),
         _extract_douane_bureaux(text),
     ):
         for p in extra:
@@ -1062,7 +1145,12 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
         return True
     sx = [p for p in named
           if "sint maarten" in (p.get("note") or "").casefold()]
-    return len(sx) >= 4
+    if len(sx) >= 4:
+        return True
+    eg = [p for p in named
+          if "égypte" in (p.get("note") or "").casefold()
+          or "egypte" in (p.get("note") or "").casefold()]
+    return len(eg) >= 4
 
 
 _JUNK_NAME_RE = re.compile(

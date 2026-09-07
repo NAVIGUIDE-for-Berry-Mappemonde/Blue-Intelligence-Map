@@ -598,6 +598,7 @@ class TestStructuredDiscovery:
             "SX": "Pages/Customs.aspx",
             "YT": "JORFTEXT000030235682",
             "GB": "submit-a-pleasure-craft-report",
+            "EG": "yacht-tourism",
         }
         for iso, needle in cases.items():
             urls = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": iso}))

@@ -45,6 +45,10 @@ EXAMPLE_ZONES = {
         "iso2": "GB", "sov_iso2": "GB", "name": "United Kingdom", "sovereign": "United Kingdom",
         "pol_type": "200NM", "mrgid": 5696,
     },
+    8490: {
+        "iso2": "EG", "sov_iso2": "EG", "name": "Egypt", "sovereign": "Egypt",
+        "pol_type": "200NM", "mrgid": 8490,
+    },
 }
 
 PINNED_NEEDLES = {
@@ -58,19 +62,21 @@ PINNED_NEEDLES = {
     21803: ["sintmaartengov.org", "Pages/Customs.aspx"],
     48944: ["JORFTEXT000030235682"],
     5696: ["submit-a-pleasure-craft-report"],
+    8490: ["sis.gov.eg", "yacht-tourism"],
 }
 
 FOREIGN_NEEDLES = {
-    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc", "sintmaartengov"],
-    8429: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov"],
-    8433: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov"],
+    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc", "sintmaartengov", "sis.gov.eg"],
+    8429: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "sis.gov.eg"],
+    8433: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "sis.gov.eg"],
     8447: ["mpi.govt.nz", "customs.govt.nz", "vous-naviguez"],
-    8455: ["niue_laws", "vous-naviguez", "gouv.nc", "sintmaartengov"],
-    8312: ["vous-naviguez-en-provenance", "mpi.govt.nz", "sintmaartengov"],
+    8455: ["niue_laws", "vous-naviguez", "gouv.nc", "sintmaartengov", "sis.gov.eg"],
+    8312: ["vous-naviguez-en-provenance", "mpi.govt.nz", "sintmaartengov", "sis.gov.eg"],
     21803: ["vous-naviguez", "mpi.govt.nz", "inea.gob.ve", "gouv.nc"],
     48944: ["vous-naviguez-en-provenance", "Liste-ports-de-plaisance",
             "submit-a-pleasure-craft-report"],
     5696: ["vous-naviguez", "JORFTEXT000030235682", "inea.gob.ve"],
+    8490: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "inea.gob.ve"],
 }
 
 
@@ -226,6 +232,7 @@ def test_example_hints_stay_on_the_polygon():
     sx = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[21803]))
     yt = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[48944]))
     gb = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5696]))
+    eg = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8490]))
     assert "places of first arrival" in nz and "Niue" not in nz
     assert "Customs Act" in nu and "places of first arrival" not in nu
     assert "plaisance" in nc and "PPF" not in nc
@@ -241,6 +248,14 @@ def test_example_hints_stay_on_the_polygon():
     assert "government.nl" not in poe.build_whitelist("SX", "NL")
     qsx = poe.localized_query(EXAMPLE_ZONES[21803]) or ""
     assert "customs department" in qsx and "binnenkomst" not in qsx
+    assert "yacht tourism" in eg and "Mayotte" not in eg
+    qeg = poe.localized_query(EXAMPLE_ZONES[8490]) or ""
+    assert "yacht tourism" in qeg
+    assert "sis.gov.eg" in poe.build_whitelist("EG", "EG")
+    assert poe.url_allowed(
+        "https://sis.gov.eg/en/egypt/tourism/yacht-tourism/yacht-tourism/",
+        poe.build_whitelist("EG", "EG"),
+    )
 
 
 def test_sint_maarten_gov_org_is_whitelisted_not_sx_cctld():
@@ -459,6 +474,43 @@ def test_nc_clearance_bureau_and_sx_generic_marina():
     sx = extract_structured_ports("Port de plaisance de Marina\nGreat Bay.")
     assert not any(p["name"].casefold() in {"marina", "port de plaisance de marina"}
                    for p in sx)
+
+
+def test_egypt_sis_yacht_headings_yield_five_marinas():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    text = (
+        "Egypt has been keen to encourage yachting tourism and establish "
+        "specialized marinas on its beaches, including:\n"
+        "Hurghada Marina:\n"
+        "Located in the heart of Hurghada city next to the Grand Mina Mosque.\n"
+        "Marassi Yacht Marina:\n"
+        "A marina for yachts in the yacht port of Marassi on the Mediterranean.\n"
+        "Taba Heights Marina:\n"
+        "The marina is located in Moqbela, south of Taba.\n"
+        "Abu Teeg Marina (El Gouna Marina):\n"
+        "Located within the El Gouna Resort area, 21 km north of Hurghada.\n"
+        "Porto Marina North Coast:\n"
+        "Located in Alamein city on the North Coast.\n"
+        "The State Sets a Legislative Framework For Yacht Tourism:\n"
+        "Prime Minister's decision No. 2721 of 2022. "
+        "Yachts storing at Ismailia Yacht Marina for more than 90 days. "
+        "Cities such as: Sharm El Sheikh, Nuweiba, Dahab and Taba."
+    )
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert names == {
+        "Hurghada Marina",
+        "Marassi Yacht Marina",
+        "Taba Heights Marina",
+        "Abu Teeg Marina (El Gouna Marina)",
+        "Porto Marina North Coast",
+    }
+    assert "Marassi on" not in names
+    assert "Sharm El Sheikh" not in names
+    assert "Ismailia Yacht Marina" not in names
+    assert catalog_is_sufficient(ports, text)
+    flat = extract_structured_ports(text.replace("\n", " "))
+    assert {p["name"] for p in flat} == names
 
 
 def test_sint_maarten_customs_examples_yield_simpson_and_great_bay():

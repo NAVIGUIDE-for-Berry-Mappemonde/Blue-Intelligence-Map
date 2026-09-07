@@ -161,6 +161,7 @@ _LIST_PATH_TOKENS = (
     "sailing-to", "terminales", "formalit", "niue_laws", "habilitados",
     "marina-mercante", "vous-naviguez", "inventario", "pages/customs",
     "capitanias", "jurisdiccion", "ley-de-marinas", "actividades-conexas",
+    "yacht-tourism",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -222,6 +223,8 @@ def localized_query(zone: dict) -> str | None:
         )
     if polygon_iso2(zone) == "GB":
         return f"submit a pleasure craft report sPCR ports of entry {place}"
+    if polygon_iso2(zone) == "EG":
+        return f"Egypt SIS yacht tourism specialized marinas official {place}"
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
     return tpl.format(name=place) if tpl else None
@@ -409,6 +412,11 @@ def default_search_hints(zone: dict) -> list[str]:
         return [
             f"submit a pleasure craft report ports of entry {poly}",
             f"sPCR C1331 pleasure craft sailing {poly}",
+            generic,
+        ]
+    if iso == "EG":
+        return [
+            f"SIS Egypt yacht tourism specialized marinas {poly}",
             generic,
         ]
     lang = zone_search_lang(zone)
@@ -1309,6 +1317,8 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
         return f"site:{domain} filetype:pdf (arrêté Mayotte points de passage OR annexe I)"
     if iso == "GB":
         return f"site:{domain} filetype:pdf (C1331 OR pleasure craft report)"
+    if iso == "EG":
+        return f"site:{domain} filetype:pdf (yacht tourism OR marinas OR ports of entry)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
@@ -1339,6 +1349,8 @@ def site_list_page_query(domain: str, zone: dict) -> str:
         return f"site:{domain} (JORFTEXT000030235682 OR arrêté points de passage Mayotte)"
     if iso == "GB":
         return f"site:{domain} (submit a pleasure craft report)"
+    if iso == "EG":
+        return f"site:{domain} (yacht tourism OR specialized marinas)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} (ports d'entrée OR liste douane)"
