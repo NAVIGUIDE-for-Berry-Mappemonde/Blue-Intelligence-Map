@@ -49,6 +49,10 @@ EXAMPLE_ZONES = {
         "iso2": "EG", "sov_iso2": "EG", "name": "Egypt", "sovereign": "Egypt",
         "pol_type": "200NM", "mrgid": 8490,
     },
+    5670: {
+        "iso2": "AL", "sov_iso2": "AL", "name": "Albania", "sovereign": "Albania",
+        "pol_type": "200NM", "mrgid": 5670,
+    },
 }
 
 PINNED_NEEDLES = {
@@ -63,10 +67,12 @@ PINNED_NEEDLES = {
     48944: ["JORFTEXT000030235682"],
     5696: ["submit-a-pleasure-craft-report"],
     8490: ["sis.gov.eg", "yacht-tourism"],
+    5670: ["dogana.gov.al", "autorizim-per-perjashtimin", "akcizes", "peshkimit"],
 }
 
 FOREIGN_NEEDLES = {
-    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc", "sintmaartengov", "sis.gov.eg"],
+    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc", "sintmaartengov", "sis.gov.eg",
+           "dogana.gov.al"],
     8429: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "sis.gov.eg"],
     8433: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "sis.gov.eg"],
     8447: ["mpi.govt.nz", "customs.govt.nz", "vous-naviguez"],
@@ -77,6 +83,7 @@ FOREIGN_NEEDLES = {
             "submit-a-pleasure-craft-report"],
     5696: ["vous-naviguez", "JORFTEXT000030235682", "inea.gob.ve"],
     8490: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov", "inea.gob.ve"],
+    5670: ["vous-naviguez", "mpi.govt.nz", "sis.gov.eg", "sintmaartengov"],
 }
 
 
@@ -233,6 +240,7 @@ def test_example_hints_stay_on_the_polygon():
     yt = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[48944]))
     gb = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5696]))
     eg = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8490]))
+    al = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5670]))
     assert "places of first arrival" in nz and "Niue" not in nz
     assert "Customs Act" in nu and "places of first arrival" not in nu
     assert "plaisance" in nc and "PPF" not in nc
@@ -256,6 +264,15 @@ def test_example_hints_stay_on_the_polygon():
         "https://sis.gov.eg/en/egypt/tourism/yacht-tourism/yacht-tourism/",
         poe.build_whitelist("EG", "EG"),
     )
+    assert "akciz" in al and "peshkimit" in al and "Durres" not in al
+    qal = poe.localized_query(EXAMPLE_ZONES[5670]) or ""
+    assert "porteve detare" in qal
+    al_url = ("https://www.dogana.gov.al/dokument/2251/"
+              "autorizim-per-perjashtimin-nga-detyrimet-e-akcizes-se-karburantit"
+              "-per-anijet-e-peshkimit")
+    assert poe.url_allowed(al_url, poe.build_whitelist("AL", "AL"))
+    assert "dogana.gov.al" in poe.build_whitelist("AL", "AL")
+    assert poe.list_url_bonus(al_url) >= 0.3
 
 
 def test_sint_maarten_gov_org_is_whitelisted_not_sx_cctld():
@@ -474,6 +491,38 @@ def test_nc_clearance_bureau_and_sx_generic_marina():
     sx = extract_structured_ports("Port de plaisance de Marina\nGreat Bay.")
     assert not any(p["name"].casefold() in {"marina", "port de plaisance de marina"}
                    for p in sx)
+
+
+def test_albania_dogana_kartela_yields_four_seaports():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    # Mise en page PDF : « Porti detar » puis le toponyme à la ligne suivante.
+    text = (
+        "6. Ku mund të aplikoj?\n"
+        "Degët doganore mbikëqyrëse (pranë porteve detare)\n"
+        "Dega Doganore Durrës\nDega Doganore Lezhë\n"
+        "Dega Doganore Vlorë\nDega Doganore Sarandë\n"
+        "1. Durrës - Porti detar\nDurrës\n"
+        "2. Lezhë - Porti detar\nShëngjin\n"
+        "3. Vlorë - Porti detar Vlorë\n"
+        "4. Sarandë - Porti detar\nSarandë\n"
+        "Autorizim për përjashtimin nga detyrimet e akcizës për anijet e peshkimit."
+    )
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert names == {
+        "Porti detar Durrës",
+        "Porti detar Shëngjin",
+        "Porti detar Vlorë",
+        "Porti detar Sarandë",
+    }
+    assert "Lezhë" not in names and "Porti detar Lezhë" not in names
+    assert catalog_is_sufficient(ports, text)
+    flat = extract_structured_ports(
+        "1. Durrës - Porti detar Durrës 2. Lezhë - Porti detar Shëngjin "
+        "3. Vlorë - Porti detar Vlorë 4. Sarandë - Porti detar Sarandë. "
+        "Degët doganore mbikëqyrëse pranë porteve detare, anijet e peshkimit."
+    )
+    assert {p["name"] for p in flat} == names
 
 
 def test_egypt_sis_yacht_headings_yield_five_marinas():

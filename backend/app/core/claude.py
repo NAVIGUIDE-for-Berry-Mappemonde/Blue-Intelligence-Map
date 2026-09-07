@@ -251,6 +251,8 @@ Règles absolues :
   Égypte : titres de la liste SIS yacht tourism (Hurghada Marina, Marassi,
   Taba Heights, Abu Teeg / El Gouna, Porto Marina North Coast). Ne pas inventer
   d'autres ports (la liste officielle n'est pas exhaustive).
+  Albanie : kartelë Dogana accise carburant — uniquement les « Porti detar »
+  (Durrës, Shëngjin, Vlorë, Sarandë). Ignorer Dega Doganore Lezhë (ville, pas le port).
 - La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé :
   {"ports": []}.

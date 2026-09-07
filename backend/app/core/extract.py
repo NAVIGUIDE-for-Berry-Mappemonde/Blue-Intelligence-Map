@@ -463,7 +463,8 @@ _CATALOG_MARKERS_RE = re.compile(
     r"designated ports|ports? d['’]entrée|"
     r"ports? of entry|puertos de entrada|portos de entrada|"
     r"ports? de plaisance|capitan[ií]as?\s+de\s+puerto|"
-    r"places of first arrival|approved ports",
+    r"places of first arrival|approved ports|"
+    r"porti\s+detar|porteve\s+detare|dega\s+doganore",
     re.I,
 )
 # Capitanía / Capitanias — pas « Capitán de Puerto » (titre, prose de loi).
@@ -607,6 +608,14 @@ _EG_SKIP_MARINA_RE = re.compile(
     r"specialized marinas|egyptian marinas|international marinas|"
     r"tourist harbou?rs?)\b",
 )
+# Kartelë Dogana AL : « 2. Lezhë - Porti detar\nShëngjin » (le port, pas la ville).
+_AL_PORTI_DETAR_RE = re.compile(
+    r"(?i)porti\s+detar\s+([A-ZÀ-ÝË][A-Za-zÀ-ÿËëÇç]{2,24})",
+)
+_AL_PORTI_SKIP = frozenset({
+    "detar", "peshkimit", "aplikantit", "mbikëqyrëse", "kompetente",
+    "qyteti", "adresa", "orari",
+})
 _JORF_READERS = {
     "JORFTEXT000030235682": [
         # Même arrêté (NOR INTV1430080A) : Légifrance est derrière Cloudflare.
@@ -640,7 +649,8 @@ _LIST_PDF_PATH_RE = re.compile(
     r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
     r"points-d-entree|points-of-entry|designat|gazett|legislat|"
     r"decreto|decret|arrete|capitanias|jurisdiccion|ley-de-marinas|"
-    r"jorftext|c1331|pleasure-craft|pleasure_craft",
+    r"jorftext|c1331|pleasure-craft|pleasure_craft|"
+    r"akciz|peshkimit|anijet|autorizim|porti-detar",
     re.I,
 )
 _JUNK_PDF_PATH_RE = re.compile(
@@ -695,6 +705,11 @@ def looks_like_port_catalog(text: str) -> bool:
     if (re.search(r"specialized marinas.{0,200}?including", text, re.I)
             and sum(1 for raw in _EG_MARINA_HEAD_RE.findall(text)
                     if _eg_normalize_marina(raw)) >= 3):
+        return True
+    if (re.search(r"porti\s+detar", text, re.I)
+            and re.search(r"dega\s+doganore|porteve\s+detare|anijet?\s+e\s+peshkimit",
+                          text, re.I)
+            and len(_AL_PORTI_DETAR_RE.findall(text)) >= 3):
         return True
     return False
 
@@ -980,6 +995,27 @@ def _extract_eg_sis_yacht_marinas(text: str) -> list[dict]:
     return out
 
 
+def _extract_al_porti_detar(text: str) -> list[dict]:
+    """Quatre ports de la kartelë Dogana (accise carburant, anijet e peshkimit)."""
+    out, seen = [], set()
+    text = html.unescape(text or "")
+    for m in _AL_PORTI_DETAR_RE.finditer(text):
+        place = " ".join((m.group(1) or "").split()).strip(" .;:-")
+        if not place or place.casefold() in _AL_PORTI_SKIP:
+            continue
+        name = f"Porti detar {place}"
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "port detar (kartelë Dogana, accise anijet e peshkimit)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
 def _extract_sx_customs_examples(text: str) -> list[dict]:
     """Lieux d'autorité listés par la douane de Sint Maarten (pas l'aéroport)."""
     out, seen = [], set()
@@ -1059,6 +1095,7 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         _extract_uk_pleasure_ports(text),
         _extract_sx_customs_examples(text),
         _extract_eg_sis_yacht_marinas(text),
+        _extract_al_porti_detar(text),
         _extract_douane_bureaux(text),
     ):
         for p in extra:
@@ -1143,14 +1180,8 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
     min_names = int(get_rule("formalities.catalog_min_names", 8))
     if looks_like_port_catalog(text or "") and len(named) >= min_names:
         return True
-    sx = [p for p in named
-          if "sint maarten" in (p.get("note") or "").casefold()]
-    if len(sx) >= 4:
-        return True
-    eg = [p for p in named
-          if "égypte" in (p.get("note") or "").casefold()
-          or "egypte" in (p.get("note") or "").casefold()]
-    return len(eg) >= 4
+    cat = [p for p in named if p.get("extraction_engine") == "catalog"]
+    return bool(looks_like_port_catalog(text or "") and len(cat) >= 4)
 
 
 _JUNK_NAME_RE = re.compile(

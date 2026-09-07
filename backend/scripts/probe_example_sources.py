@@ -60,6 +60,10 @@ EXAMPLE_ZONES = {
         "iso2": "EG", "sov_iso2": "EG", "name": "Egypt", "sovereign": "Egypt",
         "pol_type": "200NM", "mrgid": 8490,
     },
+    5670: {
+        "iso2": "AL", "sov_iso2": "AL", "name": "Albania", "sovereign": "Albania",
+        "pol_type": "200NM", "mrgid": 5670,
+    },
 }
 PINNED_NEEDLES = {
     5677: ["vous-naviguez-en-provenance"],
@@ -74,15 +78,18 @@ PINNED_NEEDLES = {
     48944: ["JORFTEXT000030235682"],
     5696: ["submit-a-pleasure-craft-report"],
     8490: ["sis.gov.eg", "yacht-tourism"],
+    5670: ["dogana.gov.al", "autorizim-per-perjashtimin", "peshkimit"],
 }
 
 FR_PDF_NEEDLES = (
     "Liste-ports-de-plaisance-eligibles.pdf",
     "carte-PPF-maritimes.pdf",
 )
-TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803, 48944, 5696, 8490)
+TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803, 48944, 5696, 8490,
+                 5670)
 SOV_ISO2 = {5677: "FR", 8429: "MX", 8433: "VE", 8447: "NZ", 8455: "NZ",
-            8312: "FR", 21803: "NL", 48944: "FR", 5696: "GB", 8490: "EG"}
+            8312: "FR", 21803: "NL", 48944: "FR", 5696: "GB", 8490: "EG",
+            5670: "AL"}
 
 
 def _blob(rows: list[dict]) -> str:

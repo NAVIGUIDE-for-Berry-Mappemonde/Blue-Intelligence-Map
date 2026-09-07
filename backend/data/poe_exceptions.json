@@ -50,6 +50,9 @@
     "EG": [
       "sis.gov.eg"
     ],
+    "AL": [
+      "dogana.gov.al"
+    ],
     "DE": [
       "bund.de",
       "zoll.de"
@@ -362,6 +365,9 @@
     "EG": [
       "https://sis.gov.eg/en/egypt/tourism/yacht-tourism/yacht-tourism/"
     ],
+    "AL": [
+      "https://www.dogana.gov.al/dokument/2251/autorizim-per-perjashtimin-nga-detyrimet-e-akcizes-se-karburantit-per-anijet-e-peshkimit"
+    ],
     "YT": [
       "https://www.legifrance.gouv.fr/loda/id/JORFTEXT000030235682/"
     ],
@@ -396,6 +402,9 @@
     ],
     "EG": [
       "Egypt SIS yacht tourism specialized marinas"
+    ],
+    "AL": [
+      "dogana autorizim akcizë anijet e peshkimit porteve detare"
     ],
     "YT": [
       "Mayotte arrêté 4 février 2015 points de passage contrôlés annexe I"

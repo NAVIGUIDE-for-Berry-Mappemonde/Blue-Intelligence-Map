@@ -274,6 +274,8 @@ Règles absolues:
   de PoE (marinas + Greatbay harbor + Cruise Terminal) — ignorer aéroport et poste.
   Égypte : titres « X Marina: » de la page SIS yacht-tourism — ne pas inventer
   Alexandria / Port Said / Sharm s'ils ne figurent pas en titre.
+  Albanie : « Porti detar X » de la kartelë akcizë / anijet e peshkimit
+  (Durrës, Shëngjin, Vlorë, Sarandë) — pas Lezhë (dega doganore seulement).
   Tableaux MPI « | Nom | / Approved vessels » = places of first arrival.
   La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.

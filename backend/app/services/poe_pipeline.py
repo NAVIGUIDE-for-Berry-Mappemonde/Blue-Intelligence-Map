@@ -161,7 +161,7 @@ _LIST_PATH_TOKENS = (
     "sailing-to", "terminales", "formalit", "niue_laws", "habilitados",
     "marina-mercante", "vous-naviguez", "inventario", "pages/customs",
     "capitanias", "jurisdiccion", "ley-de-marinas", "actividades-conexas",
-    "yacht-tourism",
+    "yacht-tourism", "autorizim", "akciz", "peshkimit", "anijet",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -225,6 +225,10 @@ def localized_query(zone: dict) -> str | None:
         return f"submit a pleasure craft report sPCR ports of entry {place}"
     if polygon_iso2(zone) == "EG":
         return f"Egypt SIS yacht tourism specialized marinas official {place}"
+    if polygon_iso2(zone) == "AL":
+        return (
+            f"dogana autorizim akcizë anijet e peshkimit porteve detare {place}"
+        )
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
     return tpl.format(name=place) if tpl else None
@@ -417,6 +421,12 @@ def default_search_hints(zone: dict) -> list[str]:
     if iso == "EG":
         return [
             f"SIS Egypt yacht tourism specialized marinas {poly}",
+            generic,
+        ]
+    if iso == "AL":
+        return [
+            f"dogana autorizim përjashtimin akcizës anijet e peshkimit "
+            f"porteve detare {poly}",
             generic,
         ]
     lang = zone_search_lang(zone)
@@ -1319,6 +1329,9 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
         return f"site:{domain} filetype:pdf (C1331 OR pleasure craft report)"
     if iso == "EG":
         return f"site:{domain} filetype:pdf (yacht tourism OR marinas OR ports of entry)"
+    if iso == "AL":
+        return (f"site:{domain} filetype:pdf "
+                f"(akcizë OR anijet e peshkimit OR porteve detare OR kartelë)")
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
@@ -1351,6 +1364,8 @@ def site_list_page_query(domain: str, zone: dict) -> str:
         return f"site:{domain} (submit a pleasure craft report)"
     if iso == "EG":
         return f"site:{domain} (yacht tourism OR specialized marinas)"
+    if iso == "AL":
+        return f"site:{domain} (autorizim akcizë anijet e peshkimit OR porteve detare)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} (ports d'entrée OR liste douane)"
