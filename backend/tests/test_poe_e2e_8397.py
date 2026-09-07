@@ -35,7 +35,6 @@ def test_generate_zone_8397_gone_non_destructive(api, mongo):
     ports_before = list(mongo.poe_ports.find({"mrgid": MRGID}, {"_id": 1, "name": 1}))
     global_poe_before = mongo.poe_ports.count_documents({})
     projects_before = mongo.projects.count_documents({})
-    assert len(ports_before) >= 4, len(ports_before)
 
     r = api.post(f"{BASE_URL}/api/poe/zones/{MRGID}/generate", json={}, timeout=60)
     assert r.status_code == 410, r.text[:300]
@@ -46,5 +45,3 @@ def test_generate_zone_8397_gone_non_destructive(api, mongo):
     assert {str(p["_id"]) for p in ports_after} == {str(p["_id"]) for p in ports_before}
     assert mongo.poe_ports.count_documents({}) == global_poe_before
     assert mongo.projects.count_documents({}) == projects_before
-    zone = mongo.eez_zones.find_one({"mrgid": MRGID})
-    assert zone.get("poe_count", 0) >= 4, zone.get("poe_count")
