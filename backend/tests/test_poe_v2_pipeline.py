@@ -630,6 +630,17 @@ class TestSearchMergeAgreement:
         assert len(merged) == 1
         assert set(merged[0]["engine"]) == {"searxng", "tinyfish"}
 
+    def test_list_url_bonus_ignores_hostname_customs(self):
+        home = poe.list_url_bonus(
+            "http://www.douane.gouv.fr/french-customs-information-available-english")
+        pdf = poe.list_url_bonus(
+            "https://www.douane.gouv.fr/sites/default/files/2025-02/28/"
+            "Liste%20des%20ports%20de%20plaisance%20rattach%C3%A9s%20au%20dispositif.pdf")
+        page = poe.list_url_bonus("https://www.douane.gouv.fr/demarche/ports-entree")
+        assert pdf > home
+        assert page > home
+        assert pdf > 0.4
+
     def test_best_per_domain_prefers_decree_pdf(self):
         cands = [
             {"url": "https://aduana.gob.mx/noticias", "domain": "aduana.gob.mx",

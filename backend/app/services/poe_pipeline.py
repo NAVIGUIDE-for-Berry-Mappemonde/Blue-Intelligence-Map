@@ -34,7 +34,7 @@ import pycountry
 import tldextract
 from shapely.geometry import shape, mapping
 from shapely.prepared import prep
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
@@ -146,10 +146,19 @@ QUERY_TEMPLATES = {
     "ko": "공식 입국 항구 목록 세관 법령 {name}",
 }
 
-_LIST_URL_TOKENS = (
-    "port-of-entry", "ports-of-entry", "habilit", "puertos", "designated",
-    "decreto", "gazette", "customs", "douane", "aduana", "legislat",
-    "portos-de-entrada", "ports-entree",
+# Jetons de *chemin* (pas le hostname). « douane » / « customs » dans
+# le domaine donnent un faux bonus à une home douanes.
+_LIST_PATH_TOKENS = (
+    "port-of-entry", "ports-of-entry", "ports-entree", "portos-de-entrada",
+    "habilit", "puertos", "designated", "decreto", "decree", "decret",
+    "arrete", "arrêté", "gazette", "legislat", "jorf", "liste", "listen",
+    "list-of", "listing", "ordonnance", "ordinance", "plaisance",
+    "points-d-entree", "points-of-entry",
+)
+_HOME_PATH_RE = re.compile(
+    r"(^/?$|/accueil\b|/home\b|/en/?$|information-available|"
+    r"what-know-when-travelling|/fiche/|/particuliers/?$)",
+    re.I,
 )
 
 
@@ -319,9 +328,21 @@ def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]
 
 
 def list_url_bonus(url: str) -> float:
-    """Priorise les pages qui ressemblent à une liste officielle (leçon SCT)."""
-    u = (url or "").lower()
-    return sum(0.15 for tok in _LIST_URL_TOKENS if tok in u) + (0.1 if u.endswith(".pdf") else 0.0)
+    """Priorise décret / PDF / page liste — pas la home douanes (CDC §18)."""
+    raw = (url or "").strip()
+    if not raw:
+        return 0.0
+    parsed = urlparse(raw)
+    path = unquote((parsed.path or "") + "?" + (parsed.query or "")).lower()
+    score = sum(0.15 for tok in _LIST_PATH_TOKENS if tok in path)
+    if path.endswith(".pdf") or ".pdf" in path:
+        score += 0.35
+    if _HOME_PATH_RE.search(path.split("?", 1)[0]):
+        score -= 0.45
+    leaf = path.split("?", 1)[0].strip("/")
+    if len(leaf) < 8:
+        score -= 0.3
+    return score
 
 
 def remember_seed_urls(zone: dict, urls: list[str], exceptions: dict | None = None,
