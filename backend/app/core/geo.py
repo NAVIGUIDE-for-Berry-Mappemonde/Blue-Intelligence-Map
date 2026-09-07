@@ -360,20 +360,78 @@ async def geocode(query: str, country_code: str | None = None):
 
 
 # ---------------------------------------------------------------------------
-# Géocodage de PoE (variantes de noms + re-ranking sémantique)
+# Géocodage de PoE (variantes de noms + score d'homonymes)
 # ---------------------------------------------------------------------------
+GEOCODE_CANDIDATE_LIMIT = 8
+BASIN_SPLIT_KM = 1500.0
+PEER_NEAR_KM = 300.0
+PEER_FAR_KM = 500.0
+AMBIGUOUS_SCORE_GAP = 12.0
+INLAND_FAR_SCORE_KM = 30.0
+
+_PAREN_HINT_RE = re.compile(r"\((.+)\)")
+_PAREN_HINT_STOP = {
+    "island", "islands", "city", "port", "harbour", "harbor", "marina",
+    "coast", "west", "east", "north", "south", "the", "and", "of",
+}
+
+
+def paren_hint_tokens(*names: str) -> list[str]:
+    """Tokens entre parenthèses (Bintan Island, Georgia) — contrainte, pas un strip."""
+    tokens: list[str] = []
+    for raw in names:
+        if not raw:
+            continue
+        m = _PAREN_HINT_RE.search(raw)
+        if not m:
+            continue
+        for bit in re.split(r"\s*[,/;&–-]\s*", m.group(1)):
+            bit = bit.strip()
+            if len(bit) >= 4:
+                tokens.append(bit)
+            for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", bit):
+                if w.lower() not in _PAREN_HINT_STOP:
+                    tokens.append(w)
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tokens:
+        k = t.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+    return out
+
+
 def port_name_variants(name: str) -> list[str]:
-    variants = []
+    """Nom complet d'abord (parenthèses conservées), puis alias sans parenthèses."""
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def _add(v: str) -> None:
+        v = (v or "").strip()
+        if not v:
+            return
+        k = v.lower()
+        if k in seen:
+            return
+        seen.add(k)
+        variants.append(v)
+
+    _add(name)
+    hints = paren_hint_tokens(name)
     deparen = re.sub(r"\s*\([^)]*\)", "", name).strip()
-    if deparen and deparen.lower() != name.lower():
-        variants.append(deparen)
-    variants.append(name)
-    stripped = re.sub(r"^(port|puerto|porto|harbour|harbor)\s+(of|de|du|di|da|d')\s*", "", name, flags=re.I).strip()
-    if stripped and stripped.lower() != name.lower():
-        variants.append(stripped)
-    stripped2 = re.sub(r"\s+(port|harbour|harbor|marina|wharf|jetty|terminal)$", "", name, flags=re.I).strip()
-    if stripped2 and stripped2.lower() not in {v.lower() for v in variants}:
-        variants.append(stripped2)
+    if hints and deparen:
+        _add(f"{deparen}, {', '.join(hints)}")
+    _add(deparen)
+    stripped = re.sub(
+        r"^(port|puerto|porto|harbour|harbor)\s+(of|de|du|di|da|d')\s*",
+        "", name, flags=re.I).strip()
+    _add(stripped)
+    stripped2 = re.sub(
+        r"\s+(port|harbour|harbor|marina|wharf|jetty|terminal)$",
+        "", deparen or name, flags=re.I).strip()
+    _add(stripped2)
     return variants
 
 
@@ -394,67 +452,392 @@ def _port_queries(port: dict, zone: dict) -> tuple[list[str], str]:
     """Échelle de requêtes de géocodage d'un port + contexte de re-ranking."""
     name = port["name"]
     territory = zone.get("name") or ""
+    listing_name = (port.get("listing_name") or "").strip()
     variants = port_name_variants(name)
+    if listing_name and listing_name.lower() != name.lower():
+        for v in port_name_variants(listing_name):
+            if v.lower() not in {x.lower() for x in variants}:
+                variants.append(v)
     queries = []
     if port.get("city"):
         queries.append(f"{name}, {port['city']}, {territory}")
+    grp = (port.get("listing_group") or "").strip()
+    if grp:
+        queries.append(f"{variants[0] if variants else name}, {grp}")
     for v in variants:
         queries.append(f"{v}, {territory}")
     if port.get("city"):
         queries.append(f"{port['city']}, {territory}")
     queries.append(f"{name} port, {zone.get('sovereign') or territory}")
     ctx = f"{name} port harbour marina customs, {territory}"
-    return queries, ctx
-
-
-async def _geocode_port_nominatim(port: dict, zone: dict) -> dict | None:
-    queries, ctx = _port_queries(port, zone)
-    cc = (zone.get("iso2") or "").lower() or None
+    # Déduplique en gardant l'ordre (parenthèses / groupe listing d'abord).
+    seen: set[str] = set()
+    uniq: list[str] = []
     for q in queries:
-        rows = await _nominatim_rows(q, cc, limit=3)
-        if rows:
-            best = _rerank_rows(ctx, rows, "display_name")
-            return {
-                "lat": float(best["lat"]),
-                "lon": float(best["lon"]),
-                "osm_class": best.get("class") or "",
-                "osm_type": best.get("type") or "",
-            }
-    return None
+        k = q.strip().lower()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        uniq.append(q.strip())
+    return uniq, ctx
 
 
-async def _geocode_port_geonames(port: dict, zone: dict) -> dict | None:
-    name = port["name"]
-    territory = zone.get("name") or ""
-    _, ctx = _port_queries(port, zone)
-    cc = (zone.get("iso2") or "").upper() or None
-    for q, country in ((name, cc), (f"{name} {territory}", None)):
-        rows = await _geonames_rows(q, country, limit=3)
-        if rows:
-            best = _rerank_rows(ctx, rows, "name")
-            return {
-                "lat": float(best["lat"]),
-                "lon": float(best["lng"]),
-                "geonames_fcode": best.get("fcode") or "",
-            }
-    return None
+def _zone_geom(zone: dict | None):
+    zone = zone or {}
+    geom = zone.get("_geom")
+    prepared = zone.get("_prep")
+    if geom is None and zone.get("geometry"):
+        try:
+            from shapely.geometry import shape
+            geom = shape(zone["geometry"])
+        except Exception:
+            geom = None
+    return geom, prepared
+
+
+def listing_group_penalty(group: str, lat: float, lon: float) -> float:
+    """Pénalité si le GPS contredit le bassin du listing (pas un centroïde)."""
+    g = (group or "").lower()
+    if not g:
+        return 0.0
+    if "west coast" in g and ("usa" in g or "united states" in g):
+        return -45.0 if lon > -90.0 else 0.0
+    if "east coast" in g and ("usa" in g or "united states" in g):
+        return -45.0 if lon < -90.0 else 0.0
+    if "atlantic" in g and "france" in g:
+        return -45.0 if lon > 1.0 else 0.0
+    if "north of rio" in g:
+        return -45.0 if lat < -23.0 else 0.0
+    return 0.0
+
+
+def _core_name_token(name: str) -> str:
+    n = re.sub(r"\([^)]*\)", " ", name or "")
+    n = re.sub(
+        r"\b(port of|porto de|puerto de|harbour|harbor|marina|tp)\b",
+        " ", n, flags=re.I)
+    n = re.sub(r"[^A-Za-zÀ-ÿ]+", "", n).lower()
+    return n
+
+
+def _cand_harbour_meta(cand: dict) -> dict:
+    return {
+        "osm_class": cand.get("osm_class") or "",
+        "osm_type": cand.get("osm_type") or "",
+        "geonames_fcode": cand.get("geonames_fcode") or cand.get("fcode") or "",
+    }
+
+
+def _has_decisive_hint(cand: dict, port: dict) -> bool:
+    if cand.get("paren_hit"):
+        return True
+    if cand.get("peer_km") is not None and cand["peer_km"] <= PEER_NEAR_KM:
+        return True
+    if (cand.get("group_penalty") or 0) == 0 and (port.get("listing_group") or ""):
+        if listing_group_penalty(
+                port.get("listing_group") or "", cand["lat"], cand["lon"]) == 0:
+            # Un groupe ouest/est USA qui ne pénalise pas EST un hint.
+            g = (port.get("listing_group") or "").lower()
+            if "west coast" in g or "east coast" in g or (
+                    "atlantic" in g and "france" in g) or "north of rio" in g:
+                return True
+    return False
+
+
+def score_geocode_candidate(
+    cand: dict, port: dict, zone: dict | None, geom=None, prepared=None,
+) -> dict:
+    """Score un candidat Nominatim/GeoNames. Ne copie jamais le GPS d'un pair."""
+    lat, lon = float(cand["lat"]), float(cand["lon"])
+    label = str(cand.get("label") or "")
+    meta = _cand_harbour_meta(cand)
+    # Pas listing_role=poe → exception rivière 400 km (Safi inland).
+    port_for_inland = {k: v for k, v in (port or {}).items() if k != "listing_role"}
+    inland = inland_exception_flags(port_for_inland, zone or {}, meta)
+    spatial = {"kind": "unknown", "validated": False, "dist_km": None}
+    if geom is not None:
+        spatial = classify_poe_point(lat, lon, geom, prepared, inland=inland)
+    kind = spatial.get("kind")
+    dist = spatial.get("dist_km")
+    dist_f = float(dist) if dist is not None else None
+    score = 0.0
+    if kind == "in_eez":
+        score += 50
+    elif kind == "coastal_land":
+        score += 40
+    elif kind == "inland_river" and dist_f is not None and dist_f <= INLAND_FAR_SCORE_KM:
+        score += 10
+    elif kind in {"inland_river", "inland", "other_water"} and dist_f is not None:
+        if dist_f > INLAND_FAR_SCORE_KM:
+            score -= 40
+        else:
+            score -= 10
+    osm = f"{meta.get('osm_class') or ''} {meta.get('osm_type') or ''}".lower()
+    if any(tok in osm for tok in _HARBOUR_OSM):
+        score += 25
+    fcode = (meta.get("geonames_fcode") or "").upper()
+    if fcode in _HARBOUR_GN:
+        score += 25
+    hints = paren_hint_tokens(
+        port.get("name") or "", port.get("listing_name") or "")
+    label_l = label.lower()
+    paren_hit = False
+    if hints:
+        hits = sum(1 for h in hints if h.lower() in label_l)
+        if hits:
+            score += 20 * hits
+            paren_hit = True
+        else:
+            score -= 10
+    core = _core_name_token(port.get("name") or "")
+    label_core = _core_name_token(label)
+    if core and core in label_l.replace(" ", "").lower():
+        score += 12
+    elif core and core not in label_core:
+        score -= 8
+    group = port.get("listing_group") or ""
+    group_penalty = listing_group_penalty(group, lat, lon)
+    score += group_penalty
+    peer_km = None
+    peers = list(port.get("geocode_peers") or [])
+    if peers:
+        ds = []
+        for p in peers:
+            try:
+                ds.append(haversine_km(lat, lon, float(p["lat"]), float(p["lon"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+        if ds:
+            peer_km = min(ds)
+            if peer_km <= PEER_NEAR_KM:
+                score += 20
+            elif peer_km > PEER_FAR_KM:
+                score -= 25
+    out = dict(cand)
+    out.update({
+        "lat": lat, "lon": lon, "score": score, "spatial": spatial,
+        "paren_hit": paren_hit, "peer_km": peer_km,
+        "group_penalty": group_penalty,
+    })
+    return out
+
+
+def select_geocode_candidate(
+    cands: list[dict], port: dict, zone: dict | None = None,
+    geom=None, prepared=None,
+) -> dict:
+    """Choisit un candidat ou déclare ambiguous (deux bassins, pas de hint)."""
+    if not cands:
+        return {"status": "miss", "chosen": None, "ranked": []}
+    ranked = [
+        score_geocode_candidate(c, port, zone, geom, prepared)
+        for c in cands
+    ]
+    ranked.sort(key=lambda c: (-c["score"], c.get("source") != "nominatim"))
+    best = ranked[0]
+    status = "ok"
+    core = _core_name_token(port.get("name") or "")
+
+    def _label_has_core(c: dict) -> bool:
+        if not core:
+            return False
+        lab = (c.get("label") or "").lower().replace(" ", "")
+        return core in lab
+
+    # Port fluvial légitime (Sevilla) : ne pas sauter vers un quai lointain
+    # dont le libellé n'est pas le toponyme.
+    inland_named = []
+    if core:
+        for c in ranked:
+            sp = c.get("spatial") or {}
+            dist = sp.get("dist_km")
+            if (sp.get("kind") in {"inland_river", "inland"}
+                    and dist is not None and float(dist) <= 80
+                    and _label_has_core(c)):
+                inland_named.append(c)
+    if inland_named and best is not inland_named[0]:
+        try:
+            jump = haversine_km(
+                best["lat"], best["lon"],
+                inland_named[0]["lat"], inland_named[0]["lon"])
+        except (TypeError, ValueError):
+            jump = 0.0
+        if jump > PEER_NEAR_KM and not _label_has_core(best):
+            best = inland_named[0]
+
+    # Pair listing trop loin : homonyme dans une ZEE immense (Kingston ON vs NL).
+    if (best.get("peer_km") is not None and best["peer_km"] >= BASIN_SPLIT_KM
+            and not best.get("paren_hit")):
+        status = "spatial_rejected"
+        best = None
+    if best is not None and len(ranked) >= 2:
+        second = ranked[1]
+        gap = best["score"] - second["score"]
+        try:
+            split = haversine_km(
+                best["lat"], best["lon"], second["lat"], second["lon"])
+        except (TypeError, ValueError):
+            split = 0.0
+        if (split >= BASIN_SPLIT_KM and gap <= AMBIGUOUS_SCORE_GAP
+                and second["score"] >= 0):
+            if _has_decisive_hint(best, port) and not _has_decisive_hint(second, port):
+                status = "ok"
+            elif _has_decisive_hint(second, port) and not _has_decisive_hint(best, port):
+                best = second
+                status = "ok"
+            else:
+                status = "ambiguous"
+                best = None
+    if status == "ok" and best is not None:
+        kind = (best.get("spatial") or {}).get("kind")
+        dist = (best.get("spatial") or {}).get("dist_km")
+        if (kind in {"inland", "inland_river", "other_water"}
+                and dist is not None and float(dist) > INLAND_FAR_SCORE_KM
+                and best["score"] < 20):
+            status = "spatial_rejected"
+    return {"status": status, "chosen": best, "ranked": ranked}
 
 
 def _xy(hit: dict | None) -> list[float] | None:
     if not hit:
         return None
+    if hit.get("lat") is None or hit.get("lon") is None:
+        return None
     return [hit["lat"], hit["lon"]]
 
 
+def _nominatim_cand(row: dict) -> dict | None:
+    try:
+        return {
+            "source": "nominatim",
+            "lat": float(row["lat"]),
+            "lon": float(row["lon"]),
+            "label": str(row.get("display_name") or ""),
+            "osm_class": row.get("class") or "",
+            "osm_type": row.get("type") or "",
+            "geonames_fcode": "",
+        }
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _geonames_cand(row: dict) -> dict | None:
+    try:
+        return {
+            "source": "geonames",
+            "lat": float(row["lat"]),
+            "lon": float(row["lng"]),
+            "label": str(row.get("name") or ""),
+            "osm_class": "",
+            "osm_type": "",
+            "geonames_fcode": row.get("fcode") or "",
+        }
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _add_unique_cand(pool: list[dict], cand: dict | None) -> None:
+    if not cand:
+        return
+    key = (round(cand["lat"], 4), round(cand["lon"], 4))
+    for c in pool:
+        if (round(c["lat"], 4), round(c["lon"], 4)) == key:
+            return
+    pool.append(cand)
+
+
+def _pool_has_coastal(pool: list[dict], port: dict, zone: dict, geom, prepared) -> bool:
+    if geom is None or not pool:
+        return bool(pool)
+    for c in pool:
+        sc = score_geocode_candidate(c, port, zone, geom, prepared)
+        kind = (sc.get("spatial") or {}).get("kind")
+        if kind in {"in_eez", "coastal_land"}:
+            return True
+    return False
+
+
+async def _collect_nominatim_candidates(port: dict, zone: dict) -> list[dict]:
+    queries, _ctx = _port_queries(port, zone)
+    cc = (zone.get("iso2") or "").lower() or None
+    geom, prepared = _zone_geom(zone)
+    pool: list[dict] = []
+    for q in queries:
+        rows = await _nominatim_rows(q, cc, limit=GEOCODE_CANDIDATE_LIMIT)
+        for row in rows or []:
+            _add_unique_cand(pool, _nominatim_cand(row))
+        if len(pool) >= GEOCODE_CANDIDATE_LIMIT:
+            break
+        if pool and _pool_has_coastal(pool, port, zone, geom, prepared):
+            break
+        if pool and geom is None:
+            break
+    return pool[:GEOCODE_CANDIDATE_LIMIT]
+
+
+async def _collect_geonames_candidates(port: dict, zone: dict) -> list[dict]:
+    name = port["name"]
+    territory = zone.get("name") or ""
+    cc = (zone.get("iso2") or "").upper() or None
+    geom, prepared = _zone_geom(zone)
+    pool: list[dict] = []
+    for q, country in ((name, cc), (f"{name} {territory}", None)):
+        rows = await _geonames_rows(q, country, limit=GEOCODE_CANDIDATE_LIMIT)
+        for row in rows or []:
+            _add_unique_cand(pool, _geonames_cand(row))
+        if len(pool) >= GEOCODE_CANDIDATE_LIMIT:
+            break
+        if pool and _pool_has_coastal(pool, port, zone, geom, prepared):
+            break
+        if pool and geom is None:
+            break
+    return pool[:GEOCODE_CANDIDATE_LIMIT]
+
+
+async def _geocode_port_nominatim(port: dict, zone: dict) -> dict | None:
+    """Meilleur Nominatim après score ; None si aucun hit."""
+    pool = await _collect_nominatim_candidates(port, zone)
+    if not pool:
+        return None
+    geom, prepared = _zone_geom(zone)
+    sel = select_geocode_candidate(pool, port, zone, geom, prepared)
+    chosen = sel.get("chosen") or pool[0]
+    if chosen.get("lat") is None:
+        chosen = pool[0]
+    return {
+        "lat": float(chosen["lat"]),
+        "lon": float(chosen["lon"]),
+        "osm_class": chosen.get("osm_class") or "",
+        "osm_type": chosen.get("osm_type") or "",
+        "candidates": pool,
+        "pick_status": sel.get("status"),
+    }
+
+
+async def _geocode_port_geonames(port: dict, zone: dict) -> dict | None:
+    pool = await _collect_geonames_candidates(port, zone)
+    if not pool:
+        return None
+    geom, prepared = _zone_geom(zone)
+    sel = select_geocode_candidate(pool, port, zone, geom, prepared)
+    chosen = sel.get("chosen") or pool[0]
+    if chosen.get("lat") is None:
+        chosen = pool[0]
+    return {
+        "lat": float(chosen["lat"]),
+        "lon": float(chosen["lon"]),
+        "geonames_fcode": chosen.get("geonames_fcode") or "",
+        "candidates": pool,
+        "pick_status": sel.get("status"),
+    }
+
+
 async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
-    """GÉOCODAGE PARALLÈLE COMPARÉ : Nominatim (données OSM) ∥ GeoNames (base
-    indépendante) — plus de cascade. L'accord des deux fournisseurs à < 2 km
-    est un signal de confiance fort ; le désaccord est arbitré en aval
-    (point-in-EEZ). Retourne :
-      {nominatim: [lat, lon]|None, geonames: [lat, lon]|None,
-       nominatim_meta: dict, geonames_meta: dict,
-       agreement_km: float|None, agree: bool|None, geonames_available: bool}
-    agree=None quand un seul fournisseur a répondu (GeoNames absent/désactivé)."""
+    """Nominatim ∥ GeoNames, puis score d'homonymes (ZEE, parenthèses, listing).
+
+    Retourne aussi `candidates` et `pick` pour pick_geocode. L'accord < 2 km
+    reste un signal ; il ne départage pas deux homonymes identiques.
+    """
     log = log or (lambda m: None)
     nomi, geon = await asyncio.gather(
         _geocode_port_nominatim(port, zone),
@@ -462,12 +845,20 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
     )
     agreement_km = None
     agree = None
-    if nomi and geon:
+    if nomi and geon and nomi.get("lat") is not None and geon.get("lat") is not None:
         agreement_km = round(haversine_km(
             nomi["lat"], nomi["lon"], geon["lat"], geon["lon"]), 2)
         agree = agreement_km <= 2.0
     if not nomi and not geon:
         log(f"géocodage: aucun résultat pour « {port['name']} »")
+    candidates: list[dict] = []
+    for hit in (nomi, geon):
+        for c in (hit or {}).get("candidates") or []:
+            _add_unique_cand(candidates, c)
+    geom, prepared = _zone_geom(zone)
+    pick = select_geocode_candidate(candidates, port, zone, geom, prepared) if candidates else {
+        "status": "miss", "chosen": None, "ranked": [],
+    }
     return {
         "nominatim": _xy(nomi),
         "geonames": _xy(geon),
@@ -481,6 +872,12 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
         "agreement_km": agreement_km,
         "agree": agree,
         "geonames_available": geonames_status() == "ok",
+        "candidates": candidates,
+        "pick": {
+            "status": pick.get("status"),
+            "chosen": pick.get("chosen"),
+            "ranked": pick.get("ranked") or [],
+        },
     }
 
 
