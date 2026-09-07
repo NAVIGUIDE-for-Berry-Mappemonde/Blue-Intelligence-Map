@@ -42,7 +42,8 @@ EXAMPLE_ZONES = {
 PINNED_NEEDLES = {
     5677: ["vous-naviguez-en-provenance"],
     8429: ["puertos-y-terminales"],
-    8433: ["inea.gob.ve", "inventario-de-puertos"],
+    8433: ["Ley-de-Marinas-y-Actividades-Conexas.pdf",
+           "CAPITANIAS-DE-PUERTO"],
     8447: ["niue_laws_vol4_part1"],
     8455: ["places-of-first-arrival-seaports", "sailing-to-new-zealand-this-small-craft-season"],
     8312: ["formalites-douanieres-pour-les-navires-de-plaisance"],
@@ -102,6 +103,20 @@ def test_france_landing_still_yields_current_list_and_ppf():
     assert should_follow_attachments(html, base)
 
 
+def test_venezuela_inea_attachments_keep_ley_and_reglamento():
+    html = """
+    <a href="/wp-content/uploads/2026/04/Ley-de-Marinas-y-Actividades-Conexas.pdf">ley</a>
+    <a href="/wp-content/uploads/2026/04/REGLAMENTO-QUE-DETERMINA-LA-JURISDICCION-DE-LAS-CAPITANIAS-DE-PUERTO-DE-LA-REPUBLICA.pdf">reg</a>
+    <a href="/wp-content/uploads/2024/01/logo-inea.pdf">logo</a>
+    """
+    base = "https://inea.gob.ve/"
+    atts = official_attachments(html, base)
+    blob = " ".join(atts)
+    assert "Ley-de-Marinas-y-Actividades-Conexas.pdf" in blob
+    assert "CAPITANIAS-DE-PUERTO" in blob
+    assert should_follow_attachments(html, base)
+
+
 def test_example_hints_stay_on_the_polygon():
     nz = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8455]))
     nu = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8447]))
@@ -113,7 +128,7 @@ def test_example_hints_stay_on_the_polygon():
     assert "Customs Act" in nu and "places of first arrival" not in nu
     assert "plaisance" in nc and "PPF" not in nc
     assert "PPF" in fr and "Mayotte" not in fr and "Calédonie" not in fr
-    assert "INEA" in ve
+    assert "Ley de Marinas" in ve and "capitanías" in ve
     assert "Sint Maarten customs" in sx
     assert "havens van binnenkomst" not in sx
     assert poe.zone_search_lang(EXAMPLE_ZONES[21803]) is None

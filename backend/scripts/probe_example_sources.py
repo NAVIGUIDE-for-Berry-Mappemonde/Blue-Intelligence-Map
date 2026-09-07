@@ -51,7 +51,8 @@ EXAMPLE_ZONES = {
 PINNED_NEEDLES = {
     5677: ["vous-naviguez-en-provenance"],
     8429: ["puertos-y-terminales"],
-    8433: ["inea.gob.ve", "inventario-de-puertos"],
+    8433: ["Ley-de-Marinas-y-Actividades-Conexas.pdf",
+           "CAPITANIAS-DE-PUERTO"],
     8447: ["niue_laws_vol4_part1"],
     8455: ["places-of-first-arrival-seaports",
            "sailing-to-new-zealand-this-small-craft-season"],

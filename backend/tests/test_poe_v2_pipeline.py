@@ -594,14 +594,15 @@ class TestStructuredDiscovery:
             "NU": "niue_laws_vol4_part1",
             "NZ": "places-of-first-arrival-seaports",
             "NC": "formalites-douanieres-pour-les-navires-de-plaisance",
-            "VE": "inventario-de-puertos",
+            "VE": "Ley-de-Marinas-y-Actividades-Conexas.pdf",
             "SX": "Pages/Customs.aspx",
         }
         for iso, needle in cases.items():
             urls = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": iso}))
             assert needle in urls, (iso, urls)
         ve = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": "VE"}))
-        assert "inea.gob.ve/" in ve
+        assert "Ley-de-Marinas-y-Actividades-Conexas.pdf" in ve
+        assert "CAPITANIAS-DE-PUERTO" in ve
         nz_on_niue = poe.seed_url_candidates({
             "iso2": "NU", "sov_iso2": "NZ", "name": "Niue", "sovereign": "New Zealand",
         })
@@ -637,9 +638,16 @@ class TestStructuredDiscovery:
             "puertos-y-terminales")
         sx = poe.list_url_bonus(
             "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx")
+        ley = poe.list_url_bonus(
+            "https://inea.gob.ve/wp-content/uploads/2026/04/"
+            "Ley-de-Marinas-y-Actividades-Conexas.pdf")
+        cap = poe.list_url_bonus(
+            "https://inea.gob.ve/wp-content/uploads/2026/04/"
+            "REGLAMENTO-QUE-DETERMINA-LA-JURISDICCION-DE-LAS-CAPITANIAS-DE-PUERTO-DE-LA-REPUBLICA.pdf")
         assert mpi > 0.3 and craft > 0.2 and nc > 0.2 and mx > 0.2
         assert mpi > home_ve and mx > home_ve
         assert sx > home_ve
+        assert ley > home_ve and cap > home_ve
 
     def test_numbered_law_is_not_a_port_catalog(self):
         from app.core.extract import looks_like_port_catalog

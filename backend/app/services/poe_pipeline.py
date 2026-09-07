@@ -160,6 +160,7 @@ _LIST_PATH_TOKENS = (
     "first-arrival", "places-of-first", "seaports", "small-craft",
     "sailing-to", "terminales", "formalit", "niue_laws", "habilitados",
     "marina-mercante", "vous-naviguez", "inventario", "pages/customs",
+    "capitanias", "jurisdiccion", "ley-de-marinas", "actividades-conexas",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -366,8 +367,8 @@ def default_search_hints(zone: dict) -> list[str]:
         ]
     if iso == "VE":
         return [
-            f"INEA puertos habilitados {poly}",
-            f"{poly} puertos habilitados decreto lista oficial",
+            f"Ley de Marinas y Actividades Conexas INEA {poly}",
+            f"Reglamento jurisdicción capitanías de puerto {poly}",
             generic,
         ]
     if iso == "NC":
@@ -1277,7 +1278,8 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
     if iso == "NZ":
         return f"site:{domain} filetype:pdf (places of first arrival OR small craft OR ports of entry)"
     if iso == "VE":
-        return f"site:{domain} filetype:pdf (puertos habilitados OR lista de puertos)"
+        return (f"site:{domain} filetype:pdf "
+                f"(Ley de Marinas OR capitanías de puerto OR reglamento jurisdicción)")
     if iso == "NC":
         return f"site:{domain} filetype:pdf (plaisance OR formalités douanières)"
     if iso == "NU":
@@ -1300,7 +1302,8 @@ def site_list_page_query(domain: str, zone: dict) -> str:
     if iso == "NZ":
         return f"site:{domain} (places of first arrival seaports OR small craft sailing)"
     if iso == "VE":
-        return f"site:{domain} (inventario de puertos OR puertos habilitados INEA)"
+        return (f"site:{domain} "
+                f"(Ley de Marinas OR capitanías de puerto OR reglamento jurisdicción)")
     if iso == "NC":
         return f"site:{domain} (formalités douanières navires de plaisance)"
     if iso == "MX":

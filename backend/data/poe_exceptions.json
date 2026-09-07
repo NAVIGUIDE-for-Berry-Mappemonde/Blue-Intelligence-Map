@@ -343,8 +343,9 @@
       "https://douane.gouv.nc/particuliers/formalites-douanieres-pour-les-navires-de-plaisance"
     ],
     "VE": [
-      "https://inea.gob.ve/",
-      "https://inea.gob.ve/category/tramites/puertos/inventario-de-puertos/"
+      "https://inea.gob.ve/wp-content/uploads/2026/04/Ley-de-Marinas-y-Actividades-Conexas.pdf",
+      "https://inea.gob.ve/wp-content/uploads/2026/04/REGLAMENTO-QUE-DETERMINA-LA-JURISDICCION-DE-LAS-CAPITANIAS-DE-PUERTO-DE-LA-REPUBLICA.pdf",
+      "https://inea.gob.ve/"
     ],
     "FR": [
       "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
@@ -368,7 +369,8 @@
       "Nouvelle-Calédonie formalités douanières navires de plaisance"
     ],
     "VE": [
-      "Venezuela INEA puertos habilitados"
+      "Venezuela INEA Ley de Marinas y Actividades Conexas",
+      "Venezuela reglamento jurisdicción capitanías de puerto"
     ],
     "FR": [
       "liste ports de plaisance éligibles PPF douane France"

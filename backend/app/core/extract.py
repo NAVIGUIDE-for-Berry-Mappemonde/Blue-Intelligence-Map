@@ -114,6 +114,7 @@ FOLLOWUP_PATTERNS = (
     "gazette", "legislation", "aduana", "anexo",
     "puerto", "terminal", "plaisance", "first-arrival", "small-craft",
     "formalit", "seaport", "marina-mercante", "inventario",
+    "capitanias", "jurisdiccion",
 )
 
 
@@ -440,7 +441,7 @@ _LIST_PDF_PATH_RE = re.compile(
     r"liste|listen|plaisance|eligibles|ppf|puerto|terminal|habilit|"
     r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
     r"points-d-entree|points-of-entry|designat|gazett|legislat|"
-    r"decreto|decret|arrete",
+    r"decreto|decret|arrete|capitanias|jurisdiccion|ley-de-marinas",
     re.I,
 )
 _JUNK_PDF_PATH_RE = re.compile(
