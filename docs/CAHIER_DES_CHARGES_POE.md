@@ -878,7 +878,7 @@ cd backend && python3 -m pytest tests/test_poe_seeds.py tests/test_listing_contr
 
 Ce cahier **ne couvre pas** :
 
-- le mode **Projets** (swarm fondations, 4 463 projets) ;
+- le mode **Projets** (swarm fondations, 4 463 projets) — voir `docs/CAHIER_DES_CHARGES_PROJETS.md` ;
 - le mode **Marinas** de la route Berry-Mappemonde (corridor ±25 NM, enrichissement VHF / places) — autre produit, autre couche carte ;
 - les **mouillages** OSM ;
 - le crowdsourcing skipper avec lien de loi (backlog P1 du PRD) ;
