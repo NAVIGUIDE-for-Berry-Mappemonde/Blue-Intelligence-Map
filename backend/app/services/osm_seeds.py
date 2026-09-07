@@ -9,13 +9,19 @@ OSM n'a pas d'objet unique « port ». Deux couches distinctes :
 
   2. Infrastructure portuaire (Harbour / CATHAF) :
      harbour=yes, industrial=port, landuse=harbour|port, water=harbour,
-     HBRFAC commerciaux / sans catégorie. PAS leisure=marina (31 792).
+     HBRFAC commerciaux / sans catégorie.
+
+  3. Plaisance (graine P, pas un PoE) :
+     leisure=marina / CATHAF marina* seulement si une douane, un
+     border_control ou un port_of_entry se trouve à ≤ 800 m. On ne
+     prend pas les 31 792 marinas.
 
 L'ancienne requête (harbour=yes ∪ seamark:type=harbour ∪ industrial=port)
 inondait l'union de marinas : 21 344 seamark:type=harbour portent aussi
 leisure=marina. v2 excluait à tort douanes et border_control (bureaux ≠ havre).
 v3 les réintroduit comme graines PoE ; les aéroports sont filtrés ; le
 rattachement VLIZ (in_eez / coastal_land) écarte les postes terrestres inland.
+v4 : marinas près d'un contrôle = graines P (requête Overpass around.ctrl:800).
 
 GET /seeds/union lit le cache. Le refresh Overpass est explicite
 (POST /seeds/osm/refresh ou scripts/refresh_osm_seeds.py).
@@ -33,7 +39,7 @@ from shapely.geometry import shape
 from shapely.prepared import prep
 
 from app.core.dedup import normalize_name
-from app.core.geo import classify_poe_point
+from app.core.geo import classify_poe_point, haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +92,15 @@ HARBOUR_COMMERCIAL_VALUES = frozenset({
     "fishing", "passenger", "terminal", "customs", "tanker",
 })
 POE_YES = frozenset({"yes", "all"})
+# CDC : marina = graine P seulement si contrôle à ≤ 800 m.
+MARINA_CONTROL_RADIUS_M = 800
+MARINA_CONTROL_RADIUS_KM = MARINA_CONTROL_RADIUS_M / 1000.0
 
 # Regex Overpass POSIX : une catégorie commerciale dans une liste « a;b ».
 _CATHAF_ALT = "|".join(sorted(COMMERCIAL_CATHAF))
 COMMERCIAL_CATHAF_REGEX = rf"(^|;)({_CATHAF_ALT})(;|$)"
+_MARINA_CATHAF_ALT = "|".join(sorted(MARINA_CATHAF))
+MARINA_CATHAF_REGEX = rf"(^|;)({_MARINA_CATHAF_ALT})(;|$)"
 HARBOUR_COMMERCIAL_REGEX = r"^(fishing|passenger|terminal|customs|tanker)$"
 # Listes « customs;migration » (Taginfo : government=customs;migration;military = 13).
 GOVERNMENT_CONTROL_REGEX = r"(^|;)(customs|border_control|immigration)(;|$)"
@@ -128,6 +139,25 @@ OSM_SEED_CLAUSES: tuple[tuple, ...] = (
     ("eq", "barrier", "border_control"),
     ("eq", "barrier", "customs_control"),
     ("eq", "landuse", "border_control"),
+)
+
+# Sous-ensemble contrôle : set Overpass `.ctrl` pour around:800 (pas les 32k marinas).
+OSM_CONTROL_CLAUSES: tuple[tuple, ...] = (
+    ("eq", "port_of_entry", "yes"),
+    ("eq", "port_of_entry", "all"),
+    ("regex", "government", GOVERNMENT_CONTROL_REGEX),
+    ("eq", "amenity", "customs"),
+    ("eq", "amenity", "border_control"),
+    ("eq", "office", "customs"),
+    ("eq", "seamark:building:function", "customs"),
+    ("eq", "barrier", "border_control"),
+    ("eq", "barrier", "customs_control"),
+    ("eq", "landuse", "border_control"),
+)
+MARINA_NEAR_CONTROL_CLAUSES: tuple[tuple, ...] = (
+    ("eq", "leisure", "marina"),
+    ("eq", "harbour", "marina"),
+    ("regex", "seamark:harbour:category", MARINA_CATHAF_REGEX),
 )
 
 # Égalités encore utiles pour osm_tag_list / tests. Ce n'est plus LA requête.
@@ -294,7 +324,10 @@ TAGINFO_CATALOG: tuple[dict[str, Any], ...] = (
         "tag": "leisure=marina", "key": "leisure", "value": "marina",
         "role": "marina_only", "seed": False, "measured": 31792,
         "wiki": WIKI["marina"],
-        "note": "Wiki : plaisance. Un vrai port doit utiliser harbour=* / industrial=port.",
+        "note": (
+            "Wiki : plaisance. Graine P seulement si douane / border / "
+            "port_of_entry à ≤ 800 m — pas les 31 792."
+        ),
     },
     {
         "tag": "amenity=ferry_terminal", "key": "amenity", "value": "ferry_terminal",
@@ -381,8 +414,101 @@ def has_commercial_category(tags: dict[str, str]) -> bool:
     return bool(split_categories(tags.get("seamark:harbour:category")) & COMMERCIAL_CATHAF)
 
 
+def is_airport_like(name: str, tags: dict[str, str] | None = None) -> bool:
+    """Aéroport / aérodrome : un bureau de douane là n'ancre pas une marina."""
+    tags = tags or {}
+    if tags.get("aeroway"):
+        return True
+    blob = " ".join(
+        str(tags.get(k) or "") for k in ("name", "name:en", "official_name")
+    )
+    text = f"{name or ''} {blob}".strip()
+    return bool(text) and bool(_AIRPORT_NAME_RE.search(text))
+
+
+def is_control_facility(tags: dict[str, str]) -> bool:
+    """Douane / border / port_of_entry — signal de proximité, pas un havre."""
+    if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
+        return True
+    if split_categories(tags.get("government")) & CONTROL_GOVERNMENT:
+        return True
+    if tags.get("amenity") in CONTROL_AMENITY:
+        return True
+    if tags.get("office") == "customs":
+        return True
+    if tags.get("seamark:building:function") == "customs":
+        return True
+    if tags.get("barrier") in CONTROL_BARRIER:
+        return True
+    if tags.get("landuse") == "border_control":
+        return True
+    return False
+
+
+def control_kind_flags(tags: dict[str, str]) -> tuple[bool, bool]:
+    """(customs, border) d'après les tags du point de contrôle le plus proche."""
+    gov = split_categories(tags.get("government"))
+    customs = (
+        "customs" in gov
+        or tags.get("amenity") == "customs"
+        or tags.get("office") == "customs"
+        or tags.get("seamark:building:function") == "customs"
+        or tags.get("barrier") == "customs_control"
+    )
+    border = (
+        "border_control" in gov
+        or tags.get("amenity") == "border_control"
+        or tags.get("barrier") == "border_control"
+        or tags.get("landuse") == "border_control"
+        or "immigration" in gov
+    )
+    return customs, border
+
+
+def nearest_control(
+    lat: float, lon: float,
+    controls: list[tuple[float, float, dict]],
+    radius_km: float = MARINA_CONTROL_RADIUS_KM,
+) -> tuple[float, dict] | None:
+    """Contrôle le plus proche à ≤ radius_km, sinon None."""
+    best: tuple[float, dict] | None = None
+    for clat, clon, ctags in controls:
+        try:
+            dist = haversine_km(lat, lon, clat, clon)
+        except (TypeError, ValueError):
+            continue
+        if dist <= radius_km and (best is None or dist < best[0]):
+            best = (dist, ctags)
+    return best
+
+
+def collect_control_points(docs: list[dict]) -> list[tuple[float, float, dict]]:
+    """Points de contrôle utilisables (hors aéroport) depuis extraits OSM / cache."""
+    out: list[tuple[float, float, dict]] = []
+    for raw in docs or []:
+        tags = {str(k): str(v) for k, v in (raw.get("tags") or {}).items()}
+        if not is_control_facility(tags):
+            continue
+        try:
+            lat = float(raw["lat"] if "lat" in raw else raw.get("center", {}).get("lat"))
+            lon = float(raw["lon"] if "lon" in raw else raw.get("center", {}).get("lon"))
+        except (KeyError, TypeError, ValueError):
+            coords = element_coords(raw)
+            if coords is None:
+                continue
+            lat, lon = coords
+        name = element_name(tags) or str(raw.get("name") or "")
+        if is_airport_like(name, tags):
+            continue
+        out.append((lat, lon, tags))
+    return out
+
+
 def is_marina_only(tags: dict[str, str]) -> bool:
-    """Plaisance sans signal port / PoE — à exclure des graines."""
+    """Plaisance sans signal port / PoE sur le même objet.
+
+    Ce n'est pas un rejet définitif : graine P si near_control (≤ 800 m).
+    """
     if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
         return False
     if has_commercial_category(tags):
@@ -406,12 +532,12 @@ def is_marina_only(tags: dict[str, str]) -> bool:
     )
 
 
-def is_seed_candidate(tags: dict[str, str]) -> bool:
-    """True si l'objet OSM est un candidat *port*, pas une marina / un quai."""
+def is_seed_candidate(tags: dict[str, str], *, near_control: bool = False) -> bool:
+    """True si l'objet OSM est un candidat port, ou une marina près d'un contrôle."""
     if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
         return True
     if is_marina_only(tags):
-        return False
+        return bool(near_control)
     if tags.get("industrial") == "port":
         return True
     if tags.get("landuse") in ("harbour", "port"):
@@ -434,11 +560,11 @@ def is_seed_candidate(tags: dict[str, str]) -> bool:
     return False
 
 
-def osm_role(tags: dict[str, str]) -> str:
+def osm_role(tags: dict[str, str], *, near_control: bool = False) -> str:
     if (tags.get("port_of_entry") or "").strip().lower() in POE_YES:
         return "poe_explicit"
     if is_marina_only(tags):
-        return "marina_only"
+        return "marina_pleasure" if near_control else "marina_only"
     if (
         tags.get("industrial") == "port"
         or tags.get("landuse") == "port"
@@ -565,8 +691,9 @@ def taginfo_snapshot(*, live: bool = True) -> dict[str, Any]:
         "note": (
             "Comptes Taginfo mondiaux (tous types OSM). Recouvrement : un "
             "objet peut porter industrial=port ET harbour=yes. Le cache "
-            "déduplique par osm_id et écarte is_marina_only. "
-            "leisure=marina et amenity=ferry_terminal ne sont pas des graines."
+            "déduplique par osm_id. leisure=marina n'est une graine P que "
+            "si douane / border / port_of_entry à ≤ 800 m (around.ctrl). "
+            "amenity=ferry_terminal n'est pas une graine."
         ),
     }
 
@@ -624,8 +751,11 @@ def osm_tag_list(tags: dict[str, str]) -> list[str]:
     return out
 
 
-def osm_confidence(name: str, tags: dict[str, str], in_eez: bool) -> float:
+def osm_confidence(name: str, tags: dict[str, str], in_eez: bool,
+                   *, near_control: bool = False) -> float:
     if is_marina_only(tags) and (tags.get("port_of_entry") or "") not in POE_YES:
+        if near_control:
+            return 0.55 if name else 0.45
         return 0.35
     conf = 0.55 if name else 0.35
     if (
@@ -634,7 +764,7 @@ def osm_confidence(name: str, tags: dict[str, str], in_eez: bool) -> float:
         or tags.get("landuse") in ("harbour", "port")
     ):
         conf = max(conf, 0.6)
-    role = osm_role(tags)
+    role = osm_role(tags, near_control=near_control)
     if role == "commercial_harbour":
         conf = max(conf, 0.75 if name else 0.5)
     if role == "harbour_basin" and name:
@@ -661,10 +791,16 @@ def cache_doc_to_seed(doc: dict) -> dict | None:
         mid = None
     osm_id = str(doc.get("osm_id") or "")
     tags = {str(k): str(v) for k, v in (doc.get("tags") or {}).items()}
-    if tags and not is_seed_candidate(tags):
+    near = bool(doc.get("osm_near_control"))
+    if tags and not is_seed_candidate(tags, near_control=near):
         return None
     tag_list = list(doc.get("osm_tags") or osm_tag_list(tags))
     urls = [f"https://www.openstreetmap.org/{osm_id}"] if osm_id else []
+    kinds = list(doc.get("osm_kinds") or [])
+    if near and is_marina_only(tags) and "marina" not in kinds:
+        kinds.append("marina")
+    customs = bool(doc.get("osm_customs"))
+    border = bool(doc.get("osm_border"))
     return {
         "name": name,
         "mrgid": mid,
@@ -675,7 +811,8 @@ def cache_doc_to_seed(doc: dict) -> dict | None:
         "validated": bool(doc.get("in_eez")),
         "osm_confidence": doc.get("osm_confidence"),
         "osm_tags": tag_list,
-        "osm_role": doc.get("osm_role") or (osm_role(tags) if tags else None),
+        "osm_role": doc.get("osm_role") or (
+            osm_role(tags, near_control=near) if tags else None),
         "osm_id": osm_id or None,
         "osm_ids": [osm_id] if osm_id else [],
         "source_urls": urls,
@@ -686,6 +823,10 @@ def cache_doc_to_seed(doc: dict) -> dict | None:
         ),
         "seed_sources": [OSM_SOURCE],
         "has_coords": True,
+        "osm_near_control": near,
+        "osm_customs": customs,
+        "osm_border": border,
+        "osm_kinds": kinds,
     }
 
 
@@ -717,6 +858,25 @@ def _overpass_query(south: float, west: float, north: float, east: float,
         "[out:json][timeout:90];\n(\n"
         + "\n".join(parts)
         + "\n);\nout center tags;"
+    )
+
+
+def _overpass_marina_near_control_query(
+    south: float, west: float, north: float, east: float,
+    radius_m: int = MARINA_CONTROL_RADIUS_M,
+) -> str:
+    """Marinas dans un rayon (m) d'un contrôle — pas le dump leisure=marina mondial."""
+    bbox = f"{south:.4f},{west:.4f},{north:.4f},{east:.4f}"
+    ctrl = "\n".join(_clause_to_overpass(c, bbox) for c in OSM_CONTROL_CLAUSES)
+    around = f"(around.ctrl:{int(radius_m)})"
+    marinas = "\n".join(
+        f"  nwr{_filters_for_part(c)}{around};" for c in MARINA_NEAR_CONTROL_CLAUSES
+    )
+    return (
+        "[out:json][timeout:90];\n"
+        f"(\n{ctrl}\n)->.ctrl;\n"
+        f"(\n{marinas}\n);\n"
+        "out center tags;"
     )
 
 
@@ -798,6 +958,26 @@ async def _fetch_tile(
         raise
 
 
+async def _fetch_tile_marinas_near_control(
+    client: httpx.AsyncClient,
+    tile: tuple[float, float, float, float],
+) -> list[dict[str, Any]]:
+    south, west, north, east = tile
+    query = _overpass_marina_near_control_query(south, west, north, east)
+    try:
+        return await _overpass_post(client, query)
+    except (TimeoutError, RuntimeError) as exc:
+        span = max(north - south, east - west)
+        if span > MIN_TILE_DEG:
+            logger.warning("Overpass marinas tuile trop lourde %s — split (%s)", tile, exc)
+            out: list[dict[str, Any]] = []
+            for sub in _split_tile(south, west, north, east):
+                await asyncio.sleep(1.2)
+                out.extend(await _fetch_tile_marinas_near_control(client, sub))
+            return out
+        raise
+
+
 async def fetch_osm_elements(
     tiles: tuple[tuple[float, float, float, float], ...] = WORLD_TILES,
     log=None,
@@ -808,10 +988,15 @@ async def fetch_osm_elements(
         for i, tile in enumerate(tiles, start=1):
             log(f"Overpass tuile {i}/{len(tiles)} {tile}")
             elements = await _fetch_tile(client, tile)
-            for el in elements:
+            await asyncio.sleep(1.2)
+            marinas = await _fetch_tile_marinas_near_control(client, tile)
+            for el in elements + marinas:
                 osm_id = f"{el.get('type')}/{el.get('id')}"
                 by_id[osm_id] = el
-            log(f"  → {len(elements)} éléments, {len(by_id)} uniques")
+            log(
+                f"  → {len(elements)} ports/contrôles + {len(marinas)} marinas "
+                f"≤{MARINA_CONTROL_RADIUS_M}m, {len(by_id)} uniques"
+            )
             await asyncio.sleep(1.5)
     return list(by_id.values())
 
@@ -870,16 +1055,25 @@ def assign_eez_point(lat: float, lon: float, zones: list[dict]) -> dict | None:
 
 
 def enrich_elements(elements: list[dict], zones: list[dict]) -> list[dict]:
-    docs: list[dict] = []
-    seen: set[str] = set()
-    now = datetime.now(timezone.utc).isoformat()
+    parsed: list[tuple[dict, float, float, dict[str, str]]] = []
     for el in elements:
         coords = element_coords(el)
         if coords is None:
             continue
         lat, lon = coords
         tags = {str(k): str(v) for k, v in (el.get("tags") or {}).items()}
-        if not is_seed_candidate(tags):
+        parsed.append((el, lat, lon, tags))
+    controls = collect_control_points([
+        {"lat": lat, "lon": lon, "tags": tags, "name": element_name(tags)}
+        for _, lat, lon, tags in parsed
+    ])
+    docs: list[dict] = []
+    seen: set[str] = set()
+    now = datetime.now(timezone.utc).isoformat()
+    for el, lat, lon, tags in parsed:
+        hit = nearest_control(lat, lon, controls)
+        near = hit is not None and is_marina_only(tags)
+        if not is_seed_candidate(tags, near_control=near):
             continue
         name = element_name(tags)
         osm_id = f"{el.get('type')}/{el.get('id')}"
@@ -891,6 +1085,10 @@ def enrich_elements(elements: list[dict], zones: list[dict]) -> list[dict]:
         mrgid = int(eez["mrgid"]) if eez else None
         iso = str((eez or {}).get("iso2") or "")
         zone_name = (eez or {}).get("name")
+        customs = border = False
+        if near and hit is not None:
+            customs, border = control_kind_flags(hit[1])
+        kinds = ["marina"] if near else []
         docs.append({
             "osm_id": osm_id,
             "name": name,
@@ -898,12 +1096,17 @@ def enrich_elements(elements: list[dict], zones: list[dict]) -> list[dict]:
             "lon": lon,
             "tags": tags,
             "osm_tags": osm_tag_list(tags),
-            "osm_role": osm_role(tags),
+            "osm_role": osm_role(tags, near_control=near),
+            "osm_near_control": near,
+            "osm_customs": customs,
+            "osm_border": border,
+            "osm_kinds": kinds,
             "mrgid": mrgid,
             "iso": iso,
             "zone_name": zone_name,
             "in_eez": in_eez,
-            "osm_confidence": osm_confidence(name, tags, in_eez),
+            "osm_confidence": osm_confidence(
+                name, tags, in_eez, near_control=near),
             "schema": CACHE_SCHEMA,
             "updated_at": now,
         })
@@ -950,7 +1153,7 @@ async def load_cached_osm(db, *, in_eez_only: bool = True) -> list[dict]:
 async def refresh_osm_cache(db, log=None) -> dict[str, Any]:
     """Télécharge Overpass, rattache VLIZ, réécrit osm_port_seeds. Lent."""
     log = log or (lambda m: logger.info("%s", m))
-    log("Overpass : candidats port (pas seamark:type=harbour marina)…")
+    log("Overpass : candidats port + marinas ≤ 800 m d'un contrôle…")
     elements = await fetch_osm_elements(log=log)
     log(f"{len(elements)} objets OSM uniques — filtre candidats + index VLIZ…")
     zones = await load_eez_index(db)
@@ -987,6 +1190,6 @@ async def osm_inventory(db) -> dict[str, Any]:
         "cache": stats,
         "union_uses": (
             "osm_port_seeds where in_eez and named and is_seed_candidate "
-            "(plus proximité unnamed)"
+            "(marina_pleasure si douane/border/PoE ≤ 800 m ; plus proximité unnamed)"
         ),
     }

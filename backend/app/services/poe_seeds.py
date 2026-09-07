@@ -6,8 +6,9 @@ Ne crawl pas. Ne touche pas poe_ports. Les sources sont des graines
 
   - carte v1 (poe_ports)
   - runs versionnés (poe_run_ports) — mondiaux ou canaris
-  - OSM cache (osm_port_seeds) + priors fichier (harbour/marina ≤ 800 m
-    d'une douane / border_control)
+  - OSM cache (osm_port_seeds) : havres + marinas ≤ 800 m d'une douane /
+    border_control / port_of_entry (graine P, pas un PoE)
+  - priors fichier (harbour/marina ≤ 800 m d'une douane / border_control)
   - listing communautaire (rôle poe | other, souvent sans coordonnées)
 
 Une identité (mrgid + nom) porte toutes les observations. On n'aplatit
@@ -467,13 +468,22 @@ def _nearest_seed(seed: dict, pool: list[dict], max_km: float) -> dict | None:
 
 
 def attach_osm_seeds(extracted: list[dict], osm_docs: list[dict]) -> dict:
-    """Union OSM : fusion nom / proximité, création des havres nommés orphelins."""
-    from app.services.osm_seeds import cache_doc_to_seed, is_seed_candidate
+    """Union OSM : fusion nom / proximité, création des havres nommés orphelins.
+
+    Une marina n'entre que si le cache l'a déjà marquée près d'un contrôle
+    (`osm_near_control`) ou si un bureau douane/border est dans le même lot
+    à ≤ 800 m.
+    """
+    from app.services.osm_seeds import (
+        cache_doc_to_seed, collect_control_points, control_kind_flags,
+        is_marina_only, is_seed_candidate, nearest_control,
+    )
 
     by_zone: dict[int | None, list[dict]] = {}
     for p in extracted:
         by_zone.setdefault(p.get("mrgid"), []).append(p)
 
+    controls = collect_control_points(osm_docs)
     merged_name = merged_near = created = 0
     skipped_unnamed = skipped_no_eez = skipped_bad = skipped_not_candidate = 0
     for raw in osm_docs:
@@ -481,10 +491,24 @@ def attach_osm_seeds(extracted: list[dict], osm_docs: list[dict]) -> dict:
             skipped_no_eez += 1
             continue
         tags = {str(k): str(v) for k, v in (raw.get("tags") or {}).items()}
-        if tags and not is_seed_candidate(tags):
+        doc = dict(raw)
+        near_ctrl = bool(raw.get("osm_near_control"))
+        if not near_ctrl and tags and is_marina_only(tags):
+            try:
+                ctrl_hit = nearest_control(
+                    float(raw["lat"]), float(raw["lon"]), controls)
+            except (KeyError, TypeError, ValueError):
+                ctrl_hit = None
+            if ctrl_hit is not None:
+                near_ctrl = True
+                customs, border = control_kind_flags(ctrl_hit[1])
+                doc["osm_near_control"] = True
+                doc["osm_customs"] = bool(raw.get("osm_customs") or customs)
+                doc["osm_border"] = bool(raw.get("osm_border") or border)
+        if tags and not is_seed_candidate(tags, near_control=near_ctrl):
             skipped_not_candidate += 1
             continue
-        seed = cache_doc_to_seed(raw)
+        seed = cache_doc_to_seed(doc)
         if seed is None:
             skipped_bad += 1
             continue
