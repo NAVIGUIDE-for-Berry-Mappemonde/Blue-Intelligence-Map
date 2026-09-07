@@ -1613,11 +1613,11 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     return official, strictly_official, synthesis
 
 
-async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
+async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 8
                          ) -> tuple[list[str], dict, list[dict], dict]:
     """Étape 3 — Collecte : cascade N1∥N2, miroir anti-bot, PDF joints officiels
     (même si la page est déjà longue), depth-2 si le texte est mince.
-    Jusqu'à max_fetch URL : une page bloquée n'épuise plus le budget de 3."""
+    Les PJ passent avant le reste de la file SERP (leçon France : liste + carte)."""
     texts, hashes, used_sources, excerpts = [], {}, [], {}
     queue = list(official)
     seen_urls: set[str] = set()
@@ -1653,11 +1653,14 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
         # Les href PDF sont dans le HTML ; le texte extrait (trafilatura) les perd
         # (leçon France : liste + carte PPF liées depuis vous-naviguez).
         if should_follow_attachments(blob, url) or official_attachments(blob, url, limit=1):
+            extra = []
             for att in official_attachments(blob, url, limit=4):
-                if att not in seen_urls:
+                if att not in seen_urls and att not in {q.get("url") for q in queue}:
                     log(f"pièce jointe officielle: {att[:90]}")
                     await emit(rec, "attachment", parent=url, url=att)
-                    queue.append({"url": att, "domain": domain_of(att)})
+                    extra.append({"url": att, "domain": domain_of(att)})
+            if extra:
+                queue[0:0] = extra
         if (res.get("html") and not (url or "").lower().endswith(".pdf")
                 and not looks_like_port_catalog(text or "")):
             for fu in internal_followups(res["html"], url, limit=3):

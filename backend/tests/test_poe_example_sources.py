@@ -153,3 +153,38 @@ def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):
     blob = " ".join(c["url"] for c in used)
     assert liste in blob
     assert carte in blob
+
+
+def test_attachments_beat_remaining_serp_queue(monkeypatch):
+    landing = (
+        "https://www.douane.gouv.fr/particuliers/vous-naviguez/"
+        "vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
+    )
+    liste = ("https://www.douane.gouv.fr/sites/default/files/2026-07/06/"
+             "Liste-ports-de-plaisance-eligibles.pdf")
+    carte = ("https://www.douane.gouv.fr/sites/default/files/uploads/files/"
+             "carte-PPF-maritimes.pdf")
+    html = f'<a href="{carte}">PPF</a><a href="{liste}">liste</a>'
+    junk = [
+        "https://www.douane.gouv.fr/french-customs-information-available-english",
+        "https://www.douane.gouv.fr/sites/default/files/2018-11/10-questions-before-exporting-en.pdf",
+        "https://www.service-public.fr/particuliers/vosdroits/F1234",
+    ]
+
+    async def fake_cascade(url, min_chars=200, log=None):
+        if url in (liste, carte):
+            return {"text": "1.- Port Alpha latitude: 46.1 longitude: -1.1\n" * 8,
+                    "html": "", "md5": "p", "level": "N1", "blocked": False}
+        if url == landing:
+            return {"text": "Formalités plaisance. " * 40, "html": html,
+                    "md5": "h", "level": "N1", "blocked": False}
+        return {"text": "page d'accueil douanes " * 40, "html": "",
+                "md5": "j", "level": "N1", "blocked": False}
+
+    monkeypatch.setattr(poe, "extract_cascade", fake_cascade)
+    official = ([{"url": landing, "domain": "douane.gouv.fr"}]
+                + [{"url": u, "domain": "douane.gouv.fr"} for u in junk])
+    _t, _h, used, _e = asyncio.run(poe._collect_texts(official, lambda m: None, max_fetch=5))
+    blob = " ".join(c["url"] for c in used)
+    assert liste in blob
+    assert carte in blob
