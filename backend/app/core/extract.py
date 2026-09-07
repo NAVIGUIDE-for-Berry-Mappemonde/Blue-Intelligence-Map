@@ -450,10 +450,12 @@ def looks_like_port_catalog(text: str) -> bool:
     qui contient « 1. Article »."""
     if not text:
         return False
+    from app.core.run_rules import get_rule
     lat_hits = len(re.findall(r"latitud(?:e)?\s*:", text, re.I))
-    if lat_hits >= 8:
+    lat_need = int(get_rule("formalities.catalog_lat_hits", 8))
+    if lat_hits >= lat_need:
         return True
-    if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= 8 or lat_hits >= 3):
+    if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= lat_need or lat_hits >= 3):
         return True
     return False
 
@@ -537,10 +539,13 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
     """
     if not ports:
         return False
+    from app.core.run_rules import get_rule
     with_coords = len(catalog_ports_with_coords(ports))
-    if with_coords >= 3:
+    min_coords = int(get_rule("formalities.catalog_min_coords", 3))
+    like_min = int(get_rule("formalities.catalog_looks_like_min_coords", 1))
+    if with_coords >= min_coords:
         return True
-    return bool(looks_like_port_catalog(text or "") and with_coords >= 1)
+    return bool(looks_like_port_catalog(text or "") and with_coords >= like_min)
 
 
 _JUNK_NAME_RE = re.compile(

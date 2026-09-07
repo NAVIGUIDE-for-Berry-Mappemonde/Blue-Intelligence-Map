@@ -197,6 +197,8 @@ def test_open_run_never_writes_projects():
         doc = await db.project_runs.find_one({"_id": opened["run_id"]})
         assert doc["wrote_projects"] is False
         assert doc["state"] == "running"
+        assert doc["params"]["rules"]["hash"]
+        assert doc["params"]["rules"]["chosen"]["shared.no_snap"]["value"] is True
         assert await db.projects.count_documents({}) == before
 
     asyncio.run(run())

@@ -935,4 +935,6 @@ WPI : National Geospatial-Intelligence Agency, domaine public US (quand branché
 
 ---
 
-*Fin du cahier des charges. Toute évolution de règle (plaisance, WPI, marinas-graines, bras TD∥BU, promotion carte) se fait d’abord ici, puis dans le code.*
+Les **chiffres** (2,2 km, 15 km, 400 km, 800 m, ≥ 3 ports, 90 % Claude, couverture listing…) sont catalogués dans `backend/data/run_rules.json` avec un principe et un intervalle — voir `docs/REGLES_PARAMETRES.md`. Chaque run fige le snapshot dans `params.rules`.
+
+*Fin du cahier des charges. Toute évolution de règle (plaisance, WPI, marinas-graines, bras TD∥BU, promotion carte) se fait d’abord ici, puis dans le catalogue / le code.*

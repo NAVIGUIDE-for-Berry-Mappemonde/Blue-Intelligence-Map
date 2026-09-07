@@ -677,4 +677,6 @@ Pages des fondations ; OSM / Nominatim / GeoNames ; AMP en indice si réutilisé
 
 ---
 
-*Fin du cahier des charges v2. Toute évolution de règle se fait d’abord ici, puis dans le code. L’implémentation suit le § 14, phase A en premier.*
+Les **chiffres** (15 km, 0,85 / 0,12, 500 m, plafonds…) ne vivent plus seulement ici : catalogue `backend/data/run_rules.json`, principe et intervalle dans `docs/REGLES_PARAMETRES.md`. Un run consigne le snapshot dans `params.rules`.
+
+*Fin du cahier des charges v2. Toute évolution de règle se fait d’abord ici, puis dans le catalogue / le code. L’implémentation suit le § 14, phase A en premier.*

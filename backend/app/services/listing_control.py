@@ -56,7 +56,9 @@ def _best_listing_match(run_port: dict, listing_pool: list[dict]) -> tuple[dict 
         s = _score(run_port.get("name") or "", lp.get("name") or "")
         if s > best_s:
             best, best_s = lp, s
-    if best_s >= SIM_LOW:
+    from app.core.run_rules import get_rule
+    sim_low = float(get_rule("formalities.listing_sim_low", SIM_LOW))
+    if best_s >= sim_low:
         return best, best_s
     return None, best_s
 
@@ -130,7 +132,8 @@ def compare_to_listing(run_ports: list[dict], listing_ports: list[dict],
         key = (hit.get("slug"), normalize_name(hit.get("name")))
         matched_listing.add(key)
         row["listing"] = _slim_listing(hit)
-        if score < SIM_HIGH:
+        from app.core.run_rules import get_rule
+        if score < float(get_rule("formalities.listing_sim_high", SIM_HIGH)):
             ambiguous.append({**row, "reason": "ambiguous"})
             continue
         if hit.get("role") == "other":

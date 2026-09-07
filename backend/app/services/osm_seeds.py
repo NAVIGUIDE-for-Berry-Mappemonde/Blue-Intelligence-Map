@@ -468,9 +468,12 @@ def control_kind_flags(tags: dict[str, str]) -> tuple[bool, bool]:
 def nearest_control(
     lat: float, lon: float,
     controls: list[tuple[float, float, dict]],
-    radius_km: float = MARINA_CONTROL_RADIUS_KM,
+    radius_km: float | None = None,
 ) -> tuple[float, dict] | None:
     """Contrôle le plus proche à ≤ radius_km, sinon None."""
+    from app.core.run_rules import get_rule
+    if radius_km is None:
+        radius_km = float(get_rule("formalities.marina_control_m", MARINA_CONTROL_RADIUS_M)) / 1000.0
     best: tuple[float, dict] | None = None
     for clat, clon, ctags in controls:
         try:
@@ -863,9 +866,12 @@ def _overpass_query(south: float, west: float, north: float, east: float,
 
 def _overpass_marina_near_control_query(
     south: float, west: float, north: float, east: float,
-    radius_m: int = MARINA_CONTROL_RADIUS_M,
+    radius_m: int | None = None,
 ) -> str:
     """Marinas dans un rayon (m) d'un contrôle — pas le dump leisure=marina mondial."""
+    from app.core.run_rules import get_rule
+    if radius_m is None:
+        radius_m = int(get_rule("formalities.marina_control_m", MARINA_CONTROL_RADIUS_M))
     bbox = f"{south:.4f},{west:.4f},{north:.4f},{east:.4f}"
     ctrl = "\n".join(_clause_to_overpass(c, bbox) for c in OSM_CONTROL_CLAUSES)
     around = f"(around.ctrl:{int(radius_m)})"

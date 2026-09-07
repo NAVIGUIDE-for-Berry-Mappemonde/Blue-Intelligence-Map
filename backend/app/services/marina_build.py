@@ -868,8 +868,11 @@ def sample_corridor(lines: list[list[tuple[float, float]]], step_nm: float = 25.
 def priority_for(lat: float, lon: float, wps: list[Waypoint]) -> tuple[int, Waypoint, float]:
     """
     Return (priority, nearest_waypoint, distance_nm).
-    Priority: 1 if within 15 NM of an escale, 2 if within 15 NM of an intermediate, else 3 (corridor).
+    Priority: 1 if within priority_escale_nm of an escale, 2 if within
+    that radius of an intermediate, else 3 (corridor).
     """
+    from app.core.run_rules import get_rule
+    near_nm = float(get_rule("marinas.priority_escale_nm", 15.0))
     best_wp: Waypoint | None = None
     best_d = math.inf
     for w in wps:
@@ -878,9 +881,9 @@ def priority_for(lat: float, lon: float, wps: list[Waypoint]) -> tuple[int, Wayp
             best_d = d
             best_wp = w
     assert best_wp is not None
-    if best_d <= 15 and best_wp.kind == "escale":
+    if best_d <= near_nm and best_wp.kind == "escale":
         prio = 1
-    elif best_d <= 15 and best_wp.kind == "intermediate":
+    elif best_d <= near_nm and best_wp.kind == "intermediate":
         prio = 2
     else:
         prio = 3

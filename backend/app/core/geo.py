@@ -976,20 +976,30 @@ def _dist_km_to_geom(lat: float, lon: float, geom) -> float | None:
 
 
 def classify_poe_point(lat: float, lon: float, geom, prepared=None,
-                       coastal_km: float = COASTAL_LAND_KM,
-                       inland: dict | None = None) -> dict:
+                       coastal_km: float | None = None,
+                       inland: dict | None = None,
+                       sliver_km: float | None = None,
+                       river_km: float | None = None) -> dict:
     """Classe un candidat PoE par rapport à CETTE ZEE (pas snap_to_ocean).
 
-    - in_eez         : dans le polygone, ou sliver ≤ 2,2 km → accepté
-    - coastal_land   : à terre, ≤ 15 km du trait de côte de cette ZEE → accepté
-    - inland_river   : exception — à terre, dans CE pays, jusqu'à 400 km,
+    - in_eez         : dans le polygone, ou sliver ≤ eez_sliver_km → accepté
+    - coastal_land   : à terre, ≤ coastal_land_km du trait de côte → accepté
+    - inland_river   : exception — à terre, dans CE pays, jusqu'à inland_river_max_km,
                        seulement si c'est un port (pas une ville intérieure)
     - other_water    : en mer hors de cette ZEE → rejeté
     - inland         : trop loin / pas un port → rejeté
 
     `inland` = {country_ok, harbour_like}. Sans les deux, pas d'exception.
+    Les km viennent du catalogue / snapshot de run (get_rule), pas de magie locale.
     """
+    from app.core.run_rules import get_rule
     inland = inland or {}
+    sliver = float(sliver_km if sliver_km is not None else get_rule(
+        "formalities.eez_sliver_km", IN_EEZ_SLIVER_KM))
+    coastal = float(coastal_km if coastal_km is not None else get_rule(
+        "formalities.coastal_land_km", COASTAL_LAND_KM))
+    river = float(river_km if river_km is not None else get_rule(
+        "formalities.inland_river_max_km", INLAND_RIVER_MAX_KM))
     try:
         from shapely.geometry import Point
         pt = Point(lon, lat)
@@ -1001,12 +1011,12 @@ def classify_poe_point(lat: float, lon: float, geom, prepared=None,
         dist = _dist_km_to_geom(lat, lon, geom)
         if inside:
             return {"kind": "in_eez", "validated": True, "dist_km": 0.0}
-        if dist is not None and dist <= IN_EEZ_SLIVER_KM:
+        if dist is not None and dist <= sliver:
             return {"kind": "in_eez", "validated": True, "dist_km": dist}
         on_land = not is_ocean(lat, lon)
-        if on_land and dist is not None and dist <= coastal_km:
+        if on_land and dist is not None and dist <= coastal:
             return {"kind": "coastal_land", "validated": True, "dist_km": dist}
-        if (on_land and dist is not None and dist <= INLAND_RIVER_MAX_KM
+        if (on_land and dist is not None and dist <= river
                 and inland.get("country_ok") and inland.get("harbour_like")):
             return {"kind": "inland_river", "validated": True, "dist_km": dist}
         if on_land:

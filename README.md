@@ -33,7 +33,7 @@ blue-intelligence/
 │   └── models/         Modèles ML locaux entraînés (gatekeeper, classifieur SERP, NER)
 ├── frontend/           React (CRA) + Leaflet + Tailwind
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
-├── docs/               PRD, CDC Projets, CDC Formalités (PoE), architecture
+├── docs/               PRD, CDC Projets, CDC Formalités (PoE), règles/paramètres, architecture
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 
