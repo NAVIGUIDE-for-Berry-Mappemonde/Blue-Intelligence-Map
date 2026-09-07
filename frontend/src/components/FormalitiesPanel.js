@@ -1,5 +1,7 @@
 import { Anchor, Clock, ScrollText, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import ZoneFiche from "./ZoneFiche";
+import { zoneDisplayName, zoneSearchHaystack, zoneSubtitle } from "./map/zoneLabel";
 
 // Refactor 2026-06 — Formalities mode = world map [EEZ -> Ports of Entry].
 // The sidebar lists the ~285 world EEZs (VLIZ Marine Regions) with their
@@ -25,7 +27,7 @@ const flagEmoji = (iso2) => {
   return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
 };
 
-export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone }) {
+export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone, fiche, ficheLoading, onFlyToPort }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
@@ -39,7 +41,7 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
     return items.filter((z) => {
       if (statusFilter !== "All" && (z.status || "non_generee") !== statusFilter) return false;
       if (!needle) return true;
-      return `${z.name || ""} ${z.geoname || ""} ${z.sovereign || ""}`.toLowerCase().includes(needle);
+      return zoneSearchHaystack(z).includes(needle);
     });
   }, [items, q, statusFilter]);
 
@@ -54,11 +56,11 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
 
   return (
     <aside
-      className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface"
+      className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0"
       data-testid="formalities-panel"
     >
       {/* En-tête + recherche — structure uniforme des 3 modes */}
-      <div className="p-4 border-b border-line">
+      <div className="p-4 border-b border-line shrink-0">
         <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />
           {/* Même libellé que le bouton de mode dans l'en-tête (cohérence),
@@ -138,6 +140,12 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
         )}
       </div>
 
+      {(selectedZone || ficheLoading) && (
+        <div className="shrink-0 max-h-[46%] overflow-y-auto border-b border-line">
+          <ZoneFiche t={t} fiche={fiche} loading={ficheLoading && !fiche} onFlyToPort={onFlyToPort} />
+        </div>
+      )}
+
       {/* EEZ list */}
       <div className="flex-1 overflow-y-auto" data-testid="poe-zones-list">
         {items.length === 0 && (
@@ -153,7 +161,7 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
               key={z.mrgid}
               data-testid={`poe-zone-row-${z.mrgid}`}
               onClick={() => onSelectZone && onSelectZone(z.mrgid, z.bbox, z.anchor)}
-              title={z.status === "erreur" && z.last_error ? z.last_error : undefined}
+              title={z.status === "erreur" && z.last_error ? z.last_error : zoneDisplayName(z, t)}
               className={`w-full text-left px-4 py-2.5 border-b border-line hover:bg-raised transition-colors group ${
                 isSelected ? "bg-amberx/5 border-l-2 border-l-amberx" : ""
               }`}
@@ -161,12 +169,11 @@ export default function FormalitiesPanel({ t, zones, selectedZone, onSelectZone 
               <div className="flex items-start gap-2">
                 <span className="text-base leading-none mt-0.5">{flagEmoji(z.iso2 || z.sov_iso2)}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white">
-                    {z.name || z.geoname}
+                  <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white" data-testid="poe-zone-row-label">
+                    {zoneDisplayName(z, t)}
                   </div>
                   <div className="font-mono text-[10px] text-slate-500 mt-0.5 truncate">
-                    {z.sovereign || "—"}
-                    {z.pol_type && z.pol_type !== "200NM" ? ` · ${z.pol_type}` : ""}
+                    {zoneSubtitle(z)}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {statusBadge(z.status)}

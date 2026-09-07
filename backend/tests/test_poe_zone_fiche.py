@@ -210,10 +210,12 @@ def test_france_hexagon_fiche_does_not_absorb_mayotte():
 
 def test_frontend_fiche_has_no_generate_button():
     root = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    popup = (root / "components" / "map" / "zonePopup.js").read_text(encoding="utf-8")
     fiche = (root / "components" / "ZoneFiche.js").read_text(encoding="utf-8")
+    panel = (root / "components" / "FormalitiesPanel.js").read_text(encoding="utf-8")
     review = (root / "components" / "ReviewView.js").read_text(encoding="utf-8")
     header = (root / "components" / "Header.js").read_text(encoding="utf-8")
-    for src in (fiche, review, header):
+    for src in (popup, fiche, panel, review, header):
         assert "generate-btn" not in src
         assert "poe-generate" not in src
         assert "/generate" not in src
@@ -223,6 +225,9 @@ def test_frontend_fiche_has_no_generate_button():
     assert "poe-fiche-sources-bu" not in fiche
     assert "poe-zone-fiche" in fiche
     assert "ExternalLink" in fiche
+    assert "poe-fiche-popup-td" in popup
+    assert "poe-fiche-popup-port-bu" in popup
+    assert "poe-fiche-popup-bu" not in popup
     assert "zoneDisplayName" in fiche
     assert "view-toggle-review" in header
     assert "review-comment" in review

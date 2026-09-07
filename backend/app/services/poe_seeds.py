@@ -1006,14 +1006,17 @@ async def persist_verify_run(db, report: dict, *, label: str = "seed-verify") ->
         })
     if zone_docs:
         await db.poe_run_zones.insert_many(zone_docs)
+    from app.core.run_rules import attach_rules, snapshot_for_run
     fingerprint = build_code_fingerprint({}, zone_timeout_s=0)
-    params = merge_run_params({
+    rules = snapshot_for_run(mode="formalities", settings={})
+    params = attach_rules(merge_run_params({
         "label": label,
         "variant": "verify",
         "crawled": False,
         "force": False,
         "use_seeds": True,
-    }, fingerprint)
+        "profile": rules["profile"],
+    }, fingerprint), rules)
     summary = dict(report.get("summary") or {})
     summary["run_id"] = run_id
     await db.poe_runs.insert_one({

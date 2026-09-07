@@ -32,7 +32,7 @@ from app.core.tinyfish import (
     tf_search_pages,
 )
 from app.services.poe_pipeline import (
-    build_whitelist, load_exceptions, now_iso, url_allowed,
+    build_whitelist, load_exceptions, now_iso, search_polygon_name, url_allowed,
 )
 from app.services.poe_seeds import (
     SEARCH_EXCLUDE_DOMAINS, listing_is_poe, seed_search_query,
@@ -504,8 +504,8 @@ def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
     name = (doc.get("name") or "").strip()
     return (
         f"Candidat : {name}\n"
-        f"Zone VLIZ : {zone.get('name') or zone.get('geoname')} "
-        f"({zone.get('iso2') or ''})\n"
+        f"Zone VLIZ : {search_polygon_name(zone) or zone.get('name') or zone.get('geoname')} "
+        f"(mrgid={zone.get('mrgid')}, {zone.get('iso2') or ''})\n"
         f"Juge uniquement CE lieu à partir des extraits. "
         f"Ne liste aucun autre port.\n\n"
         f"EXTRAITS:\n{(context or '')[:8000]}"

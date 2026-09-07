@@ -52,6 +52,7 @@ from app.services.listing_control import (
     build_listing_control_report, compare_runs_to_listing, persist_review,
     suggest_canary_zones,
 )
+from app.core.run_rules import snapshot_for_run
 from app.services.run_fingerprint import build_code_fingerprint
 from app.services.listing_ref import project_listing
 from app.services.poe_bestof import compare_runs, synthesize_best_of
@@ -83,6 +84,8 @@ class RunBody(BaseModel):
     zones: list[int] | None = None
     resume_run_id: str | None = None
     variant: str = "tinyfish"           # v1 | v2 | tinyfish
+    profile: str | None = None
+    rules: dict | None = None
 
 
 class MultiRunBody(BaseModel):
@@ -129,7 +132,9 @@ class SeedEnrichBody(BaseModel):
 
 
 async def _launch_run(*, resume: bool, run_id: str, label: str, limit: int,
-                      zones, concurrency: int, variant: str) -> str:
+                      zones, concurrency: int, variant: str,
+                      rules_overrides: dict | None = None,
+                      profile: str | None = None) -> str:
     if len(_active_ids()) >= MAX_PARALLEL_RUNS:
         raise HTTPException(409, f"déjà {MAX_PARALLEL_RUNS} runs actifs")
     if run_id in RUN_STATES and RUN_STATES[run_id].running:
@@ -143,7 +148,8 @@ async def _launch_run(*, resume: bool, run_id: str, label: str, limit: int,
             state.summary = await poe_runs.execute_run(
                 _db, state, run_id, label=label, limit=limit,
                 only_zones=zones, concurrency=concurrency, resume=resume,
-                variant=variant)
+                variant=variant, rules_overrides=rules_overrides,
+                profile=profile)
         except Exception as e:
             state.error = f"{type(e).__name__}: {e}"
             state.log(f"FATAL: {state.error}")
@@ -182,8 +188,18 @@ async def poe_run_start(body: RunBody | None = None):
         raise HTTPException(400, str(e)) from e
     if not label:
         label = f"{variant}-full"
+    if not resume and (body.rules or body.profile):
+        from app.core.run_rules import RuleError, snapshot_for_run
+        from app.db import get_settings
+        try:
+            snapshot_for_run(mode="formalities", settings=await get_settings(),
+                             overrides=body.rules, profile=body.profile)
+        except RuleError as e:
+            raise HTTPException(400, str(e)) from e
     await _launch_run(resume=resume, run_id=run_id, label=label, limit=limit,
-                      zones=zones, concurrency=concurrency, variant=variant)
+                      zones=zones, concurrency=concurrency, variant=variant,
+                      rules_overrides=None if resume else body.rules,
+                      profile=None if resume else body.profile)
     return {"status": "started", "run_id": run_id, "resume": resume, "variant": variant}
 
 
@@ -221,7 +237,13 @@ async def poe_runs_code_fingerprint():
     """Empreinte qui serait écrite dans params.code au prochain POST /runs."""
     from app.db import get_settings
     settings = await get_settings()
-    return build_code_fingerprint(settings, zone_timeout_s=poe_runs.ZONE_TIMEOUT_S)
+    rules = snapshot_for_run(mode="formalities", settings=settings)
+    timeout = int((rules.get("chosen") or {}).get(
+        "formalities.zone_timeout_s", {}).get("value") or poe_runs.ZONE_TIMEOUT_S)
+    fp = build_code_fingerprint(settings, zone_timeout_s=timeout)
+    fp["rules"] = {"hash": rules["hash"], "profile": rules["profile"],
+                   "counts": rules["counts"]}
+    return fp
 
 
 @router.get("/poe/runs/searxng")

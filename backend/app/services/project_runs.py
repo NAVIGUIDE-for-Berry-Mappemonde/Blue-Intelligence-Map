@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.events import RunRecorder
+from app.core.run_rules import attach_rules, bind_rules, snapshot_for_run
 from app.services.run_fingerprint import build_code_fingerprint, merge_run_params
 
 
@@ -62,18 +63,23 @@ COUNTER_FOR_VERDICT = {
 
 async def open_run(db, *, mode: str, label: str = "", settings: dict | None = None,
                    force_rescan: bool = False, run_id: str | None = None,
-                   to_file: bool = True) -> dict:
+                   to_file: bool = True, rules_overrides: dict | None = None,
+                   profile: str | None = None) -> dict:
     """Crée le document de run. N'écrit pas dans `projects`."""
     await ensure_run_indexes(db)
     rid = run_id or new_run_id()
     settings = settings or {}
     fingerprint = build_code_fingerprint(settings)
-    params = merge_run_params({
+    rules = snapshot_for_run(mode="projects", settings=settings,
+                             overrides=rules_overrides, profile=profile)
+    params = attach_rules(merge_run_params({
         "mode": mode,
         "label": label,
         "force_rescan": force_rescan,
         "wrote_projects": False,
-    }, fingerprint)
+        "profile": rules["profile"],
+    }, fingerprint), rules)
+    bind_rules(rules)
     rec = RunRecorder(rid, db=db, events_coll="project_run_events", to_file=to_file)
     doc = {
         "_id": rid,

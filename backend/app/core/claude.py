@@ -189,10 +189,13 @@ def budget_allows_call(settings: dict | None = None) -> bool:
         return False
     budget = get_claude_budget_usd(settings)
     spent = float(load_usage().get("spent_usd") or 0)
-    return spent < budget * STOP_RATIO
+    from app.core.run_rules import get_rule
+    stop = float(get_rule("shared.claude_stop_ratio", STOP_RATIO))
+    return spent < budget * stop
 
 
 def usage_public(settings: dict | None = None) -> dict:
+    from app.core.run_rules import get_rule
     doc = load_usage()
     budget = get_claude_budget_usd(settings)
     spent = float(doc.get("spent_usd") or 0)
@@ -203,7 +206,7 @@ def usage_public(settings: dict | None = None) -> dict:
         "claude_calls": int(doc.get("calls") or 0),
         "claude_cache_read_tokens": int(doc.get("cache_read_tokens") or 0),
         "claude_cache_write_tokens": int(doc.get("cache_write_tokens") or 0),
-        "claude_stop_ratio": STOP_RATIO,
+        "claude_stop_ratio": float(get_rule("shared.claude_stop_ratio", STOP_RATIO)),
         "claude_remaining_usd": round(max(0.0, budget - spent), 6) if budget else 0.0,
         "claude_allows_call": budget_allows_call(settings),
         "claude_model": CLAUDE_MODEL,
@@ -417,10 +420,11 @@ STATIC_PREFIX = _build_static_prefix()
 
 def build_extract_payload(zone: dict, context: str) -> dict:
     """Payload Messages : breakpoint sur le préfixe statique, jamais sur le user."""
-    name = zone.get("name") or zone.get("geoname") or ""
+    from app.services.poe_zone_label import search_polygon_name
+    name = search_polygon_name(zone) or (zone.get("name") or zone.get("geoname") or "")
     sovereign = zone.get("sovereign") or ""
     user_text = (
-        f"Zone à extraire : {name} ({sovereign}).\n\n"
+        f"Zone à extraire : {name} ({sovereign}, polygone VLIZ mrgid={zone.get('mrgid')}).\n\n"
         f"EXTRAITS DES SOURCES OFFICIELLES:\n{(context or '')[:CONTEXT_CHARS]}"
     )
     return {

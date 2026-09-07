@@ -4,9 +4,13 @@ Document de cadrage du mode **Formalités** de Blue Intelligence.
 Il relit le code, le PRD, l’architecture, et les décisions des agents précédents.
 Il est écrit en langage simple : c’est le contrat de ce que l’on cherche, et de ce que l’on refuse.
 
-Version 1.2 — 7 septembre 2026. Document **complet** (objet, stratégies, règles, outils, code, données, interface, recette, risques, annexes).
+Version 1.4 — 7 septembre 2026. Document **complet** (objet, stratégies, règles, outils, code, données, interface, recette, risques, annexes).
 
 **1.2** fige le contrat manquant du 3ᵉ tour Word (#3 / #20) : Bottom-Up **détecteur de listes**, pas seulement un oui/non sur un nom ; les deux bras **en parallèle** ; arrêt dès la première vraie liste ; juge seulement le **résidu**. Elle fige aussi la règle carte : on **mémorise** chaque étape de cartographie pour les comparer ; on **publie** seulement une carte assez confiante (couverture listing Noonsite + fiche officielle par ZEE pour la relecture).
+
+**1.3** fige le **grain VLIZ** : une ZEE = **un polygone** (`mrgid`), jamais un pays. La France a 23 polygones. On cherche, on rattache et on fiche **par polygone**.
+
+**1.4** fige la **fiche de revue** : une fiche par polygone VLIZ, **une** URL Top-Down (la page ou le PDF d’État qui liste les PoE), la **liste des PoE**, **une** URL Bottom-Up **par port**. Pas de bouton Générer. Un futur run mondial TD∥BU serait **versionné** (`poe_run_*`, un passe par `mrgid`), sans effacer v1 ni les runs déjà faits — **à ne pas lancer** tant que les modèles NVIDIA ne sont pas branchés.
 
 **Sommaire**
 
@@ -59,7 +63,7 @@ Blue Intelligence cartographie ces listes pour l’expédition Berry-Mappemonde 
 
 ## 3. Ce que l’on veut obtenir
 
-Deux livrables, indissociables, **par ZEE** (identifiant VLIZ `mrgid`) :
+Deux livrables, indissociables, **par ZEE** (identifiant VLIZ `mrgid`, un polygone — pas un pays) :
 
 1. **La liste des Ports d’Entrée (PoE) officiels pour la plaisance.**
    Pour chaque port : nom officiel, ville si connue, coordonnées, ZEE d’appartenance, URLs des sources, score de confiance, et d’où vient le signal (extraction, OSM, listing, run, juge).
@@ -86,7 +90,7 @@ Une ZEE sans port physique n’est pas un échec : on la qualifie en droit (UNCL
 
 | Mot | Sens ici |
 |-----|----------|
-| **ZEE** | Polygone maritime d’un État ou territoire, référentiel Marine Regions / VLIZ v12 (~285 zones). Clé : `mrgid`. |
+| **ZEE** | Polygone maritime d’un État ou territoire, référentiel Marine Regions / VLIZ v12 (~285 zones). Clé : `mrgid`. Un État peut avoir **plusieurs** polygones (hexagone, outre-mer, régime conjoint, revendication) : **une fiche par polygone**, jamais un agrégat pays. |
 | **PoE** | Port d’Entrée : lieu **désigné** où un navire étranger de **plaisance** peut accomplir ses formalités. |
 | **Port de plaisance** | Infrastructure qui accueille des yachts (marina, port mixte, havre avec formalités plaisance). Ce n’est pas forcément un PoE. |
 | **Port de commerce / industriel** | Infrastructure fret, pêche industrielle, militaire. Utile comme **contre-liste**, pas comme livrable carte Formalités. |
@@ -106,23 +110,24 @@ Une ZEE sans port physique n’est pas un échec : on la qualifie en droit (UNCL
 
 On ne choisit pas l’une ou l’autre. On les **fait travailler ensemble**.
 
-Le Top-Down répond : *« Cette ZEE, quelle liste officielle publie-t-elle ? »*
+Le Top-Down répond : *« Ce polygone VLIZ (`mrgid`), quelle liste officielle publie-t-il ? »*
 
 Le Bottom-Up répond **deux choses** : *« Ce lieu déjà connu, est-ce vraiment un PoE plaisance ? »* et, si la page d’État ouverte pour ce lieu est un **catalogue**, *« quels autres ports cette page désigne-t-elle ? »*
 
 ### 6.1 Top-Down — de la ZEE vers la liste
 
-On part du **pays / de la ZEE**, pas d’un nom de port.
+On part du **polygone VLIZ**, pas du pays agrégé, et pas d’un nom de port.
 
-1. Prendre le polygone VLIZ (nom, ISO2, souverain, géométrie).
-2. Construire la **whitelist** des domaines d’État de ce pays (motifs `gov`, `gouv`, `gob`… × code ISO, plus exceptions mémorisées).
-3. **Chercher** les pages qui listent les ports d’entrée : requêtes multilingues (*ports d’entrée, puertos habilitados, designated ports, douane, gazette, décret*), SearXNG et/ou TinyFish Search, filet sur les domaines officiels, dernier recours recherche groundée OpenRouter.
+1. Prendre **ce** polygone VLIZ (nom du territoire, ISO2 du polygone, souverain, géométrie, `mrgid`).
+2. Construire la **whitelist** des domaines d’État (ISO2 du polygone **et** du souverain : Mayotte `YT` + `FR`).
+3. **Chercher** avec le nom du **polygone** (`search_polygon_name` : `France hexagone` ≠ `Mayotte` ≠ `Saba`), pas seulement le souverain. Requêtes multilingues, SearXNG et/ou TinyFish Search (`location` = ISO2 du polygone), filet officiel, recherche groundée en dernier.
 4. **Télécharger** les pages (HTTP, Readability, rendu Chromium, PDF hors process). Jeter les interstitiels anti-bot.
-5. **Extraire** les noms (parseur de tableau/décret d’abord ; sinon LLM ∥ NER ; Claude en second lecteur si le budget est ouvert).
-6. **Géocoder** (Nominatim ∥ GeoNames), vérifier que le point est dans **cette** ZEE (ou sur son bord terrestre, exception rivière encadrée).
-7. **Stocker** sans détruire l’existant, avec les URLs utilisées.
+5. **Extraire** les noms (parseur de tableau/décret d’abord ; sinon LLM ∥ NER ; Claude en second lecteur si le budget est ouvert). Un décret **national** peut lister plusieurs polygones : on lit toute la liste.
+6. **Géocoder** (Nominatim ∥ GeoNames), vérifier que le point est dans **ce** polygone (ou bord terrestre, exception rivière encadrée). Un GPS dans un **autre** polygone du même souverain (Dzaoudzi dans Mayotte alors qu’on traite l’hexagone) **n’est pas écrit** sur cette fiche.
+7. **Stocker** sous le `mrgid` de ce polygone, sans détruire l’existant, avec les URLs utilisées.
 
-Question métier : *quels ports ce pays désigne-t-il officiellement pour l’entrée des navires étrangers de plaisance ?*
+Question métier : *quels ports ce polygone VLIZ désigne-t-il pour l’entrée des navires étrangers de plaisance ?*
+Exemple : `France (hexagone)` (5677) et `France (Mayotte)` (48944) sont **deux** fiches, **deux** recherches, **deux** listes. Valable pour tout souverain à plusieurs zones (UK, NL, US, Espagne…).
 
 Le Top-Down reste le moyen de **découvrir une liste officielle sans aucune graine**. Le Bottom-Up peut **aussi** découvrir une liste, en ouvrant la page d’État d’un port déjà connu. Les canaris 12 ZEE (septembre 2026) ont montré trop de fragments de loi, trop peu de recoupement listing, et des ZEE à zéro port alors que la carte v1 en avait. D’où le pivot : les deux bras **en parallèle**, arrêt dès la première vraie liste.
 
@@ -160,13 +165,13 @@ Aujourd’hui `judge_one` / `execute_enrich` **jettent le reste de la page**. `r
 
 | | Top-Down | Bottom-Up |
 |---|---|---|
-| Point de départ | une ZEE | un lieu candidat (appât) |
-| Question | quelle liste officielle publie ce pays ? | cette page d’État, pour ce lieu, est-elle une **liste** — et ce lieu un PoE plaisance ? |
+| Point de départ | un polygone VLIZ (`mrgid`) | un lieu candidat **de ce polygone** |
+| Question | quelle liste officielle publie **cette** ZEE ? | cette page d’État, pour ce lieu, est-elle une **liste** — et ce lieu un PoE plaisance ? |
 | Produit principal | URLs d’État + noms extraits → `sources_td` | URL + liste entière si catalogue → `sources_bu` ; sinon verdict par graine |
 | Faiblesse actuelle | bruit, catalogues mal lus, canaris à 10 % | le juge oui/non **jette le reste de la page** (Fort Bay / Saba) |
 | Force | trouve un décret sans aucune graine | capitalise le stock déjà payé ; un port connu ouvre souvent le catalogue |
 
-On ne choisit pas un bras. **Top-Down cherche la liste par le pays ; Bottom-Up cherche la liste par un port qu’on connaît déjà ; les deux écrivent dans la même fiche ZEE ; la première vraie liste officielle gagne ; l’autre bras ne fait plus que le reliquat.**
+On ne choisit pas un bras. **Top-Down cherche la liste par le polygone VLIZ ; Bottom-Up cherche la liste par un port déjà connu de ce polygone ; les deux écrivent dans la même fiche `mrgid` ; la première vraie liste officielle gagne ; l’autre bras ne fait plus que le reliquat.** Un catalogue national (ex. `douane.gouv.fr`) n’autorise **pas** à fusionner hexagone et outre-mer : on rattache chaque GPS au polygone qui le contient.
 
 #### Pipeline parallèle par ZEE (contrat)
 
@@ -174,9 +179,9 @@ Les deux bras **partent en même temps**. Ils partagent un bus :
 
 | Bus | Contenu |
 |-----|---------|
-| `sources_td` | URLs d’État trouvées en cherchant le pays / la ZEE |
-| `sources_bu` | URLs d’État trouvées en cherchant un port déjà connu |
-| `ports` | noms extraits (catalogue, décret, juge) rattachés à la ZEE |
+| `sources_td` | URLs d’État trouvées en cherchant **ce polygone** |
+| `sources_bu` | URLs d’État trouvées en cherchant un port déjà connu **de ce polygone** |
+| `ports` | noms extraits rattachés à **ce** `mrgid` (un GPS Mayotte n’entre pas dans la fiche hexagone) |
 
 Règles du bus :
 
@@ -196,7 +201,7 @@ Dès qu’un bras a cette liste : on **arrête** de chercher d’autres listes p
 
 Faisceaux D et P (section 19) s’appliquent **après** : la liste officielle alimente D ; P filtre la plaisance. Un port D sans indice plaisance **ne va pas** tel quel sur la carte Formalités. Un port P sans page d’État reste une graine.
 
-Requêtes : SearXNG **et** TinyFish ; **langue du pays + français + anglais** à chaque fois.
+Requêtes : SearXNG **et** TinyFish ; **langue du polygone + français + anglais** ; `location` TinyFish = ISO2 du polygone.
 
 ---
 
@@ -299,7 +304,7 @@ Fichier : `backend/app/services/poe_pipeline.py`
 |----------|------|
 | `build_referential` | Charge les ~285 ZEE VLIZ (WFS), simplifie, écrit la carte |
 | `build_whitelist` / `url_allowed` | Domaines d’État du pays |
-| `localized_query` / `search_hint_queries` | Requêtes dans la langue du pays |
+| `localized_query` / `search_hint_queries` / `search_polygon_name` | Requêtes dans la langue du polygone VLIZ (Mayotte ≠ France hexagone) |
 | `search_searxng` / `search_grounded` | Recherche d’URLs |
 | `rank_candidates_ml` | Tri SERP avant fetch |
 | `_find_sources` | SearXNG ∥ TinyFish, filet officiel, retry douane |
@@ -333,6 +338,7 @@ Variantes de recherche (`normalize_variant`) :
 | Fichier | Fonctions clés |
 |---------|----------------|
 | `services/poe_seeds.py` | `union_extracted`, `attach_listing_seeds`, `attach_osm_seeds`, `attach_wpi_commercial`, `verdict_for_seed`, `build_seed_union`, `persist_verify_run` |
+| `services/poe_zone_fiche.py` | fiche de revue ZEE (`sources_td` / `sources_bu` + PoE), lecture seule |
 | `services/poe_seed_enrich.py` | `geocode_one`, `judge_one`, `execute_enrich`, `apply_judge_verdict`. **Écart** : `judge_one` ne lance pas encore le parseur catalogue ni `remember_seed_urls` |
 | `services/osm_seeds.py` | `is_marina_only`, `is_seed_candidate`, `refresh_osm_cache`, `osm_inventory` |
 | `services/wpi_ports.py` | ingest Pub 150, `match_wpi_port`, `wpi_commercial` (contre-liste, pas une preuve) |
@@ -374,6 +380,7 @@ Verdicts de graine (`verdict_for_seed`) :
 
 ### 9.6 API Formalités (rappel)
 
+- `GET /api/poe/zones/{mrgid}` — fiche de revue (PoE + `sources_td` + `sources_bu`, lecture seule)
 - `POST /api/poe/zones/{mrgid}/generate` · `POST /api/poe/generate-batch` — **410** (retirés, n’écrasent plus `poe_ports`)
 - `POST /api/poe/runs` · `/multi` · `/best-of` — runs isolés
 - `GET /api/poe/seeds/union` · `POST /api/poe/seeds/verify` · `POST /api/poe/seeds/enrich`
@@ -473,7 +480,9 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 | **Marinas OSM exclues des graines** | **Recalé (code + tests, pas de rebuild).** `leisure=marina` / CATHAF marina* = graine P si douane / `border_control` / `port_of_entry` à ≤ 800 m (`around.ctrl`, `osm_role=marina_pleasure`). Loin d’un contrôle : toujours exclu. **Ne pas** `POST /api/poe/seeds/build` ni Overpass refresh tant qu’un rebuild n’est pas décidé (4034 / 1280 / 781 figés). |
 | **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI comme preuve).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI : jeton seulement. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
-| **Promotion manuelle** | Pas d’UI de revue → carte. |
+| **Fiche ZEE absente de l’UI** | **Recalé (lecture seule, pas rebuild).** `GET /api/poe/zones/{mrgid}` + bandeau Formalités + popup : **1 URL TD** (page/PDF d’État listant les PoE), **liste des PoE**, **1 URL BU par port**. Une fiche = un polygone VLIZ (`France (hexagone)` ≠ `France (Mayotte)`). Pas de bouton Générer (`POST …/generate` = 410). Noonsite hors fiche. **Ne pas** `POST /api/poe/seeds/build`. **Ne pas** lancer de run mondial avant les modèles NVIDIA. |
+| **Recherche SERP trop « pays »** | **Recalé (code, pas crawl).** `_find_sources` / hints / TinyFish `location` visent le **polygone** (`search_polygon_name`, ISO2 `YT` pour Mayotte). Un port géocodé hors de ce polygone n’est plus écrit sur cette fiche. **Ceci ne relance pas un mondial Top-Down.** |
+| **Promotion manuelle** | Pas d’UI de revue D/P → carte. La fiche ZEE n’écrit pas `poe_ports`. |
 | **Gold Dataset** | N’existe pas. Le listing n’en est pas un. |
 
 ---
@@ -481,7 +490,7 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 ## 14. Ordre de travail recommandé
 
 1. **Figer ce contrat** (ce document). Puis brancher la double lecture dans `judge_one` / `execute_enrich` (`looks_like_port_catalog` + parseur + `sources_bu` + `remember_seed_urls`).
-2. Garder l’union des graines et les jugements déjà payés ; **ne pas** relancer un crawl mondial Top-Down ; **ne pas** `POST /api/poe/seeds/build`.
+2. Garder l’union des graines et les jugements déjà payés ; **ne pas** relancer un crawl mondial Top-Down **maintenant** ; **ne pas** `POST /api/poe/seeds/build`. Les 23 polygones France (et les 47 souverains à plusieurs ZEE) se traitent **un `mrgid` à la fois**. Un **futur** run mondial TD∥BU, si décidé après les modèles NVIDIA, est un **nouveau `run_id`** dans `poe_run_*` : une passe par polygone, sans toucher `poe_ports` ni les runs déjà en base. Si le stock a le mauvais `mrgid`, **re-zoner** par point-in-polygon VLIZ (0 crawl) avant tout crawl.
 3. Faire travailler TD et BU **en parallèle par ZEE** ; arrêter la recherche de listes dès la première vraie liste ; juger le résidu seulement.
 4. **Mémoriser** chaque étape (v1, runs, union, confirmed, listing-control, futurs lots) pour les comparer. L’affichage carte n’est pas une publication.
 5. Finir l’enrichissement Bottom-Up par lots (noms sans GPS, puis non vérifiés) **avec** moisson de catalogue.
@@ -582,34 +591,21 @@ Les `confirmed` déjà obtenus (atelier 2026-09-06/07) sont une **étape** à co
 
 ## 18. Le second livrable : les sources officielles par ZEE
 
-Le skipper ne doit pas seulement voir des points. Il doit voir **la page d’État** de cette ZEE. C’est aussi le critère UI de publication (§12) : **une liste officielle par ZEE** pour la relecture manuelle.
+Le skipper ne doit pas seulement voir des points. Il doit voir **la page d’État** de ce polygone. C’est aussi le critère UI de publication (§12) : **une liste officielle par ZEE** pour la relecture manuelle.
 
-Pour chaque ZEE on veut, au minimum :
+### Fiche de revue (contrat UI)
 
-| Champ | Sens |
-|-------|------|
-| `mrgid` | Identifiant VLIZ |
-| `sources_td` | URLs trouvées en cherchant **le pays / la ZEE** |
-| `sources_bu` | URLs trouvées en cherchant **un port déjà connu** de cette ZEE |
-| `urls` | Union des deux (dédupliquée). Une URL présente dans les deux = **source d’or** |
-| `kind` | `pleasure_list` (liste plaisance dédiée) · `general_list` (liste générale d’entrée) · `gazette` · `catalog` (tableau type SCT) · `none` (UNCLOS) |
-| `covers_pleasure` | La source parle-t-elle de yachts / recreo / turística, ou seulement de navires en général ? |
-| `collected_at` | Date de collecte |
-| `md5` | Pour savoir si le texte a changé |
-| `official` | Domaine dans la whitelist de **ce** pays |
-| `from_arm` | `td` · `bu` · `both` |
+Pour chacun des ~285 polygones VLIZ, une fiche, **sans** bouton Générer :
 
-Aujourd’hui ces informations sont éparpillées : `eez_zones.sources`, `source_hashes`, `poe_exceptions.json` (domaines et URLs mémorisés), `source_urls` de chaque port. Le cahier demande d’en faire **une fiche source par ZEE**, visible dans le popup (déjà commencé : bloc « sources officielles utilisées ») et exportable — avec **deux colonnes cliquables** : sources Top-Down et sources Bottom-Up.
+| Élément | Sens |
+|---------|------|
+| **1 URL Top-Down** | La page ou le PDF d’État **censé lister les PoE** de **ce** polygone (décret, gazette, catalogue douane). Geste Projets : un nom de domaine + lien externe. |
+| **Liste des PoE** | Les ports rattachés à ce `mrgid` (pas l’agrégat pays). |
+| **1 URL Bottom-Up par PoE** | La page d’État ouverte en cherchant **ce** nom de port. Pas une pile d’URLs BU au niveau de la zone. |
 
-Règles de la fiche :
+Si plusieurs pages TD existent en base, la revue n’en **affiche qu’une** (PDF / page « liste » d’abord). Les autres restent stockées. Noonsite, wiki, forums : hors fiche. Home `douane.gouv.fr` sans liste : ne suffit pas. ZEE inhabitée / revendiquée sans source : `kind = none` + code UNCLOS.
 
-- une URL Noonsite, forum ou Wikipedia **n’entre pas** ;
-- une home `douane.gouv.fr` sans liste **ne suffit pas** ;
-- si plusieurs PDF / pages, on les garde toutes dès qu’elles nomment des ports ;
-- si le Bottom-Up ouvre un catalogue, **toute** la liste rejoint `ports` et l’URL rejoint `sources_bu` — on ne garde pas seulement le nom appât ;
-- si aucune source et ZEE inhabitée / revendiquée : `kind = none` + code UNCLOS.
-
-Le Top-Down sert à **remplir `sources_td`**. Le Bottom-Up sert à **remplir `sources_bu`** (et, tant qu’il n’y a pas de liste, à juger le résidu). Une fois la fiche pourvue d’une vraie liste, le filet `include_domains` de cette ZEE part de cette fiche.
+Champs conservés en coulisse (`sources_td` / `sources_bu` / `from_arm`) : une URL vue par les deux bras = **source d’or**. Le Top-Down **remplit l’URL TD de la fiche**. Le Bottom-Up **remplit l’URL de chaque port**. Une fois une vraie liste posée, le filet `include_domains` de ce polygone part de cette fiche.
 
 ---
 
@@ -644,7 +640,7 @@ Les pages du faisceau D peuvent arriver **par n’importe quel bras** (`sources_
 
 Cas Mexique : le catalogue SCT a un champ d’activité. D = toutes les lignes « port designated ». P = lignes *Turística* (et mixte qui contient le tourisme). Seul P ∩ D va sur la carte.
 
-Cas France métropolitaine : le PDF douane des ports de plaisance rattachés **est déjà P**. Pas besoin de WPI.
+Cas France métropolitaine : le PDF douane des ports de plaisance rattachés **est déjà P**. Pas besoin de WPI. Ce PDF, s’il nomme aussi l’outre-mer, **ne va pas** dans la fiche hexagone : Dzaoudzi / Mamoudzou appartiennent à `France (Mayotte)` (48944).
 
 ---
 
@@ -718,8 +714,8 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 
 - Carte mondiale des ZEE colorées par statut (pas encore générée / générée / sans source officielle / erreur).
 - Points ambre = PoE publiés. Clic : nom, ZEE, score, badge OSM, anomalie spatiale, jusqu’à 3 URLs sources, mention « indicatif ».
-- Bandeau gauche : les ~285 ZEE, recherche, filtre de statut, nombre de PoE, confiance moyenne.
-- Popup ZEE : **fiche** — sources officielles cliquables, bloc UNCLOS si pas de port. **Pas** de bouton Générer (`POST …/generate` = 410).
+- Bandeau gauche : les ~285 polygones VLIZ, recherche, filtre de statut ; **fiche** du polygone sélectionné : **1 URL TD** (liste officielle) + **liste des PoE** + **1 URL BU par port**.
+- Popup polygone : même fiche. **Pas** de bouton Générer (`POST …/generate` = 410).
 - Mention fixe : *vérifiez auprès des autorités avant le départ.*
 - Tant que §12 n’est pas atteint, l’opérateur peut **changer l’étape affichée** (v1, un run, confirmed…) sans que cela vaille publication.
 
@@ -731,7 +727,7 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 - Diff run ↔ v1, rapport markdown, listing-control, file de revue.
 - Auto-refresh : toutes les 12 h, max 60 ZEE, re-télécharge les sources de plus de 30 jours, ne ré-extrait que si le MD5 a changé ; réessaie les erreurs après 7 jours.
 
-Ce qui **manque** à l’UI (écart de ce cahier) : fiche ZEE complète (PoE + `sources_td` + `sources_bu`) ; écran de revue (D/P, juge, listing) ; comparateur d’étapes ; bouton **Promouvoir vers la carte** seulement après §12.
+Ce qui **manque** à l’UI (écart de ce cahier) : écran de revue D/P + juge + listing ; comparateur d’étapes ; bouton **Promouvoir vers la carte** seulement après §12. La fiche polygone (1 URL TD + PoE + 1 URL BU/port, sans Générer) est le geste de revue.
 
 ---
 
@@ -809,6 +805,12 @@ On garde **Alofi**. On jette l’aéroport et la poste. Pas de marina OSM requis
 
 Une `leisure=marina` en Croatie, sans douane à 800 m, absente du listing `poe` et d’un décret : **graine faible ou rien**. Ce n’est pas un PoE.
 
+### France — 23 polygones, pas une ZEE unique
+
+VLIZ v12 découpe la France en 23 polygones (hexagone 5677, Mayotte 48944, Réunion 8338, Guadeloupe 33177, régimes conjoints, îles inhabitées…). Le listing Noonsite aussi : slug `france-2` → 5677 seulement ; slug `mayotte` → 48944. On ne produit **jamais** une fiche « France » qui mélange Marseille et Mamoudzou.
+
+Cette constatation **n’autorise pas** un crawl mondial Top-Down. Les canaris 12 ZEE restent NO-GO. Parade : grain `mrgid` dans la recherche et la fiche ; re-zonage PIP du stock existant si besoin.
+
 ### Venezuela au canari Top-Down
 
 Le crawl 12 ZEE a rendu **0** port. La carte v1 en a 12. C’est pourquoi on ne relance pas un mondial Top-Down : il **écraserait** un stock déjà utile. On part des 12 graines et on cherche **leur** décret — et si ce décret est un catalogue, on prend **toute** la liste.
@@ -859,6 +861,7 @@ cd backend && python3 -m pytest tests/test_poe_seeds.py tests/test_listing_contr
 | Risque | Effet | Parade déjà là / à faire |
 |--------|--------|---------------------------|
 | Crawl Top-Down bruyant | Fragments de loi, 0 port sur une ZEE peuplée, listing à 10 % | Plus de mondial Top-Down ; Bottom-Up par graine **et** moisson de catalogue |
+| Agrégat pays (France+Mayotte) | Une fiche / un crawl « France » avale l’outre-mer | Une fiche et une recherche **par polygone VLIZ** ; re-zonage PIP, pas un mondial |
 | Juge BU qui jette la liste | Fort Bay oui, reste de la page perdu | Double lecture : parseur catalogue + juge du résidu (§6.3) |
 | Trop de commerce sur la carte | Skipper arrive dans un terminal conteneur | Faisceau P + WPI + juge recalibré |
 | Trop de marinas | 32 000 points inutiles | Marina = graine seulement près d’une douane / listing |
@@ -935,4 +938,6 @@ WPI : National Geospatial-Intelligence Agency, domaine public US (quand branché
 
 ---
 
-*Fin du cahier des charges. Toute évolution de règle (plaisance, WPI, marinas-graines, bras TD∥BU, promotion carte) se fait d’abord ici, puis dans le code.*
+Les **chiffres** (2,2 km, 15 km, 400 km, 800 m, ≥ 3 ports, 90 % Claude, couverture listing…) sont catalogués dans `backend/data/run_rules.json` avec un principe et un intervalle — voir `docs/REGLES_PARAMETRES.md`. Chaque run fige le snapshot dans `params.rules`.
+
+*Fin du cahier des charges. Toute évolution de règle (plaisance, WPI, marinas-graines, bras TD∥BU, promotion carte) se fait d’abord ici, puis dans le catalogue / le code.*

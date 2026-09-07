@@ -239,11 +239,14 @@ def wpi_matches_name(seed_name: str, rec: dict) -> bool:
 
 
 def match_wpi_port(seed: dict, ports: list[dict] | None = None,
-                   radius_km: float = WPI_PROXIMITY_KM) -> dict | None:
+                   radius_km: float | None = None) -> dict | None:
     """Apparie une graine déjà connue. None si pas de nom+proximité (ou nom unique).
 
     Ne crée pas de graine. Ne copie pas le GPS WPI.
     """
+    from app.core.run_rules import get_rule
+    if radius_km is None:
+        radius_km = float(get_rule("formalities.wpi_proximity_km", WPI_PROXIMITY_KM))
     name = (seed.get("name") or "").strip()
     if not name:
         return None

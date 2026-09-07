@@ -53,6 +53,9 @@ export default function App() {
   const [poePorts, setPoePorts] = useState({ type: "FeatureCollection", features: [] });
   const [selectedZone, setSelectedZone] = useState(null);   // mrgid
   const [flyToZone, setFlyToZone] = useState(null);         // {mrgid, bbox, ts}
+  const [zoneFiche, setZoneFiche] = useState(null);
+  const [ficheLoading, setFicheLoading] = useState(false);
+  const [flyToPoe, setFlyToPoe] = useState(null);
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
   // creates a fresh `t` → MapView props change → the formalities marker
@@ -287,6 +290,26 @@ export default function App() {
     }
   }, []);
 
+  const handleFlyToPoe = useCallback((port) => {
+    if (!port || port.lat == null || port.lon == null) return;
+    setFlyToPoe({ ...port, ts: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedZone) {
+      setZoneFiche(null);
+      setFicheLoading(false);
+      return;
+    }
+    let alive = true;
+    setFicheLoading(true);
+    api.get(`/poe/zones/${selectedZone}`)
+      .then(({ data }) => { if (alive) setZoneFiche(data); })
+      .catch(() => { if (alive) setZoneFiche(null); })
+      .finally(() => { if (alive) setFicheLoading(false); });
+    return () => { alive = false; };
+  }, [selectedZone]);
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss" data-mode={mode}>
       <Header
@@ -320,6 +343,9 @@ export default function App() {
             zones={poeZones}
             selectedZone={selectedZone}
             onSelectZone={handleSelectZone}
+            fiche={zoneFiche}
+            ficheLoading={ficheLoading}
+            onFlyToPort={handleFlyToPoe}
           />
         )}
         <main className="flex-1 relative min-w-0">
@@ -335,6 +361,8 @@ export default function App() {
               onSelectZone={handleSelectZone}
               flyToMarina={flyToMarina}
               flyToZone={flyToZone}
+              flyToPoe={flyToPoe}
+              zoneFiche={zoneFiche}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
               maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
