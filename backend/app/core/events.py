@@ -45,9 +45,11 @@ def _clip(value):
 class RunRecorder:
     """Journal d'un run : écrit chaque événement dans Mongo + JSONL."""
 
-    def __init__(self, run_id: str, db=None, to_file: bool = True):
+    def __init__(self, run_id: str, db=None, to_file: bool = True,
+                 events_coll: str = "poe_run_events"):
         self.run_id = run_id
         self.db = db
+        self.events_coll = events_coll
         self._seq = 0
         self._seq_lock = asyncio.Lock()
         self.path = None
@@ -73,7 +75,7 @@ class RunRecorder:
         }
         if self.db is not None:
             try:
-                await self.db.poe_run_events.insert_one(doc)
+                await getattr(self.db, self.events_coll).insert_one(doc)
             except Exception:
                 pass  # le journal ne doit jamais faire échouer le pipeline
         if self.path is not None:

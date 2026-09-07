@@ -61,6 +61,10 @@ class Swarm:
         self.partner_count = 0
         self.no_new_streak = 0
         self.saturated = False
+        self.run_id = None
+        self.recorder = None
+        self.force_rescan = False
+        self.wrote_projects = False
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -93,17 +97,71 @@ class Swarm:
         await self.db.telemetry.insert_one({
             "_id": str(uuid.uuid4()), "url": url, "engine": engine, "status": status,
             "duration_ms": int(duration_ms), "results": results, "detail": str(detail)[:500],
-            "ts": now_iso(),
+            "ts": now_iso(), "dataset": "projects", "run_id": self.run_id,
         })
 
     async def add_failed(self, url, source, funder, reason, stage):
         await self.db.failed.update_one(
             {"url": url},
             {"$set": {"url": url, "source": source, "funder": funder,
-                      "reason": str(reason)[:300], "stage": stage, "ts": now_iso()},
+                      "reason": str(reason)[:300], "stage": stage, "ts": now_iso(),
+                      "dataset": "projects", "run_id": self.run_id},
              "$setOnInsert": {"_id": str(uuid.uuid4())}},
             upsert=True,
         )
+
+    async def _emit(self, step: str, **payload):
+        rec = self.recorder
+        if rec is not None:
+            try:
+                await rec.event(step, **payload)
+            except Exception:
+                pass
+
+    async def _bump_run(self, key: str):
+        if not self.run_id:
+            return
+        from app.services.project_runs import bump_counter
+        try:
+            await bump_counter(self.db, self.run_id, key)
+        except Exception:
+            pass
+
+    async def _ensure_isolated_run(self, *, mode: str, settings: dict | None = None,
+                                   force_rescan: bool = False, label: str = ""):
+        """Ouvre un run project_run_* si aucun n'est déjà attaché. N'écrit pas `projects`."""
+        if self.run_id:
+            return self.run_id
+        from app.services.project_runs import open_run
+        opened = await open_run(
+            self.db, mode=mode, label=label or f"projects-{mode}",
+            settings=settings or self.settings, force_rescan=force_rescan)
+        self.run_id = opened["run_id"]
+        self.recorder = opened["recorder"]
+        self.wrote_projects = False
+        return self.run_id
+
+    async def _write_verdict(self, item: dict, verdict: str, **fields):
+        """Persiste une ligne de run. Interdit toute écriture dans `projects`."""
+        if not self.run_id:
+            raise RuntimeError("isolated run required — no write to projects")
+        from app.services.project_runs import COUNTER_FOR_VERDICT, write_run_project
+        url = item["url"]
+        funder = item.get("funder") or fields.get("funder") or ""
+        doc = {
+            "url": url,
+            "title": fields.pop("title", None) or url,
+            "funder": funder,
+            "funders": fields.pop("funders", None) or ([funder] if funder else []),
+            "verdict": verdict,
+            **fields,
+        }
+        await write_run_project(self.db, self.run_id, doc)
+        key = COUNTER_FOR_VERDICT.get(verdict)
+        if key:
+            await self._bump_run(key)
+        await self._emit("project_verdict", url=url, verdict=verdict, title=doc.get("title"))
+        return doc
 
     def status(self):
         agents = list(self.agents.values())[::-1][:20]
@@ -116,6 +174,8 @@ class Swarm:
             "queued": self.queued_count,
             "agents": agents,
             "logs": list(self.logs)[-100:],
+            "run_id": self.run_id,
+            "wrote_projects": False,
         }
 
     def _tf_key(self):
@@ -133,7 +193,8 @@ class Swarm:
             self.log(f"Auto-Stop: {self.no_new_streak} consecutive extractions without a new unique project — graceful shutdown to save credits", "warn")
             asyncio.create_task(self.stop())
 
-    async def deploy(self, mode: str, clear_db: bool, settings: dict, force_rescan: bool = False):
+    async def deploy(self, mode: str, clear_db: bool, settings: dict, force_rescan: bool = False,
+                     run_id: str | None = None, recorder=None):
         if self.running:
             raise ValueError("swarm already running")
         self.settings = settings
@@ -141,10 +202,18 @@ class Swarm:
         self.force_rescan = force_rescan
         if clear_db:
             raise ValueError("clear_db is disabled")
+        if run_id:
+            self.run_id = run_id
+            self.recorder = recorder
+        else:
+            await self._ensure_isolated_run(
+                mode=mode, settings=settings, force_rescan=force_rescan)
+        self.wrote_projects = False
         self.running = True
         self.logs.clear()
         self.no_new_streak = 0
         self.saturated = False
+        self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
         self.log(f"Deploying Swarm — mode: {mode.upper()} | cascade N1 (gratuit) → N2 → N3 TinyFish (dernier recours)")
         self.log(f"Auto-Stop armed: shutdown after {int(settings.get('saturation_limit', 50))} extractions without new project")
         self.log(f"TinyFish key: {'ACTIVE (N3 last-resort only)' if self._tf_key() else 'MISSING → N1/N2 only'}",
@@ -175,6 +244,8 @@ class Swarm:
         self.log("Swarm stopped")
 
     async def _run(self):
+        cancelled = False
+        error = None
         try:
             seeds = MASTER_SEEDS[:TEST_SEED_COUNT] if self.mode == "test" else MASTER_SEEDS
             max_urls = int(self.settings.get("test_max_urls_per_seed", 6)) if self.mode == "test" \
@@ -216,13 +287,27 @@ class Swarm:
             for w in self.workers:
                 w.cancel()
             self.workers = []
-            count = await self.db.projects.count_documents({})
-            self.log(f"Pipeline complete — {count} projects mapped", "success")
+            n_sites = 0
+            if self.run_id:
+                n_sites = await self.db.project_run_projects.count_documents(
+                    {"run_id": self.run_id, "verdict": "site"})
+            self.log(
+                f"Pipeline complete — {n_sites} sites in run {self.run_id} "
+                f"(wrote_projects: false)",
+                "success",
+            )
         except asyncio.CancelledError:
-            pass
+            cancelled = True
         except Exception as e:
+            error = str(e)
             self.log(f"Pipeline error: {e}", "error")
         finally:
+            from app.services.project_runs import finalize_run
+            try:
+                await finalize_run(
+                    self.db, self.run_id, cancelled=cancelled, error=error)
+            except Exception:
+                pass
             self.running = False
 
     # ---------- discovery (cascade : N1 crawler gratuit → N3 TinyFish dernier recours) ----------
@@ -430,11 +515,31 @@ class Swarm:
         self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
 
     async def _process_url(self, item):
+        if not self.run_id:
+            raise RuntimeError("isolated run required — no write to projects")
         url, funder, source = item["url"], item["funder"], item["source"]
         depth = item.get("depth", 0)
-        if await self.db.projects.find_one({"url": url}):
-            # Free URL-dedup skip: costs no credits, must NOT count toward Auto-Stop saturation
-            return
+        force = bool(item.get("force") or getattr(self, "force_rescan", False))
+
+        existing_run = await self.db.project_run_projects.find_one(
+            {"run_id": self.run_id, "url": url})
+        if existing_run and not force:
+            return existing_run
+
+        if not force:
+            v1 = await self.db.projects.find_one({"url": url})
+            if v1:
+                # Skip crawl (crédits) mais trace dans le run — ne compte pas pour l'Auto-Stop
+                await self._write_verdict(
+                    item, "seen_v1",
+                    title=v1.get("title") or url,
+                    lat=v1.get("lat"), lon=v1.get("lon"),
+                    location=v1.get("location"),
+                    geo_source="v1",
+                    v1_id=v1.get("_id"),
+                )
+                return {"status": "seen_v1", "url": url}
+
         aid = self.new_agent("Cascade N1→N2", "extract", url, source)
         t0 = time.time()
         try:
@@ -453,13 +558,17 @@ class Swarm:
 
             self.agent_log(aid, "Gatekeeper Protocol (ML local → LLM cascade)")
             gk = await gatekeeper_check(page_title, text, self.settings)
+            await self._emit("gatekeeper", url=url, accepted=gk["accepted"],
+                             reason=str(gk.get("reason") or "")[:200])
             if not gk["accepted"]:
                 self.set_agent(aid, status="REJECTED")
                 self.agent_log(aid, f"REJECTED: {gk['reason'][:80]}")
+                await self._write_verdict(item, "rejected", title=page_title,
+                                          reason=gk["reason"], engine=gk.get("engine"))
                 await self.telemetry(url, gk["engine"], "REJECTED", (time.time() - t0) * 1000, 0, gk["reason"])
                 await self.add_failed(url, source, funder, gk["reason"], "gatekeeper")
                 self._bump_saturation(False)
-                return
+                return {"status": "rejected", "url": url}
 
             # RAG local : sur les pages longues, seuls les chunks pertinents partent au LLM
             llm_text = text
@@ -496,49 +605,67 @@ class Swarm:
             if not ok:
                 self.set_agent(aid, status="FAILED")
                 self.agent_log(aid, f"UNLOCATED ({kind}): no boat-accessible site — not published")
+                await self._write_verdict(
+                    item, "unlocated", title=proj.get("title") or page_title,
+                    location=proj.get("location"), lat=lat, lon=lon,
+                    geo_source=geo_src, geo_kind=kind, engine=proj.get("engine"),
+                    reason=f"unlocated:{kind}")
                 await self.telemetry(url, proj["engine"], "UNLOCATED", (time.time() - t0) * 1000, 0, kind)
                 await self.add_failed(url, source, funder, f"unlocated:{kind}", "unlocated")
                 self._bump_saturation(False)
-                return
+                return {"status": "unlocated", "url": url, "kind": kind}
             snapped = False
             self.agent_log(aid, f"site publishable ({kind})")
 
             merged = await self._dedup_merge(proj, url, funder, lat, lon)
             if merged:
                 self.set_agent(aid, status="SUCCESS")
-                self.agent_log(aid, "Merged with existing project (dedup_core: <500m / similarity)")
+                self.agent_log(aid, f"Merged ({merged}) — dedup_core: <500m / similarity")
                 await self.telemetry(url, proj["engine"], "MERGED", (time.time() - t0) * 1000, 1)
                 self._bump_saturation(False)
-                return
+                return {"status": merged, "url": url}
 
             category = proj.get("category")
-            await self.db.projects.insert_one({
-                "_id": str(uuid.uuid4()), "title": proj["title"], "url": url,
-                "description": proj["description"], "funder": funder, "funders": [funder],
-                "location": proj.get("location"), "lat": float(lat), "lon": float(lon),
-                "s_ocean": proj.get("s_ocean", 0.5), "snapped": snapped, "geo_source": geo_src,
-                "category": category, "category_group": normalize_category(category),
-                "image": image, "engine": proj["engine"], "extract_level": page["level"],
-                "created_at": now_iso(),
-            })
+            await self._write_verdict(
+                item, "site",
+                title=proj["title"],
+                description=proj.get("description"),
+                location=proj.get("location"),
+                lat=float(lat), lon=float(lon),
+                s_ocean=proj.get("s_ocean", 0.5),
+                snapped=snapped,
+                geo_source=geo_src,
+                geo_kind=kind,
+                category=category,
+                category_group=normalize_category(category),
+                image=image,
+                engine=proj["engine"],
+                extract_level=page["level"],
+            )
             self._bump_saturation(True)
             self.set_agent(aid, status="SUCCESS")
-            self.agent_log(aid, f"Project mapped — S_ocean {proj.get('s_ocean')}")
-            self.log(f"+ {proj['title'][:60]} ({funder})", "success")
+            self.agent_log(aid, f"Site recorded in run — S_ocean {proj.get('s_ocean')}")
+            self.log(f"+ {proj['title'][:60]} ({funder}) → run {self.run_id}", "success")
             await self.telemetry(url, proj["engine"], "SUCCESS", (time.time() - t0) * 1000, 1)
             if depth == 0:
                 for p in (proj.get("partners") or []):
                     if p.get("url"):
                         self._queue_partner(p["name"], p["url"])
+            return {"status": "site", "url": url}
         except asyncio.CancelledError:
             self.set_agent(aid, status="CANCELLED")
             raise
         except Exception as e:
             self.set_agent(aid, status="FAILED")
             self.agent_log(aid, f"FAILED: {str(e)[:80]}")
+            try:
+                await self._write_verdict(item, "failed", title=url, reason=str(e)[:300])
+            except Exception:
+                pass
             await self.telemetry(url, "Cascade N1→N2", "FAILED", (time.time() - t0) * 1000, 0, str(e))
             await self.add_failed(url, source, funder, str(e), "extract")
             self._bump_saturation(False)
+            return {"status": "failed", "url": url}
 
     @staticmethod
     def _valid_coords(lat, lon):
@@ -549,14 +676,55 @@ class Swarm:
             return False
 
     async def _dedup_merge(self, proj, url, funder, lat, lon):
-        """Déduplication spatio-textuelle mutualisée (dedup_core) — fusion non-destructive."""
+        """Dédup dans le run, puis lecture seule de v1. N'écrit jamais `projects`."""
+        from app.services.project_runs import write_run_project
         candidate = {"title": proj["title"], "lat": lat, "lon": lon}
-        candidates = await self.db.projects.find({}, {"title": 1, "lat": 1, "lon": 1, "funders": 1, "url": 1}).to_list(30000)
-        for c in candidates:
+        run_docs = await self.db.project_run_projects.find(
+            {"run_id": self.run_id, "verdict": "site"},
+            {"title": 1, "lat": 1, "lon": 1, "funders": 1, "url": 1,
+             "funder": 1, "location": 1, "description": 1},
+        ).to_list(20000)
+        for c in run_docs:
             if c.get("url") == url:
-                return True
+                return "merged_run"
             if is_duplicate(candidate, c):
                 funders = list(set((c.get("funders") or []) + [funder]))
-                await self.db.projects.update_one({"_id": c["_id"]}, {"$set": {"funders": funders}})
-                return True
-        return False
+                await write_run_project(self.db, self.run_id, {
+                    "url": c["url"],
+                    "title": c.get("title"),
+                    "funder": c.get("funder"),
+                    "funders": funders,
+                    "lat": c.get("lat"),
+                    "lon": c.get("lon"),
+                    "location": c.get("location"),
+                    "description": c.get("description"),
+                    "verdict": "site",
+                })
+                await self._write_verdict(
+                    {"url": url, "funder": funder}, "merged_run",
+                    title=proj["title"], lat=lat, lon=lon,
+                    location=proj.get("location"),
+                    merged_into_url=c.get("url"),
+                )
+                return "merged_run"
+
+        v1_docs = await self.db.projects.find(
+            {}, {"title": 1, "lat": 1, "lon": 1, "url": 1},
+        ).to_list(30000)
+        for c in v1_docs:
+            if c.get("url") == url:
+                await self._write_verdict(
+                    {"url": url, "funder": funder}, "seen_v1",
+                    title=proj["title"], lat=lat, lon=lon,
+                    location=proj.get("location"), v1_id=c.get("_id"),
+                )
+                return "seen_v1"
+            if is_duplicate(candidate, c):
+                await self._write_verdict(
+                    {"url": url, "funder": funder}, "merged_v1",
+                    title=proj["title"], lat=lat, lon=lon,
+                    location=proj.get("location"),
+                    v1_url=c.get("url"), v1_id=c.get("_id"),
+                )
+                return "merged_v1"
+        return None
