@@ -270,6 +270,47 @@ def lessons_learned_query(zone: dict) -> str:
     )
 
 
+def google_style_tld_tokens(zone: dict) -> str:
+    """ccTLD du polygone ; + .fr pour un DROM (Légifrance n'est pas en .yt)."""
+    iso = (zone.get("iso2") or "").strip().lower()
+    sov = (zone.get("sov_iso2") or "").strip().lower()
+    toks: list[str] = []
+    if iso:
+        toks.append(f".{iso}")
+    if sov == "fr" and iso and iso != "fr" and ".fr" not in toks:
+        toks.append(".fr")
+    return " ".join(toks)
+
+
+def google_style_query(zone: dict, lang: str | None = None) -> str:
+    """Phrase courte type barre Google : lieu + PoE + sailing + official + TLD."""
+    place = serp_place_name(zone) or search_polygon_name(zone) or ""
+    tld_tok = google_style_tld_tokens(zone)
+    if lang == "fr":
+        q = f"{place} port d'entrée officiel liste plaisance {tld_tok}"
+    elif lang == "es":
+        q = f"{place} puertos habilitados lista oficial yates {tld_tok}"
+    elif lang == "nl":
+        q = f"{place} officiële lijst toegangshavens pleziervaartuigen {tld_tok}"
+    else:
+        q = f"{place} Ports of Entry sailing list official {tld_tok}"
+    return " ".join(q.split())
+
+
+def google_style_shots(zone: dict) -> list[tuple[str, str]]:
+    """(lang, query) — EN toujours ; + fr/es/nl si la langue du polygone l'est.
+
+    SX a zone_search_lang=None : un seul shot EN, pas le néerlandais.
+    """
+    shots = [("en", google_style_query(zone))]
+    lang = zone_search_lang(zone)
+    if lang in ("fr", "es", "nl"):
+        loc = google_style_query(zone, lang)
+        if loc != shots[0][1]:
+            shots.append((lang, loc))
+    return shots
+
+
 def has_list_candidate(rows: list | None, min_bonus: float = _LIST_CANDIDATE_BONUS) -> bool:
     """PDF liste ou page assez profonde — pas une home douanes."""
     for c in rows or []:
@@ -1358,6 +1399,32 @@ def _search_agreement(a: list[dict], b: list[dict]) -> dict:
     }
 
 
+async def _resolve_serper_key(serper_key: str | None = None) -> str:
+    if serper_key:
+        return serper_key.strip()
+    from app.core.serper import serper_api_key
+    key = serper_api_key()
+    if key:
+        return key
+    try:
+        from app.db import get_settings
+        return serper_api_key(await get_settings())
+    except Exception:
+        return ""
+
+
+async def _serper_search_safe(query: str, key: str, log, *, gl=None,
+                              hl: str = "en") -> list[dict]:
+    if not key or not query:
+        return []
+    from app.core.serper import serper_search
+    try:
+        return await serper_search(query, key, gl=gl, hl=hl, log=log)
+    except Exception as e:
+        log(f"Serper: échec ({type(e).__name__})")
+        return []
+
+
 async def _resolve_tf_key(tf_key: str | None = None) -> str:
     if tf_key:
         return tf_key.strip()
@@ -1510,12 +1577,14 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     v2 = SearXNG parallèle EN ∥ local, sans TinyFish ;
     tinyfish = SearXNG ∥ TinyFish + filet include_domains.
     Les if iso des 11 polygones restent sur hints / site: / localized_query.
+    Serper (phrase courte + TLD) tourne en parallèle du round 1.
     :online en dernier. Ne touche jamais poe_ports."""
     name = search_polygon_name(zone)
     place = serp_place_name(zone) or name
     variant = normalize_variant(variant)
     use_tf = variant == "tinyfish"
     key = (await _resolve_tf_key(tf_key)) if use_tf else ""
+    serper_key = await _resolve_serper_key()
     iso = zone_search_location(zone)
     lang = zone_search_lang(zone)
 
@@ -1523,13 +1592,31 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
                 f"decree legislation {place}")
     loc_q = localized_query(zone)
 
-    searx_groups, tf_groups = [], []
+    searx_groups, tf_groups, serper_groups = [], [], []
+
+    def _add_serper_jobs(jobs: list, labels: list) -> None:
+        if not serper_key:
+            return
+        for qlang, q in google_style_shots(zone):
+            jobs.append(_serper_search_safe(q, serper_key, log, gl=iso, hl=qlang))
+            labels.append(("serper", qlang, q))
+
     if variant == "v1":
-        res_en = await search_searxng(query_en, log)
-        await emit(rec, "search", engine="searxng", lang="en", query=query_en,
-                   n=len(res_en or []), results=res_en or [], variant=variant,
-                   round="classic")
-        searx_groups.append(res_en or [])
+        jobs = [search_searxng(query_en, log)]
+        labels = [("searxng", "en", query_en)]
+        _add_serper_jobs(jobs, labels)
+        results = await asyncio.gather(*jobs)
+        res_en: list = []
+        for res, (engine, qlang, query) in zip(results, labels):
+            rnd = "google_style" if engine == "serper" else "classic"
+            await emit(rec, "search", engine=engine, lang=qlang, query=query,
+                       n=len(res or []), results=res or [], variant=variant,
+                       round=rnd)
+            if engine == "serper":
+                serper_groups.append(res or [])
+            else:
+                res_en = res or []
+                searx_groups.append(res_en)
         if not res_en and loc_q:
             log(f"v1: SearXNG EN vide — bascule localisée ({lang}): {loc_q[:80]}")
             res_loc = await search_searxng(loc_q, log)
@@ -1550,14 +1637,18 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             if key:
                 jobs.append(_tf_search_safe(loc_q, key, log, location=iso, language=lang))
                 labels.append(("tinyfish", lang, loc_q))
+        _add_serper_jobs(jobs, labels)
 
         results = await asyncio.gather(*jobs)
         for res, (engine, qlang, query) in zip(results, labels):
+            rnd = "google_style" if engine == "serper" else "classic"
             await emit(rec, "search", engine=engine, lang=qlang, query=query,
                        n=len(res or []), results=res or [], variant=variant,
-                       round="classic")
+                       round=rnd)
             if engine == "tinyfish":
                 tf_groups.append(res or [])
+            elif engine == "serper":
+                serper_groups.append(res or [])
             else:
                 searx_groups.append(res or [])
 
@@ -1569,10 +1660,11 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         log(f"search_compare: discordance Jaccard domaines={compare['jaccard_domains']} "
             f"(n_searx={compare['n_a']} n_tf={compare['n_b']})")
 
-    candidates = _merge_candidates(searx_set, tf_set)
+    serper_set = _merge_candidates(*serper_groups)
+    candidates = _merge_candidates(searx_set, tf_set, serper_set)
     if candidates:
         log(f"union des recherches: {compare['n_a']} SearXNG + {compare['n_b']} TinyFish "
-            f"→ {len(candidates)} candidats")
+            f"+ {len(serper_set)} Serper → {len(candidates)} candidats")
 
     hints = search_hint_queries(zone, exceptions)
     if hints:

@@ -275,6 +275,27 @@ def test_example_hints_stay_on_the_polygon():
     assert poe.list_url_bonus(al_url) >= 0.3
 
 
+def test_google_style_query_matches_human_serp():
+    eg = poe.google_style_query(EXAMPLE_ZONES[8490])
+    assert "Egypt" in eg and "official" in eg and ".eg" in eg
+    assert "Hurghada" not in eg
+    al = poe.google_style_query(EXAMPLE_ZONES[5670])
+    assert "Albania" in al and ".al" in al
+    yt = poe.google_style_query(EXAMPLE_ZONES[48944], "fr")
+    assert "Mayotte" in yt and ".yt" in yt and ".fr" in yt
+    assert "France" not in yt
+    sx = poe.google_style_query(EXAMPLE_ZONES[21803])
+    assert "Sint" in sx and ".sx" in sx
+    shots = poe.google_style_shots(EXAMPLE_ZONES[21803])
+    assert shots == [("en", sx)]
+    fr_shots = poe.google_style_shots(EXAMPLE_ZONES[5677])
+    langs = [lang for lang, _ in fr_shots]
+    assert langs == ["en", "fr"]
+    hr = {"iso2": "HR", "sov_iso2": "HR", "name": "Croatia", "sovereign": "Croatia"}
+    qhr = poe.google_style_query(hr)
+    assert "Croatia" in qhr and ".hr" in qhr and "akciz" not in qhr
+
+
 def test_witness_polygon_gets_family_hints_without_iso_switch():
     """Hors des 11 : legal + pleasure + EN, pas un if iso AL/FR."""
     hr = {"iso2": "HR", "sov_iso2": "HR", "name": "Croatia", "sovereign": "Croatia"}

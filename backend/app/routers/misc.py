@@ -52,6 +52,7 @@ class SettingsBody(BaseModel):
     llm_provider: str | None = None
     openrouter_api_key: str | None = None
     tinyfish_api_key: str | None = None
+    serper_api_key: str | None = None
     tinyfish_agents: int | None = None
     extract_concurrency: int | None = None
     max_coast_km: float | None = None
@@ -98,6 +99,11 @@ async def read_settings():
         s["tinyfish_api_key"] = ""
     else:
         s["tinyfish_api_key_set"] = False
+    if s.get("serper_api_key") or os.environ.get("SERPER_API_KEY"):
+        s["serper_api_key_set"] = True
+        s["serper_api_key"] = ""
+    else:
+        s["serper_api_key_set"] = False
     try:
         s["claude_budget_usd"] = float(s.get("claude_budget_usd") or 0)
     except (TypeError, ValueError):
@@ -115,8 +121,8 @@ async def read_settings():
 @router.put("/settings")
 async def write_settings(body: SettingsBody):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    for k in ("openrouter_api_key", "tinyfish_api_key", "anthropic_api_key",
-              "nvidia_api_key"):
+    for k in ("openrouter_api_key", "tinyfish_api_key", "serper_api_key",
+              "anthropic_api_key", "nvidia_api_key"):
         if k in updates and updates[k] == "":
             del updates[k]
     if updates:

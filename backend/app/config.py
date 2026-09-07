@@ -27,6 +27,7 @@ DEFAULT_SETTINGS = {
     "llm_provider": "auto",
     "openrouter_api_key": "",
     "tinyfish_api_key": "",
+    "serper_api_key": "",
     "tinyfish_agents": 2,
     "extract_concurrency": 6,
     "max_coast_km": 50,
