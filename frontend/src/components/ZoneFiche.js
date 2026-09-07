@@ -9,51 +9,18 @@ function hostOf(url) {
   }
 }
 
-function SourceList({ t, arm, items, total }) {
-  const title = arm === "td" ? t("poeSourcesTd") : t("poeSourcesBu");
-  const empty = arm === "td" ? t("poeFicheEmptyTd") : t("poeFicheEmptyBu");
-  return (
-    <div data-testid={`poe-fiche-sources-${arm}`}>
-      <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1.5">
-        {title}
-        {total != null && total > (items || []).length ? (
-          <span className="text-slate-600"> ({(items || []).length}/{total})</span>
-        ) : null}
-      </p>
-      {(!items || items.length === 0) ? (
-        <p className="text-[11px] text-slate-500 leading-relaxed">{empty}</p>
-      ) : (
-        <ul className="space-y-1">
-          {items.map((s) => (
-            <li key={`${arm}-${s.url}`} className="flex items-start gap-1.5 min-w-0">
-              <a
-                href={s.url}
-                target="_blank"
-                rel="noreferrer"
-                data-testid={`poe-fiche-${arm}-url`}
-                className="text-[11px] text-accent hover:text-white truncate font-medium"
-                title={s.url}
-              >
-                {hostOf(s.url)}
-              </a>
-              {s.from_arm === "both" && (
-                <span className="shrink-0 font-mono text-[8px] uppercase tracking-widest text-bio border border-bio/40 px-1 py-px rounded-sm">
-                  {t("poeSourceBoth")}
-                </span>
-              )}
-              <a href={s.url} target="_blank" rel="noreferrer" className="shrink-0 text-accent hover:text-white mt-0.5">
-                <ExternalLink size={11} />
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+function tdUrlOf(fiche) {
+  return fiche?.url_td?.url || (fiche?.sources_td || [])[0]?.url || "";
+}
+
+function buUrlOf(port) {
+  if (typeof port?.url_bu === "string") return port.url_bu;
+  return port?.url_bu?.url || (port?.source_urls || [])[0] || "";
 }
 
 /**
- * Fiche de revue d'une ZEE — même geste que ProjectList : nom + URL cliquable.
+ * Fiche de revue d'un polygone VLIZ — même geste que ProjectList :
+ * une URL TD (liste officielle) + chaque PoE avec une URL BU.
  * Pas de bouton Générer.
  */
 export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
@@ -66,6 +33,8 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
   }
   if (!fiche) return null;
   const ports = fiche.ports || [];
+  const td = tdUrlOf(fiche);
+  const tdBoth = fiche?.url_td?.from_arm === "both" || (fiche?.sources_td || [])[0]?.from_arm === "both";
   return (
     <section className="p-3 border-b border-line bg-raised/30 space-y-3" data-testid="poe-zone-fiche">
       <div className="flex items-baseline justify-between gap-2">
@@ -87,9 +56,36 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
-        <SourceList t={t} arm="td" items={fiche.sources_td} total={fiche.sources_td_total} />
-        <SourceList t={t} arm="bu" items={fiche.sources_bu} total={fiche.sources_bu_total} />
+      <div data-testid="poe-fiche-sources-td">
+        <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1.5">
+          {t("poeSourcesTd")}
+        </p>
+        {td ? (
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <a
+              href={td}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="poe-fiche-td-url"
+              className="text-[11px] text-accent hover:text-white truncate font-medium"
+              title={td}
+            >
+              {hostOf(td)}
+            </a>
+            <div className="flex items-center gap-1 shrink-0">
+              {tdBoth && (
+                <span className="font-mono text-[8px] uppercase tracking-widest text-bio border border-bio/40 px-1 py-px rounded-sm">
+                  {t("poeSourceBoth")}
+                </span>
+              )}
+              <a href={td} target="_blank" rel="noreferrer" className="text-accent hover:text-white">
+                <ExternalLink size={11} />
+              </a>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-500 leading-relaxed">{t("poeFicheEmptyTd")}</p>
+        )}
       </div>
 
       <div data-testid="poe-fiche-ports">
@@ -99,9 +95,9 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
         {ports.length === 0 ? (
           <p className="text-[11px] text-slate-500">{t("poeFicheNoPorts")}</p>
         ) : (
-          <div className="divide-y divide-line/60 border border-line/60 rounded-sm max-h-40 overflow-y-auto">
+          <div className="divide-y divide-line/60 border border-line/60 rounded-sm max-h-56 overflow-y-auto">
             {ports.map((p) => {
-              const href = (p.source_urls || [])[0];
+              const href = buUrlOf(p);
               const canFly = p.lat != null && p.lon != null && onFlyToPort;
               return (
                 <div
@@ -126,10 +122,13 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
                     {href ? (
                       <a href={href} target="_blank" rel="noreferrer"
                         className="text-accent hover:text-white shrink-0"
-                        data-testid="poe-fiche-port-url">
+                        data-testid="poe-fiche-port-bu"
+                        title={href}>
                         <ExternalLink size={11} />
                       </a>
-                    ) : null}
+                    ) : (
+                      <span className="font-mono text-[9px] text-slate-600" data-testid="poe-fiche-port-bu-empty">—</span>
+                    )}
                   </div>
                 </div>
               );

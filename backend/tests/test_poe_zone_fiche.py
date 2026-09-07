@@ -82,13 +82,12 @@ def test_assemble_td_bu_ports_no_write_and_no_noonsite():
     assert fiche["wrote_poe_ports"] is False
     assert fiche["crawled"] is False
     assert fiche["mrgid"] == 26518
-    td_urls = [s["url"] for s in fiche["sources_td"]]
-    bu_urls = [s["url"] for s in fiche["sources_bu"]]
-    assert td_urls == ["https://douane.gouv.fr/saba-list"]
-    assert bu_urls == ["https://www.rvo.nl/saba-clearance"]
-    assert all("noonsite" not in u.lower() for u in td_urls + bu_urls)
+    assert fiche["url_td"]["url"] == "https://douane.gouv.fr/saba-list"
+    assert len(fiche["sources_td"]) == 1
     assert fiche["ports"][0]["name"] == "Fort Bay"
-    assert "noonsite" not in "".join(fiche["ports"][0]["source_urls"]).lower()
+    assert fiche["ports"][0]["url_bu"]["url"] == "https://www.rvo.nl/saba-clearance"
+    assert "noonsite" not in (fiche["ports"][0]["url_bu"]["url"] or "").lower()
+    assert "noonsite" not in (fiche["url_td"]["url"] or "").lower()
     assert fiche["kind"] == "general_list"
     assert fiche["confidence_avg"] == 72
 
@@ -96,14 +95,39 @@ def test_assemble_td_bu_ports_no_write_and_no_noonsite():
 def test_url_in_both_arms_is_gold():
     zone = {
         **_ZONE,
-        "sources_td": ["https://gov.example/list"],
-        "sources_bu": ["https://gov.example/list"],
-        "sources": [],
+        "sources": [{"url": "https://gov.example/list", "domain": "gov.example"}],
+        "sources_td": [],
+        "sources_bu": [],
     }
-    fiche = assemble_zone_fiche(zone, [])
-    assert fiche["urls"][0]["from_arm"] == "both"
-    assert fiche["sources_td"][0]["from_arm"] == "both"
-    assert fiche["sources_bu"][0]["from_arm"] == "both"
+    ports = [{"_id": "p1", "name": "Fort Bay", "lat": 17.62, "lon": -63.25}]
+    seeds = [{"name": "Fort Bay", "judge_sources": ["https://gov.example/list"]}]
+    fiche = assemble_zone_fiche(zone, ports, seeds=seeds)
+    assert fiche["url_td"]["url"] == "https://gov.example/list"
+    assert fiche["url_td"]["from_arm"] == "both"
+    assert fiche["ports"][0]["url_bu"]["url"] == "https://gov.example/list"
+    assert fiche["ports"][0]["url_bu"]["from_arm"] == "both"
+
+
+def test_one_bu_url_per_port_not_a_zone_pile():
+    zone = {**_ZONE, "sources": [
+        {"url": "https://gov.example/accueil", "domain": "gov.example"},
+        {"url": "https://gov.example/ports-entree.pdf", "domain": "gov.example"},
+    ]}
+    ports = [
+        {"_id": "a", "name": "Fort Bay"},
+        {"_id": "b", "name": "Ladder Bay"},
+    ]
+    seeds = [
+        {"name": "Fort Bay", "judge_sources": ["https://gov.bq/fort-bay"]},
+        {"name": "Ladder Bay", "judge_sources": ["https://gov.bq/ladder"]},
+    ]
+    fiche = assemble_zone_fiche(zone, ports, seeds=seeds)
+    assert fiche["url_td"]["url"].endswith("ports-entree.pdf")
+    assert len(fiche["sources_td"]) == 1
+    by = {p["name"]: p["url_bu"]["url"] for p in fiche["ports"]}
+    assert by["Fort Bay"] == "https://gov.bq/fort-bay"
+    assert by["Ladder Bay"] == "https://gov.bq/ladder"
+    assert by["Fort Bay"] != by["Ladder Bay"]
 
 
 def test_unclos_without_sources_is_kind_none():
@@ -132,7 +156,7 @@ def test_one_url_per_domain_prefers_list_pdf():
     fiche = assemble_zone_fiche(zone, [])
     assert fiche["sources_td_total"] == 2
     assert len(fiche["sources_td"]) == 1
-    assert fiche["sources_td"][0]["url"].endswith(".pdf")
+    assert fiche["url_td"]["url"].endswith(".pdf")
 
 
 def test_build_zone_fiche_reads_only():
@@ -142,11 +166,11 @@ def test_build_zone_fiche_reads_only():
         zones=[_ZONE],
         ports=[{"_id": "p1", "name": "Fort Bay", "mrgid": 26518,
                 "lat": 17.62, "lon": -63.25, "source_urls": ["https://gov.bq/x"]}],
-        seeds=[{"mrgid": 26518, "judge_sources": ["https://gov.bq/bu"]}],
+        seeds=[{"mrgid": 26518, "name": "Fort Bay", "judge_sources": ["https://gov.bq/bu"]}],
     )
     fiche = asyncio.run(build_zone_fiche(db, 26518))
     assert fiche["ports"][0]["name"] == "Fort Bay"
-    assert any(s["from_arm"] in ("bu", "both") for s in fiche["sources_bu"])
+    assert fiche["ports"][0]["url_bu"]["url"] == "https://gov.bq/bu"
     missing = asyncio.run(build_zone_fiche(db, 999999))
     assert missing is None
 
@@ -194,9 +218,14 @@ def test_frontend_fiche_has_no_generate_button():
         assert "poe-generate" not in src
         assert "/generate" not in src
     assert "wpi_commercial" not in fiche
-    assert "sources_td" in popup or "poeSourcesTd" in popup
+    assert "poe-fiche-td-url" in fiche
+    assert "poe-fiche-port-bu" in fiche
+    assert "poe-fiche-sources-bu" not in fiche
     assert "poe-zone-fiche" in fiche
     assert "ExternalLink" in fiche
+    assert "poe-fiche-popup-td" in popup
+    assert "poe-fiche-popup-port-bu" in popup
+    assert "poe-fiche-popup-bu" not in popup
     assert "zoneDisplayName" in fiche
     label_js = (root / "components" / "map" / "zoneLabel.js").read_text(encoding="utf-8")
     assert "disambiguated" in label_js

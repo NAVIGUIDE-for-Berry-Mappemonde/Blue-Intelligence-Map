@@ -12,11 +12,13 @@ from functools import lru_cache
 from urllib.parse import urlparse
 
 from app.config import DATA_DIR
+from app.core.dedup import normalize_name
 from app.services.poe_pipeline import domain_of, list_url_bonus, zone_to_item
 from app.services.poe_zone_label import attach_zone_labels
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, url_is_excluded_search
 
-FICHE_URL_CAP = 12
+# Revue : une URL TD (la liste officielle) + une URL BU par PoE.
+FICHE_TD_URL_CAP = 1
 
 
 @lru_cache(maxsize=1)
@@ -91,7 +93,7 @@ def _url_rank(rec: dict) -> float:
     return list_url_bonus(rec.get("url") or "") + (1.0 if rec.get("official") else 0.0)
 
 
-def _cap_sources(recs: list[dict], limit: int = FICHE_URL_CAP) -> list[dict]:
+def _cap_sources(recs: list[dict], limit: int = FICHE_TD_URL_CAP) -> list[dict]:
     """Un URL par domaine, les pages liste/PDF d'abord — comme une fiche projets."""
     by_dom: dict[str, dict] = {}
     for rec in recs or []:
@@ -103,21 +105,37 @@ def _cap_sources(recs: list[dict], limit: int = FICHE_URL_CAP) -> list[dict]:
     return ranked[:limit]
 
 
-def _port_row(doc: dict) -> dict | None:
+def _best_one(recs: list[dict]) -> dict | None:
+    capped = _cap_sources(recs, limit=1)
+    return capped[0] if capped else None
+
+
+def _bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
+    """Meilleure URL d'État trouvée en cherchant CE port (juge / sources_bu)."""
+    by: dict[str, dict] = {}
+    for doc in docs or []:
+        key = normalize_name(doc.get("name") or "")
+        if not key:
+            continue
+        recs: list[dict] = []
+        for raw in list(doc.get("judge_sources") or []) + list(doc.get("sources_bu") or []):
+            rec = _as_source(raw, "bu")
+            if rec:
+                recs.append(rec)
+        best = _best_one(recs)
+        if not best:
+            continue
+        prev = by.get(key)
+        if prev is None or _url_rank(best) > _url_rank(prev):
+            by[key] = best
+    return by
+
+
+def _port_row(doc: dict, url_bu: dict | None = None) -> dict | None:
     name = (doc.get("name") or "").strip()
     if not name:
         return None
-    urls = []
-    seen = set()
-    for raw in doc.get("source_urls") or []:
-        url = _clean_url(raw)
-        if not url or url in seen or url_is_community(url):
-            continue
-        seen.add(url)
-        urls.append(url)
-        if len(urls) >= 6:
-            break
-    return {
+    row = {
         "id": str(doc.get("_id") or doc.get("id") or name),
         "name": name,
         "city": doc.get("city"),
@@ -126,8 +144,13 @@ def _port_row(doc: dict) -> dict | None:
         "confidence": doc.get("confidence"),
         "spatial_kind": doc.get("spatial_kind"),
         "validated": bool(doc.get("validated")),
-        "source_urls": urls,
+        "url_bu": url_bu,
     }
+    if url_bu and url_bu.get("url"):
+        row["source_urls"] = [url_bu["url"]]
+    else:
+        row["source_urls"] = []
+    return row
 
 
 def _fiche_kind(zone: dict, n_sources: int, n_ports: int) -> str:
@@ -143,50 +166,58 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
                         seeds: list[dict] | None = None,
                         run_ports: list[dict] | None = None,
                         run_zones: list[dict] | None = None) -> dict:
-    """Construit la fiche. 0 écriture Atlas."""
+    """Construit la fiche de revue. 0 écriture Atlas.
+
+    Contrat UI : 1 URL TD (page/PDF d'État listant les PoE) + la liste des
+    PoE + 1 URL BU par port (page ouverte en cherchant ce nom).
+    """
     td_raw = [zone.get("sources"), zone.get("sources_td")]
-    bu_raw = [zone.get("sources_bu")]
     for rz in run_zones or []:
         td_raw.append(rz.get("sources"))
         td_raw.append(rz.get("sources_td"))
-        bu_raw.append(rz.get("sources_bu"))
-    for doc in list(seeds or []) + list(run_ports or []):
-        bu_raw.append(doc.get("judge_sources"))
-        bu_raw.append(doc.get("sources_bu"))
     td_map = _collect(td_raw, "td")
-    bu_map = _collect(bu_raw, "bu")
-    union_urls = sorted(set(td_map) | set(bu_map))
-    sources_td, sources_bu = [], []
-    for url in union_urls:
-        in_td = url in td_map
-        in_bu = url in bu_map
-        arm = "both" if in_td and in_bu else ("td" if in_td else "bu")
-        base = dict(td_map.get(url) or bu_map.get(url) or {"url": url})
-        base["from_arm"] = arm
-        if in_td:
-            sources_td.append({**base, "from_arm": arm})
-        if in_bu:
-            sources_bu.append({**base, "from_arm": arm})
-    td_total, bu_total = len(sources_td), len(sources_bu)
-    sources_td = _cap_sources(sources_td)
-    sources_bu = _cap_sources(sources_bu)
-    urls_map: dict[str, dict] = {}
-    for rec in sources_td + sources_bu:
-        urls_map.setdefault(rec["url"], rec)
-    urls = list(urls_map.values())
+    bu_by_name = _bu_by_port_name(list(seeds or []) + list(run_ports or []))
+
     rows = []
+    bu_seen: dict[str, dict] = {}
     for doc in ports or []:
-        row = _port_row(doc)
-        if row:
-            rows.append(row)
+        key = normalize_name(doc.get("name") or "")
+        url_bu = bu_by_name.get(key)
+        row = _port_row(doc, url_bu)
+        if not row:
+            continue
+        rows.append(row)
+        if url_bu and url_bu.get("url"):
+            bu_seen.setdefault(url_bu["url"], url_bu)
     rows.sort(key=lambda p: (p.get("name") or "").lower())
+
+    td_list = list(td_map.values())
+    td_total = len(td_list)
+    url_td = _best_one(td_list)
+    if url_td:
+        td_url = url_td["url"]
+        if td_url in bu_seen:
+            url_td = {**url_td, "from_arm": "both"}
+            for row in rows:
+                bu = row.get("url_bu") or {}
+                if bu.get("url") == td_url:
+                    row["url_bu"] = {**bu, "from_arm": "both"}
+                    bu_seen[td_url] = row["url_bu"]
+        sources_td = [url_td]
+    else:
+        sources_td = []
+
+    sources_bu = list(bu_seen.values())
     item = zone_to_item(zone)
+    item["url_td"] = url_td
     item["sources_td"] = sources_td
     item["sources_bu"] = sources_bu
     item["sources_td_total"] = td_total
-    item["sources_bu_total"] = bu_total
-    item["urls"] = urls
-    item["kind"] = _fiche_kind(zone, td_total + bu_total, len(rows))
+    item["sources_bu_total"] = len(sources_bu)
+    item["urls"] = ([url_td] if url_td else []) + [
+        rec for rec in sources_bu if not url_td or rec.get("url") != url_td.get("url")
+    ]
+    item["kind"] = _fiche_kind(zone, td_total + len(sources_bu), len(rows))
     item["ports"] = rows
     item["wrote_poe_ports"] = False
     item["crawled"] = False

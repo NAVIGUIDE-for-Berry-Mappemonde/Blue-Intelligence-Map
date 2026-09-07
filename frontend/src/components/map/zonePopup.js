@@ -2,40 +2,49 @@ import { ZONE_COLORS, escH, flagEmoji } from "./constants";
 import { zoneDisplayName, zoneSubtitle } from "./zoneLabel";
 
 /**
- * Popup HTML d'une fiche ZEE (mode Formalités) : liste PoE, URLs TD et BU
- * cliquables, UNCLOS. Pas de bouton Générer.
- * Lit tRef / zoneItemsRef / zoneFicheRef / poePortsRef à l'ouverture.
+ * Popup HTML d'une fiche polygone VLIZ : 1 URL TD (liste officielle),
+ * liste PoE, 1 URL BU par port. Pas de bouton Générer.
  */
 
-function _urlItems(list) {
-  return (list || []).map((s) => (typeof s === "string" ? { url: s } : s)).filter((s) => s?.url);
+function _tdUrl(fiche, z) {
+  return fiche?.url_td?.url
+    || (fiche?.sources_td || [])[0]?.url
+    || (z.sources_td || [])[0]?.url
+    || (Array.isArray(z.sources) && z.sources[0]?.url)
+    || "";
 }
 
-function _sourcesBlock(title, items, testId) {
-  const rows = _urlItems(items).map((s) => `
-    <div style="margin-top:4px;font-size:11px;line-height:1.4;display:flex;gap:4px;align-items:flex-start;">
-      <a href="${escH(s.url)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(s.domain || s.url)}</a>
-      ${s.from_arm === "both" ? `<span style="font-family:'JetBrains Mono',monospace;font-size:8px;color:#39ff14;border:1px solid rgba(57,255,20,0.4);padding:0 4px;border-radius:2px;">★</span>` : ""}
-    </div>`).join("");
-  return `<div data-testid="${testId}" style="margin-top:8px;">
-    <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${escH(title)}</div>
-    ${rows || `<div style="margin-top:4px;font-size:11px;color:#64748b;">—</div>`}
+function _buUrl(p) {
+  if (typeof p?.url_bu === "string") return p.url_bu;
+  return p?.url_bu?.url || (p?.source_urls || [])[0] || "";
+}
+
+function _tdBlock(t, url, both) {
+  const link = url
+    ? `<div style="margin-top:4px;font-size:11px;line-height:1.4;display:flex;gap:6px;align-items:center;justify-content:space-between;">
+        <a href="${escH(url)}" target="_blank" rel="noreferrer" data-testid="poe-fiche-popup-td-url" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0])}</a>
+        ${both ? `<span style="font-family:'JetBrains Mono',monospace;font-size:8px;color:#39ff14;border:1px solid rgba(57,255,20,0.4);padding:0 4px;border-radius:2px;">★</span>` : ""}
+      </div>`
+    : `<div style="margin-top:4px;font-size:11px;color:#64748b;">${escH(t("poeFicheEmptyTd"))}</div>`;
+  return `<div data-testid="poe-fiche-popup-td" style="margin-top:8px;">
+    <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${escH(t("poeSourcesTd"))}</div>
+    ${link}
   </div>`;
 }
 
 function _portsBlock(t, ports) {
-  const rows = (ports || []).slice(0, 12).map((p) => {
-    const href = (p.source_urls || [])[0];
+  const rows = (ports || []).slice(0, 24).map((p) => {
+    const href = _buUrl(p);
     const score = p.confidence != null ? ` · ${escH(t("poeConfidence"))} ${Number(p.confidence)}` : "";
     const link = href
-      ? `<a href="${escH(href)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;">↗</a>`
-      : "";
+      ? `<a href="${escH(href)}" target="_blank" rel="noreferrer" data-testid="poe-fiche-popup-port-bu" style="color:#00f0ff;text-decoration:none;">↗</a>`
+      : `<span style="color:#64748b;">—</span>`;
     return `<div style="display:flex;justify-content:space-between;gap:6px;margin-top:3px;font-size:11px;color:#e2e8f0;">
       <span>⚓ ${escH(p.name)}${score}</span>${link}
     </div>`;
   }).join("");
-  const more = (ports || []).length > 12
-    ? `<div style="margin-top:4px;font-size:10px;color:#64748b;">+${(ports.length - 12)}</div>`
+  const more = (ports || []).length > 24
+    ? `<div style="margin-top:4px;font-size:10px;color:#64748b;">+${(ports.length - 24)}</div>`
     : "";
   return `<div data-testid="poe-fiche-popup-ports" style="margin-top:8px;">
     <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:0.08em;border-bottom:1px solid rgba(251,191,36,0.25);padding-bottom:2px;">${escH(t("poeFichePorts"))} (${(ports || []).length})</div>
@@ -54,6 +63,7 @@ function _portsFromGeojson(mrgid, poePorts) {
       id: p.id,
       name: p.name,
       confidence: p.confidence,
+      url_bu: p.url_bu,
       source_urls: p.source_urls || [],
     });
   }
@@ -75,16 +85,15 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef, zoneFicheRef, 
   }[status];
   const flag = flagEmoji(z.iso2 || z.sov_iso2 || props?.iso2);
   const gen = z.generated_at ? String(z.generated_at).slice(0, 10) : null;
-  const td = fiche?.sources_td || z.sources_td || z.sources || [];
-  const bu = fiche?.sources_bu || z.sources_bu || [];
+  const td = _tdUrl(fiche, z);
+  const tdBoth = fiche?.url_td?.from_arm === "both";
   const ports = fiche?.ports || _portsFromGeojson(mrgid, poePortsRef?.current);
   const noSourceWarn = status === "ia_sans_source"
     ? `<div style="margin-top:6px;padding:4px 6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.35);color:#fecaca;font-size:10px;line-height:1.4;border-radius:2px;">⚠️ ${escH(t("poeNoSourceWarning"))}</div>`
     : "";
   const errHtml = z.last_error
     ? `<div style="margin-top:6px;font-size:10px;color:#fca5a5;">${escH(t("poeLastError"))}: ${escH(z.last_error)}</div>` : "";
-  const sourcesHtml = `${_sourcesBlock(t("poeSourcesTd"), td, "poe-fiche-popup-td")}${_sourcesBlock(t("poeSourcesBu"), bu, "poe-fiche-popup-bu")}`;
-  const body = `${noSourceWarn}${errHtml}${_portsBlock(t, ports)}${sourcesHtml}`;
+  const body = `${noSourceWarn}${errHtml}${_tdBlock(t, td, tdBoth)}${_portsBlock(t, ports)}`;
   const polType = z.pol_type || props?.pol_type;
   const unclosHtml = z.unclos && z.unclos.code
     ? `<div data-testid="zone-unclos-block" style="margin-top:6px;padding:5px 7px;background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.35);border-radius:2px;">
