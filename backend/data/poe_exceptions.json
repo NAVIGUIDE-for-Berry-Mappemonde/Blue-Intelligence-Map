@@ -44,6 +44,9 @@
       "belastingdienst.nl",
       "rijksoverheid.nl"
     ],
+    "SX": [
+      "sintmaartengov.org"
+    ],
     "DE": [
       "bund.de",
       "zoll.de"
@@ -345,6 +348,9 @@
     ],
     "FR": [
       "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
+    ],
+    "SX": [
+      "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx"
     ]
   },
   "search_hints": {
@@ -366,6 +372,9 @@
     ],
     "FR": [
       "liste ports de plaisance éligibles PPF douane France"
+    ],
+    "SX": [
+      "Sint Maarten customs department official"
     ]
   }
 }

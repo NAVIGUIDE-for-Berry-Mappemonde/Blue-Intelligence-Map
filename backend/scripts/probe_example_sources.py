@@ -1,7 +1,7 @@
-"""Run ciblé : FR hexagone, Mexique, Venezuela, Niue, NZ, Nouvelle-Calédonie.
+"""Run ciblé : FR hexagone, MX, VE, NU, NZ, NC, Sint Maarten.
 
 1) collecte les graines / pages d'entrée + pièces jointes (preuve découverte)
-2) option --run : upsert les 6 ZEE depuis eez_world_map.geojson puis
+2) option --run : upsert les ZEE depuis eez_world_map.geojson puis
    execute_run isolé (poe_run_* uniquement).
 """
 from __future__ import annotations
@@ -43,6 +43,10 @@ EXAMPLE_ZONES = {
         "iso2": "NC", "sov_iso2": "FR", "name": "New Caledonia", "sovereign": "France",
         "pol_type": "200NM", "mrgid": 8312,
     },
+    21803: {
+        "iso2": "SX", "sov_iso2": "NL", "name": "Sint-Maarten", "sovereign": "Netherlands",
+        "pol_type": "200NM", "mrgid": 21803,
+    },
 }
 PINNED_NEEDLES = {
     5677: ["vous-naviguez-en-provenance"],
@@ -52,14 +56,16 @@ PINNED_NEEDLES = {
     8455: ["places-of-first-arrival-seaports",
            "sailing-to-new-zealand-this-small-craft-season"],
     8312: ["formalites-douanieres-pour-les-navires-de-plaisance"],
+    21803: ["sintmaartengov.org", "Pages/Customs.aspx"],
 }
 
 FR_PDF_NEEDLES = (
     "Liste-ports-de-plaisance-eligibles.pdf",
     "carte-PPF-maritimes.pdf",
 )
-TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312)
-SOV_ISO2 = {5677: "FR", 8429: "MX", 8433: "VE", 8447: "NZ", 8455: "NZ", 8312: "FR"}
+TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803)
+SOV_ISO2 = {5677: "FR", 8429: "MX", 8433: "VE", 8447: "NZ", 8455: "NZ",
+            8312: "FR", 21803: "NL"}
 
 
 def _blob(rows: list[dict]) -> str:

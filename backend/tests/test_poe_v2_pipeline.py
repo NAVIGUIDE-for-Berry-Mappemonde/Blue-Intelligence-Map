@@ -595,6 +595,7 @@ class TestStructuredDiscovery:
             "NZ": "places-of-first-arrival-seaports",
             "NC": "formalites-douanieres-pour-les-navires-de-plaisance",
             "VE": "inventario-de-puertos",
+            "SX": "Pages/Customs.aspx",
         }
         for iso, needle in cases.items():
             urls = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": iso}))
@@ -634,8 +635,11 @@ class TestStructuredDiscovery:
         mx = poe.list_url_bonus(
             "https://www.gob.mx/puertosymarinamercante/acciones-y-programas/"
             "puertos-y-terminales")
+        sx = poe.list_url_bonus(
+            "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx")
         assert mpi > 0.3 and craft > 0.2 and nc > 0.2 and mx > 0.2
         assert mpi > home_ve and mx > home_ve
+        assert sx > home_ve
 
     def test_numbered_law_is_not_a_port_catalog(self):
         from app.core.extract import looks_like_port_catalog

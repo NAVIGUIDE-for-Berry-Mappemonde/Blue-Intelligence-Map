@@ -33,6 +33,10 @@ EXAMPLE_ZONES = {
         "iso2": "NC", "sov_iso2": "FR", "name": "New Caledonia", "sovereign": "France",
         "pol_type": "200NM", "mrgid": 8312,
     },
+    21803: {
+        "iso2": "SX", "sov_iso2": "NL", "name": "Sint-Maarten", "sovereign": "Netherlands",
+        "pol_type": "200NM", "mrgid": 21803,
+    },
 }
 
 PINNED_NEEDLES = {
@@ -42,15 +46,17 @@ PINNED_NEEDLES = {
     8447: ["niue_laws_vol4_part1"],
     8455: ["places-of-first-arrival-seaports", "sailing-to-new-zealand-this-small-craft-season"],
     8312: ["formalites-douanieres-pour-les-navires-de-plaisance"],
+    21803: ["sintmaartengov.org", "Pages/Customs.aspx"],
 }
 
 FOREIGN_NEEDLES = {
-    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc"],
-    8429: ["vous-naviguez", "mpi.govt.nz"],
-    8433: ["vous-naviguez", "mpi.govt.nz"],
+    5677: ["mpi.govt.nz", "inea.gob.ve", "gouv.nc", "sintmaartengov"],
+    8429: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov"],
+    8433: ["vous-naviguez", "mpi.govt.nz", "sintmaartengov"],
     8447: ["mpi.govt.nz", "customs.govt.nz", "vous-naviguez"],
-    8455: ["niue_laws", "vous-naviguez", "gouv.nc"],
-    8312: ["vous-naviguez-en-provenance", "mpi.govt.nz"],
+    8455: ["niue_laws", "vous-naviguez", "gouv.nc", "sintmaartengov"],
+    8312: ["vous-naviguez-en-provenance", "mpi.govt.nz", "sintmaartengov"],
+    21803: ["vous-naviguez", "mpi.govt.nz", "inea.gob.ve", "gouv.nc"],
 }
 
 
@@ -102,11 +108,19 @@ def test_example_hints_stay_on_the_polygon():
     nc = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8312]))
     fr = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5677]))
     ve = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8433]))
+    sx = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[21803]))
     assert "places of first arrival" in nz and "Niue" not in nz
     assert "Customs Act" in nu and "places of first arrival" not in nu
     assert "plaisance" in nc and "PPF" not in nc
     assert "PPF" in fr and "Mayotte" not in fr and "Calédonie" not in fr
     assert "INEA" in ve
+    assert "Sint Maarten customs" in sx
+    assert "havens van binnenkomst" not in sx
+    assert poe.zone_search_lang(EXAMPLE_ZONES[21803]) is None
+    assert "sintmaartengov.org" in poe.build_whitelist("SX", "NL")
+    assert "government.nl" not in poe.build_whitelist("SX", "NL")
+    qsx = poe.localized_query(EXAMPLE_ZONES[21803]) or ""
+    assert "customs department" in qsx and "binnenkomst" not in qsx
 
 
 def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):

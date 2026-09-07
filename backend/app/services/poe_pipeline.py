@@ -159,7 +159,7 @@ _LIST_PATH_TOKENS = (
     "points-d-entree", "points-of-entry", "eligibles", "ppf",
     "first-arrival", "places-of-first", "seaports", "small-craft",
     "sailing-to", "terminales", "formalit", "niue_laws", "habilitados",
-    "marina-mercante", "vous-naviguez", "inventario",
+    "marina-mercante", "vous-naviguez", "inventario", "pages/customs",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -172,8 +172,21 @@ _HOME_PATH_RE = re.compile(
 )
 
 
+# Langue des pages d'État de CE polygone, pas du souverain
+# (Sint Maarten : site EN, souverain NL).
+_POLYGON_SEARCH_LANG = {
+    "SX": None,
+    "AW": None,
+    "CW": None,
+    "BQ": None,
+}
+
+
 def zone_search_lang(zone: dict) -> str | None:
     """Langue SERP : ISO2 du polygone s'il est dans la matrice, sinon le souverain."""
+    iso = (zone.get("iso2") or "").upper()
+    if iso in _POLYGON_SEARCH_LANG:
+        return _POLYGON_SEARCH_LANG[iso]
     for cc in (zone.get("iso2"), zone.get("sov_iso2")):
         lang = LANG_BY_ISO2.get((cc or "").upper())
         if lang:
@@ -199,6 +212,8 @@ def localized_query(zone: dict) -> str | None:
             "liste ports de plaisance éligibles PPF "
             f"points de passage frontaliers douane {place}"
         )
+    if polygon_iso2(zone) == "SX":
+        return f"Sint Maarten customs department official ports of entry {place}"
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
     return tpl.format(name=place) if tpl else None
@@ -369,6 +384,11 @@ def default_search_hints(zone: dict) -> list[str]:
     if iso == "NU":
         return [
             f"Niue Customs Act Port of Entry Order official legislation",
+            generic,
+        ]
+    if iso == "SX":
+        return [
+            f"Sint Maarten customs department official {poly}",
             generic,
         ]
     lang = zone_search_lang(zone)
@@ -1262,6 +1282,8 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
         return f"site:{domain} filetype:pdf (plaisance OR formalités douanières)"
     if iso == "NU":
         return f"site:{domain} filetype:pdf (customs act OR port of entry OR niue laws)"
+    if iso == "SX":
+        return f"site:{domain} filetype:pdf (customs OR ports of entry OR pleasure craft)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
@@ -1285,6 +1307,8 @@ def site_list_page_query(domain: str, zone: dict) -> str:
         return f"site:{domain} (puertos y terminales habilitados)"
     if iso == "NU":
         return f"site:{domain} (customs act port of entry)"
+    if iso == "SX":
+        return f"site:{domain} (customs department OR ports of entry)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} (ports d'entrée OR liste douane)"
