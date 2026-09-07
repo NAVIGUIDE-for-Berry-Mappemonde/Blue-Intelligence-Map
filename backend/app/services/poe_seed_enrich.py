@@ -40,15 +40,53 @@ from app.services.poe_seeds import (
 )
 
 JUDGE_SYSTEM = (
-    "Tu es un juge Ports d'Entrée. Réponds uniquement en JSON strict : "
-    '{"is_poe": true, "confidence": 0, "reason": "", "official_name": null} '
+    "Tu es un juge Ports d'Entrée pour la plaisance. Réponds uniquement en JSON strict : "
+    '{"is_poe": true, "confidence": 0, "reason": "", "official_name": null, '
+    '"kind": "pleasure"} '
+    'kind = pleasure | mixed | cargo | other | unknown. '
     "is_poe=true seulement si une source officielle désigne CE lieu comme "
-    "port d'entrée / clearance / puerto habilitado / designated port. "
-    "false si les sources parlent d'autre chose (marina, ville, autre pays). "
-    "null si les extraits ne permettent pas de décider. "
+    "port d'entrée / clearance / puerto habilitado / designated port "
+    "POUR la plaisance (yacht, recreational, pleasure craft) OU mixte "
+    "(commerce ET plaisance explicites). "
+    "false si cargo-only, terminal conteneur, industriel, aéroport, ville, autre pays. "
+    "Une marina n'est PAS false automatique : si clearance officielle à CETTE marina, "
+    "is_poe=true et kind=pleasure. "
+    "null si extraits insuffisants, ou port désigné sans trafic lisible "
+    "(plaisance vs cargo). "
     "Juge uniquement le lieu nommé. Ne liste aucun autre port. "
     "Ignore listing communautaire et forums."
 )
+
+_KIND_CANON = {
+    "pleasure": "pleasure",
+    "yacht": "pleasure",
+    "yachts": "pleasure",
+    "recreational": "pleasure",
+    "pleasure_craft": "pleasure",
+    "pleasurecraft": "pleasure",
+    "plaisance": "pleasure",
+    "mixed": "mixed",
+    "mixte": "mixed",
+    "both": "mixed",
+    "cargo": "cargo",
+    "commercial": "cargo",
+    "freight": "cargo",
+    "industrial": "cargo",
+    "commerce": "cargo",
+    "container": "cargo",
+    "cargo_only": "cargo",
+    "other": "other",
+    "unknown": "unknown",
+}
+
+
+def normalize_judge_kind(raw) -> str:
+    """Canonise kind LLM → pleasure | mixed | cargo | other | unknown."""
+    if raw is None:
+        return "unknown"
+    key = str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    return _KIND_CANON.get(key, "unknown")
+
 
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
 VERIFY_ORDER = ("name_only", "unverified", "probable")
@@ -59,12 +97,16 @@ WHITELIST_DOMAIN_CAP = 15
 def parse_judge(data: dict | None) -> dict:
     data = data if isinstance(data, dict) else {}
     flag = data.get("is_poe")
+    kind = normalize_judge_kind(data.get("kind"))
     if flag is True:
         status = "accepted"
     elif flag is False:
         status = "rejected"
     else:
         status = "inconclusive"
+    # Filet déterministe : cargo-only n'est jamais un PoE plaisance.
+    if kind == "cargo" and status == "accepted":
+        status = "rejected"
     try:
         conf = int(data.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -74,6 +116,7 @@ def parse_judge(data: dict | None) -> dict:
         "judge_confidence": max(0, min(100, conf)),
         "judge_reason": str(data.get("reason") or "")[:240],
         "official_name": data.get("official_name"),
+        "judge_kind": kind,
     }
 
 
@@ -479,7 +522,7 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
             return None
         try:
             parsed = await claude.complete_json_claude(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=250, log=log)
+                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=300, log=log)
             out = parse_judge(parsed)
             out["judge_engine"] = engine
             return out
@@ -495,7 +538,7 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
     if result is None or result.get("judge_status") == "inconclusive":
         try:
             data = await ask_json(prompt, system=JUDGE_SYSTEM, settings=settings,
-                                  max_tokens=250, log=log)
+                                  max_tokens=300, log=log)
             out = parse_judge(data)
             out["judge_engine"] = "openrouter"
             if result is None or out.get("judge_status") != "inconclusive":

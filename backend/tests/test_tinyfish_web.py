@@ -202,3 +202,17 @@ class TestTfPoeAgent:
         assert out["is_poe"] is True
         assert out["_agent_profile"] == "stealth"
         assert tf.POE_JUDGE_SCHEMA["required"] == ["is_poe", "confidence", "reason"]
+        assert "kind" in tf.POE_JUDGE_SCHEMA["properties"]
+        assert "kind" not in tf.POE_JUDGE_SCHEMA["required"]
+
+    def test_goal_and_purpose_pleasure_or_mixed_not_cargo(self):
+        goal = tf.poe_agent_goal("Nouméa", "New Caledonia", "NC").lower()
+        assert "pleasure" in goal
+        assert "mixed" in goal
+        assert "cargo-only" in goal
+        assert "marina is not automatically false" in goal
+        assert "foreign vessels" not in goal
+        purpose = tf.POE_PURPOSE.lower()
+        assert "pleasure" in purpose
+        assert "mixed" in purpose
+        assert "cargo-only" in purpose

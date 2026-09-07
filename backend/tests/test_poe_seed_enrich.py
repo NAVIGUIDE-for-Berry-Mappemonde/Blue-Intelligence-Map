@@ -32,6 +32,15 @@ class TestJudgePrompt:
         assert "extrait officiel" in prompt
         assert "Uturoa" not in prompt
 
+    def test_system_requires_pleasure_or_mixed_not_cargo(self):
+        sys = enr.JUDGE_SYSTEM.lower()
+        assert "plaisance" in sys
+        assert "mixte" in sys
+        assert "cargo" in sys
+        assert "kind" in sys
+        assert "marina n'est pas false automatique" in sys
+        assert "false si les sources parlent d'autre chose (marina" not in sys
+
 
 class TestSearchFromSeed:
     def test_query_is_the_port_name(self):
@@ -68,6 +77,32 @@ class TestParseAndVerdict:
         assert enr.parse_judge({"is_poe": False})["judge_status"] == "rejected"
         assert enr.parse_judge({"is_poe": None})["judge_status"] == "inconclusive"
         assert enr.parse_judge({})["judge_status"] == "inconclusive"
+        assert enr.parse_judge({"is_poe": True})["judge_kind"] == "unknown"
+
+    def test_parse_judge_pleasure_or_mixed_accepted(self):
+        pleasure = enr.parse_judge({
+            "is_poe": True, "confidence": 90, "kind": "pleasure"})
+        assert pleasure["judge_status"] == "accepted"
+        assert pleasure["judge_kind"] == "pleasure"
+        mixed = enr.parse_judge({
+            "is_poe": True, "confidence": 80, "kind": "mixed"})
+        assert mixed["judge_status"] == "accepted"
+        assert mixed["judge_kind"] == "mixed"
+        marina = enr.parse_judge({
+            "is_poe": True, "kind": "pleasure",
+            "reason": "clearance officielle à cette marina"})
+        assert marina["judge_status"] == "accepted"
+
+    def test_parse_judge_cargo_forced_rejected(self):
+        out = enr.parse_judge({
+            "is_poe": True, "confidence": 95, "kind": "cargo",
+            "reason": "designated commercial port"})
+        assert out["judge_status"] == "rejected"
+        assert out["judge_kind"] == "cargo"
+        for alias in ("commercial", "freight", "industrial"):
+            forced = enr.parse_judge({"is_poe": True, "kind": alias})
+            assert forced["judge_status"] == "rejected"
+            assert forced["judge_kind"] == "cargo"
 
     def test_apply_keeps_confirmed(self):
         seed = {"verify_verdict": "confirmed", "seed_sources": ["listing", "v1"],
@@ -83,6 +118,13 @@ class TestParseAndVerdict:
         seed = {"verify_verdict": "unverified", "seed_sources": ["v1"],
                 "has_coords": True}
         assert enr.apply_judge_verdict(seed, {"judge_status": "accepted"}) == "probable"
+
+    def test_listing_cargo_rejected_stays_unverified(self):
+        seed = {"verify_verdict": "unverified", "seed_sources": ["listing"],
+                "has_coords": True}
+        judge = enr.parse_judge({"is_poe": True, "kind": "cargo"})
+        assert judge["judge_status"] == "rejected"
+        assert enr.apply_judge_verdict(seed, judge) == "unverified"
 
 
 class TestJudgeLlmEscalate:
@@ -112,8 +154,26 @@ class TestJudgeLlmEscalate:
         assert out["judge_engine"] == "claude-sonnet"
         assert out["judge_status"] == "accepted"
 
+    def test_cargo_kind_rejected_without_listing_escalation(self, monkeypatch):
+        async def fake_complete(system, user, settings=None, *, model=None, **k):
+            return {"is_poe": True, "confidence": 90, "kind": "cargo",
+                    "reason": "terminal conteneur"}
 
-class TestEscalate:
+        async def boom(*a, **k):
+            raise AssertionError("OpenRouter should not run after cargo reject")
+
+        from app.core import claude
+        monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
+        monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
+        monkeypatch.setattr(claude, "complete_json_claude", fake_complete)
+        monkeypatch.setattr(enr, "ask_json", boom)
+
+        out = _run(enr._judge_llm(
+            {"name": "Port Commerce", "seed_sources": ["v1"]},
+            {"name": "XX"}, "terminal conteneur", {}, lambda m: None))
+        assert out["judge_status"] == "rejected"
+        assert out["judge_kind"] == "cargo"
+        assert out["judge_engine"] == "claude-haiku"
     def test_inconclusive_escalates(self):
         assert enr.should_escalate_sonnet({"judge_status": "inconclusive"}, {}) is True
 
