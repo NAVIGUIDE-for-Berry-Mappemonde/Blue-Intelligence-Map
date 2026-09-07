@@ -160,11 +160,13 @@ async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
     except Exception:
         ml = None
     if ml is not None:
-        if ml["score"] >= 0.85:
+        accept_at = float(settings.get("gatekeeper_accept", 0.85))
+        reject_at = float(settings.get("gatekeeper_reject", 0.12))
+        if ml["score"] >= accept_at:
             return {"accepted": True, "score": round(ml["score"], 3),
                     "reason": "ML gatekeeper: high-confidence marine (local model, no LLM call)",
                     "engine": "ML Gatekeeper (local)"}
-        if ml["score"] <= 0.12:
+        if ml["score"] <= reject_at:
             return {"accepted": False, "score": round(ml["score"], 3),
                     "reason": "ML gatekeeper: high-confidence non-marine (local model, no LLM call)",
                     "engine": "ML Gatekeeper (local)"}

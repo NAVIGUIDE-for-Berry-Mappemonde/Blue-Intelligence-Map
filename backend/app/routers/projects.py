@@ -58,11 +58,9 @@ async def get_funders():
     return {"total": len(docs), "funders": [{"name": k, "count": v} for k, v in sorted(counts.items())]}
 
 
-@router.delete("/projects")
+@router.delete("/projects", status_code=410)
 async def clear_projects():
-    res = await db.projects.delete_many({})
-    swarm.log(f"All projects cleared ({res.deleted_count})", "warn")
-    return {"deleted": res.deleted_count}
+    raise HTTPException(410, "purging projects is disabled")
 
 
 @router.get("/export/geojson")

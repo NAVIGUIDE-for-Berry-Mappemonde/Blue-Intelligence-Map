@@ -13,7 +13,8 @@ from app.core.llm import extract_project, gatekeeper_check, has_llm, llm_geocode
 from app.static_data.categories import normalize_category
 from app.core.dedup import is_duplicate
 from app.core.extract import extract_cascade
-from app.core.geo import geocode, haversine_km, is_ocean, ocean_fallback_coords, snap_to_ocean
+from app.core.geo import geocode
+from app.core.project_geo import site_publishable
 from app.core.rag import select_context
 from app.static_data.seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
@@ -139,8 +140,7 @@ class Swarm:
         self.mode = mode
         self.force_rescan = force_rescan
         if clear_db:
-            await self.db.projects.delete_many({})
-            self.log("Database cleared before deployment", "warn")
+            raise ValueError("clear_db is disabled")
         self.running = True
         self.logs.clear()
         self.no_new_streak = 0
@@ -261,7 +261,7 @@ class Swarm:
                 crawl_err = f"{type(e).__name__}: {str(e)[:80]}"
                 self.agent_log(aid, f"N1 crawler échec: {crawl_err}")
             # --- N3 : TinyFish uniquement si le crawler ne trouve rien ---
-            if not urls and key:
+            if not urls and key and self.settings.get("allow_tinyfish_agent", True):
                 used_engine = "TinyFish"
                 self.set_agent(aid, engine="TinyFish N3")
                 self.agent_log(aid, "N1 vide → TinyFish (N3, dernier recours payant)")
@@ -491,17 +491,17 @@ class Swarm:
                     if g:
                         lat, lon = g
                         geo_src = "geocoded:title"
-                if lat is None:
-                    lat, lon = ocean_fallback_coords(proj["title"])
-                    geo_src = "ocean-region-fallback"
 
+            ok, kind = site_publishable(lat, lon, self.settings)
+            if not ok:
+                self.set_agent(aid, status="FAILED")
+                self.agent_log(aid, f"UNLOCATED ({kind}): no boat-accessible site — not published")
+                await self.telemetry(url, proj["engine"], "UNLOCATED", (time.time() - t0) * 1000, 0, kind)
+                await self.add_failed(url, source, funder, f"unlocated:{kind}", "unlocated")
+                self._bump_saturation(False)
+                return
             snapped = False
-            if not is_ocean(lat, lon):
-                max_km = float(self.settings.get("max_coast_km", 50))
-                nlat, nlon, snapped = snap_to_ocean(lat, lon, max_km=max(500.0, max_km * 4))
-                if snapped:
-                    self.agent_log(aid, f"Point-in-Ocean failed → snapped to coast ({haversine_km(lat, lon, nlat, nlon):.0f} km)")
-                    lat, lon = nlat, nlon
+            self.agent_log(aid, f"site publishable ({kind})")
 
             merged = await self._dedup_merge(proj, url, funder, lat, lon)
             if merged:
