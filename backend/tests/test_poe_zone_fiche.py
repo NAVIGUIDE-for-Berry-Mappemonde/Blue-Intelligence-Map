@@ -213,7 +213,9 @@ def test_frontend_fiche_has_no_generate_button():
     popup = (root / "components" / "map" / "zonePopup.js").read_text(encoding="utf-8")
     fiche = (root / "components" / "ZoneFiche.js").read_text(encoding="utf-8")
     panel = (root / "components" / "FormalitiesPanel.js").read_text(encoding="utf-8")
-    for src in (popup, fiche, panel):
+    review = (root / "components" / "ReviewView.js").read_text(encoding="utf-8")
+    header = (root / "components" / "Header.js").read_text(encoding="utf-8")
+    for src in (popup, fiche, panel, review, header):
         assert "generate-btn" not in src
         assert "poe-generate" not in src
         assert "/generate" not in src
@@ -227,6 +229,10 @@ def test_frontend_fiche_has_no_generate_button():
     assert "poe-fiche-popup-port-bu" in popup
     assert "poe-fiche-popup-bu" not in popup
     assert "zoneDisplayName" in fiche
+    assert "view-toggle-review" in header
+    assert "review-comment" in review
+    assert "review-kind-${k.id}" in review
+    assert "review-kind-switch" in review
     label_js = (root / "components" / "map" / "zoneLabel.js").read_text(encoding="utf-8")
     assert "disambiguated" in label_js
     assert "qualifier_key" in label_js

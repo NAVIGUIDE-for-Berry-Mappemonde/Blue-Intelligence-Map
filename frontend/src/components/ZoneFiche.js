@@ -23,7 +23,7 @@ function buUrlOf(port) {
  * une URL TD (liste officielle) + chaque PoE avec une URL BU.
  * Pas de bouton Générer.
  */
-export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
+export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "sidebar" }) {
   if (loading) {
     return (
       <section className="p-3 border-b border-line" data-testid="poe-zone-fiche-loading">
@@ -35,6 +35,9 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
   const ports = fiche.ports || [];
   const td = tdUrlOf(fiche);
   const tdBoth = fiche?.url_td?.from_arm === "both" || (fiche?.sources_td || [])[0]?.from_arm === "both";
+  const portsMax = variant === "page" ? "max-h-[45vh]" : "max-h-56";
+  const unclos = fiche.unclos && typeof fiche.unclos === "object" ? fiche.unclos : null;
+  const unclosKey = unclos?.code ? `poeUnclos_${unclos.code}` : "";
   return (
     <section className="p-3 border-b border-line bg-raised/30 space-y-3" data-testid="poe-zone-fiche">
       <div className="flex items-baseline justify-between gap-2">
@@ -95,7 +98,7 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
         {ports.length === 0 ? (
           <p className="text-[11px] text-slate-500">{t("poeFicheNoPorts")}</p>
         ) : (
-          <div className="divide-y divide-line/60 border border-line/60 rounded-sm max-h-56 overflow-y-auto">
+          <div className={`divide-y divide-line/60 border border-line/60 rounded-sm ${portsMax} overflow-y-auto`}>
             {ports.map((p) => {
               const href = buUrlOf(p);
               const canFly = p.lat != null && p.lon != null && onFlyToPort;
@@ -136,6 +139,17 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort }) {
           </div>
         )}
       </div>
+
+      {unclos?.code ? (
+        <div data-testid="poe-fiche-unclos" className="border border-line/60 rounded-sm px-2.5 py-2">
+          <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1">
+            {t("poeUnclosTitle")}
+          </p>
+          <p className="text-[11px] text-slate-300 leading-relaxed">
+            {t(unclosKey) !== unclosKey ? t(unclosKey) : (unclos.label || unclos.code)}
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }

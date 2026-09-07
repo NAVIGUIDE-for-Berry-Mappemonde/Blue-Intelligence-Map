@@ -110,7 +110,7 @@ def _best_one(recs: list[dict]) -> dict | None:
     return capped[0] if capped else None
 
 
-def _bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
+def bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
     """Meilleure URL d'État trouvée en cherchant CE port (juge / sources_bu)."""
     by: dict[str, dict] = {}
     for doc in docs or []:
@@ -176,7 +176,7 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
         td_raw.append(rz.get("sources"))
         td_raw.append(rz.get("sources_td"))
     td_map = _collect(td_raw, "td")
-    bu_by_name = _bu_by_port_name(list(seeds or []) + list(run_ports or []))
+    bu_by_name = bu_by_port_name(list(seeds or []) + list(run_ports or []))
 
     rows = []
     bu_seen: dict[str, dict] = {}
@@ -261,15 +261,57 @@ async def _label_zone(db, zone: dict) -> dict:
     return zone
 
 
-async def build_zone_fiche(db, mrgid: int) -> dict | None:
-    """Charge Atlas en lecture seule et assemble la fiche."""
-    zone = await db.eez_zones.find_one({"mrgid": int(mrgid)}, {"geometry": 0})
-    if not zone:
-        return None
+PUBLISHED_RUN = "published"
+
+
+def _is_published(run_id: str | None) -> bool:
+    return not run_id or run_id == PUBLISHED_RUN
+
+
+async def _find_run_mrgid(coll, run_id: str, mrgid: int) -> list[dict]:
+    if coll is None:
+        return []
+    try:
+        return await coll.find({"run_id": run_id, "mrgid": int(mrgid)}).to_list(8000)
+    except Exception:
+        return []
+
+
+async def build_zone_fiche(db, mrgid: int, run_id: str | None = None) -> dict | None:
+    """Charge Atlas en lecture seule et assemble la fiche.
+
+    ``run_id=None`` / ``published`` : ports v1 + toutes les URLs de runs comme
+    sources auxiliaires. Un ``run_id`` précis : ports et sources de CE run.
+    """
+    mid = int(mrgid)
+    zone = await db.eez_zones.find_one({"mrgid": mid}, {"geometry": 0})
+    seeds = await _find_mrgid(getattr(db, "poe_seed_ports", None), mid)
+    if _is_published(run_id):
+        if not zone:
+            return None
+        ports = await db.poe_ports.find({"mrgid": mid}).to_list(2000)
+        # Graines pour les URLs BU ; zones de run seulement pour l'URL TD.
+        # On ne charge pas poe_run_ports (tous les mondiaux) — trop lourd.
+        run_ports = []
+        run_zones = await _find_mrgid(getattr(db, "poe_run_zones", None), mid)
+    else:
+        ports = await _find_run_mrgid(getattr(db, "poe_run_ports", None), run_id, mid)
+        run_zones = await _find_run_mrgid(getattr(db, "poe_run_zones", None), run_id, mid)
+        run_ports = ports
+        if not zone:
+            zone = run_zones[0] if run_zones else None
+        elif run_zones:
+            rz = run_zones[0]
+            zone = {
+                **zone,
+                "sources": rz.get("sources") if rz.get("sources") is not None else zone.get("sources"),
+                "sources_td": rz.get("sources_td") if rz.get("sources_td") is not None else zone.get("sources_td"),
+                "confidence_avg": rz.get("confidence_avg", zone.get("confidence_avg")),
+                "status": rz.get("status") or zone.get("status"),
+                "poe_count": rz.get("poe_count", zone.get("poe_count")),
+            }
+        if not zone:
+            return None
     zone = await _label_zone(db, zone)
-    ports = await db.poe_ports.find({"mrgid": int(mrgid)}).to_list(2000)
-    seeds = await _find_mrgid(getattr(db, "poe_seed_ports", None), int(mrgid))
-    run_ports = await _find_mrgid(getattr(db, "poe_run_ports", None), int(mrgid))
-    run_zones = await _find_mrgid(getattr(db, "poe_run_zones", None), int(mrgid))
     return assemble_zone_fiche(
         zone, ports, seeds=seeds, run_ports=run_ports, run_zones=run_zones)

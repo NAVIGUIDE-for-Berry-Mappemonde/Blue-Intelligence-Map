@@ -1,4 +1,4 @@
-import { Anchor, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
@@ -81,6 +81,13 @@ export default function Header({
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "audit" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
           >
             <Radar size={13} /> {t("audit")}
+          </button>
+          <button
+            data-testid="view-toggle-review"
+            onClick={() => setView("review")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "review" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+          >
+            <ClipboardCheck size={13} /> {t("review")}
           </button>
         </div>
         <div className="flex border border-line rounded-sm overflow-hidden font-mono text-xs">
