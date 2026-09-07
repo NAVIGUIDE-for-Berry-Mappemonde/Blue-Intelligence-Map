@@ -32,6 +32,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   const [index, setIndex] = useState(0);
   const [fiche, setFiche] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(true);
   const [comment, setComment] = useState("");
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -99,6 +100,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
 
   useEffect(() => {
     let cancelled = false;
+    setQueueLoading(true);
     (async () => {
       try {
         const { data } = await api.get("/review/queue", {
@@ -116,6 +118,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           setQueue([]);
           setTotal(0);
         }
+      } finally {
+        if (!cancelled) setQueueLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -291,7 +295,9 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         </div>
         <div className="flex-1 overflow-y-auto" data-testid="review-queue-list">
           {queue.length === 0 && (
-            <p className="p-4 text-xs text-slate-500">{t("reviewEmpty")}</p>
+            <p className="p-4 text-xs text-slate-500">
+              {queueLoading ? t("reviewQueueLoading") : t("reviewEmpty")}
+            </p>
           )}
           {queue.map((it, i) => (
             <button
@@ -370,7 +376,9 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
           {queue.length === 0 && !loading ? (
-            <p className="p-6 text-sm text-slate-500">{t("reviewEmpty")}</p>
+            <p className="p-6 text-sm text-slate-500">
+              {queueLoading ? t("reviewQueueLoading") : t("reviewEmpty")}
+            </p>
           ) : renderFiche()}
         </div>
         <div className="border-t border-line p-4 bg-surface space-y-2" data-testid="review-comment-box">

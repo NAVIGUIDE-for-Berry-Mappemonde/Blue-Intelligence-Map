@@ -50,6 +50,7 @@ export default function App() {
   }, []);
   // Refactor 2026-06 — Formalities mode = world [EEZ -> Ports of Entry]
   const [poeZones, setPoeZones] = useState({ count: 0, summary: null, items: [] });
+  const [poeZonesLoading, setPoeZonesLoading] = useState(true);
   const [poePorts, setPoePorts] = useState({ type: "FeatureCollection", features: [] });
   const [selectedZone, setSelectedZone] = useState(null);   // mrgid
   const [flyToZone, setFlyToZone] = useState(null);         // {mrgid, bbox, ts}
@@ -129,6 +130,7 @@ export default function App() {
       const { data } = await api.get("/poe/zones", { params: { visible: 1 } });
       setPoeZones(data);
     } catch (e) { /* transient */ }
+    finally { setPoeZonesLoading(false); }
   }, []);
 
   const fetchPoePorts = useCallback(async () => {
@@ -348,6 +350,7 @@ export default function App() {
           <FormalitiesPanel
             t={t}
             zones={poeZones}
+            zonesLoading={poeZonesLoading}
             selectedZone={selectedZone}
             onSelectZone={handleSelectZone}
             fiche={zoneFiche}

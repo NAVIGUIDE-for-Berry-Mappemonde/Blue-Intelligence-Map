@@ -10,11 +10,11 @@ Règle de visibilité carte :
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import datetime, timezone
 
-from app.core.dedup import normalize_name
 from app.core.geo import haversine_km, ocean_fallback_coords
 
 GOLD_KINDS = ("project", "eez", "marina")
@@ -23,7 +23,6 @@ FALLBACK_SOURCES = frozenset({
     "fallback", "ocean_region_fallback",
 })
 OSM_SOURCES = frozenset({"openstreetmap", "osm"})
-JACCARD_MIN = 0.7
 FALLBACK_KM = 50.0
 _TEST_LABEL = re.compile(
     r"^(canary|smoke|seed-enrich|test|debug)(?:[-_].*)?$",
@@ -32,6 +31,7 @@ _TEST_LABEL = re.compile(
 
 _eez_pre_gold_cache: tuple[float, frozenset[int]] | None = None
 _EEZ_CACHE_TTL_S = 300.0
+_eez_locks: dict[int, asyncio.Lock] = {}
 
 
 def now_iso() -> str:
@@ -99,39 +99,6 @@ def gold_pressed(is_pre_gold: bool, override: dict | None) -> bool:
     return bool(is_pre_gold)
 
 
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-def _norm_url(url: str) -> str:
-    return (url or "").strip().split("#", 1)[0].rstrip("/").lower()
-
-
-def _td_url(zone: dict | None) -> str:
-    if not zone:
-        return ""
-    for raw in zone.get("sources") or []:
-        if isinstance(raw, dict):
-            url = raw.get("url") or ""
-        else:
-            url = str(raw or "")
-        cleaned = _norm_url(url)
-        if cleaned.startswith("http"):
-            return cleaned
-    return ""
-
-
-def _port_names(ports: list[dict]) -> set[str]:
-    names: set[str] = set()
-    for p in ports or []:
-        key = normalize_name(p.get("name") or "")
-        if key:
-            names.add(key)
-    return names
-
-
 def reset_eez_pre_gold_cache() -> None:
     global _eez_pre_gold_cache
     _eez_pre_gold_cache = None
@@ -145,112 +112,81 @@ async def production_poe_runs(db) -> list[dict]:
     return [d for d in docs if not is_test_run(d)]
 
 
+def _eez_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _eez_locks.get(id(loop))
+    if lock is None:
+        lock = asyncio.Lock()
+        _eez_locks[id(loop)] = lock
+    return lock
+
+
+def _mrgid_set(docs: list[dict]) -> set[int]:
+    out: set[int] = set()
+    for d in docs or []:
+        try:
+            mid = int(d.get("mrgid") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mid:
+            out.add(mid)
+    return out
+
+
 async def pre_gold_eez_mrgids(db) -> set[int]:
-    """mrgid stables : v1 + runs prod, Jaccard ports ≥ 0.7 ou même URL TD."""
+    """mrgid vus dans au moins 2 origines (v1 + runs prod), hors tests.
+
+    Lecture des fiches zone seulement (~285 × N) — pas le scan des ports,
+    trop lent pour le timeout Axios du front.
+    """
     global _eez_pre_gold_cache
     now = time.time()
     if _eez_pre_gold_cache and now - _eez_pre_gold_cache[0] < _EEZ_CACHE_TTL_S:
         return set(_eez_pre_gold_cache[1])
 
-    origins: list[dict[int, tuple[set[str], str]]] = []
+    async with _eez_lock():
+        now = time.time()
+        if _eez_pre_gold_cache and now - _eez_pre_gold_cache[0] < _EEZ_CACHE_TTL_S:
+            return set(_eez_pre_gold_cache[1])
 
-    v1_ports: dict[int, list[dict]] = {}
-    try:
-        for p in await db.poe_ports.find({}, {"name": 1, "mrgid": 1}).to_list(20000):
-            try:
-                mid = int(p.get("mrgid") or 0)
-            except (TypeError, ValueError):
-                continue
-            if mid:
-                v1_ports.setdefault(mid, []).append(p)
-    except Exception:
-        v1_ports = {}
-    v1_td: dict[int, str] = {}
-    try:
-        for z in await db.eez_zones.find({}, {"mrgid": 1, "sources": 1}).to_list(500):
-            try:
-                mid = int(z.get("mrgid") or 0)
-            except (TypeError, ValueError):
-                continue
-            if mid:
-                v1_td[mid] = _td_url(z)
-    except Exception:
-        v1_td = {}
-    if v1_ports or v1_td:
-        mrgids = set(v1_ports) | set(v1_td)
-        origins.append({
-            mid: (_port_names(v1_ports.get(mid) or []), v1_td.get(mid) or "")
-            for mid in mrgids
-        })
-
-    prod_runs = await production_poe_runs(db)
-    rids = [_sid(r.get("_id")) for r in prod_runs if _sid(r.get("_id"))]
-    ports_by_run: dict[str, dict[int, list[dict]]] = {rid: {} for rid in rids}
-    td_by_run: dict[str, dict[int, str]] = {rid: {} for rid in rids}
-    if rids:
+        origins: list[set[int]] = []
         try:
-            for p in await db.poe_run_ports.find(
-                {"run_id": {"$in": rids}}, {"name": 1, "mrgid": 1, "run_id": 1},
-            ).to_list(80000):
-                rid = _sid(p.get("run_id"))
-                try:
-                    mid = int(p.get("mrgid") or 0)
-                except (TypeError, ValueError):
-                    continue
-                if rid in ports_by_run and mid:
-                    ports_by_run[rid].setdefault(mid, []).append(p)
+            v1 = await db.eez_zones.find({}, {"mrgid": 1}).to_list(500)
+            v1_ids = _mrgid_set(v1)
+            if v1_ids:
+                origins.append(v1_ids)
         except Exception:
-            ports_by_run = {rid: {} for rid in rids}
-        try:
-            for z in await db.poe_run_zones.find(
-                {"run_id": {"$in": rids}}, {"mrgid": 1, "sources": 1, "run_id": 1},
-            ).to_list(4000):
+            pass
+
+        prod_runs = await production_poe_runs(db)
+        rids = [_sid(r.get("_id")) for r in prod_runs if _sid(r.get("_id"))]
+        if rids:
+            try:
+                zones = await db.poe_run_zones.find(
+                    {"run_id": {"$in": rids}}, {"mrgid": 1, "run_id": 1},
+                ).to_list(4000)
+            except Exception:
+                zones = []
+            by_run: dict[str, set[int]] = {rid: set() for rid in rids}
+            for z in zones:
                 rid = _sid(z.get("run_id"))
-                try:
-                    mid = int(z.get("mrgid") or 0)
-                except (TypeError, ValueError):
-                    continue
-                if rid in td_by_run and mid:
-                    td_by_run[rid][mid] = _td_url(z)
-        except Exception:
-            td_by_run = {rid: {} for rid in rids}
-    for rid in rids:
-        by_ports = ports_by_run.get(rid) or {}
-        by_td = td_by_run.get(rid) or {}
-        mrgids = set(by_ports) | set(by_td)
-        if not mrgids:
-            continue
-        origins.append({
-            mid: (_port_names(by_ports.get(mid) or []), by_td.get(mid) or "")
-            for mid in mrgids
-        })
+                if rid in by_run:
+                    by_run[rid] |= _mrgid_set([z])
+            for rid in rids:
+                if by_run[rid]:
+                    origins.append(by_run[rid])
 
-    hits: set[int] = set()
-    all_ids: set[int] = set()
-    for origin in origins:
-        all_ids |= set(origin)
-    for mid in all_ids:
-        sigs = [origin[mid] for origin in origins if mid in origin]
-        if len(sigs) < 2:
-            continue
-        ok = False
-        for i in range(len(sigs)):
-            for j in range(i + 1, len(sigs)):
-                names_a, url_a = sigs[i]
-                names_b, url_b = sigs[j]
-                if url_a and url_b and url_a == url_b:
-                    ok = True
-                    break
-                if _jaccard(names_a, names_b) >= JACCARD_MIN:
-                    ok = True
-                    break
-            if ok:
-                break
-        if ok:
-            hits.add(mid)
+        hits: set[int] = set()
+        seen: dict[int, int] = {}
+        for origin in origins:
+            for mid in origin:
+                seen[mid] = seen.get(mid, 0) + 1
+        for mid, n in seen.items():
+            if n >= 2:
+                hits.add(mid)
 
-    _eez_pre_gold_cache = (now, frozenset(hits))
-    return hits
+        _eez_pre_gold_cache = (time.time(), frozenset(hits))
+        return hits
 
 
 async def overrides_map(db, kind: str) -> dict[str, dict]:
