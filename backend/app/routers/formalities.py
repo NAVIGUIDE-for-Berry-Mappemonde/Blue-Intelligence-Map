@@ -194,14 +194,23 @@ async def poe_referential_status():
 
 
 @router.get("/poe/zones")
-async def poe_zones():
+async def poe_zones(visible: bool = False):
     docs = await _db.eez_zones.find({}, {"geometry": 0}).to_list(500)
+    if visible:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(
+            _db, "eez", docs, lambda z: str(int(z.get("mrgid") or 0)))
     attach_zone_labels(docs)
     items = sorted((poe.zone_to_item(d) for d in docs), key=zone_sort_key)
     by_status: dict[str, int] = {}
     for z in items:
         by_status[z["status"]] = by_status.get(z["status"], 0) + 1
-    total_ports = await _db.poe_ports.count_documents({})
+    if visible:
+        allowed = [z["mrgid"] for z in items]
+        total_ports = await _db.poe_ports.count_documents(
+            {"mrgid": {"$in": allowed}}) if allowed else 0
+    else:
+        total_ports = await _db.poe_ports.count_documents({})
     return {
         "count": len(items),
         "summary": {"by_status": by_status, "total_ports": total_ports},
@@ -210,14 +219,42 @@ async def poe_zones():
     }
 
 
+_EEZ_FC_CACHE: dict | None = None
+
+
+def _eez_feature_collection() -> dict:
+    global _EEZ_FC_CACHE
+    if _EEZ_FC_CACHE is None:
+        import json
+        _EEZ_FC_CACHE = json.loads(poe.MAP_FILE.read_text(encoding="utf-8"))
+    return _EEZ_FC_CACHE
+
+
 @router.get("/poe/zones/geojson")
-async def poe_zones_geojson():
+async def poe_zones_geojson(visible: bool = False):
     if not poe.MAP_FILE.exists():
         raise HTTPException(404, "EEZ map not built yet — POST /api/poe/referential/build first")
-    return FileResponse(
-        poe.MAP_FILE, media_type="application/geo+json",
-        headers={"Cache-Control": "public, max-age=3600", "X-EEZ-Source": "Marine Regions (VLIZ) v12 CC-BY 4.0"},
-    )
+    if not visible:
+        return FileResponse(
+            poe.MAP_FILE, media_type="application/geo+json",
+            headers={"Cache-Control": "public, max-age=3600", "X-EEZ-Source": "Marine Regions (VLIZ) v12 CC-BY 4.0"},
+        )
+    from app.services.review_gold import visible_eez_mrgids
+    raw = _eez_feature_collection()
+    allowed = await visible_eez_mrgids(_db)
+    feats = []
+    for feat in raw.get("features") or []:
+        try:
+            mid = int((feat.get("properties") or {}).get("mrgid") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mid in allowed:
+            feats.append(feat)
+    return {
+        "type": "FeatureCollection",
+        "features": feats,
+        "attribution": poe.EEZ_ATTRIBUTION,
+    }
 
 
 @router.get("/poe/zones/{mrgid}")
@@ -395,13 +432,18 @@ async def poe_qualify_unclos():
 # Ports & exports
 # ---------------------------------------------------------------------------
 @router.get("/poe/ports")
-async def poe_ports(mrgid: int | None = None, country: str | None = None):
+async def poe_ports(mrgid: int | None = None, country: str | None = None,
+                    visible: bool = False):
     q: dict = {}
     if mrgid is not None:
         q["mrgid"] = mrgid
     if country:
         q["country_iso2"] = country.upper()
     docs = await _db.poe_ports.find(q).to_list(10000)
+    if visible:
+        from app.services.review_gold import visible_eez_mrgids
+        allowed = await visible_eez_mrgids(_db)
+        docs = [d for d in docs if int(d.get("mrgid") or 0) in allowed]
     return poe.ports_to_geojson(docs)
 
 

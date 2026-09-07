@@ -102,13 +102,17 @@ ANCHORAGE_BUILD_STATE = BuildState()
 async def list_marinas(
     priority: int | None = None,
     source: str | None = None,
+    visible: bool = False,
 ):
     q: dict = {}
     if priority is not None:
         q["priority"] = int(priority)
     if source:
         q["source"] = source
-    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(20000)
+    docs = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(50000)
+    if visible:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(db, "marina", docs, lambda m: m.get("_id"))
     return marinas_to_geojson(docs)
 
 

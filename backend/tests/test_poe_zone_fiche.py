@@ -231,8 +231,8 @@ def test_frontend_fiche_has_no_generate_button():
     assert "zoneDisplayName" in fiche
     assert "view-toggle-review" in header
     assert "review-comment" in review
-    assert "review-kind-${k.id}" in review
-    assert "review-kind-switch" in review
+    assert "review-gold" in review
+    assert "review-kind-switch" not in review
     label_js = (root / "components" / "map" / "zoneLabel.js").read_text(encoding="utf-8")
     assert "disambiguated" in label_js
     assert "qualifier_key" in label_js
