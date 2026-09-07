@@ -1646,13 +1646,18 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
                     await emit(rec, "depth2", parent=url, url=fu,
                                chars=len(sub["text"]), level=sub["level"])
                     text = (text + "\n" + sub["text"]).strip()
-        if text and len(text) > 200:
-            texts.append(f"[SOURCE: {url}]\n{text[:60000]}")
-            excerpts[url] = text[:2500]
+        keep_short_pdf = (
+            (url or "").lower().endswith(".pdf")
+            and list_url_bonus(url) >= 0.45
+        )
+        if (text and len(text) > 200) or keep_short_pdf:
+            texts.append(f"[SOURCE: {url}]\n{(text or '')[:60000]}")
+            excerpts[url] = (text or "")[:2500]
             used_sources.append({"url": url, "domain": c.get("domain") or domain_of(url),
                                  "md5": hashes.get(url), "collected_at": now_iso(),
                                  "official": bool(c.get("official"))})
-            await emit(rec, "source_used", url=url, domain=c.get("domain"), chars=len(text))
+            await emit(rec, "source_used", url=url, domain=c.get("domain"),
+                       chars=len(text or ""))
     return texts, hashes, used_sources, excerpts
 
 

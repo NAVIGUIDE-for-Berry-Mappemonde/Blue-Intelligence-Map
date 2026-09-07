@@ -125,6 +125,9 @@ def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):
     prose = "Formalités pour les plaisanciers en provenance d'un pays tiers. " * 40
 
     async def fake_cascade(url, min_chars=200, log=None):
+        if "carte-PPF" in url:
+            return {"text": "Points de passage frontaliers maritimes",
+                    "html": "", "md5": "c", "level": "N1-pymupdf", "blocked": False}
         if url.endswith(".pdf"):
             return {"text": "1.- Port Alpha latitude: 46.1 longitude: -1.1\n" * 8,
                     "html": "", "md5": "p", "level": "N1", "blocked": False}
