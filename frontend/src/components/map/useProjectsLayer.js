@@ -20,7 +20,7 @@ export default function useProjectsLayer({
     const features = (projects.features || [])
       .filter((f) => (funderFilter === "All" || (f.properties.funder || "").includes(funderFilter)) &&
         (categoryFilter === "All" || f.properties.category_group === categoryFilter) &&
-        (!q || `${f.properties.title} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q)))
+        (!q || `${f.properties.title} ${f.properties.site_name || ""} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q)))
       .slice(0, maxMarkers || 1000);
     // Skip rebuild if the visible set is unchanged — keeps open popups alive
     const sig = `${features.length}|${funderFilter}|${categoryFilter}|${q}|${features.map((f) => f.properties.id).join(",")}`;
@@ -46,12 +46,15 @@ export default function useProjectsLayer({
         // `t` COURANT via tRef — la bascule FR ↔ EN n'exige aucun rebuild.
         marker.bindPopup(() => {
           const t = tRef.current;
+          const siteName = p.site_name || p.location || p.title;
+          const showProject = p.title && siteName && p.title !== siteName;
           const snapped = p.snapped ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid #fbbf2455;padding:1px 5px;border-radius:2px;margin-left:6px;">${t("snappedBadge")}</span>` : "";
           const cat = p.category_group ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${col};border:1px solid ${col}55;padding:1px 5px;border-radius:2px;">${t("cat_" + p.category_group)}</span>` : "";
           return `
           <div style="min-width:220px;max-width:270px;">
             ${img}
-            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${p.title}</div>
+            <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${siteName}</div>
+            ${showProject ? `<div style="font-size:11px;color:#94a3b8;margin:2px 0 0;">${p.title}</div>` : ""}
             <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#c084fc;margin:4px 0;">${p.funder}${snapped}</div>
             <div style="margin:2px 0 6px;">${cat}</div>
             <div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:6px;">${p.description || ""}</div>

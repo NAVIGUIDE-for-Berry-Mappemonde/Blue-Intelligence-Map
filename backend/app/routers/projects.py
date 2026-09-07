@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.core.project_geo import valid_coords
 from app.core.tasks import new_task, prune_tasks
 from app.db import db, get_settings
 from app.services.swarm_pipeline import now_iso
@@ -26,7 +27,9 @@ def project_to_feature(p: dict) -> dict:
         "geometry": {"type": "Point", "coordinates": [p["lon"], p["lat"]]},
         "properties": {
             "id": p["_id"],
+            "project_id": p.get("project_id") or p["_id"],
             "title": p["title"],
+            "site_name": p.get("site_name") or p.get("location") or p["title"],
             "url": p["url"],
             "description": p.get("description", ""),
             "funder": ", ".join(p.get("funders") or [p.get("funder", "")]),
@@ -39,13 +42,39 @@ def project_to_feature(p: dict) -> dict:
         },
     }
 
+
+def project_to_features(p: dict) -> list[dict]:
+    """Une Feature par site visitable ; repli sur le point v1 unique."""
+    sites = []
+    for s in p.get("sites") or []:
+        if isinstance(s, dict) and valid_coords(s.get("lat"), s.get("lon")):
+            if s.get("verdict") in (None, "site_ok", "site"):
+                sites.append(s)
+    if not sites and valid_coords(p.get("lat"), p.get("lon")):
+        sites = [{"name": p.get("location") or p.get("title"), "lat": p["lat"],
+                  "lon": p["lon"], "location": p.get("location")}]
+    out = []
+    multi = len(sites) > 1
+    for i, s in enumerate(sites):
+        row = dict(p)
+        row["lat"], row["lon"] = s["lat"], s["lon"]
+        row["location"] = s.get("location") or p.get("location")
+        row["site_name"] = s.get("name") or row["location"] or p.get("title")
+        row["project_id"] = p["_id"]
+        row["_id"] = f"{p['_id']}:{i}" if multi else p["_id"]
+        out.append(project_to_feature(row))
+    return out
+
 @router.get("/projects")
 async def get_projects(funder: str | None = None):
     q = {}
     if funder and funder != "All":
         q = {"funders": funder}
     docs = await db.projects.find(q).to_list(20000)
-    return {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
+    features = []
+    for p in docs:
+        features.extend(project_to_features(p))
+    return {"type": "FeatureCollection", "features": features}
 
 
 @router.get("/funders")
@@ -66,7 +95,10 @@ async def clear_projects():
 @router.get("/export/geojson")
 async def export_geojson():
     docs = await db.projects.find({}).to_list(20000)
-    fc = {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
+    features = []
+    for p in docs:
+        features.extend(project_to_features(p))
+    fc = {"type": "FeatureCollection", "features": features}
     return JSONResponse(fc, headers={"Content-Disposition": "attachment; filename=blue_intelligence_projects.geojson"})
 
 @router.post("/import/geojson")
