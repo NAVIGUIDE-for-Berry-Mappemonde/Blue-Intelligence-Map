@@ -285,6 +285,7 @@ def google_style_tld_tokens(zone: dict) -> str:
 def google_style_query(zone: dict, lang: str | None = None) -> str:
     """Phrase courte type barre Google : lieu + PoE + sailing + official + TLD."""
     place = serp_place_name(zone) or search_polygon_name(zone) or ""
+    place = place.replace("-", " ")
     tld_tok = google_style_tld_tokens(zone)
     if lang == "fr":
         q = f"{place} port d'entrée officiel liste plaisance {tld_tok}"

@@ -285,7 +285,8 @@ def test_google_style_query_matches_human_serp():
     assert "Mayotte" in yt and ".yt" in yt and ".fr" in yt
     assert "France" not in yt
     sx = poe.google_style_query(EXAMPLE_ZONES[21803])
-    assert "Sint" in sx and ".sx" in sx
+    assert "Sint Maarten" in sx and ".sx" in sx
+    assert "Sint-Maarten" not in sx
     shots = poe.google_style_shots(EXAMPLE_ZONES[21803])
     assert shots == [("en", sx)]
     fr_shots = poe.google_style_shots(EXAMPLE_ZONES[5677])

@@ -79,6 +79,7 @@ async def probe_zone(zone: dict, key: str) -> dict:
         "n_hits": len(merged),
         "n_officialish": len(official),
         "official_domains": sorted({h.get("domain") for h in official if h.get("domain")}),
+        "all_domains": sorted({h.get("domain") for h in merged if h.get("domain")}),
         "needles": needles,
         "needles_hit": needles_hit,
         "top_urls": [h.get("url") for h in official[:6] or merged[:4]],
@@ -89,6 +90,12 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0,
                     help="Plafond de ZEE hors des 11 (0 = toutes)")
+    ap.add_argument("--skip-mrgids", type=str, default="",
+                    help="mrgid déjà faits, séparés par des virgules")
+    ap.add_argument("--skip-iso2", type=str, default="",
+                    help="iso2 déjà faits, séparés par des virgules")
+    ap.add_argument("--only-mrgids", type=str, default="",
+                    help="ne sonder que ces mrgid (11 + debug)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     key = serper_api_key()
@@ -98,28 +105,57 @@ async def main() -> int:
 
     index = json.loads(INDEX.read_text()) if INDEX.exists() else {"zones": []}
     extra = []
-    seen = set(TARGET_MRGIDS)
-    for row in index.get("zones") or []:
-        mid = row.get("mrgid")
-        if not mid or mid in seen:
-            continue
-        if poe.UNINHABITED_RE.search(row.get("name") or ""):
-            continue
-        extra.append(_zone_from_index(row))
-        seen.add(mid)
-        if args.limit and len(extra) >= args.limit:
-            break
-
-    ordered = [EXAMPLE_ZONES[mid] for mid in TARGET_MRGIDS] + extra
+    seen = set()
+    only = {int(x) for x in args.only_mrgids.split(",") if x.strip().isdigit()}
+    skip_iso = {x.strip().upper() for x in args.skip_iso2.split(",") if x.strip()}
+    for raw in (args.skip_mrgids or "").split(","):
+        raw = raw.strip()
+        if raw.isdigit():
+            seen.add(int(raw))
+    if not only:
+        seen.update(TARGET_MRGIDS)
+    if only:
+        ordered = [EXAMPLE_ZONES[mid] for mid in TARGET_MRGIDS if mid in only]
+        if len(ordered) < len(only):
+            for row in index.get("zones") or []:
+                if row.get("mrgid") in only:
+                    ordered.append(_zone_from_index(row))
+    else:
+        for row in index.get("zones") or []:
+            mid = row.get("mrgid")
+            iso = (row.get("iso2") or "").upper()
+            if not mid or mid in seen:
+                continue
+            if iso and iso in skip_iso:
+                continue
+            if poe.UNINHABITED_RE.search(row.get("name") or ""):
+                continue
+            extra.append(_zone_from_index(row))
+            seen.add(mid)
+            if args.limit and len(extra) >= args.limit:
+                break
+        heads = [] if skip_iso else [EXAMPLE_ZONES[mid] for mid in TARGET_MRGIDS]
+        ordered = heads + extra
     reports = []
     for z in ordered:
         rep = await probe_zone(z, key)
         reports.append(rep)
         mark = "OK" if (rep["n_officialish"] or rep["needles_hit"]) else "—"
-        print(f"{mark} {rep['iso2']:3} {rep['name'][:28]:28} "
+        iso = (rep.get("iso2") or "?")[:3]
+        name = (rep.get("name") or "?")[:28]
+        print(f"{mark} {iso:3} {name:28} "
               f"hits={rep['n_hits']:2} official={rep['n_officialish']:2} "
               f"needles={len(rep['needles_hit'])}/{len(rep['needles'])} "
               f"{','.join(rep['official_domains'][:4])}")
+        if args.out:
+            try:
+                args.out.parent.mkdir(parents=True, exist_ok=True)
+                args.out.write_text(json.dumps({
+                    "n_zones": len(reports),
+                    "reports": reports,
+                }, ensure_ascii=False, indent=2))
+            except OSError:
+                pass
         if rep["n_hits"] == 0 and all(s["n"] == 0 for s in rep["shots"]):
             print("stop: Serper vide (crédits ou erreur)", file=sys.stderr)
             break
