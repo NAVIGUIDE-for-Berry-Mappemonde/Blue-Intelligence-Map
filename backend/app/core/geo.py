@@ -362,7 +362,10 @@ async def geocode(query: str, country_code: str | None = None):
 # ---------------------------------------------------------------------------
 # Géocodage de PoE (variantes de noms + score d'homonymes)
 # ---------------------------------------------------------------------------
-GEOCODE_CANDIDATE_LIMIT = 8
+# Filet Nominatim/GeoNames : jusqu'à 10 hits (habitude search). N n'est pas
+# le système — parenthèses, listing_group, pairs côtiers et le registre
+# docs/data/poe-gps-arbitrated.json arbitrent. Ne pas s'arrêter au 1er village.
+GEOCODE_CANDIDATE_LIMIT = 10
 BASIN_SPLIT_KM = 1500.0
 PEER_NEAR_KM = 300.0
 PEER_FAR_KM = 500.0

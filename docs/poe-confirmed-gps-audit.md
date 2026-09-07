@@ -76,10 +76,14 @@ Les trois derniers existaient dans `poe_ports` avec le même GPS aberrant :
 corrigés aussi, count 1280 inchangé. Tanjung Pinang n’était pas dans
 `poe_ports` (listing-only).
 
-### Corrigés ensuite (recherche UN/LOCODE / autorités, `REVIEWED_GPS`)
+### Corrigés ensuite (recherche UN/LOCODE / autorités)
 
 15 GPS tranchés, `geocode_source=manual_audit`. Pas de fusion de clés.
 Pas de centroïde de groupe (Savannah ≠ Delaware, Vancouver ≠ Prince Rupert).
+
+Source de vérité **révisable en PR** : [`data/poe-gps-arbitrated.json`](data/poe-gps-arbitrated.json)
+(plus un dict Python). Chargeur : `backend/app/services/poe_gps_registry.py`.
+Atelier : `GET /api/poe/seeds/gps-arbitrated` (lecture git, pas de persist).
 
 | Clé | Nom | GPS avant | GPS après |
 |---|---|---|---|
@@ -100,13 +104,14 @@ Pas de centroïde de groupe (Savannah ≠ Delaware, Vancouver ≠ Prince Rupert)
 | `8324:portofmadang` | Port of Madang | −5,0 / 145,5 | **−5,21 / 145,80** (PGMAG) |
 
 `5693:puertodemelilla` : GPS déjà le quai (~400 m de Wikipedia). Faux positif
-VLIZ (enclave). `REVIEWED_KEEP` → `gps_audit_status=ok`, lat/lon inchangés.
+VLIZ (enclave). Registre `action=keep` → `gps_audit_status=ok`, lat/lon inchangés.
 
 Sidney BC (`8493:portofsidney`) : **ok**, pas flaggé malgré des obs Sydney NS.
 
 ## Scorer d'homonymes (géocodage)
 
-`geocode_port_dual` / `pick_geocode` notent jusqu'à 8 candidats :
+`geocode_port_dual` / `pick_geocode` notent jusqu'à **10** candidats (filet Nominatim ;
+le système c'est parenthèses, `listing_group`, pairs, et le registre JSON) :
 
 - parenthèses conservées dans la requête (Bintan avant Sumatra)
 - polygone VLIZ de **ce** mrgid + classe OSM harbour
@@ -114,6 +119,8 @@ Sidney BC (`8493:portofsidney`) : **ok**, pas flaggé malgré des obs Sydney NS.
 - pairs côtiers du même groupe : proximité, pas fusion
 - deux bassins à score proche **sans** hint → `geocode_status=ambiguous`, on ne
   pose pas de GPS (et on n'écrase pas un GPS existant)
+- `geocode_one` consulte le registre `accepted` **avant** Nominatim
+  (`geocode_arbitration=gps_registry`). Claude ne choisit pas un point.
 
 `_needs_geocode` : `name_only` sans point, ou `inland_far` / `ambiguous`.
 Les confirmed `ok` / `corrected` ne sont **pas** re-géocodés.

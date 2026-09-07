@@ -22,6 +22,7 @@ from app.core.geo import (
     spatial_class_for_point,
 )
 from app.services.listing_ref import project_listing
+from app.services.poe_gps_registry import accepted_by_key
 from app.services.poe_pipeline import MAP_FILE, now_iso
 
 INLAND_FAR_KM = 30.0
@@ -43,29 +44,9 @@ INLAND_KINDS = {"inland_river", "inland", "other_water"}
 
 TANJUNG_PINANG_KEY = "8492:tanjungpinangbintanislandriauislands"
 # Centroïde île Bintan (pas Bandar Bintan Telani 1.1605 / 104.3202).
+# Les lat/lon tranchés vivent dans docs/data/poe-gps-arbitrated.json.
 BINTAN_CLUSTER = (1.08, 104.42)
 BANDAR_BINTAN_TELANI_KEY = "8492:bandarbintantelani"
-
-# GPS tranchés (recherche UN/LOCODE / autorités). Pas un centroïde de groupe.
-# Melilla : GPS déjà le quai — polygone VLIZ trop étroit → REVIEWED_KEEP.
-REVIEWED_GPS: dict[str, tuple[float, float]] = {
-    "8456:savannah": (32.0809, -81.0912),
-    "8456:astoria": (46.1879, -123.8313),
-    "5677:stnazaire": (47.27805, -2.19995),
-    "8367:safi": (32.3083, -9.2510),
-    "8366:gabes": (33.90724, 10.10169),
-    "8479:portofmtwara": (-10.268833, 40.197917),
-    "8479:portoftanga": (-5.066, 39.10556),
-    "8464:recife": (-8.0556, -34.8705),
-    "8493:vancouver": (49.2888, -123.1113),
-    "8456:brunswick": (31.129059, -81.544011),
-    "8484:tpdanang": (16.0974, 108.2343),
-    "5697:canakkale": (40.1023, 26.379),
-    "5697:mersin": (36.80045, 34.63908),
-    "8349:portofkilifi": (-3.637462, 39.858398),
-    "8324:portofmadang": (-5.208333, 145.800833),
-}
-REVIEWED_KEEP = frozenset({"5693:puertodemelilla"})
 
 # Tokens parenthèse → centroïde d'île, jamais le GPS d'une autre marina.
 ISLAND_CLUSTER_GPS: dict[str, tuple[float, float]] = {
@@ -450,16 +431,18 @@ def _already_at(seed: dict, lat: float, lon: float, tol: float = 5e-3) -> bool:
 
 def _plan_correction(seed: dict, spatial: dict, extra: dict,
                      reasons: list[str]) -> dict | None:
-    """Cas évidents + GPS déjà tranchés (REVIEWED_GPS)."""
+    """Cas évidents + GPS du registre git (accepted)."""
     key = _seed_key(seed)
-    if key in REVIEWED_KEEP:
-        return None
-    reviewed = REVIEWED_GPS.get(key)
-    if reviewed:
-        lat, lon = reviewed
-        if _already_at(seed, lat, lon):
+    hit = accepted_by_key(key)
+    if hit:
+        if hit.get("action") == "keep":
             return None
-        return {"lat": lat, "lon": lon, "geocode_source": "manual_audit"}
+        if hit.get("action") == "correct":
+            lat, lon = float(hit["lat"]), float(hit["lon"])
+            if _already_at(seed, lat, lon):
+                return None
+            src = hit.get("geocode_source") or "manual_audit"
+            return {"lat": lat, "lon": lon, "geocode_source": src}
     if key == TANJUNG_PINANG_KEY:
         lat, lon = BINTAN_CLUSTER
         if extra.get("suggested_source") == "island_cluster" and extra.get("suggested_lat"):
@@ -518,7 +501,8 @@ def flag_confirmed_seeds(
     for seed in confirmed:
         spatial = spatial_by_key[_seed_key(seed)]
         key = _seed_key(seed)
-        if key in REVIEWED_KEEP:
+        hit = accepted_by_key(key)
+        if hit and hit.get("action") == "keep":
             continue
         reasons = _spatial_reasons(spatial)
         extra: dict = {}

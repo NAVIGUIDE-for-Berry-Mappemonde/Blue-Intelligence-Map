@@ -25,6 +25,7 @@ from app.core.geo import (
     classify_poe_point, geocode_port_dual, inland_exception_flags,
     select_geocode_candidate,
 )
+from app.services.poe_gps_registry import accepted_by_key
 from app.core.llm import ask_json
 from app.core.tinyfish import (
     FETCH_URL_CAP, SEARCH_PAGE_CAP, tf_api_key, tf_fetch, tf_poe_agent,
@@ -386,11 +387,44 @@ def attach_geocode_context(ports: list[dict]) -> None:
         p["geocode_peers"] = others[:24]
 
 
+def _registry_geocode(doc: dict, zone: dict, log) -> dict | None:
+    """GPS déjà tranché (registre git) : pas Nominatim, pas Claude."""
+    hit = accepted_by_key(str(doc.get("dedup_key") or ""))
+    if not hit:
+        return None
+    lat, lon = float(hit["lat"]), float(hit["lon"])
+    src = hit.get("geocode_source") or "manual_audit"
+    out = {
+        "lat": lat, "lon": lon, "has_coords": True,
+        "geocode_source": src,
+        "geocode_arbitration": "gps_registry",
+        "geocoded_at": now_iso(),
+        "geocode_query": geocode_query_name(doc.get("name") or ""),
+    }
+    geom = zone.get("_geom") if zone else None
+    prepared = zone.get("_prep") if zone else None
+    if geom is not None:
+        inland = inland_exception_flags(doc, zone or {}, {}, official_list=True)
+        cls = classify_poe_point(lat, lon, geom, prepared, inland=inland)
+        out["spatial_kind"] = cls.get("kind")
+        out["validated"] = bool(cls.get("validated"))
+        out["distance_km"] = cls.get("dist_km")
+    if hit.get("action") == "keep":
+        out["geocode_kept_previous"] = True
+        log(f"géocode registre keep: {hit.get('dedup_key')}")
+    else:
+        log(f"géocode registre: {hit.get('dedup_key')}")
+    return out
+
+
 async def geocode_one(doc: dict, zone: dict, log) -> dict:
     raw = doc.get("name") or ""
     name = geocode_query_name(raw)
     if name != raw:
         log(f"géocode alias: {raw} → {name}")
+    registered = _registry_geocode(doc, zone, log)
+    if registered is not None:
+        return registered
     if not is_geocodeable_name(name) and not is_geocodeable_name(raw):
         log(f"géocode sauté (non toponyme): {raw}")
         return {"geocoded_at": now_iso(), "spatial_kind": "not_geocodeable",

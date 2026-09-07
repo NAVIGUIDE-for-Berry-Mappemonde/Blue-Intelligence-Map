@@ -3,11 +3,16 @@ from shapely.geometry import box
 from shapely.ops import unary_union
 
 from app.core.geo import (
+    GEOCODE_CANDIDATE_LIMIT,
     listing_group_penalty,
     port_name_variants,
     select_geocode_candidate,
 )
 from app.services.poe_seed_enrich import _needs_geocode, pick_geocode
+
+
+def test_geocode_candidate_limit_is_a_net_of_ten():
+    assert GEOCODE_CANDIDATE_LIMIT == 10
 
 
 def test_port_name_variants_keeps_paren_first():
