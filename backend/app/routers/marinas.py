@@ -126,6 +126,7 @@ async def _all_marinas(q: dict | None = None, projection: dict | None = None) ->
 async def list_marinas(
     priority: int | None = None,
     source: str | None = None,
+    visible: bool = False,
 ):
     q: dict = {}
     if priority is not None:
@@ -133,6 +134,9 @@ async def list_marinas(
     if source:
         q["source"] = source
     docs = await _all_marinas(q)
+    if visible:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(db, "marina", docs, lambda m: m.get("_id"))
     return marinas_to_slim_geojson(docs)
 
 

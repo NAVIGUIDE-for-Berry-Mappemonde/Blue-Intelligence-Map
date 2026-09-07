@@ -200,6 +200,17 @@ def search_polygon_name(zone: dict, zones: list[dict] | None = None) -> str:
     return " ".join(label.replace("(", " ").replace(")", " ").replace("·", " ").split())
 
 
+def serp_place_name(zone: dict, zones: list[dict] | None = None) -> str:
+    """Nom envoyé au moteur : vocabulaire d'État, pas le qualifiant VLIZ.
+
+    « France hexagone » n'apparaît sur aucune page douane. Mayotte reste Mayotte.
+    """
+    key, _ = zone_qualifier(zone)
+    if key in ("hexagone", "metropole"):
+        return (zone.get("sovereign") or zone.get("name") or zone.get("geoname") or "").strip()
+    return search_polygon_name(zone, zones)
+
+
 def zone_search_lang_iso(zone: dict) -> str | None:
     """ISO2 pour la langue des requêtes : polygone d'abord, sinon souverain."""
     for cc in (zone.get("iso2"), zone.get("sov_iso2")):

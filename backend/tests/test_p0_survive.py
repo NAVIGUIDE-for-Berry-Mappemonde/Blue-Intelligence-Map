@@ -54,7 +54,7 @@ class TestPdfIsolation:
         first = extract.parse_pdf_text(content)
         assert "Charlie" in first
         digest = extract.pdf_cache_key(content)
-        assert (tmp_path / f"{digest}.txt").is_file()
+        assert (tmp_path / f"{digest}.act1.txt").is_file()
 
         def boom(*_a, **_k):
             raise AssertionError("subprocess should not run on cache hit")

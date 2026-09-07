@@ -7,7 +7,7 @@ export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 
 const api = axios.create({
   baseURL: `${BACKEND_URL}/api`,
-  timeout: 30000,
+  timeout: 120000,
 });
 
 export default api;

@@ -3,15 +3,7 @@ import { ChevronLeft, ChevronRight, ClipboardCheck, Search } from "lucide-react"
 import api from "../api";
 import ZoneFiche from "./ZoneFiche";
 import ProjectFiche from "./review/ProjectFiche";
-import PoeFiche from "./review/PoeFiche";
 import MarinaFiche from "./review/MarinaFiche";
-
-const KINDS = [
-  { id: "project", labelKey: "reviewKindProject" },
-  { id: "eez", labelKey: "reviewKindEez" },
-  { id: "poe", labelKey: "reviewKindPoe" },
-  { id: "marina", labelKey: "reviewKindMarina" },
-];
 
 const PAGE = 500;
 
@@ -21,8 +13,14 @@ function kindFromMode(mode) {
   return "project";
 }
 
-export default function ReviewView({ t, mode }) {
-  const [kind, setKind] = useState(() => kindFromMode(mode));
+function kindLabelKey(kind) {
+  if (kind === "eez") return "reviewKindEez";
+  if (kind === "marina") return "reviewKindMarina";
+  return "reviewKindProject";
+}
+
+export default function ReviewView({ t, mode, onMapDirty }) {
+  const kind = kindFromMode(mode);
   const [runs, setRuns] = useState([]);
   const [runId, setRunId] = useState("published");
   const [queue, setQueue] = useState([]);
@@ -30,23 +28,27 @@ export default function ReviewView({ t, mode }) {
   const [offset, setOffset] = useState(0);
   const [filter, setFilter] = useState("");
   const [q, setQ] = useState("");
+  const [preGold, setPreGold] = useState(true);
   const [index, setIndex] = useState(0);
   const [fiche, setFiche] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(true);
   const [comment, setComment] = useState("");
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [goldOn, setGoldOn] = useState(false);
+  const [goldBusy, setGoldBusy] = useState(false);
   const dirtyRef = useRef(false);
   const commentRef = useRef("");
   const currentIdRef = useRef(null);
   const pendingIndexRef = useRef(0);
 
   useEffect(() => {
-    setKind(kindFromMode(mode));
     setIndex(0);
     setOffset(0);
     setFilter("");
     setQ("");
+    setPreGold(true);
   }, [mode]);
 
   useEffect(() => {
@@ -98,10 +100,11 @@ export default function ReviewView({ t, mode }) {
 
   useEffect(() => {
     let cancelled = false;
+    setQueueLoading(true);
     (async () => {
       try {
         const { data } = await api.get("/review/queue", {
-          params: { kind, run_id: runId, offset, limit: PAGE, q },
+          params: { kind, run_id: runId, offset, limit: PAGE, q, pre_gold: preGold },
         });
         if (cancelled) return;
         const items = data.items || [];
@@ -115,16 +118,19 @@ export default function ReviewView({ t, mode }) {
           setQueue([]);
           setTotal(0);
         }
+      } finally {
+        if (!cancelled) setQueueLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, runId, offset, q]);
+  }, [kind, runId, offset, q, preGold]);
 
   useEffect(() => {
     setFiche(null);
     setComment("");
     setSavedAt(null);
-  }, [kind, runId]);
+    setGoldOn(false);
+  }, [kind, runId, preGold]);
 
   useEffect(() => {
     commentRef.current = comment;
@@ -136,6 +142,7 @@ export default function ReviewView({ t, mode }) {
       setFiche(null);
       setComment("");
       setSavedAt(null);
+      setGoldOn(false);
       dirtyRef.current = false;
       return undefined;
     }
@@ -150,6 +157,7 @@ export default function ReviewView({ t, mode }) {
         setFiche(data.fiche);
         setComment(data.comment || "");
         setSavedAt(data.comment_updated_at || null);
+        setGoldOn(Boolean(data.gold_on));
         dirtyRef.current = false;
       } catch (e) {
         if (!cancelled) setFiche(null);
@@ -193,7 +201,7 @@ export default function ReviewView({ t, mode }) {
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target && e.target.tagName) || "";
-      if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+      if (tag === "TEXTAREA" || e.target?.tagName === "INPUT" || tag === "SELECT") return;
       if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
       if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
     };
@@ -210,13 +218,33 @@ export default function ReviewView({ t, mode }) {
       });
       dirtyRef.current = false;
       setSavedAt(data.updated_at || new Date().toISOString());
-      setQueue((q) => q.map((it) => (
+      setQueue((items) => items.map((it) => (
         it.id === current.id ? { ...it, has_comment: Boolean((comment || "").trim()) } : it
       )));
     } catch (e) {
       /* transient */
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleGold = async () => {
+    if (!current || goldBusy) return;
+    try {
+      setGoldBusy(true);
+      const { data } = await api.put("/review/gold", {
+        kind, run_id: runId, id: current.id,
+      });
+      const pressed = Boolean(data.gold_on);
+      setGoldOn(pressed);
+      setQueue((items) => items.map((it) => (
+        it.id === current.id ? { ...it, gold_on: pressed } : it
+      )));
+      if (onMapDirty) onMapDirty();
+    } catch (e) {
+      /* transient */
+    } finally {
+      setGoldBusy(false);
     }
   };
 
@@ -230,12 +258,11 @@ export default function ReviewView({ t, mode }) {
     }
     if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
     if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
-    if (kind === "poe") return <PoeFiche t={t} fiche={fiche} />;
     return <MarinaFiche t={t} fiche={fiche} />;
   };
 
   return (
-    <div className="h-full flex min-h-0 bg-abyss" data-testid="review-view">
+    <div className="h-full flex min-h-0 bg-abyss" data-testid="review-view" data-review-kind={kind}>
       <aside className="w-[280px] shrink-0 flex flex-col border-r border-line bg-surface">
         <div className="p-3 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">
@@ -252,10 +279,25 @@ export default function ReviewView({ t, mode }) {
               className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
+          <button
+            type="button"
+            data-testid="review-pregold-filter"
+            aria-pressed={preGold}
+            onClick={() => { setPreGold((v) => !v); setOffset(0); pendingIndexRef.current = 0; }}
+            className={`mt-2 w-full px-2.5 py-1.5 text-[11px] font-semibold border rounded-sm ${
+              preGold
+                ? "border-accent/50 bg-accent/15 text-accent"
+                : "border-line text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            {t("reviewPreGold")}
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto" data-testid="review-queue-list">
           {queue.length === 0 && (
-            <p className="p-4 text-xs text-slate-500">{t("reviewEmpty")}</p>
+            <p className="p-4 text-xs text-slate-500">
+              {queueLoading ? t("reviewQueueLoading") : t("reviewEmpty")}
+            </p>
           )}
           {queue.map((it, i) => (
             <button
@@ -286,35 +328,27 @@ export default function ReviewView({ t, mode }) {
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="px-5 py-3 border-b border-line flex flex-wrap items-center gap-2">
           <ClipboardCheck size={16} className="text-accent" />
-          <h2 className="font-heading font-black text-lg text-accent mr-2">{t("reviewTitle")}</h2>
-          <div className="flex border border-line rounded-sm overflow-hidden" data-testid="review-kind-switch">
-            {KINDS.map((k) => (
-              <button
-                key={k.id}
-                type="button"
-                data-testid={`review-kind-${k.id}`}
-                onClick={async () => { await persistIfDirty(); setKind(k.id); setOffset(0); pendingIndexRef.current = 0; }}
-                className={`px-2.5 py-1.5 text-[11px] font-semibold ${
-                  k.id !== "project" ? "border-l border-line" : ""
-                } ${kind === k.id ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
-              >
-                {t(k.labelKey)}
-              </button>
-            ))}
-          </div>
-          <select
-            data-testid="review-run-select"
-            value={runId}
-            onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); setOffset(0); pendingIndexRef.current = 0; }}
-            className="bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[280px]"
-          >
-            {runs.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.id === "published" ? t("reviewPublished") : (r.label || r.id)}
-                {r.count != null ? ` (${r.count})` : ""}
-              </option>
-            ))}
-          </select>
+          <h2 className="font-heading font-black text-lg text-accent mr-2">
+            {t("reviewTitle")}
+            <span className="ml-2 font-semibold text-sm text-slate-300" data-testid="review-mode-label">
+              {t(kindLabelKey(kind))}
+            </span>
+          </h2>
+          {kind !== "marina" && (
+            <select
+              data-testid="review-run-select"
+              value={runId}
+              onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); setOffset(0); pendingIndexRef.current = 0; }}
+              className="bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[280px]"
+            >
+              {runs.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.id === "published" ? t("reviewPublished") : (r.label || r.id)}
+                  {r.count != null ? ` (${r.count})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
           <span className="ml-auto font-mono text-[11px] text-slate-400" data-testid="review-counter">
             {total ? `${offset + index + 1} / ${total}` : "0 / 0"}
           </span>
@@ -342,7 +376,9 @@ export default function ReviewView({ t, mode }) {
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
           {queue.length === 0 && !loading ? (
-            <p className="p-6 text-sm text-slate-500">{t("reviewEmpty")}</p>
+            <p className="p-6 text-sm text-slate-500">
+              {queueLoading ? t("reviewQueueLoading") : t("reviewEmpty")}
+            </p>
           ) : renderFiche()}
         </div>
         <div className="border-t border-line p-4 bg-surface space-y-2" data-testid="review-comment-box">
@@ -366,15 +402,31 @@ export default function ReviewView({ t, mode }) {
             rows={4}
             className="w-full bg-raised border border-line rounded-sm px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-40"
           />
-          <button
-            type="button"
-            data-testid="review-comment-save"
-            onClick={saveComment}
-            disabled={!current || saving}
-            className="px-3 py-1.5 text-[11px] font-semibold border border-accent/50 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
-          >
-            {saving ? t("reviewSaving") : t("reviewSave")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="review-comment-save"
+              onClick={saveComment}
+              disabled={!current || saving}
+              className="px-3 py-1.5 text-[11px] font-semibold border border-accent/50 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
+            >
+              {saving ? t("reviewSaving") : t("reviewSave")}
+            </button>
+            <button
+              type="button"
+              data-testid="review-gold"
+              aria-pressed={goldOn}
+              onClick={toggleGold}
+              disabled={!current || goldBusy}
+              className={`px-3 py-1.5 text-[11px] font-semibold border rounded-sm disabled:opacity-40 ${
+                goldOn
+                  ? "border-accent bg-accent/20 text-accent"
+                  : "border-line text-slate-300 hover:bg-raised"
+              }`}
+            >
+              {t("reviewGold")}
+            </button>
+          </div>
         </div>
       </div>
     </div>

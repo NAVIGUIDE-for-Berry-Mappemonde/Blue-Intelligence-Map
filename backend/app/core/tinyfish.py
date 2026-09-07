@@ -13,7 +13,9 @@ FETCH_URL = "https://api.fetch.tinyfish.ai"
 POE_PURPOSE = (
     "Official designated ports of entry / puertos habilitados / ports désignés "
     "for foreign pleasure craft or mixed (commercial AND pleasure), not cargo-only; "
-    "prefer customs gazette, decree or official list."
+    "also seaports, yacht marinas, porti detar or maritime checkpoints listed in an "
+    "excise authorization, gazette, yacht-tourism page, sPCR or fishing-fuel kartelë. "
+    "Prefer government domains. Ignore airports."
 )
 
 # Une retry 429 ; monkeypatchable dans les tests.

@@ -13,22 +13,25 @@ export default function useFormalitiesLayers({
   poeMarkersById,
   mode, poeZones, poePorts, flyToZone, tRef,
 }) {
-  const eezLoadedRef = useRef(false);
+  const eezSigRef = useRef("");
   const poeSigRef = useRef("");
 
-  // Lazy-load the EEZ polygons once (heavy file) when formalities mode is first opened.
+  // Polygones visibles seulement (pré-Gold + Gold enfoncé). Recharge si l'ensemble change.
   useEffect(() => {
-    if (mode !== "formalities" || eezLoadedRef.current) return;
+    if (mode !== "formalities") return;
     const layer = eezLayerRef.current;
     if (!layer) return;
-    eezLoadedRef.current = true;
+    const ids = (poeZones || []).map((z) => z.mrgid).sort().join(",");
+    if (ids === eezSigRef.current && layer.getLayers && layer.getLayers().length) return;
+    eezSigRef.current = ids;
     (async () => {
       try {
-        const res = await api.get("/poe/zones/geojson");
-        layer.addData(res.data);
+        const res = await api.get("/poe/zones/geojson", { params: { visible: 1 } });
+        layer.clearLayers();
+        if (eezLayersByMrgid?.current) eezLayersByMrgid.current.clear();
+        if ((res.data?.features || []).length) layer.addData(res.data);
       } catch (e) {
-        // 404 until the referential is built — retry on the next zones refresh
-        eezLoadedRef.current = false;
+        eezSigRef.current = "";
       }
     })();
     // eslint-disable-next-line

@@ -16,6 +16,7 @@ from app.core.dedup import normalize_name
 from app.services.poe_pipeline import domain_of, list_url_bonus, zone_to_item
 from app.services.poe_zone_label import attach_zone_labels
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, url_is_excluded_search
+from app.services.territory_ref import curated_td_urls
 
 # Revue : une URL TD (la liste officielle) + une URL BU par PoE.
 FICHE_TD_URL_CAP = 1
@@ -110,6 +111,17 @@ def _best_one(recs: list[dict]) -> dict | None:
     return capped[0] if capped else None
 
 
+def _list_like_from_docs(docs: list[dict] | None) -> list[dict]:
+    """Un PDF / décret trouvé en cherchant un port peut être la liste TD."""
+    out: list[dict] = []
+    for doc in docs or []:
+        for raw in list(doc.get("judge_sources") or []) + list(doc.get("sources_bu") or []):
+            rec = _as_source(raw, "td")
+            if rec and list_url_bonus(rec["url"]) >= 0.3:
+                out.append(rec)
+    return out
+
+
 def bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
     """Meilleure URL d'État trouvée en cherchant CE port (juge / sources_bu)."""
     by: dict[str, dict] = {}
@@ -175,6 +187,8 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
     for rz in run_zones or []:
         td_raw.append(rz.get("sources"))
         td_raw.append(rz.get("sources_td"))
+    td_raw.append(curated_td_urls(zone.get("mrgid")))
+    td_raw.append(_list_like_from_docs(list(seeds or []) + list(run_ports or [])))
     td_map = _collect(td_raw, "td")
     bu_by_name = bu_by_port_name(list(seeds or []) + list(run_ports or []))
 

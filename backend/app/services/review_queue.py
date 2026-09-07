@@ -17,9 +17,11 @@ from app.services.poe_zone_fiche import (
     build_zone_fiche,
 )
 from app.services.poe_zone_label import attach_zone_labels
+from app.services import review_gold
 
 _PROJECT_QUEUE_PROJ = {
     "_id": 1, "title": 1, "url": 1, "funders": 1, "funder": 1, "verdict": 1,
+    "lat": 1, "lon": 1, "snapped": 1, "snapped_coastal": 1, "geo_source": 1,
 }
 _POE_QUEUE_PROJ = {
     "_id": 1, "dedup_key": 1, "name": 1, "mrgid": 1, "zone_name": 1,
@@ -60,6 +62,7 @@ async def ensure_review_indexes(db) -> None:
         await db.poe_ports.create_index("name")
         await db.poe_run_ports.create_index([("run_id", 1), ("name", 1)])
         await db.marinas.create_index("name")
+        await review_gold.ensure_gold_indexes(db)
     except Exception:
         pass
 
@@ -124,6 +127,8 @@ async def list_runs(db, kind: str) -> dict:
         docs = await db.project_runs.find({}).to_list(100)
         docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
         for d in docs:
+            if review_gold.is_test_run(d):
+                continue
             rid = _sid(d.get("_id"))
             n = await _count(db.project_run_projects, {"run_id": rid})
             items.append({
@@ -139,6 +144,8 @@ async def list_runs(db, kind: str) -> dict:
         docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
         coll = db.poe_run_zones if kind == "eez" else db.poe_run_ports
         for d in docs:
+            if review_gold.is_test_run(d):
+                continue
             rid = _sid(d.get("_id"))
             n = await _count(coll, {"run_id": rid})
             items.append({
@@ -194,33 +201,40 @@ def _title_filter(field: str, q: str) -> dict:
 
 async def list_queue(db, kind: str, run_id: str | None = None,
                      offset: int = 0, limit: int = QUEUE_LIMIT_DEFAULT,
-                     q: str = "") -> dict:
+                     q: str = "", pre_gold: bool = False) -> dict:
     if kind not in KINDS:
         raise ValueError("kind must be project|eez|poe|marina")
     rid = run_id or PUBLISHED_RUN
     offset, limit = _clamp_page(offset, limit)
     flags = await _comment_flags(db, kind, rid)
     items: list[dict] = []
-    total = 0
     needle = (q or "").strip().casefold()
+    overrides = await review_gold.overrides_map(db, kind)
+    pre_eez = await review_gold.pre_gold_eez_mrgids(db) if kind == "eez" else set()
 
     if kind == "project":
         filt: dict = {} if is_published(rid) else {"run_id": rid}
         filt.update(_title_filter("title", q))
         coll = db.projects if is_published(rid) else db.project_run_projects
-        total = await _count(coll, filt)
         docs = await (coll.find(filt, _PROJECT_QUEUE_PROJ)
-                      .sort("title", 1).skip(offset).limit(limit).to_list(limit))
+                      .sort("title", 1).to_list(20000))
         for d in docs:
             eid = _sid(d.get("_id") or d.get("url"))
             if not eid:
+                continue
+            pre = review_gold.is_pre_gold_project(d)
+            if pre_gold and not pre:
                 continue
             funders = d.get("funders") or ([d.get("funder")] if d.get("funder") else [])
             items.append(_queue_item(
                 eid, d.get("title") or "",
                 ", ".join(x for x in funders if x) or (d.get("verdict") or ""),
                 flags,
-                {"verdict": d.get("verdict")},
+                {
+                    "verdict": d.get("verdict"),
+                    "pre_gold": pre,
+                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                },
             ))
 
     elif kind == "eez":
@@ -235,28 +249,33 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             docs = [z for z in docs if needle in (
                 f"{z.get('label') or ''} {z.get('name') or ''} {z.get('sovereign') or ''}"
             ).casefold()]
-        total = len(docs)
-        docs = docs[offset:offset + limit]
         for z in docs:
             mid = z.get("mrgid")
             if mid is None:
                 continue
             eid = str(int(mid))
+            pre = int(mid) in pre_eez
+            if pre_gold and not pre:
+                continue
             items.append(_queue_item(
                 eid,
                 z.get("label") or z.get("name") or eid,
                 z.get("sovereign") or z.get("iso2") or "",
                 flags,
-                {"mrgid": int(mid), "poe_count": z.get("poe_count") or 0},
+                {
+                    "mrgid": int(mid),
+                    "poe_count": z.get("poe_count") or 0,
+                    "pre_gold": pre,
+                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                },
             ))
 
     elif kind == "poe":
         filt = {} if is_published(rid) else {"run_id": rid}
         filt.update(_title_filter("name", q))
         coll = db.poe_ports if is_published(rid) else db.poe_run_ports
-        total = await _count(coll, filt)
         docs = await (coll.find(filt, _POE_QUEUE_PROJ)
-                      .sort("name", 1).skip(offset).limit(limit).to_list(limit))
+                      .sort("name", 1).to_list(20000))
         for d in docs:
             eid = _sid(d.get("dedup_key") or d.get("_id"))
             if not eid:
@@ -265,24 +284,32 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 eid, d.get("name") or "",
                 d.get("zone_name") or str(d.get("mrgid") or ""),
                 flags,
-                {"mrgid": d.get("mrgid")},
+                {"mrgid": d.get("mrgid"), "pre_gold": False, "gold_on": False},
             ))
 
     else:
         filt = _title_filter("name", q)
-        total = await _count(db.marinas, filt)
         docs = await (db.marinas.find(filt, _MARINA_QUEUE_PROJ)
-                      .sort("name", 1).skip(offset).limit(limit).to_list(limit))
+                      .sort("name", 1).to_list(50000))
         for d in docs:
             eid = _sid(d.get("_id"))
             if not eid:
+                continue
+            pre = review_gold.is_pre_gold_marina(d)
+            if pre_gold and not pre:
                 continue
             items.append(_queue_item(
                 eid, d.get("name") or "",
                 d.get("source") or "",
                 flags,
+                {
+                    "pre_gold": pre,
+                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                },
             ))
 
+    total = len(items)
+    items = items[offset:offset + limit]
     commented = sum(1 for it in items if it["has_comment"])
     return {
         "kind": kind,
@@ -290,6 +317,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
         "total": total,
         "offset": offset,
         "limit": limit,
+        "pre_gold": bool(pre_gold),
         "commented": commented,
         "items": items,
         "wrote_projects": False,
@@ -443,6 +471,7 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
     rid = run_id or PUBLISHED_RUN
     eid = _sid(entity_id)
     fiche = None
+    doc = None
 
     if kind == "project":
         if is_published(rid):
@@ -488,6 +517,13 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
         fiche = _marina_fiche(doc)
 
     comment = await get_comment(db, kind, rid, eid)
+    source = None
+    if kind == "project":
+        source = doc
+    elif kind == "marina":
+        source = doc
+    pre = await review_gold.is_pre_gold_entity(db, kind, eid, source)
+    override = await review_gold.get_override(db, kind, eid)
     return {
         "kind": kind,
         "run_id": rid,
@@ -495,6 +531,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
         "fiche": fiche,
         "comment": comment.get("comment") or "",
         "comment_updated_at": comment.get("updated_at"),
+        "pre_gold": pre,
+        "gold_on": review_gold.gold_pressed(pre, override),
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,

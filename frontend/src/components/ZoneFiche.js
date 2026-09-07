@@ -9,6 +9,16 @@ function hostOf(url) {
   }
 }
 
+function pathHint(url) {
+  try {
+    const leaf = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean).pop() || "";
+    if (leaf.length < 3) return "";
+    return leaf.length > 52 ? `${leaf.slice(0, 50)}…` : leaf;
+  } catch (_) {
+    return "";
+  }
+}
+
 function tdUrlOf(fiche) {
   return fiche?.url_td?.url || (fiche?.sources_td || [])[0]?.url || "";
 }
@@ -70,10 +80,15 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
               target="_blank"
               rel="noreferrer"
               data-testid="poe-fiche-td-url"
-              className="text-[11px] text-accent hover:text-white truncate font-medium"
+              className="min-w-0 text-[11px] text-accent hover:text-white font-medium"
               title={td}
             >
-              {hostOf(td)}
+              <span className="block truncate">{hostOf(td)}</span>
+              {pathHint(td) ? (
+                <span className="block font-mono text-[10px] text-slate-400 truncate" data-testid="poe-fiche-td-path">
+                  {pathHint(td)}
+                </span>
+              ) : null}
             </a>
             <div className="flex items-center gap-1 shrink-0">
               {tdBoth && (
