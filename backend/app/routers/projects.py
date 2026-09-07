@@ -40,17 +40,27 @@ def project_to_feature(p: dict) -> dict:
     }
 
 @router.get("/projects")
-async def get_projects(funder: str | None = None):
+async def get_projects(funder: str | None = None, visible: bool = False):
     q = {}
     if funder and funder != "All":
         q = {"funders": funder}
     docs = await db.projects.find(q).to_list(20000)
+    if visible:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(
+            db, "project", docs, lambda p: p.get("_id") or p.get("url"))
     return {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
 
 
 @router.get("/funders")
-async def get_funders():
-    docs = await db.projects.find({}, {"funders": 1}).to_list(20000)
+async def get_funders(visible: bool = False):
+    docs = await db.projects.find({}, {"funders": 1, "title": 1, "lat": 1, "lon": 1,
+                                       "snapped": 1, "snapped_coastal": 1,
+                                       "geo_source": 1, "url": 1, "_id": 1}).to_list(20000)
+    if visible:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(
+            db, "project", docs, lambda p: p.get("_id") or p.get("url"))
     counts = {}
     for d in docs:
         for f in d.get("funders") or []:

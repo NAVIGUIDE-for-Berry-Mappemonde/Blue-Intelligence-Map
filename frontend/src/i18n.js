@@ -343,7 +343,9 @@ export const DICT = {
     reviewEnriched: "Enriched",
     reviewNotEnriched: "Not enriched",
     reviewOsm: "OSM",
-    reviewHint: "One sheet at a time. Comments stay in the database, keyed to this run.",
+    reviewHint: "One sheet at a time. Gold on the map is a toggle — pre-Gold starts pressed.",
+    reviewGold: "Gold",
+    reviewPreGold: "Pre-Gold",
   },
   fr: {
     subtitle: "Essaim OSINT Maritime",
@@ -686,7 +688,9 @@ export const DICT = {
     reviewNotEnriched: "Non enrichie",
     reviewOsm: "OSM",
     reviewNoUrl: "Pas d'URL",
-    reviewHint: "Une fiche à la fois. Les commentaires restent en base, rattachés à ce run.",
+    reviewHint: "Une fiche à la fois. Gold est un interrupteur — les pré-Gold arrivent enfoncés.",
+    reviewGold: "Gold",
+    reviewPreGold: "Pré-Gold",
   },
 };
 

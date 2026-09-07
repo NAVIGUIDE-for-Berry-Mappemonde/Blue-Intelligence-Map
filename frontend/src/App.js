@@ -85,10 +85,10 @@ export default function App() {
 
   const fetchProjects = useCallback(async (force = false) => {
     try {
-      const f = await api.get("/funders");
+      const f = await api.get("/funders", { params: { visible: 1 } });
       setFunders(f.data);
       if (force || f.data.total !== lastTotalRef.current) {
-        const p = await api.get("/projects");
+        const p = await api.get("/projects", { params: { visible: 1 } });
         setProjects(p.data);
         lastTotalRef.current = f.data.total;
       }
@@ -111,7 +111,7 @@ export default function App() {
 
   const fetchMarinas = useCallback(async () => {
     try {
-      const { data } = await api.get("/marinas");
+      const { data } = await api.get("/marinas", { params: { visible: 1 } });
       setMarinas(data);
     } catch (e) { /* transient */ }
   }, []);
@@ -126,17 +126,24 @@ export default function App() {
 
   const fetchPoeZones = useCallback(async () => {
     try {
-      const { data } = await api.get("/poe/zones");
+      const { data } = await api.get("/poe/zones", { params: { visible: 1 } });
       setPoeZones(data);
     } catch (e) { /* transient */ }
   }, []);
 
   const fetchPoePorts = useCallback(async () => {
     try {
-      const { data } = await api.get("/poe/ports");
+      const { data } = await api.get("/poe/ports", { params: { visible: 1 } });
       setPoePorts(data);
     } catch (e) { /* transient */ }
   }, []);
+
+  const refreshMapData = useCallback(() => {
+    fetchProjects(true);
+    fetchMarinas();
+    fetchPoeZones();
+    fetchPoePorts();
+  }, [fetchProjects, fetchMarinas, fetchPoeZones, fetchPoePorts]);
 
   useEffect(() => {
     // Phase 3.1 — async enrichment via 202 + poll status.
@@ -372,7 +379,7 @@ export default function App() {
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
           ) : (
-            <ReviewView t={t} mode={mode} />
+            <ReviewView t={t} mode={mode} onMapDirty={refreshMapData} />
           )}
         </main>
           {showSettings && (
