@@ -121,6 +121,12 @@ export default function ReviewView({ t, mode }) {
   }, [kind, runId, offset, q]);
 
   useEffect(() => {
+    setFiche(null);
+    setComment("");
+    setSavedAt(null);
+  }, [kind, runId]);
+
+  useEffect(() => {
     commentRef.current = comment;
   }, [comment]);
 
