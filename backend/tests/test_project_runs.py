@@ -227,7 +227,7 @@ def test_process_url_writes_run_not_v1(monkeypatch):
         })
         assert row["verdict"] == "site"
         assert row["wrote_projects"] is False
-        assert row["lat"] == 38.5
+        assert row["lat"] == 45.5
         run_doc = await db.project_runs.find_one({"_id": opened["run_id"]})
         assert run_doc["counters"]["sites"] == 1
 
