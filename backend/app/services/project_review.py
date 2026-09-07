@@ -185,7 +185,13 @@ async def collect_candidates(db, run_id: str | None = None) -> list[dict]:
         seen.add(rid)
         items.append(item)
 
-    for p in await db.projects.find({}).to_list(50000):
+    v1_docs = await db.projects.find({}, {
+        "url": 1, "title": 1, "description": 1, "location": 1,
+        "funders": 1, "funder": 1, "lat": 1, "lon": 1, "sites": 1,
+        "snapped": 1, "snapped_coastal": 1, "geo_source": 1,
+    }).to_list(50000)
+    v1_urls = {p.get("url") for p in v1_docs if p.get("url")}
+    for p in v1_docs:
         if is_snapped(p):
             _push(_item_from_v1(p, "v1_snapped"))
         elif is_fallback_geo(p):
@@ -194,11 +200,6 @@ async def collect_candidates(db, run_id: str | None = None) -> list[dict]:
     run_ids = [run_id] if run_id else await _latest_run_ids(db)
     for rid in run_ids:
         docs = await db.project_run_projects.find({"run_id": rid}).to_list(20000)
-        v1_urls = {
-            p.get("url")
-            for p in await db.projects.find({}, {"url": 1}).to_list(50000)
-            if p.get("url")
-        }
         for d in docs:
             verdict = d.get("verdict")
             if verdict == "unlocated" or verdict == "rejected":
@@ -644,19 +645,39 @@ async def collect_gold_items(db) -> list[dict]:
 
 
 async def gold_stats(db) -> dict:
-    projects = await db.projects.find({}).to_list(50000)
-    snapped = sum(1 for p in projects if is_snapped(p))
-    fallback = sum(1 for p in projects if (not is_snapped(p)) and is_fallback_geo(p))
-    gold = await collect_gold_items(db)
+    """Aperçu rapide : pas de slim_gold / pas de relecture complète des fiches."""
+    projects = await db.projects.find(
+        {}, {"snapped": 1, "snapped_coastal": 1, "geo_source": 1, "url": 1},
+    ).to_list(50000)
+    snapped = fallback = gold_n = 0
+    clean_urls: set[str] = set()
+    for p in projects:
+        if is_snapped(p):
+            snapped += 1
+        elif is_fallback_geo(p):
+            fallback += 1
+        else:
+            gold_n += 1
+            if p.get("url"):
+                clean_urls.add(p["url"])
+    extra_accepted = 0
+    for r in await db.project_review.find(
+        {"status": "accepted"}, {"url": 1},
+    ).to_list(20000):
+        url = r.get("url")
+        if url and url not in clean_urls:
+            extra_accepted += 1
+            gold_n += 1
     accepted = await db.project_review.count_documents({"status": "accepted"})
     rejected = await db.project_review.count_documents({"status": "rejected"})
     return {
         "projects_total": len(projects),
         "excluded_snapped": snapped,
         "excluded_fallback": fallback,
-        "gold_count": len(gold),
+        "gold_count": gold_n,
         "review_accepted": accepted,
         "review_rejected": rejected,
+        "review_accepted_extra": extra_accepted,
         "file_exists": GOLD_FILE.exists(),
         "file_path": str(GOLD_FILE),
     }
