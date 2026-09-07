@@ -4,15 +4,16 @@ import api from "../../api";
 import CardShell, { smallInput } from "./CardShell";
 
 /**
- * ProjectsCard — carte Audit du mode Projets : pilotage du swarm (Test/Full,
- * Clear DB, Deploy/Stop, logs), réglages d'extraction exclusifs au swarm et
- * filtrage marin. Tous les appels LLM passent par OpenRouter (modèle défini
- * côté serveur via OPENROUTER_MODEL).
+ * ProjectsCard — carte Audit du mode Projets : lancement d'un run isolé
+ * (`project_run_*`), jamais d'écriture carte live. Réglages d'extraction
+ * et filtrage marin. Tous les appels LLM passent par OpenRouter.
  */
 export default function ProjectsCard({ t, status, refresh, settings, onSettingsSaved }) {
   const [swarmMode, setSwarmMode] = useState("test");
   const [busy, setBusy] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
   const running = status?.running;
+  const runId = status?.run_id || lastRun?.run_id;
   // Extraction + marine filtering settings form
   const [form, setForm] = useState(null);
   const [savedFlag, setSavedFlag] = useState(false);
@@ -38,7 +39,8 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
   const deploy = async () => {
     setBusy(true);
     try {
-      await api.post("/swarm/deploy", { mode: swarmMode, clear_db: false });
+      const { data } = await api.post("/projects/runs", { mode: swarmMode });
+      setLastRun(data);
       refresh && refresh();
     } catch (e) {
       alert(e.response?.data?.detail || e.message);
@@ -46,7 +48,14 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
   };
   const stop = async () => {
     setBusy(true);
-    try { await api.post("/swarm/stop"); refresh && refresh(); } finally { setBusy(false); }
+    try {
+      if (runId) {
+        await api.post(`/projects/runs/${runId}/cancel`);
+      } else {
+        await api.post("/swarm/stop");
+      }
+      refresh && refresh();
+    } finally { setBusy(false); }
   };
   const saveExtraction = async () => {
     if (!form) return;
@@ -119,8 +128,16 @@ export default function ProjectsCard({ t, status, refresh, settings, onSettingsS
           disabled={busy || running}
           className="w-full flex items-center justify-center gap-2 py-2 font-heading font-bold text-sm rounded-sm bg-sonar/15 border border-sonar/60 text-sonar hover:bg-sonar/25 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Play size={14} /> {t("deploy")}
+          <Play size={14} /> {t("startIsolatedRun")}
         </button>
+        <p className="font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
+          {t("isolatedRunHint")}
+        </p>
+        {runId && (
+          <p className="font-mono text-[10px] text-sonar/80" data-testid="project-run-id">
+            {t("currentRun")} {runId} · {t("wroteProjectsFalse")}
+          </p>
+        )}
         <button
           data-testid="stop-swarm-btn"
           onClick={stop}

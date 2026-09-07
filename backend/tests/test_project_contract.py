@@ -67,6 +67,25 @@ def test_force_extract_does_not_call_snap_or_fallback():
     assert "snap_to_ocean" not in text
 
 
+def test_swarm_never_writes_projects_collection():
+    src = Path(__file__).resolve().parents[1] / "app" / "services" / "swarm_pipeline.py"
+    text = src.read_text()
+    assert "db.projects.insert_one" not in text
+    assert "db.projects.update_one" not in text
+    assert "db.projects.insert_many" not in text
+    assert "write_run_project" in text
+    assert "project_run_projects" in text
+
+
+def test_force_extract_never_writes_projects():
+    src = Path(__file__).resolve().parents[1] / "app" / "routers" / "swarm.py"
+    text = src.read_text()
+    assert "db.projects.insert_one" not in text
+    assert "db.projects.update_one" not in text
+    assert "_process_url" in text
+    assert "wrote_projects" in text
+
+
 def test_deploy_clear_db_raises():
     sw = Swarm(None)
 

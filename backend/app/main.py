@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import formalities, marinas, misc, ml, projects, runs, swarm
+from app.routers import formalities, marinas, misc, ml, project_runs, projects, runs, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -41,7 +41,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _SERVE_FRONTEND else "/openapi.json",
 )
 
-for module in (projects, swarm, marinas, formalities, runs, ml, misc):
+for module in (project_runs, projects, swarm, marinas, formalities, runs, ml, misc):
     app.include_router(module.router)
 
 
@@ -83,6 +83,11 @@ async def _startup():
         await ensure_geo_indexes(db)
     except Exception as e:
         print(f"[startup] geocode cache index creation failed (non-fatal): {e}")
+    try:
+        from app.services.project_runs import ensure_run_indexes
+        await ensure_run_indexes(db)
+    except Exception as e:
+        print(f"[startup] project run index creation failed (non-fatal): {e}")
     try:
         existing = await db.list_collection_names()
         for legacy in ("formalities", "mpa_cache"):

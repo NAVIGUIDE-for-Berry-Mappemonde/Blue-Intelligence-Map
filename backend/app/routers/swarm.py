@@ -1,18 +1,12 @@
 """app.routers.swarm — Pilotage du swarm de découverte, KPIs, télémétrie,
-extractions échouées (Force Extract TinyFish)."""
+extractions échouées (Force Extract via le même pipeline isolé)."""
 import asyncio
-import os
-import time
-import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.core.geo import geocode
-from app.core.project_geo import site_publishable
-from app.core.tinyfish import EXTRACT_SCHEMA, extract_goal, tf_run_sync
 from app.db import db, get_settings
-from app.services.swarm_pipeline import Swarm, now_iso
+from app.services import project_runs
 from app.state import swarm
 
 router = APIRouter(prefix="/api")
@@ -33,7 +27,12 @@ async def deploy(body: DeployBody):
         await swarm.deploy(body.mode, False, settings, body.force_rescan)
     except ValueError as e:
         raise HTTPException(409, str(e))
-    return {"status": "deployed", "mode": body.mode}
+    return {
+        "status": "deployed",
+        "mode": body.mode,
+        "run_id": swarm.run_id,
+        "wrote_projects": False,
+    }
 
 
 @router.post("/swarm/stop")
@@ -120,82 +119,97 @@ async def clear_audit():
     return {"telemetry_deleted": t.deleted_count, "failed_deleted": f.deleted_count}
 
 
-async def _force_extract_one(row: dict, settings: dict):
-    key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip()
-    url = row["url"]
-    aid = swarm.new_agent("TinyFish", "extract", url, row.get("source", ""))
-    swarm.set_agent(aid, status="RUNNING")
-    swarm.agent_log(aid, "Force extraction with TinyFish agent")
-    t0 = time.time()
+async def _force_extract_one(row: dict, settings: dict, *, finalize_own: bool = True):
+    """Même `_process_url` / gatekeeper, écriture run uniquement."""
+    if settings:
+        swarm.settings = settings
+    if not swarm.run_id:
+        opened = await project_runs.open_run(
+            db, mode="enrich", label="force-extract", settings=settings)
+        swarm.run_id = opened["run_id"]
+        swarm.recorder = opened["recorder"]
     try:
-        body = await tf_run_sync(url, extract_goal(url), EXTRACT_SCHEMA, key)
-        if body.get("status") != "COMPLETED" or not body.get("result"):
-            raise ValueError(body.get("error") or f"run {body.get('status')}")
-        res = body["result"]
-        title = (res.get("title") or url)[:200]
-        lat, lon = res.get("latitude"), res.get("longitude")
-        if not Swarm._valid_coords(lat, lon):
-            lat = lon = None
-            if res.get("location"):
-                g = await geocode(res["location"])
-                if g:
-                    lat, lon = g
-            if lat is None:
-                g = await geocode(title)
-                if g:
-                    lat, lon = g
-        ok, kind = site_publishable(lat, lon, settings)
-        if not ok:
-            raise ValueError(f"unlocated:{kind}")
-        snapped = False
-        existing = await db.projects.find_one({"url": url})
-        if not existing:
-            await db.projects.insert_one({
-                "_id": str(uuid.uuid4()), "title": title, "url": url,
-                "description": (res.get("description") or "")[:250],
-                "funder": row.get("funder", ""), "funders": [row.get("funder", "")],
-                "location": res.get("location"), "lat": float(lat), "lon": float(lon),
-                "s_ocean": 0.7, "snapped": snapped, "geo_source": "tinyfish-force",
-                "image": None, "engine": "TinyFish Force Extract", "created_at": now_iso(),
-            })
-        await db.failed.delete_one({"_id": row["_id"]})
-        swarm.set_agent(aid, status="SUCCESS")
-        swarm.log(f"Force extract OK: {title[:60]}", "success")
-        await swarm.telemetry(url, "TinyFish", "SUCCESS", (time.time() - t0) * 1000, 1, "force extract")
+        result = await swarm._process_url({
+            "url": row["url"],
+            "funder": row.get("funder", ""),
+            "source": row.get("source", ""),
+            "force": True,
+        })
+        if result and result.get("status") == "site":
+            await db.failed.delete_one({"_id": row["_id"]})
+            swarm.log(f"Force extract OK (run {swarm.run_id}): {row['url'][:60]}", "success")
+        return result
     except Exception as e:
-        swarm.set_agent(aid, status="FAILED")
-        swarm.log(f"Force extract failed for {url[:60]}: {str(e)[:100]}", "error")
-        await swarm.telemetry(url, "TinyFish", "FAILED", (time.time() - t0) * 1000, 0, str(e))
+        swarm.log(f"Force extract failed for {row['url'][:60]}: {str(e)[:100]}", "error")
+        return {"status": "failed", "url": row.get("url"), "error": str(e)[:200]}
+    finally:
+        if finalize_own and not swarm.running:
+            rid = swarm.run_id
+            await project_runs.finalize_run(db, rid)
+            if swarm.run_id == rid and not swarm.running:
+                swarm.run_id = None
+                swarm.recorder = None
 
 
 @router.post("/failed/{fid}/force")
 async def force_one(fid: str):
     settings = await get_settings()
-    key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip()
-    if not key:
-        raise HTTPException(400, "TinyFish API key not configured")
     row = await db.failed.find_one({"_id": fid})
     if not row:
         raise HTTPException(404, "failed entry not found")
-    asyncio.create_task(_force_extract_one(row, settings))
-    return {"status": "started", "url": row["url"]}
+    live = bool(swarm.running and swarm.run_id)
+    if not live:
+        opened = await project_runs.open_run(
+            db, mode="enrich", label="force-extract", settings=settings)
+        swarm.run_id = opened["run_id"]
+        swarm.recorder = opened["recorder"]
+        swarm.settings = settings
+    rid = swarm.run_id
+    asyncio.create_task(_force_extract_one(row, settings, finalize_own=not live))
+    return {
+        "status": "started",
+        "url": row["url"],
+        "run_id": rid,
+        "wrote_projects": False,
+    }
 
 
 @router.post("/failed/force-all")
 async def force_all():
     settings = await get_settings()
-    key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip()
-    if not key:
-        raise HTTPException(400, "TinyFish API key not configured")
-    rows = await db.failed.find({}).to_list(100)
+    rows = await db.failed.find({
+        "$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}],
+    }).to_list(100)
+    live = bool(swarm.running and swarm.run_id)
+    opened_here = False
+    if not live:
+        opened = await project_runs.open_run(
+            db, mode="enrich", label="force-extract-all", settings=settings)
+        swarm.run_id = opened["run_id"]
+        swarm.recorder = opened["recorder"]
+        swarm.settings = settings
+        opened_here = True
+    rid = swarm.run_id
 
     async def run_all():
-        sem = asyncio.Semaphore(3)
+        try:
+            sem = asyncio.Semaphore(3)
 
-        async def one(r):
-            async with sem:
-                await _force_extract_one(r, settings)
-        await asyncio.gather(*[one(r) for r in rows])
+            async def one(r):
+                async with sem:
+                    await _force_extract_one(r, settings, finalize_own=False)
+            await asyncio.gather(*[one(r) for r in rows])
+        finally:
+            if opened_here and not swarm.running:
+                await project_runs.finalize_run(db, rid)
+                if swarm.run_id == rid and not swarm.running:
+                    swarm.run_id = None
+                    swarm.recorder = None
 
     asyncio.create_task(run_all())
-    return {"status": "started", "count": len(rows)}
+    return {
+        "status": "started",
+        "count": len(rows),
+        "run_id": rid,
+        "wrote_projects": False,
+    }
