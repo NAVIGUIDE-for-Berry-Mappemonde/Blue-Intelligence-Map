@@ -7,6 +7,7 @@ Ne lit que les collections de run / v1. N'écrit JAMAIS dans `projects`,
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from app.core.dedup import normalize_name
 from app.services.poe_zone_fiche import (
@@ -16,7 +17,21 @@ from app.services.poe_zone_fiche import (
 )
 from app.services.poe_zone_label import attach_zone_labels
 
+_PROJECT_QUEUE_PROJ = {
+    "_id": 1, "title": 1, "url": 1, "funders": 1, "funder": 1, "verdict": 1,
+}
+_POE_QUEUE_PROJ = {
+    "_id": 1, "dedup_key": 1, "name": 1, "mrgid": 1, "zone_name": 1,
+}
+_MARINA_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1}
+_EEZ_QUEUE_PROJ = {
+    "_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
+    "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1, "status": 1,
+}
+
 KINDS = ("project", "eez", "poe", "marina")
+QUEUE_LIMIT_MAX = 2000
+QUEUE_LIMIT_DEFAULT = 500
 
 
 def now_iso() -> str:
@@ -35,14 +50,15 @@ def _sid(value) -> str:
     return "" if value is None else str(value)
 
 
-def _sort_title(docs: list[dict], key: str = "title") -> list[dict]:
-    return sorted(docs, key=lambda d: (_sid(d.get(key) or d.get("name") or "")).casefold())
-
-
 async def ensure_review_indexes(db) -> None:
     try:
         await db.review_comments.create_index([("kind", 1), ("run_id", 1)])
         await db.review_comments.create_index("entity_id")
+        await db.projects.create_index("title")
+        await db.project_run_projects.create_index([("run_id", 1), ("title", 1)])
+        await db.poe_ports.create_index("name")
+        await db.poe_run_ports.create_index([("run_id", 1), ("name", 1)])
+        await db.marinas.create_index("name")
     except Exception:
         pass
 
@@ -161,19 +177,40 @@ async def _label_zones(db, zones: list[dict]) -> list[dict]:
     return zones
 
 
-async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
+def _clamp_page(offset: int, limit: int) -> tuple[int, int]:
+    off = max(0, int(offset or 0))
+    lim = int(limit or QUEUE_LIMIT_DEFAULT)
+    lim = max(1, min(lim, QUEUE_LIMIT_MAX))
+    return off, lim
+
+
+def _title_filter(field: str, q: str) -> dict:
+    needle = (q or "").strip()
+    if not needle:
+        return {}
+    return {field: {"$regex": re.escape(needle), "$options": "i"}}
+
+
+async def list_queue(db, kind: str, run_id: str | None = None,
+                     offset: int = 0, limit: int = QUEUE_LIMIT_DEFAULT,
+                     q: str = "") -> dict:
     if kind not in KINDS:
         raise ValueError("kind must be project|eez|poe|marina")
     rid = run_id or PUBLISHED_RUN
+    offset, limit = _clamp_page(offset, limit)
     flags = await _comment_flags(db, kind, rid)
     items: list[dict] = []
+    total = 0
+    needle = (q or "").strip().casefold()
 
     if kind == "project":
-        if is_published(rid):
-            docs = await db.projects.find({}).to_list(20000)
-        else:
-            docs = await db.project_run_projects.find({"run_id": rid}).to_list(20000)
-        for d in _sort_title(docs, "title"):
+        filt: dict = {} if is_published(rid) else {"run_id": rid}
+        filt.update(_title_filter("title", q))
+        coll = db.projects if is_published(rid) else db.project_run_projects
+        total = await _count(coll, filt)
+        docs = await (coll.find(filt, _PROJECT_QUEUE_PROJ)
+                      .sort("title", 1).skip(offset).limit(limit).to_list(limit))
+        for d in docs:
             eid = _sid(d.get("_id") or d.get("url"))
             if not eid:
                 continue
@@ -187,11 +224,18 @@ async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
 
     elif kind == "eez":
         if is_published(rid):
-            docs = await db.eez_zones.find({}, {"geometry": 0}).to_list(2000)
+            docs = await db.eez_zones.find({}, _EEZ_QUEUE_PROJ).to_list(2000)
         else:
-            docs = await db.poe_run_zones.find({"run_id": rid}, {"geometry": 0}).to_list(2000)
+            docs = await db.poe_run_zones.find(
+                {"run_id": rid}, _EEZ_QUEUE_PROJ).to_list(2000)
         docs = await _label_zones(db, docs)
         docs.sort(key=lambda z: (z.get("label") or z.get("name") or "").casefold())
+        if needle:
+            docs = [z for z in docs if needle in (
+                f"{z.get('label') or ''} {z.get('name') or ''} {z.get('sovereign') or ''}"
+            ).casefold()]
+        total = len(docs)
+        docs = docs[offset:offset + limit]
         for z in docs:
             mid = z.get("mrgid")
             if mid is None:
@@ -206,11 +250,13 @@ async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
             ))
 
     elif kind == "poe":
-        if is_published(rid):
-            docs = await db.poe_ports.find({}).to_list(20000)
-        else:
-            docs = await db.poe_run_ports.find({"run_id": rid}).to_list(20000)
-        for d in _sort_title(docs, "name"):
+        filt = {} if is_published(rid) else {"run_id": rid}
+        filt.update(_title_filter("name", q))
+        coll = db.poe_ports if is_published(rid) else db.poe_run_ports
+        total = await _count(coll, filt)
+        docs = await (coll.find(filt, _POE_QUEUE_PROJ)
+                      .sort("name", 1).skip(offset).limit(limit).to_list(limit))
+        for d in docs:
             eid = _sid(d.get("dedup_key") or d.get("_id"))
             if not eid:
                 continue
@@ -222,8 +268,11 @@ async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
             ))
 
     else:
-        docs = await db.marinas.find({}).to_list(20000)
-        for d in _sort_title(docs, "name"):
+        filt = _title_filter("name", q)
+        total = await _count(db.marinas, filt)
+        docs = await (db.marinas.find(filt, _MARINA_QUEUE_PROJ)
+                      .sort("name", 1).skip(offset).limit(limit).to_list(limit))
+        for d in docs:
             eid = _sid(d.get("_id"))
             if not eid:
                 continue
@@ -237,7 +286,9 @@ async def list_queue(db, kind: str, run_id: str | None = None) -> dict:
     return {
         "kind": kind,
         "run_id": rid,
-        "total": len(items),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
         "commented": commented,
         "items": items,
         "wrote_projects": False,

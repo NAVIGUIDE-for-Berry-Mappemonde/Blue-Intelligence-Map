@@ -18,8 +18,20 @@ class _FakeCursor:
             return list(self._docs)
         return list(self._docs[:n])
 
-    def sort(self, *a, **k):
-        return self
+    def sort(self, key, direction=1):
+        rev = direction == -1
+        docs = sorted(
+            self._docs,
+            key=lambda d: str(d.get(key) or "").casefold(),
+            reverse=rev,
+        )
+        return _FakeCursor(docs)
+
+    def skip(self, n):
+        return _FakeCursor(self._docs[int(n):])
+
+    def limit(self, n):
+        return _FakeCursor(self._docs[:int(n)])
 
 
 class _FakeColl:
@@ -215,6 +227,15 @@ def test_run_fiche_uses_run_ports_not_v1():
     assert fiche["url_td"]["url"] == "https://run.gouv.fr/liste.pdf"
     pub = asyncio.run(build_zone_fiche(db, 5677, run_id="published"))
     assert [p["name"] for p in pub["ports"]] == ["Marseille"]
+
+
+def test_queue_pagination_does_not_drop_total():
+    db = _db()
+    page = asyncio.run(review_queue.list_queue(db, "eez", "published", offset=0, limit=1))
+    assert page["total"] == 2
+    assert len(page["items"]) == 1
+    rest = asyncio.run(review_queue.list_queue(db, "eez", "published", offset=1, limit=1))
+    assert {page["items"][0]["id"], rest["items"][0]["id"]} == {"5677", "48944"}
 
 
 def test_list_runs_includes_published_and_isolated():

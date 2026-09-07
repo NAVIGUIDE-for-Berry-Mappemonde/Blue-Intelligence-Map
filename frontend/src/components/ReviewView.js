@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ClipboardCheck, Search } from "lucide-react";
 import api from "../api";
 import ZoneFiche from "./ZoneFiche";
@@ -13,6 +13,8 @@ const KINDS = [
   { id: "marina", labelKey: "reviewKindMarina" },
 ];
 
+const PAGE = 500;
+
 function kindFromMode(mode) {
   if (mode === "marinas") return "marina";
   if (mode === "formalities") return "eez";
@@ -24,7 +26,10 @@ export default function ReviewView({ t, mode }) {
   const [runs, setRuns] = useState([]);
   const [runId, setRunId] = useState("published");
   const [queue, setQueue] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [filter, setFilter] = useState("");
+  const [q, setQ] = useState("");
   const [index, setIndex] = useState(0);
   const [fiche, setFiche] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -34,21 +39,26 @@ export default function ReviewView({ t, mode }) {
   const dirtyRef = useRef(false);
   const commentRef = useRef("");
   const currentIdRef = useRef(null);
+  const pendingIndexRef = useRef(0);
 
   useEffect(() => {
     setKind(kindFromMode(mode));
     setIndex(0);
+    setOffset(0);
     setFilter("");
+    setQ("");
   }, [mode]);
 
-  const filtered = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return queue;
-    return queue.filter((it) =>
-      `${it.title || ""} ${it.subtitle || ""}`.toLowerCase().includes(needle));
-  }, [queue, filter]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setQ(filter.trim());
+      setOffset(0);
+      pendingIndexRef.current = 0;
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [filter]);
 
-  const current = filtered[index] || null;
+  const current = queue[index] || null;
 
   const persistIfDirty = useCallback(async () => {
     const id = currentIdRef.current;
@@ -60,7 +70,7 @@ export default function ReviewView({ t, mode }) {
       });
       dirtyRef.current = false;
       setSavedAt(data.updated_at || new Date().toISOString());
-      setQueue((q) => q.map((it) => (
+      setQueue((items) => items.map((it) => (
         it.id === id ? { ...it, has_comment: Boolean((commentRef.current || "").trim()) } : it
       )));
     } catch (e) {
@@ -90,16 +100,25 @@ export default function ReviewView({ t, mode }) {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get("/review/queue", { params: { kind, run_id: runId } });
+        const { data } = await api.get("/review/queue", {
+          params: { kind, run_id: runId, offset, limit: PAGE, q },
+        });
         if (cancelled) return;
-        setQueue(data.items || []);
-        setIndex(0);
+        const items = data.items || [];
+        setQueue(items);
+        setTotal(data.total || 0);
+        const want = pendingIndexRef.current;
+        pendingIndexRef.current = 0;
+        setIndex(items.length ? Math.min(Math.max(want, 0), items.length - 1) : 0);
       } catch (e) {
-        if (!cancelled) setQueue([]);
+        if (!cancelled) {
+          setQueue([]);
+          setTotal(0);
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, runId]);
+  }, [kind, runId, offset, q]);
 
   useEffect(() => {
     commentRef.current = comment;
@@ -136,15 +155,34 @@ export default function ReviewView({ t, mode }) {
   }, [kind, runId, current?.id]);
 
   const go = useCallback(async (delta) => {
-    if (!filtered.length) return;
+    if (!total) return;
     await persistIfDirty();
-    setIndex((i) => {
-      const next = i + delta;
-      if (next < 0) return filtered.length - 1;
-      if (next >= filtered.length) return 0;
-      return next;
-    });
-  }, [filtered.length, persistIfDirty]);
+    const next = index + delta;
+    if (next >= 0 && next < queue.length) {
+      setIndex(next);
+      return;
+    }
+    if (next >= queue.length) {
+      const nextOff = offset + queue.length;
+      if (nextOff < total) {
+        pendingIndexRef.current = 0;
+        setOffset(nextOff);
+      } else {
+        pendingIndexRef.current = 0;
+        setOffset(0);
+      }
+      return;
+    }
+    if (offset > 0) {
+      const prevOff = Math.max(0, offset - PAGE);
+      pendingIndexRef.current = PAGE - 1;
+      setOffset(prevOff);
+      return;
+    }
+    const lastOff = Math.max(0, Math.floor((total - 1) / PAGE) * PAGE);
+    pendingIndexRef.current = Math.max(0, (total - lastOff) - 1);
+    setOffset(lastOff);
+  }, [total, index, queue.length, offset, persistIfDirty]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -196,7 +234,7 @@ export default function ReviewView({ t, mode }) {
       <aside className="w-[280px] shrink-0 flex flex-col border-r border-line bg-surface">
         <div className="p-3 border-b border-line">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-2">
-            {t("reviewJump")} <span className="text-accent">({filtered.length})</span>
+            {t("reviewJump")} <span className="text-accent">({total})</span>
           </p>
           <div className="relative">
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -204,17 +242,17 @@ export default function ReviewView({ t, mode }) {
               data-testid="review-search-input"
               type="text"
               value={filter}
-              onChange={(e) => { setFilter(e.target.value); setIndex(0); }}
+              onChange={(e) => setFilter(e.target.value)}
               placeholder={t("reviewSearch")}
               className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto" data-testid="review-queue-list">
-          {filtered.length === 0 && (
+          {queue.length === 0 && (
             <p className="p-4 text-xs text-slate-500">{t("reviewEmpty")}</p>
           )}
-          {filtered.map((it, i) => (
+          {queue.map((it, i) => (
             <button
               key={it.id}
               type="button"
@@ -250,7 +288,7 @@ export default function ReviewView({ t, mode }) {
                 key={k.id}
                 type="button"
                 data-testid={`review-kind-${k.id}`}
-                onClick={async () => { await persistIfDirty(); setKind(k.id); }}
+                onClick={async () => { await persistIfDirty(); setKind(k.id); setOffset(0); pendingIndexRef.current = 0; }}
                 className={`px-2.5 py-1.5 text-[11px] font-semibold ${
                   k.id !== "project" ? "border-l border-line" : ""
                 } ${kind === k.id ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
@@ -262,7 +300,7 @@ export default function ReviewView({ t, mode }) {
           <select
             data-testid="review-run-select"
             value={runId}
-            onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); }}
+            onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); setOffset(0); pendingIndexRef.current = 0; }}
             className="bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[280px]"
           >
             {runs.map((r) => (
@@ -273,13 +311,13 @@ export default function ReviewView({ t, mode }) {
             ))}
           </select>
           <span className="ml-auto font-mono text-[11px] text-slate-400" data-testid="review-counter">
-            {filtered.length ? `${index + 1} / ${filtered.length}` : "0 / 0"}
+            {total ? `${offset + index + 1} / ${total}` : "0 / 0"}
           </span>
           <button
             type="button"
             data-testid="review-prev"
             onClick={() => go(-1)}
-            disabled={!filtered.length}
+            disabled={!total}
             className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
           >
             <ChevronLeft size={13} /> {t("reviewPrev")}
@@ -288,7 +326,7 @@ export default function ReviewView({ t, mode }) {
             type="button"
             data-testid="review-next"
             onClick={() => go(1)}
-            disabled={!filtered.length}
+            disabled={!total}
             className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
           >
             {t("reviewNext")} <ChevronRight size={13} />
@@ -298,7 +336,7 @@ export default function ReviewView({ t, mode }) {
           {t("reviewHint")}
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
-          {filtered.length === 0 && !loading ? (
+          {queue.length === 0 && !loading ? (
             <p className="p-6 text-sm text-slate-500">{t("reviewEmpty")}</p>
           ) : renderFiche()}
         </div>
