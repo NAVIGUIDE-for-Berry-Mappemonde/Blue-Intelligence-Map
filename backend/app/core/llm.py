@@ -266,6 +266,9 @@ Règles absolues:
   « port of / port de / puerto de X », capitanías de puerto, delegaciones,
   designated ports, gazette, décret, liste de ports de plaisance, places of first arrival.
   Un règlement scanné (OCR) reste une source : extraire les noms malgré les fautes OCR.
+  Un tableau SCT « N° Nom État Puerto/Terminal date lat lon » (sans le mot Latitud)
+  est un catalogue : recopier chaque ligne et ses coordonnées.
+  Tableaux MPI « | Nom | / Approved vessels » = places of first arrival.
   La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
 - Ignorer les aéroports (sauf s'ils sont le seul point d'entrée maritime nommé — ne pas les extraire).

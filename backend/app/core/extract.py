@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
@@ -40,7 +41,8 @@ from bs4 import BeautifulSoup
 from app.config import BACKEND_DIR, DATA_DIR
 
 PDF_CACHE_DIR = DATA_DIR / "cached_pdfs"
-PDF_SUBPROCESS_TIMEOUT_S = 25
+# OCR d'une Gaceta scannée (5 pages) dépasse largement 25 s.
+PDF_SUBPROCESS_TIMEOUT_S = 90
 PDF_MAX_CONCURRENT = 3
 _pdf_slots = threading.Semaphore(PDF_MAX_CONCURRENT)
 
@@ -235,11 +237,12 @@ def parse_pdf_text(content: bytes, max_pages: int = 180) -> str:
         return ""
     digest = pdf_cache_key(content)
     cached = _read_pdf_cache(digest)
-    if cached is not None:
+    # Un cache vide (scan sans OCR, avant tesseract) ne doit pas figer l'échec.
+    if cached is not None and cached.strip():
         return cached
     with _pdf_slots:
         cached = _read_pdf_cache(digest)
-        if cached is not None:
+        if cached is not None and cached.strip():
             return cached
         fd, inp = tempfile.mkstemp(suffix=".pdf")
         out = inp + ".txt"
@@ -414,7 +417,8 @@ _CATALOG_STATE = re.compile(
 _PORT_OF_RE = re.compile(
     r"\b(?:ports?\s+of\s+|porto?s?\s+d(?:e\s+|['’])|puertos?\s+de\s+|"
     r"portos?\s+de\s+|havens?\s+van\s+|hafen\s+von\s+|porti?\s+di\s+)"
-    r"([A-ZÀ-Ý][\w'’. -]{0,40}?)(?=,|;|\.| the | or |\n| et | ou | y | e | und | oder )",
+    r"(?-i:([A-ZÀ-Ý][\w'’. -]{0,40}?))"
+    r"(?=,|;|\.| the | or |\n| et | ou | y | e | und | oder )",
     re.I,
 )
 _PORT_OF_SKIP = frozenset({
@@ -424,36 +428,97 @@ _PORT_OF_SKIP = frozenset({
     "commerce", "plaisance", "recreo", "recreio", "mer", "mar",
     "base", "principal", "éligibles", "eligibles", "eligible",
     "rattachement", "liste",
+    "arrival", "first", "marina", "zarpe", "permiso", "funcionario",
+    "autonome", "autonoma", "autónomo",
 })
 _CATALOG_MARKERS_RE = re.compile(
-    r"puertos habilitados|designated ports|ports? d['’]entrée|"
+    r"puertos habilitados|puertos y terminales habilitados|"
+    r"designated ports|ports? d['’]entrée|"
     r"ports? of entry|puertos de entrada|portos de entrada|"
     r"ports? de plaisance|capitan[ií]as?\s+de\s+puerto|"
-    r"places of first arrival",
+    r"places of first arrival|approved ports",
     re.I,
 )
+# Capitanía / Capitanias — pas « Capitán de Puerto » (titre, prose de loi).
+# Le nom doit commencer par une capitale (indépendant de IGNORECASE).
 _CAPITANIA_RE = re.compile(
-    r"capitan[iíea][aáe]?\s+d[ae]\s+puerto\s+(?:d[ae]\s+|del?\s+)?"
-    r"([A-ZÁÉÍÓÚÑÜ][\w'’.\-áéíóúñüÁÉÍÓÚÑÜ ]{1,55})",
+    r"Capitan(?:[ií]as?|te)\s+[«\"']?\s*d[ae]\s+Puerto\s+"
+    r"(?:d[ae]\s+|del?\s+|po\s+)?"
+    r"(?-i:([A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"(?:\s*-\s*[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"|\s+(?:de|del|la|las|los|y|&)\s+[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"|\s+[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"){0,4}))",
+    re.I,
+)
+# Ligne OCR du type « 7) Capitante «de Puerto de Puerto: Sucre ».
+_CAPITANIA_NUM_LINE_RE = re.compile(
+    r"(?m)^\s*\d{1,2}\s*[).:—\-]\s*.{0,24}Puerto\s+(?:d[ae]\s+|po\s+)?"
+    r"(?-i:([A-ZÁÉÍÓÚÑÜ][^\n]{1,40}))",
     re.I,
 )
 _CAPITANIA_CUT_RE = re.compile(
-    r"\b(?:tendr[aá]|art[ií]culo|su sede|geogr[aá]fica|dependencias)\b",
+    r"\b(?:tendr[aá]|art[ií]culo|su sede|geogr[aá]fica|dependencias|"
+    r"estar[aá]|permiso|funcionario|circunscrip|resoluci[oó]n|"
+    r"ministerio|gaceta|contralor[ií]a|decisi[oó]n|indica)\b",
     re.I,
 )
 _CAPITANIA_SKIP = frozenset({
     "la republica", "la república", "la circunscripcion", "la circunscripción",
-    "cada circunscripcion",
+    "cada circunscripcion", "el permiso", "un funcionario", "puerto",
 })
-_PLAISANCE_PORT_RE = re.compile(
-    r"port(?:s)?\s+de\s+plaisance\s+(?:de\s+|d['’]|du\s+|des\s+)?"
-    r"([A-ZÀ-Ý][\w'’. \-]{1,50})",
-    re.I,
+_VE_OCR_ALIASES = {
+    "gulria": "Güiria", "guiria": "Güiria", "giliria": "Güiria",
+    "gualra": "La Guaira", "guaira": "La Guaira", "maracalbo": "Maracaibo",
+    "puertosucre": "Puerto Sucre",
+}
+_VE_CANON = (
+    "Maracaibo", "Las Piedras", "La Vela de Coro", "Puerto Cabello",
+    "La Guaira", "Guanta-Puerto La Cruz", "Puerto Sucre", "Carúpano",
+    "Pampatar", "Güiria", "Caripito", "Ciudad Guayana", "Ciudad Bolívar",
+    "Amazonas", "Apure",
 )
+# Uniquement en tête de ligne : la prose « ports de plaisance de français… »
+# de la landing douane ne doit pas devenir un toponyme.
+_PLAISANCE_PORT_RE = re.compile(
+    r"(?m)^(?:[-•*]|\d+[.)])?\s*Ports?\s+de\s+plaisance\s+"
+    r"(?:de\s+|d['’]|du\s+|des\s+)?"
+    r"([A-ZÀ-Ý][\w'’. \-]{1,50})"
+)
+_PLAISANCE_NAME_SKIP_RE = re.compile(
+    r"(?i)\b(français|francais|depuis|également|egalement|eligibles|"
+    r"éligibles|qui|que|non|pas|sont|aussi|cette|ppf|schengen|liste|"
+    r"carte|rattachement|navires?)\b",
+)
+_GENERIC_PORT_NAMES = frozenset({
+    "marina", "plaisance", "port", "puerto", "harbour", "harbor",
+})
 _FR_REGION_RE = re.compile(
-    r"^(haut\s+de\s+france|normandie|bretagne|paca|nouvelle\s+aquitaine|"
+    r"^(hauts?-?\s*de\s+france|normandie|bretagne|paca|nouvelle\s+aquitaine|"
     r"corse|occitanie|pays\s+de\s+la\s+loire|provence)",
     re.I,
+)
+# Tableau SCT / SEMAR : « 1 Bahía Colonet\nBaja California\nPuerto\ndate\nlat\nlon »
+_MX_HABILITADO_ROW_RE = re.compile(
+    r"(?m)^\s*(?P<n>\d{1,3})\s+(?P<name>[A-ZÁÉÍÓÚÑÜ][^\n]{1,80})\n"
+    r"\s*(?P<state>[A-ZÁÉÍÓÚÑÜ][^\n]{2,50})\n"
+    r"\s*(?P<kind>Puerto|Terminal|Marina|Muelle|Recinto)[^\n]*\n"
+    r"\s*(?P<date>\d{1,2}/\d{1,2}/\d{4})\n"
+    r"\s*(?P<lat>[+-]?\d{1,3}\.\d+)\n"
+    r"\s*(?P<lon>[+-]?\d{2,3}\.\d+)",
+    re.I,
+)
+# MPI : chaque PoFA est un tableau markdown « | Nom |\n| --- |\n| Approved vessels | »
+_NZ_POFA_MD_RE = re.compile(
+    r"(?m)^\s*\|\s*([A-Z][^|\n]{2,70}?)\s*\|\s*\n\s*\|\s*---\s*\|\s*\n"
+    r"\s*\|\s*Approved vessels\s*\|",
+)
+_NZ_POFA_PLAIN_RE = re.compile(
+    r"(?m)^\s*([A-Z][^\n]{2,70})\n\s*Approved vessels\b",
+)
+_DOUANE_BUREAU_RE = re.compile(
+    r"(?i:bureau(?:x)?\s+des?\s+douanes?\s+(?:de\s+|d['’]|du\s+)?)"
+    r"([A-ZÀ-Ý][\w'’.\-]+(?:[\s\-][A-ZÀ-Ý][\w'’.\-]+){0,3})",
 )
 _FR_AUTH_RE = re.compile(
     r"^(paf|douane|police aux fronti|garde-fronti|autorit|version\s|"
@@ -509,9 +574,17 @@ def looks_like_port_catalog(text: str) -> bool:
         return True
     if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= lat_need or lat_hits >= 3):
         return True
+    if re.search(r"puertos\s+y\s+terminales\s+habilitados", text, re.I):
+        return True
+    if len(_MX_HABILITADO_ROW_RE.findall(text)) >= 5:
+        return True
     if len(_CAPITANIA_RE.findall(text)) >= 4:
         return True
-    if len(re.findall(r"port\s+de\s+plaisance", text, re.I)) >= 3:
+    if re.search(r"liste des ports de plaisance [ée]ligibles", text, re.I):
+        return True
+    if sum(1 for ln in text.splitlines() if _FR_REGION_RE.match(ln.strip())) >= 3:
+        return True
+    if len(_NZ_POFA_MD_RE.findall(text)) >= 3 or len(_NZ_POFA_PLAIN_RE.findall(text)) >= 3:
         return True
     if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
         return True
@@ -541,22 +614,46 @@ def extract_structured_ports(text: str) -> list[dict]:
 
 
 def _clean_legal_port_name(raw: str) -> str:
-    n = " ".join((raw or "").replace(":", " ").split()).strip(" .;,-")
+    n = " ".join((raw or "").replace(":", " ").split()).strip(" .;,-«»\"'")
     n = _CAPITANIA_CUT_RE.split(n, maxsplit=1)[0]
     n = re.sub(r"\s+tendr[aá].*$", "", n, flags=re.I)
     n = re.sub(r"\s+ten-\s*$", "", n, flags=re.I)
     n = re.sub(r"^(?:po|da|del)\s+", "", n, flags=re.I)
-    return n.strip(" .;,-")[:120]
+    return n.strip(" .;,-«»\"'")[:120]
+
+
+def _fold_ocr(s: str) -> str:
+    nfd = unicodedata.normalize("NFD", (s or "").casefold())
+    return re.sub(r"[^a-z]+", "", "".join(
+        ch for ch in nfd if unicodedata.category(ch) != "Mn"))
+
+
+def _normalize_capitania_name(name: str) -> str:
+    """Corrige une faute OCR évidente (Gúlria → Güiria), sans inventer de port."""
+    fold = _fold_ocr(name)
+    if fold in _VE_OCR_ALIASES:
+        return _VE_OCR_ALIASES[fold]
+    best, best_r = None, 0.0
+    for canon in _VE_CANON:
+        ratio = difflib.SequenceMatcher(None, fold, _fold_ocr(canon)).ratio()
+        if ratio > best_r:
+            best, best_r = canon, ratio
+    if best and best_r >= 0.82:
+        return best
+    return name
 
 
 def _extract_capitanias(text: str) -> list[dict]:
     out, seen = [], set()
-    for m in _CAPITANIA_RE.finditer(text or ""):
-        name = _clean_legal_port_name(m.group(1))
+    raw_names = [m.group(1) for m in _CAPITANIA_RE.finditer(text or "")]
+    raw_names += [m.group(1) for m in _CAPITANIA_NUM_LINE_RE.finditer(text or "")]
+    for raw in raw_names:
+        name = _normalize_capitania_name(_clean_legal_port_name(raw))
         fold = name.casefold()
         if (not name or len(name) < 3 or fold in _CAPITANIA_SKIP or fold in seen
                 or "republica" in fold or "república" in fold
-                or "refrend" in fold or fold.endswith(("tendrá", "tendra", "su"))):
+                or "refrend" in fold or fold.endswith(("tendrá", "tendra", "su"))
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
             continue
         seen.add(name.casefold())
         out.append({
@@ -609,7 +706,9 @@ def _extract_fr_plaisance_table(text: str) -> list[dict]:
         name = _clean_legal_port_name(m.group(1))
         fold = name.casefold()
         if (not name or fold in seen or fold in _PORT_OF_SKIP or len(name) < 3
-                or fold.startswith(("éligibl", "eligibl", "ppf", "rattachement"))):
+                or fold in _GENERIC_PORT_NAMES
+                or fold.startswith(("éligibl", "eligibl", "ppf", "rattachement"))
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
             continue
         seen.add(name.casefold())
         out.append({
@@ -620,9 +719,77 @@ def _extract_fr_plaisance_table(text: str) -> list[dict]:
     return out
 
 
+def _extract_mx_habilitados_table(text: str) -> list[dict]:
+    """PDF SCT « Puertos y terminales habilitados » : N° / nom / État / type / date / lat / lon."""
+    out, seen = [], set()
+    for m in _MX_HABILITADO_ROW_RE.finditer(text or ""):
+        name = " ".join(m.group("name").split()).strip()
+        state = " ".join(m.group("state").split()).strip()
+        key = name.casefold()
+        if key in seen and state:
+            name = f"{name} ({state})"
+            key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name[:120], "city": state[:80] or None,
+            "lat": float(m.group("lat")), "lon": float(m.group("lon")),
+            "note": "catalogue officiel (nom + coordonnées dans la source)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_nz_pofa_tables(text: str) -> list[dict]:
+    """Registre MPI « places of first arrival – seaports » (tableau par port)."""
+    out, seen = [], set()
+    names = [m.group(1) for m in _NZ_POFA_MD_RE.finditer(text or "")]
+    names += [m.group(1) for m in _NZ_POFA_PLAIN_RE.finditer(text or "")]
+    skip = _PORT_OF_SKIP | {"approved vessels", "choose from this list",
+                            "what you must do", "northland", "approved ports"}
+    for raw in names:
+        name = " ".join((raw or "").split()).strip(" |-")
+        fold = name.casefold()
+        if (not name or fold in seen or fold in skip or len(name) < 3
+                or len(name) > 80 or fold in _GENERIC_PORT_NAMES):
+            continue
+        seen.add(fold)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "place of first arrival (registre MPI)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_douane_bureaux(text: str) -> list[dict]:
+    """« bureau de douane de Nouméa Port » — page formalités sans tableau."""
+    out, seen = [], set()
+    for m in _DOUANE_BUREAU_RE.finditer(text or ""):
+        name = _clean_legal_port_name(m.group(1))
+        fold = name.casefold()
+        if (not name or fold in seen or fold in _PORT_OF_SKIP or len(name) < 3
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
+            continue
+        seen.add(fold)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "bureau de douane (page formalités)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
 def _extract_structured_ports_one(text: str) -> list[dict]:
     out, seen = [], set()
-    for extra in (_extract_capitanias(text), _extract_fr_plaisance_table(text)):
+    for extra in (
+        _extract_mx_habilitados_table(text),
+        _extract_nz_pofa_tables(text),
+        _extract_capitanias(text),
+        _extract_fr_plaisance_table(text),
+        _extract_douane_bureaux(text),
+    ):
         for p in extra:
             key = p["name"].casefold()
             if key in seen:
@@ -652,12 +819,16 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         })
     if len(out) >= 10:
         return out
+    if len(out) >= 3 and looks_like_port_catalog(text or ""):
+        return out
     for m in _PORT_OF_RE.finditer(text or ""):
         name = m.group(1).strip().rstrip(".")
         first = name.split()[0].casefold() if name else ""
         if not name or first in _PORT_OF_SKIP or name.casefold() in seen:
             continue
         if len(name) < 3 or len(name) > 60:
+            continue
+        if re.search(r"\b(airport|aeropuerto|aéroport|zarpe)\b", name, re.I):
             continue
         seen.add(name.casefold())
         out.append({

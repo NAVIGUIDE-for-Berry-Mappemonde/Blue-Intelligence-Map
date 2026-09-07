@@ -132,6 +132,8 @@ def test_venezuela_reglamento_ocr_yields_capitanias():
     assert "Maracaibo" in names and "La Guaira" in names
     assert "Pampatar" in names and "Güiria" in names
     assert len(ports) >= 15
+    ocr = extract_structured_ports("10) Capitanía de Puerto de Gúlria")
+    assert any(p["name"] == "Güiria" for p in ocr)
 
 
 def test_france_plaisance_table_yields_ports():
@@ -251,6 +253,122 @@ def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):
     blob = " ".join(c["url"] for c in used)
     assert liste in blob
     assert carte in blob
+
+
+def test_mexico_habilitados_table_yields_coords():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    text = """
+    PUERTOS Y TERMINALES HABILITADOS
+    1 Bahía Colonet
+    Baja California
+    Puerto
+    07/08/2006
+    30.96571843
+    -116.2804389 https://www.dof.gob.mx/nota
+    4 Ensenada
+    Baja California
+    Puerto
+    31/05/1974
+    31.8522146
+    -116.625788 https://www.dof.gob.mx/nota
+    34 Manzanillo
+    Colima
+    Puerto
+    01/01/2000
+    19.057546
+    -104.313762
+    """
+    ports = extract_structured_ports(text)
+    by = {p["name"]: p for p in ports}
+    assert "Bahía Colonet" in by and "Ensenada" in by and "Manzanillo" in by
+    assert abs(by["Ensenada"]["lat"] - 31.8522146) < 1e-6
+    assert abs(by["Bahía Colonet"]["lon"] - (-116.2804389)) < 1e-6
+    assert by["Ensenada"]["city"] == "Baja California"
+    assert catalog_is_sufficient(ports, text)
+
+
+def test_venezuela_ley_prose_is_not_a_capitania_list():
+    from app.core.extract import extract_structured_ports, looks_like_port_catalog
+    text = """
+    Artículo 12. La Capitanía de Puerto estará a cargo de un funcionario
+    denominado Capitán de Puerto. Serán atribuciones del Capitán de Puerto
+    ordenar la inspección. Capitanía de Puerto el permiso de zarpe, dentro
+    de las doce horas. En cada circunscripción acuática.
+    """
+    ports = extract_structured_ports(text)
+    names = " ".join(p["name"] for p in ports).casefold()
+    assert "estará" not in names
+    assert "permiso" not in names
+    assert "zarpe" not in names
+    assert "circunscrip" not in names
+    assert looks_like_port_catalog(text) is False
+
+
+def test_france_landing_prose_is_not_a_port_list():
+    from app.core.extract import extract_structured_ports
+    text = (
+        "Si vous arrivez dans des ports de plaisance de français depuis un "
+        "port situé en dehors de l’espace Schengen, ou dans des ports de "
+        "plaisance de qui ne sont pas des points de passage frontaliers, "
+        "la liste des ports de plaisance de non PPF est reprise sur la "
+        "liste des 53 ports bénéficiant d'une procédure simplifiée."
+    )
+    ports = extract_structured_ports(text)
+    names = " ".join(p["name"] for p in ports).casefold()
+    assert "français" not in names
+    assert "non ppf" not in names
+    assert not any("qui ne sont" in (p["name"] or "").casefold() for p in ports)
+
+
+def test_nz_pofa_tables_yield_seaports_not_arrival():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    text = """
+    ## Approved ports
+    | Opua Marine Park |
+    | --- |
+    | Approved vessels | Private recreational vessels |
+    | Port of Auckland Limited |
+    | --- |
+    | Approved vessels | Commercial vessels |
+    | Port of Tauranga |
+    | --- |
+    | Approved vessels | Cargo |
+    | Wellington Harbour |
+    | --- |
+    | Approved vessels | Ferry |
+    | Lyttelton Harbour |
+    | --- |
+    | Approved vessels | Cargo and cruise |
+    | Timaru Port |
+    | --- |
+    | Approved vessels | Cargo |
+    | Port Chalmers |
+    | --- |
+    | Approved vessels | Cargo |
+    | South Port, Bluff |
+    | --- |
+    | Approved vessels | Cargo |
+    Unlike the port of arrival or the port of Christchurch airport.
+    """
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert "Opua Marine Park" in names
+    assert "Lyttelton Harbour" in names
+    assert "Port of Auckland Limited" in names
+    assert "arrival" not in {n.casefold() for n in names}
+    assert "Christchurch" not in names
+    assert catalog_is_sufficient(ports, text)
+
+
+def test_nc_clearance_bureau_and_sx_generic_marina():
+    from app.core.extract import extract_structured_ports
+    nc = extract_structured_ports(
+        "se présenter au bureau de douane de Nouméa Port pour une clearance."
+    )
+    assert any("Nouméa" in (p["name"] or "") for p in nc)
+    sx = extract_structured_ports("Port de plaisance de Marina\nGreat Bay.")
+    assert not any(p["name"].casefold() in {"marina", "port de plaisance de marina"}
+                   for p in sx)
 
 
 def test_attachments_beat_remaining_serp_queue(monkeypatch):

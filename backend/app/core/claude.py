@@ -280,6 +280,29 @@ JSON attendu :
    "lat": 19.057546, "lon": -104.313762, "geocodeable": true}
 ]}
 
+--- Exemple A2 : tableau SCT (N° Nom État type date lat lon, sans « Latitud: ») ---
+SOURCE:
+PUERTOS Y TERMINALES HABILITADOS
+1 Bahía Colonet
+Baja California
+Puerto
+07/08/2006
+30.96571843
+-116.2804389 https://www.dof.gob.mx/nota
+4 Ensenada
+Baja California
+Puerto
+31/05/1974
+31.8522146
+-116.625788
+JSON attendu :
+{"ports": [
+  {"name": "Bahía Colonet", "city": "Baja California", "note": "catalogue officiel",
+   "lat": 30.96571843, "lon": -116.2804389, "geocodeable": true},
+  {"name": "Ensenada", "city": "Baja California", "note": "catalogue officiel",
+   "lat": 31.8522146, "lon": -116.625788, "geocodeable": true}
+]}
+
 --- Exemple B : tournure légale isolée (ne pas extraire l'aéroport) ---
 SOURCE:
 No plant material may be imported into Niue except through the port of Alofi,
