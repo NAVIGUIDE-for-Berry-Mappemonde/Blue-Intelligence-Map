@@ -470,7 +470,7 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 | **`remember_seed_urls` TD seulement** | Les URLs productives du BU ne sont pas mémorisées pour les autres ZEE du même pays. |
 | **WPI absent du code** | Spécifié ici comme contre-liste commerce/industriel. À brancher en signal Bottom-Up, comme OSM : jamais comme preuve PoE. |
 | **Marinas OSM exclues des graines** | `is_marina_only` écarte `leisure=marina` (31 792 objets). Or le livrable est bien la **plaisance**. Il faut réintroduire les marinas **comme candidats** (surtout près d’une douane / `border_control`), sans les promouvoir automatiquement. |
-| **Juge trop « port désigné »** | Le prompt actuel accepte un designated port même cargo, et refuse une « marina » trop vite. Il doit exiger la **plaisance** (ou un mixte explicite) pour `is_poe=true`. |
+| **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI encore absente. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
 | **Promotion manuelle** | Pas d’UI de revue → carte. |
 | **Gold Dataset** | N’existe pas. Le listing n’en est pas un. |

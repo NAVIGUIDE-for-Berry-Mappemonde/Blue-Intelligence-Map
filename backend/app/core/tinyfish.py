@@ -12,7 +12,8 @@ FETCH_URL = "https://api.fetch.tinyfish.ai"
 
 POE_PURPOSE = (
     "Official designated ports of entry / puertos habilitados / ports désignés "
-    "for foreign pleasure craft; prefer customs gazette, decree or official list."
+    "for foreign pleasure craft or mixed (commercial AND pleasure), not cargo-only; "
+    "prefer customs gazette, decree or official list."
 )
 
 # Une retry 429 ; monkeypatchable dans les tests.
@@ -36,6 +37,10 @@ POE_JUDGE_SCHEMA = {
         "confidence": {"type": "integer"},
         "reason": {"type": "string"},
         "official_name": {"type": ["string", "null"]},
+        "kind": {
+            "type": "string",
+            "enum": ["pleasure", "mixed", "cargo", "other", "unknown"],
+        },
     },
     "required": ["is_poe", "confidence", "reason"],
 }
@@ -431,9 +436,15 @@ def poe_agent_goal(name: str, zone_name: str, iso2: str | None = None) -> str:
     return (
         f"Open this official page. Decide if « {name} » in {zone_name}{cc} "
         "is a designated port of entry / puerto habilitado / port d'entrée "
-        "for foreign vessels. Do not invent names. is_poe=true only if THIS "
-        "page designates this place. false if the page is about something else. "
-        "null if you cannot decide."
+        "for foreign pleasure craft (yachts, recreational) OR mixed "
+        "(commercial AND pleasure). Do not invent names. is_poe=true only if "
+        "THIS page designates THIS place for pleasure or mixed traffic. "
+        "false if cargo-only, container terminal, industrial, airport, city, "
+        "or another country. A marina is not automatically false: official "
+        "clearance at THIS marina is is_poe=true, kind=pleasure. "
+        "Set kind to pleasure, mixed, cargo, other, or unknown. "
+        "null if you cannot decide or the page names a designated port "
+        "without readable traffic type."
     )
 
 

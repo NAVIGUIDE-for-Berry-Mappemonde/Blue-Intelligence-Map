@@ -146,13 +146,20 @@ Claude reçoit uniquement :
 Il répond en JSON strict :
 
 ```json
-{"is_poe": true, "confidence": 0, "reason": "", "official_name": null}
+{"is_poe": true, "confidence": 0, "reason": "", "official_name": null, "kind": "pleasure"}
 ```
 
+`kind` = `pleasure` | `mixed` | `cargo` | `other` | `unknown`.
+
 - `true` : une source **officielle** désigne **ce** lieu comme PoE / clearance
-  / puerto habilitado / designated port.
-- `false` : marina, ville, autre pays, ou port sans désignation d’entrée.
-- `null` : extraits insuffisants.
+  / puerto habilitado **pour la plaisance** (yacht, recreational, pleasure
+  craft) **ou mixte** (commerce **et** plaisance explicites).
+- `false` : cargo-only, terminal conteneur, industriel, aéroport, ville,
+  autre pays. Une **marina n’est pas** un faux automatique : clearance
+  officielle à **cette** marina → `true`, `kind=pleasure`.
+- `null` : extraits insuffisants, ou port désigné sans trafic lisible.
+- Filet déterministe : `kind=cargo` (ou alias commercial / freight /
+  industrial) force `rejected`, même si le modèle a mis `is_poe=true`.
 
 Escalade : Haiku → Sonnet si listing ou `inconclusive` → OpenRouter si échec
 ou budget.
