@@ -6,7 +6,7 @@ Architecture :
   2. Recherche ciblée      : SearXNG ∥ TinyFish Search (gratuits) -> filet
                              include_domains si discordance / 0 officiel ->
                              recherche groundée (OpenRouter :online) en dernier
-                             + Level-2 Retry Query (organisation douanière).
+                             + round 2 « leçons » (document officiel indirect).
   3. Whitelist automatique : ISO 3166-1 alpha-2 x motifs d'État validés PSL (tldextract)
                              + exceptions.json auto-enrichi + filtrage SERP regex (extract_core).
   4. Collecte & parsing    : cascade hybride extract_core — N1 httpx+trafilatura/PyMuPDF ->
@@ -162,6 +162,7 @@ _LIST_PATH_TOKENS = (
     "marina-mercante", "vous-naviguez", "inventario", "pages/customs",
     "capitanias", "jurisdiccion", "ley-de-marinas", "actividades-conexas",
     "yacht-tourism", "autorizim", "akciz", "peshkimit", "anijet",
+    "annexe", "pleasure-craft", "pleasure_craft", "c1331", "jorftext",
 )
 _JUNK_PATH_TOKENS = (
     "formulaire", "immigration", "export", "brexit", "leaflet",
@@ -231,7 +232,78 @@ def localized_query(zone: dict) -> str | None:
         )
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
-    return tpl.format(name=place) if tpl else None
+    if tpl:
+        return tpl.format(name=place)
+    return family_classic_query(place, lang)
+
+
+# Familles génériques — les 11 polygones restent en if iso (hints / site: / localized).
+_LIST_CANDIDATE_BONUS = 0.45
+
+
+def family_classic_query(place: str, lang: str | None = None) -> str:
+    """Requête « ports of entry / gazette » pour un polygone sans if iso."""
+    if lang == "fr":
+        return f"ports d'entrée officiels liste douane décret yacht plaisance {place}"
+    if lang == "es":
+        return f"puertos habilitados decreto lista oficial yates marinas {place}"
+    return f"official ports of entry yacht marina customs gazette list {place}"
+
+
+def family_default_hints(place: str) -> list[str]:
+    """legal + pleasure + arrival — jamais un nom de port."""
+    generic = f"{place} customs act designated ports of entry official legislation gazette"
+    return [
+        f"{place} yacht marina small craft pleasure craft official list",
+        f"{place} first arrival points of entry clearance gazette",
+        generic,
+    ]
+
+
+def lessons_learned_query(zone: dict) -> str:
+    """Round 2 : document officiel qui ne s'appelle pas « ports of entry »."""
+    place = serp_place_name(zone) or search_polygon_name(zone) or ""
+    return (
+        f"{place} yacht marina small craft pleasure craft "
+        f"first arrival points de passage autorizim akcizë anije "
+        f"kartelë formalités plaisance sPCR"
+    )
+
+
+def has_list_candidate(rows: list | None, min_bonus: float = _LIST_CANDIDATE_BONUS) -> bool:
+    """PDF liste ou page assez profonde — pas une home douanes."""
+    for c in rows or []:
+        u = c.get("url") or ""
+        if not u:
+            continue
+        bonus = list_url_bonus(u)
+        if bonus >= min_bonus:
+            return True
+        if ".pdf" in u.lower() and bonus >= 0.15:
+            return True
+    return False
+
+
+def needs_lessons_round(official: list | None) -> bool:
+    return not has_list_candidate(official)
+
+
+def bootstrap_national_hits(rejected: list | None, zone: dict) -> list[dict]:
+    """Domaine d'État même hors PSL / hors .{iso2} (leçon sintmaartengov.org)."""
+    cc_ok = {c for c in ((zone.get("iso2") or "").lower(),) if c}
+    out: list[dict] = []
+    for c in rejected or []:
+        dom = (c.get("domain") or "").lower()
+        u = c.get("url") or ""
+        if not dom or not OFFICIAL_TOKENS.search(dom):
+            continue
+        if is_foreign_gov_domain(dom, cc_ok):
+            continue
+        path = urlparse(u).path or "/"
+        if list_url_bonus(u) <= 0 and _HOME_PATH_RE.search(path):
+            continue
+        out.append(c)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -431,10 +503,18 @@ def default_search_hints(zone: dict) -> list[str]:
         ]
     lang = zone_search_lang(zone)
     if lang == "es":
-        return [f"{poly} puertos habilitados decreto lista oficial", generic]
+        return [
+            f"{poly} puertos habilitados decreto lista oficial",
+            f"{poly} yates marinas turismo náutico lista oficial",
+            generic,
+        ]
     if lang == "fr":
-        return [f"ports d'entrée officiels liste douane décret {poly}", generic]
-    return [generic]
+        return [
+            f"ports d'entrée officiels liste douane décret {poly}",
+            f"yacht marina plaisance liste officielle {poly}",
+            generic,
+        ]
+    return family_default_hints(poly)
 
 
 def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]:
@@ -1297,10 +1377,12 @@ async def _tf_search_safe(query: str, key: str, log, *, location=None, language=
     if not key or not query:
         return []
     from app.core.tinyfish import tf_search
+    from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS
     try:
         return await tf_search(
             query, key, location=location, language=language,
-            include_domains=include_domains, log=log)
+            include_domains=include_domains,
+            exclude_domains=SEARCH_EXCLUDE_DOMAINS, log=log)
     except Exception as e:
         log(f"TinyFish Search: échec ({type(e).__name__})")
         return []
@@ -1337,7 +1419,9 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
     if lang == "es":
         return f"site:{domain} filetype:pdf (puertos habilitados OR decreto lista)"
-    return f"site:{domain} filetype:pdf (ports of entry OR designated ports list)"
+    return (f"site:{domain} filetype:pdf "
+            f"(ports of entry OR yacht OR marina OR pleasure craft OR "
+            f"first arrival OR akcizë OR designated)")
 
 
 def site_list_page_query(domain: str, zone: dict) -> str:
@@ -1371,7 +1455,8 @@ def site_list_page_query(domain: str, zone: dict) -> str:
         return f"site:{domain} (ports d'entrée OR liste douane)"
     if lang == "es":
         return f"site:{domain} (puertos habilitados OR decreto)"
-    return f"site:{domain} (ports of entry OR designated ports list)"
+    return (f"site:{domain} (ports of entry OR yacht tourism OR specialized marinas "
+            f"OR pleasure craft OR first arrival OR porteve detare)")
 
 
 def landing_url_candidates(zone: dict) -> list[dict]:
@@ -1420,11 +1505,12 @@ async def _site_list_page_search(domains: list[str], zone: dict, log) -> list[di
 async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log, rec=None,
                         tf_key: str | None = None, variant: str = "tinyfish",
                         ) -> tuple[list[dict], bool, str | None]:
-    """Étape 2 — recherche selon le variant du run :
+    """Étape 2 — round 1 classique puis, si besoin, round 2 leçons.
     v1 = SearXNG séquentiel (EN puis localisé si vide) ;
     v2 = SearXNG parallèle EN ∥ local, sans TinyFish ;
     tinyfish = SearXNG ∥ TinyFish + filet include_domains.
-    :online en dernier dans tous les cas. Ne touche jamais poe_ports."""
+    Les if iso des 11 polygones restent sur hints / site: / localized_query.
+    :online en dernier. Ne touche jamais poe_ports."""
     name = search_polygon_name(zone)
     place = serp_place_name(zone) or name
     variant = normalize_variant(variant)
@@ -1441,13 +1527,15 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     if variant == "v1":
         res_en = await search_searxng(query_en, log)
         await emit(rec, "search", engine="searxng", lang="en", query=query_en,
-                   n=len(res_en or []), results=res_en or [], variant=variant)
+                   n=len(res_en or []), results=res_en or [], variant=variant,
+                   round="classic")
         searx_groups.append(res_en or [])
         if not res_en and loc_q:
             log(f"v1: SearXNG EN vide — bascule localisée ({lang}): {loc_q[:80]}")
             res_loc = await search_searxng(loc_q, log)
             await emit(rec, "search", engine="searxng", lang=lang, query=loc_q,
-                       n=len(res_loc or []), results=res_loc or [], variant=variant)
+                       n=len(res_loc or []), results=res_loc or [], variant=variant,
+                       round="classic")
             searx_groups.append(res_loc or [])
     else:
         jobs = [search_searxng(query_en, log)]
@@ -1466,7 +1554,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         results = await asyncio.gather(*jobs)
         for res, (engine, qlang, query) in zip(results, labels):
             await emit(rec, "search", engine=engine, lang=qlang, query=query,
-                       n=len(res or []), results=res or [], variant=variant)
+                       n=len(res or []), results=res or [], variant=variant,
+                       round="classic")
             if engine == "tinyfish":
                 tf_groups.append(res or [])
             else:
@@ -1490,18 +1579,12 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         hint_res = await asyncio.gather(*[search_searxng(q, log) for q in hints])
         for q, res in zip(hints, hint_res):
             await emit(rec, "search", engine="searxng", lang="hint", query=q,
-                       n=len(res), results=res)
+                       n=len(res), results=res, round="classic")
         candidates = _merge_candidates(candidates, *hint_res)
         log(f"requêtes épinglées: {len(hints)} → +{sum(len(r) for r in hint_res)} candidats")
 
     synthesis = None
     grounded_attempted = False
-    if not candidates:
-        candidates, synthesis = await search_grounded(zone, whitelist, log)
-        grounded_attempted = True
-        await emit(rec, "search", engine="grounded", lang="en", query="(prompt groundé)",
-                   n=len(candidates), results=candidates,
-                   synthesis_chars=len(synthesis or ""))
 
     protect = (lambda u: url_allowed(u, whitelist)
                or bool(OFFICIAL_TOKENS.search(u or "")))
@@ -1520,15 +1603,13 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
 
     official = [c for c in candidates if url_allowed(c["url"], whitelist)]
 
-    scoped_added = False
     if key and whitelist and (not official or compare.get("discordant")):
         scoped = await _tf_search_safe(
             query_en, key, log, location=iso, language="en",
             include_domains=whitelist[:8])
         await emit(rec, "search", engine="tinyfish", lang="en", query=query_en,
-                   n=len(scoped), results=scoped, scoped=True)
+                   n=len(scoped), results=scoped, scoped=True, round="classic")
         if scoped:
-            scoped_added = True
             log(f"TinyFish Search scoped: {len(scoped)} résultat(s) include_domains")
             candidates = _merge_candidates(candidates, scoped)
             before_s = list(candidates)
@@ -1547,49 +1628,60 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     elif key and not whitelist and (not official or compare.get("discordant")):
         log("TinyFish scoped sauté : whitelist vide pour cette ZEE")
 
-    if not official:
-        log("Level-2 retry: recherche ciblée sur l'organisation douanière nationale")
-        q2 = (f"{zone.get('sovereign') or name} customs administration official website "
-              f"designated ports of entry list gazette decree {name}")
-        level2_jobs = [search_searxng(q2, log)]
-        if key and not scoped_added:
-            level2_jobs.append(_tf_search_safe(q2, key, log, location=iso, language="en"))
-        extra_parts = await asyncio.gather(*level2_jobs)
-        extra = _merge_candidates(*extra_parts)
-        await emit(rec, "search", engine="searxng", lang="en", query=q2, level2=True,
-                   n=len(extra_parts[0] or []), results=extra_parts[0] or [])
-        if len(extra_parts) > 1:
-            await emit(rec, "search", engine="tinyfish", lang="en", query=q2, level2=True,
-                       n=len(extra_parts[1] or []), results=extra_parts[1] or [])
-        syn2 = None
-        if not extra and not grounded_attempted:
-            extra, syn2 = await search_grounded(zone, whitelist, log, query_override=(
-                f"Find the OFFICIAL national customs administration / border agency website of "
-                f"{zone.get('sovereign') or name} and the page listing designated ports of entry "
-                f"(clearance / designated / habilitados) in {name}. Cite the official URLs."
-            ))
-            await emit(rec, "search", engine="grounded", lang="en", query=q2, level2=True,
-                       n=len(extra or []), results=extra or [],
-                       synthesis_chars=len(syn2 or ""))
-        if syn2 and not synthesis:
-            synthesis = syn2
+    seeded_preview = seed_url_candidates(zone, exceptions) + landing_url_candidates(zone)
+    if needs_lessons_round(official + seeded_preview):
+        q2 = lessons_learned_query(zone)
+        log(f"round 2 leçons: {q2[:90]}")
+        lesson_jobs = [search_searxng(q2, log)]
+        lesson_labels = [("searxng", lang or "en", q2)]
+        if key:
+            lesson_jobs.append(_tf_search_safe(
+                q2, key, log, location=iso, language="en"))
+            lesson_labels.append(("tinyfish", "en", q2))
+        lesson_parts = await asyncio.gather(*lesson_jobs)
+        extra_groups = []
+        for res, (engine, qlang, query) in zip(lesson_parts, lesson_labels):
+            await emit(rec, "search", engine=engine, lang=qlang, query=query,
+                       n=len(res or []), results=res or [], variant=variant,
+                       round="lessons")
+            extra_groups.append(res or [])
+        if key and whitelist:
+            scoped2 = await _tf_search_safe(
+                q2, key, log, location=iso, language="en",
+                include_domains=whitelist[:8])
+            await emit(rec, "search", engine="tinyfish", lang="en", query=q2,
+                       n=len(scoped2 or []), results=scoped2 or [],
+                       scoped=True, variant=variant, round="lessons")
+            extra_groups.append(scoped2 or [])
+        extra = _merge_candidates(*extra_groups)
         known_urls = {_normalize_url(c.get("url")) for c in candidates}
-        extra = serp_filter([c for c in (extra or [])
-                             if _normalize_url(c.get("url") or "") not in known_urls],
-                            protect_fn=protect)
+        extra = serp_filter(
+            [c for c in extra if _normalize_url(c.get("url") or "") not in known_urls],
+            protect_fn=protect)
         if extra:
-            log(f"Level-2 retry: {len(extra)} source(s) supplémentaires trouvées")
-            candidates += extra
+            log(f"round 2 leçons: {len(extra)} source(s) supplémentaires")
+            candidates = _merge_candidates(candidates, extra)
             candidates = rank_candidates_ml(candidates, log, whitelist=whitelist)
         official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
 
-    # Bootstrapping des exceptions (domaines d'État non couverts par la PSL)
+    if not candidates and not grounded_attempted:
+        candidates, synthesis = await search_grounded(zone, whitelist, log)
+        grounded_attempted = True
+        await emit(rec, "search", engine="grounded", lang="en", query="(prompt groundé)",
+                   n=len(candidates), results=candidates,
+                   synthesis_chars=len(synthesis or ""), round="lessons")
+        if candidates:
+            candidates = serp_filter(candidates, protect_fn=protect)
+            candidates = rank_candidates_ml(candidates, log, whitelist=whitelist)
+            official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
+
+    # Bootstrapping : domaine d'État même hors .{iso2} (leçon SX .org).
     rejected = [c for c in candidates if c not in official]
-    cc_low = (zone.get("iso2") or "").lower()
-    if not official and rejected and cc_low:
-        boot = [c for c in rejected if c["domain"].endswith("." + cc_low) and OFFICIAL_TOKENS.search(c["domain"])]
+    if not official and rejected:
+        boot = bootstrap_national_hits(rejected, zone)
         if boot:
-            auto = exceptions.setdefault("auto", {}).setdefault((zone.get("iso2") or "").upper(), [])
+            auto = exceptions.setdefault("auto", {}).setdefault(
+                (zone.get("iso2") or "").upper(), [])
             for c in boot:
                 if c["domain"] not in auto:
                     auto.append(c["domain"])
@@ -1611,7 +1703,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         extra_pdfs = await _site_list_pdf_search(domains, zone, log)
         await emit(rec, "search", engine="searxng", lang="site-pdf",
                    query="site:domain filetype:pdf", n=len(extra_pdfs),
-                   results=extra_pdfs, domains=domains[:3])
+                   results=extra_pdfs, domains=domains[:3],
+                   round="lessons" if needs_lessons_round(official) else "classic")
         if extra_pdfs:
             extra_pdfs = serp_filter(extra_pdfs, protect_fn=protect)
             candidates = _merge_candidates(candidates, extra_pdfs)
@@ -1621,7 +1714,8 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
         extra_pages = await _site_list_page_search(domains, zone, log)
         await emit(rec, "search", engine="searxng", lang="site-page",
                    query="site:domain liste", n=len(extra_pages),
-                   results=extra_pages, domains=domains[:3])
+                   results=extra_pages, domains=domains[:3],
+                   round="lessons" if needs_lessons_round(official) else "classic")
         if extra_pages:
             extra_pages = serp_filter(extra_pages, protect_fn=protect)
             candidates = _merge_candidates(candidates, extra_pages)
@@ -1648,6 +1742,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     else:
         official = _best_per_domain(official)
     strictly_official = bool(official)
+    cc_low = (zone.get("iso2") or "").lower()
     if not official:
         # Repli national : la whitelist est un indice, pas une porte.
         # Les sites gouvernementaux d'autres pays restent exclus.

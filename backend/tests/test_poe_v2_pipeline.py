@@ -863,6 +863,84 @@ class TestFindSourcesTinyfish:
             tf_key="test"))
         return official, strict, syn, grounded_calls
 
+    def test_has_list_candidate_and_lessons_gate(self):
+        pdf = {"url": "https://www.douane.gouv.fr/sites/x/Liste-ports-de-plaisance-eligibles.pdf"}
+        home = {"url": "https://www.douane.gouv.fr/"}
+        assert poe.has_list_candidate([pdf]) is True
+        assert poe.needs_lessons_round([pdf]) is False
+        assert poe.needs_lessons_round([home]) is True
+        assert poe.needs_lessons_round([]) is True
+
+    def test_bootstrap_org_not_foreign_cctld(self):
+        sx = {"iso2": "SX", "sov_iso2": "NL"}
+        boot = poe.bootstrap_national_hits([{
+            "url": "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx",
+            "domain": "sintmaartengov.org",
+        }], sx)
+        assert boot and boot[0]["domain"] == "sintmaartengov.org"
+        assert not poe.bootstrap_national_hits([{
+            "url": "https://www.government.nl/",
+            "domain": "government.nl",
+        }], sx)
+        assert not poe.bootstrap_national_hits([{
+            "url": "https://www.congress.gov/bill/1",
+            "domain": "congress.gov",
+        }], {"iso2": "WS", "sov_iso2": "WS"})
+
+    def test_lessons_round_when_classic_is_shallow(self, monkeypatch):
+        tf_queries = []
+
+        async def fake_searx(query, log):
+            return []
+
+        async def fake_tf(query, key, log, location=None, language=None,
+                          include_domains=None):
+            tf_queries.append(query)
+            return []
+
+        async def fake_grounded(zone, whitelist, log, query_override=None):
+            return [], None
+
+        monkeypatch.setattr(poe, "search_searxng", fake_searx)
+        monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "search_grounded", fake_grounded)
+        monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
+        monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
+        zone = {"iso2": "HR", "sov_iso2": "HR", "name": "Croatia",
+                "sovereign": "Croatia"}
+        asyncio.run(poe._find_sources(
+            zone, poe.build_whitelist("HR", "HR"), {}, lambda m: None,
+            tf_key="test"))
+        assert any("akcizë" in q or "yacht" in q for q in tf_queries)
+
+    def test_seeded_france_skips_lessons_tf(self, monkeypatch):
+        tf_queries = []
+
+        async def fake_searx(query, log):
+            return []
+
+        async def fake_tf(query, key, log, location=None, language=None,
+                          include_domains=None):
+            tf_queries.append(query)
+            return []
+
+        async def fake_grounded(zone, whitelist, log, query_override=None):
+            return [], None
+
+        monkeypatch.setattr(poe, "search_searxng", fake_searx)
+        monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "search_grounded", fake_grounded)
+        monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
+        monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
+        zone = {
+            "iso2": "FR", "sov_iso2": "FR", "name": "France",
+            "sovereign": "France",
+        }
+        asyncio.run(poe._find_sources(
+            zone, poe.build_whitelist("FR", "FR"), None, lambda m: None,
+            tf_key="test"))
+        assert not any("akcizë" in q for q in tf_queries)
+
     def test_tinyfish_gov_skips_grounded(self, monkeypatch):
         tf_hits = [{
             "url": "https://www.douane.gouv.fr/demarche/ports-entree",

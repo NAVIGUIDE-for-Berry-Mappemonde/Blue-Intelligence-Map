@@ -275,6 +275,21 @@ def test_example_hints_stay_on_the_polygon():
     assert poe.list_url_bonus(al_url) >= 0.3
 
 
+def test_witness_polygon_gets_family_hints_without_iso_switch():
+    """Hors des 11 : legal + pleasure + EN, pas un if iso AL/FR."""
+    hr = {"iso2": "HR", "sov_iso2": "HR", "name": "Croatia", "sovereign": "Croatia"}
+    hints = " ".join(poe.default_search_hints(hr))
+    assert "yacht" in hints and "first arrival" in hints
+    assert "akcizës" not in hints and "PPF" not in hints
+    loc = poe.localized_query(hr) or ""
+    assert "Croatia" in loc
+    pdf = poe.site_list_pdf_query("gov.hr", hr)
+    assert "ports of entry" in pdf or "yacht" in pdf
+    assert "JORFTEXT" not in pdf and "C1331" not in pdf
+    q2 = poe.lessons_learned_query(hr)
+    assert "yacht" in q2 and "akcizë" in q2 and "Croatia" in q2
+
+
 def test_sint_maarten_gov_org_is_whitelisted_not_sx_cctld():
     """Le site d'État SX est sintmaartengov.org, pas un host .sx."""
     wl = poe.build_whitelist("SX", "NL")
@@ -523,6 +538,28 @@ def test_albania_dogana_kartela_yields_four_seaports():
         "Degët doganore mbikëqyrëse pranë porteve detare, anijet e peshkimit."
     )
     assert {p["name"] for p in flat} == names
+
+
+def test_marina_including_headings_work_without_country_name():
+    """Forme EG généralisée : titres « X Marina: » après including."""
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    text = (
+        "The state has established specialized marinas on its beaches, including:\n"
+        "Alpha Bay Marina:\nBerths for 80 yachts.\n"
+        "Beta Cove Marina:\nMediterranean quay.\n"
+        "Gamma Roads Marina:\nReceives foreign yachts.\n"
+        "Delta Point Marina:\nNorth coast.\n"
+        "The State Sets a Legislative Framework For Yacht Tourism:\n"
+        "Prime Minister's decision No. 1 of 2020. Sharm El Sheikh, Nuweiba."
+    )
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert names == {
+        "Alpha Bay Marina", "Beta Cove Marina",
+        "Gamma Roads Marina", "Delta Point Marina",
+    }
+    assert "Sharm El Sheikh" not in names
+    assert catalog_is_sufficient(ports, text)
 
 
 def test_egypt_sis_yacht_headings_yield_five_marinas():

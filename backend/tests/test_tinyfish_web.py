@@ -216,3 +216,5 @@ class TestTfPoeAgent:
         assert "pleasure" in purpose
         assert "mixed" in purpose
         assert "cargo-only" in purpose
+        assert "yacht" in purpose
+        assert "excise" in purpose or "kartelë" in purpose
