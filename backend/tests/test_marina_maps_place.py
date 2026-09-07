@@ -261,6 +261,53 @@ class _Coll:
                 d.update(upd.get("$set") or {})
 
 
+def test_resolve_batched_fetch_skips_search():
+    from app.core.tasks import TaskState
+
+    docs = [
+        {"_id": "way/741789648", "name": "Port des Minimes", "lat": 46.14676, "lon": -1.16606},
+        {"_id": "way/41585114", "name": "Bassin du Bout Blanc", "lat": 46.14687, "lon": -1.16452},
+        {
+            "_id": "way/9",
+            "name": "Tagged",
+            "lat": 1.0,
+            "lon": 2.0,
+            "website": MINIMES_PLACE,
+        },
+    ]
+    coll = _Coll(docs)
+    called = {"n": 0, "ids": []}
+
+    async def fetch_many(marinas):
+        called["n"] += 1
+        called["ids"].extend(m["_id"] for m in marinas)
+        out = {}
+        for m in marinas:
+            if m["name"] == "Port des Minimes":
+                out[m["_id"]] = {
+                    "title": "Google Maps",
+                    "text": "Port Des Minimes 4.5 Marina",
+                    "links": [MINIMES_FETCH_PLACE],
+                }
+            else:
+                out[m["_id"]] = {"title": "Google Maps", "text": "can't find", "links": []}
+        return out
+
+    state = TaskState()
+    summary = asyncio.run(mp.resolve_maps_places(
+        marinas_coll=coll, state=state, skip_search=True, fetch_many_fn=fetch_many,
+    ))
+    assert called["n"] == 1
+    assert "way/9" not in called["ids"]
+    assert summary["found"] == 2
+    assert summary["osm_tag"] == 1
+    assert summary["none"] == 1
+    by_id = {d["_id"]: d for d in coll.docs}
+    assert by_id["way/741789648"]["maps_place_source"] == "tinyfish_fetch"
+    assert by_id["way/9"]["maps_place_source"] == "osm_tag"
+    assert by_id["way/41585114"]["maps_place_status"] == "none"
+
+
 def test_resolve_batch_signals_without_filtering():
     from app.core.tasks import TaskState
 

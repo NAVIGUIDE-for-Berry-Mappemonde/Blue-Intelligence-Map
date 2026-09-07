@@ -52,6 +52,8 @@ MAPS_PLACE_PURPOSE = (
 
 SearchFn = Callable[[dict], Awaitable[list[dict]]]
 FetchFn = Callable[[dict], Awaitable[dict]]
+FetchManyFn = Callable[[list[dict]], Awaitable[dict[Any, dict]]]
+FETCH_BATCH = 10
 
 
 def is_google_place_url(url: str | None) -> bool:
@@ -242,17 +244,44 @@ def place_hits_from_fetch(rec: dict | None) -> list[dict]:
     return [{"url": u, "title": title, "snippet": snippet} for u in urls]
 
 
-async def default_fetch(marina: dict) -> dict:
-    from app.core.tinyfish import tf_api_key, tf_fetch
+def _maps_search_url(marina: dict) -> str | None:
     from app.services.marina_world import google_maps_url
-    key = tf_api_key()
     name = (marina.get("name") or "").strip()
     lat, lon = marina.get("lat"), marina.get("lon")
-    if not key or not name or lat is None or lon is None:
+    if not name or lat is None or lon is None:
+        return None
+    return google_maps_url(name, float(lat), float(lon))
+
+
+async def default_fetch(marina: dict) -> dict:
+    from app.core.tinyfish import tf_api_key, tf_fetch
+    key = tf_api_key()
+    url = _maps_search_url(marina)
+    if not key or not url:
         return {}
-    url = google_maps_url(name, float(lat), float(lon))
     recs = await tf_fetch([url], key, purpose=MAPS_PLACE_PURPOSE, log=None)
     return recs.get(url) or next(iter(recs.values()), {}) or {}
+
+
+async def default_fetch_many(marinas: list[dict]) -> dict[Any, dict]:
+    """Un POST Fetch pour jusqu'à 10 liens Maps — cadence 150 URL/min."""
+    from app.core.tinyfish import tf_api_key, tf_fetch
+    key = tf_api_key()
+    if not key:
+        return {}
+    url_by_id: dict[Any, str] = {}
+    urls: list[str] = []
+    for marina in marinas:
+        url = _maps_search_url(marina)
+        if not url:
+            continue
+        url_by_id[marina["_id"]] = url
+        urls.append(url)
+    recs = await tf_fetch(urls, key, purpose=MAPS_PLACE_PURPOSE, log=None)
+    out: dict[Any, dict] = {}
+    for mid, url in url_by_id.items():
+        out[mid] = recs.get(url) or {}
+    return out
 
 
 async def resolve_google_place(
@@ -347,15 +376,51 @@ async def apply_maps_place(coll, marina: dict, patch: dict) -> None:
     await coll.update_one({"_id": marina["_id"]}, {"$set": patch})
 
 
+def _patch_from_hits(marina: dict, hits: list[dict], *, source: str, now_iso: str) -> dict:
+    name = (marina.get("name") or "").strip()
+    picked = pick_google_place(name, hits, lat=marina.get("lat"), lon=marina.get("lon"))
+    if picked:
+        return {
+            "maps_place_url": picked,
+            "maps_place_status": "found",
+            "maps_place_source": source,
+            "maps_place_checked_at": now_iso,
+        }
+    return {
+        "maps_place_url": None,
+        "maps_place_status": "none",
+        "maps_place_source": None,
+        "maps_place_checked_at": now_iso,
+    }
+
+
+async def _apply_result(coll, state, marina: dict, patch: dict, counters: dict) -> None:
+    await apply_maps_place(coll, marina, patch)
+    if patch["maps_place_status"] == "found":
+        counters["found"] += 1
+        state.log(f"✓ {marina.get('name')} → {patch['maps_place_url']}")
+    else:
+        counters["none"] += 1
+        state.log(f"· {marina.get('name')} → pas de /place/")
+    state.progress += 1
+
+
 async def resolve_maps_places(
     *,
     marinas_coll,
     state,
     limit: int = 0,
     force: bool = False,
+    skip_search: bool = True,
     search_fn: SearchFn | None = None,
     fetch_fn: FetchFn | None = None,
+    fetch_many_fn: FetchManyFn | None = None,
+    batch_size: int = FETCH_BATCH,
 ) -> dict:
+    """
+    Reprenable (ignore les fiches déjà statusées). Monde : skip Search
+    (n'indexe pas /place/) et Fetch par lots de 10 (quota 150 URL/min).
+    """
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
@@ -385,36 +450,83 @@ async def resolve_maps_places(
         docs = docs[:fetch_n]
 
     state.total = len(docs)
-    state.log(f"Fiches Google : {len(docs)} marina(s) nommée(s) à résoudre (force={force})")
+    sequential = search_fn is not None or fetch_fn is not None
+    mode = "séquentiel" if sequential else f"Fetch lots de {max(1, int(batch_size or FETCH_BATCH))}"
+    state.log(
+        f"Fiches Google : {len(docs)} marina(s) nommée(s) "
+        f"(force={force}, skip_search={skip_search}, {mode})"
+    )
 
-    found = none = errors = 0
+    counters = {"found": 0, "none": 0, "errors": 0, "osm_tag": 0}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
-        for marina in docs:
-            if getattr(state, "cancel", False):
-                state.log("Stop demandé")
-                break
-            try:
-                patch = await resolve_google_place(
-                    marina, search_fn=search_fn, fetch_fn=fetch_fn,
-                )
-                await apply_maps_place(marinas_coll, marina, patch)
-                if patch["maps_place_status"] == "found":
-                    found += 1
-                    state.log(f"✓ {marina.get('name')} → {patch['maps_place_url']}")
-                else:
-                    none += 1
-                    state.log(f"· {marina.get('name')} → pas de /place/")
-            except Exception as exc:
-                errors += 1
-                state.log(f"✗ {marina.get('name')}: {type(exc).__name__}: {str(exc)[:80]}")
-            state.progress += 1
+        if sequential:
+            for marina in docs:
+                if getattr(state, "cancel", False):
+                    state.log("Stop demandé")
+                    break
+                try:
+                    patch = await resolve_google_place(
+                        marina, search_fn=search_fn, fetch_fn=fetch_fn, now_iso=now,
+                    )
+                    await _apply_result(marinas_coll, state, marina, patch, counters)
+                    if patch.get("maps_place_source") == "osm_tag":
+                        counters["osm_tag"] += 1
+                except Exception as exc:
+                    counters["errors"] += 1
+                    state.log(f"✗ {marina.get('name')}: {type(exc).__name__}: {str(exc)[:80]}")
+                    state.progress += 1
+        else:
+            pending: list[dict] = []
+            for marina in docs:
+                if getattr(state, "cancel", False):
+                    break
+                tagged = place_url_from_doc({**marina, "maps_place_url": None})
+                if tagged:
+                    patch = {
+                        "maps_place_url": tagged,
+                        "maps_place_status": "found",
+                        "maps_place_source": "osm_tag",
+                        "maps_place_checked_at": now,
+                    }
+                    await _apply_result(marinas_coll, state, marina, patch, counters)
+                    counters["osm_tag"] += 1
+                    continue
+                pending.append(marina)
+
+            fetch_many = fetch_many_fn or default_fetch_many
+            size = max(1, min(FETCH_BATCH, int(batch_size or FETCH_BATCH)))
+            for i in range(0, len(pending), size):
+                if getattr(state, "cancel", False):
+                    state.log("Stop demandé")
+                    break
+                chunk = pending[i:i + size]
+                try:
+                    recs = await fetch_many(chunk)
+                except Exception as exc:
+                    state.log(f"Lot Fetch {i // size + 1}: {type(exc).__name__}: {str(exc)[:80]}")
+                    recs = {}
+                for marina in chunk:
+                    try:
+                        rec = recs.get(marina["_id"]) or {}
+                        patch = _patch_from_hits(
+                            marina, place_hits_from_fetch(rec),
+                            source="tinyfish_fetch", now_iso=now,
+                        )
+                        await _apply_result(marinas_coll, state, marina, patch, counters)
+                    except Exception as exc:
+                        counters["errors"] += 1
+                        state.log(f"✗ {marina.get('name')}: {type(exc).__name__}: {str(exc)[:80]}")
+                        state.progress += 1
 
         summary = {
             "selected": len(docs),
-            "found": found,
-            "none": none,
-            "errors": errors,
+            "found": counters["found"],
+            "none": counters["none"],
+            "errors": counters["errors"],
+            "osm_tag": counters["osm_tag"],
             "force": force,
+            "skip_search": skip_search and not sequential,
         }
         state.summary = summary
         state.log(f"Fiches Google terminé: {summary}")

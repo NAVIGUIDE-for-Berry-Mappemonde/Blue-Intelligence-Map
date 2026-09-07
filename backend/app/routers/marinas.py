@@ -155,6 +155,7 @@ class MarinasBuildBody(BaseModel):
     include_corridor: bool | None = None
     corridor_step_nm: float | None = None
     corridor_radius_nm: float | None = None
+    maps_place_after: bool = False
 
 
 async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | None = None):
@@ -235,6 +236,13 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
             await db.marina_runs.update_one({"_id": run_id}, {"$set": {
                 "state": "done", "summary": MARINA_BUILD_STATE.summary,
             }})
+            if body.maps_place_after and not MAPS_PLACE_STATE.running:
+                MARINA_BUILD_STATE.log("Dump terminé — résolution des fiches Google /place/")
+                await resolve_maps_places(
+                    marinas_coll=db.marinas,
+                    state=MAPS_PLACE_STATE,
+                    skip_search=True,
+                )
         except Exception as e:
             await db.marina_runs.update_one({"_id": run_id}, {"$set": {
                 "state": "failed", "error": str(e)[:200],
@@ -246,6 +254,7 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         "run_id": run_id,
         "kind": "world_leisure_marina",
         "resume": body.resume,
+        "maps_place_after": body.maps_place_after,
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
     }
@@ -435,6 +444,7 @@ MAPS_PLACE_STATE = TaskState(max_logs=400)
 class MapsPlaceBody(BaseModel):
     limit: int = 0
     force: bool = False
+    skip_search: bool = True
 
 
 _MARINA_ENGINE_LABELS = {
@@ -699,12 +709,18 @@ async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
                 state=MAPS_PLACE_STATE,
                 limit=int(body.limit or 0),
                 force=bool(body.force),
+                skip_search=bool(body.skip_search),
             )
         except Exception as exc:
             MAPS_PLACE_STATE.error = f"{type(exc).__name__}: {exc}"
 
     asyncio.create_task(_runner())
-    return {"started": True, "limit": body.limit, "force": body.force}
+    return {
+        "started": True,
+        "limit": body.limit,
+        "force": body.force,
+        "skip_search": body.skip_search,
+    }
 
 
 @router.post("/marinas/maps-place/cancel")

@@ -101,7 +101,7 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
   const startMapsPlace = async () => {
     if (mapsPlaceStarting || mapsPlaceStatus?.running) return;
     setMapsPlaceStarting(true);
-    try { await api.post("/marinas/maps-place", { limit: 0, force: false }); }
+    try { await api.post("/marinas/maps-place", { limit: 0, force: false, skip_search: true }); }
     catch (e) { console.warn("maps-place start failed", e); }
     finally { setTimeout(() => setMapsPlaceStarting(false), 800); }
   };
