@@ -1626,7 +1626,9 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
         text = res["text"]
         log(f"fetch {c.get('domain') or domain_of(url)}: {len(text)} chars via {res['level']}")
         blob = (res.get("html") or "") + "\n" + (text or "")
-        if should_follow_attachments(text or "", url):
+        # Les href PDF sont dans le HTML ; le texte extrait (trafilatura) les perd
+        # (leçon France : liste + carte PPF liées depuis vous-naviguez).
+        if should_follow_attachments(blob, url) or official_attachments(blob, url, limit=1):
             for att in official_attachments(blob, url, limit=4):
                 if att not in seen_urls:
                     log(f"pièce jointe officielle: {att[:90]}")

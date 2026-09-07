@@ -3,6 +3,8 @@
 Les URL sont des *cibles de découverte*, pas l'affichage fiche.
 Les graines sont indexées par iso2 du polygone (Mayotte ≠ FR, Niue ≠ NZ).
 """
+import asyncio
+
 from app.core.extract import official_attachments, should_follow_attachments
 from app.services import poe_pipeline as poe
 
@@ -105,3 +107,32 @@ def test_example_hints_stay_on_the_polygon():
     assert "plaisance" in nc and "PPF" not in nc
     assert "PPF" in fr and "Mayotte" not in fr and "Calédonie" not in fr
     assert "INEA" in ve
+
+
+def test_collect_follows_list_pdfs_hidden_in_html(monkeypatch):
+    landing = (
+        "https://www.douane.gouv.fr/particuliers/vous-naviguez/"
+        "vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de"
+    )
+    liste = ("https://www.douane.gouv.fr/sites/default/files/2026-07/06/"
+             "Liste-ports-de-plaisance-eligibles.pdf")
+    carte = ("https://www.douane.gouv.fr/sites/default/files/uploads/files/"
+             "carte-PPF-maritimes.pdf")
+    html = (
+        f'<a href="{carte}">PPF</a>'
+        f'<a href="{liste}">liste</a>'
+    )
+    prose = "Formalités pour les plaisanciers en provenance d'un pays tiers. " * 40
+
+    async def fake_cascade(url, min_chars=200, log=None):
+        if url.endswith(".pdf"):
+            return {"text": "1.- Port Alpha latitude: 46.1 longitude: -1.1\n" * 8,
+                    "html": "", "md5": "p", "level": "N1", "blocked": False}
+        return {"text": prose, "html": html, "md5": "h", "level": "N1", "blocked": False}
+
+    monkeypatch.setattr(poe, "extract_cascade", fake_cascade)
+    _texts, _h, used, _ex = asyncio.run(poe._collect_texts(
+        [{"url": landing, "domain": "douane.gouv.fr"}], lambda m: None))
+    blob = " ".join(c["url"] for c in used)
+    assert liste in blob
+    assert carte in blob
