@@ -106,6 +106,8 @@ class _FakeDB:
         return self._cols[name]
 
 
+# Sources de zone : placeholders. Pour mrgid 5677, assemble_zone_fiche
+# préfère la liste plaisance curée (territories.json), pas ces URL.
 _HEX = {
     "mrgid": 5677, "name": "France", "geoname": "French Exclusive Economic Zone",
     "iso2": "FR", "sov_iso2": "FR", "sovereign": "France", "pol_type": "200NM",
@@ -244,7 +246,9 @@ def test_comment_persists_per_fiche_without_writing_v1():
     assert by["48944"]["has_comment"] is False
     fiche = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     assert fiche["comment"] == "TD OK, Mayotte à part"
-    assert fiche["fiche"]["url_td"]["url"].endswith("hexagone.pdf")
+    # hexagone.pdf n'existe pas : la fiche prend la liste plaisance curée (mrgid 5677).
+    td = (fiche["fiche"].get("url_td") or {}).get("url") or ""
+    assert "plaisance" in td.lower() and "dispositif.pdf" in td
     assert [p["name"] for p in fiche["fiche"]["ports"]] == ["Marseille"]
     assert fiche["wrote_poe_ports"] is False
 
@@ -266,7 +270,9 @@ def test_run_fiche_uses_run_ports_not_v1():
     db = _db()
     fiche = asyncio.run(build_zone_fiche(db, 5677, run_id="poe-run-1"))
     assert [p["name"] for p in fiche["ports"]] == ["Sète"]
-    assert fiche["url_td"]["url"] == "https://run.gouv.fr/liste.pdf"
+    # run.gouv.fr/liste.pdf est un placeholder : l'URL TD France reste la liste curée.
+    td = (fiche.get("url_td") or {}).get("url") or ""
+    assert "plaisance" in td.lower() and "dispositif.pdf" in td
     pub = asyncio.run(build_zone_fiche(db, 5677, run_id="published"))
     assert [p["name"] for p in pub["ports"]] == ["Marseille"]
 
