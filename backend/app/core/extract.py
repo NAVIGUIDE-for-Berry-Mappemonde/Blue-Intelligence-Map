@@ -54,7 +54,9 @@ UA_READER = {
 }
 
 HARD_CHALLENGE_RE = re.compile(
-    r"challenge validation|sec-cpt-if|sec-container|akamai",
+    r"challenge validation|sec-cpt-if|sec-container|akamai|"
+    r"just a moment|_cf_chl_|cf-browser-verification|"
+    r"challenges\.cloudflare|performing security verification",
     re.I,
 )
 
@@ -181,7 +183,8 @@ def pdf_cache_key(content: bytes) -> str:
 
 
 def _pdf_cache_path(digest: str) -> Path:
-    return Path(PDF_CACHE_DIR) / f"{digest}.txt"
+    # .act1 : annotation TURÍSTICA (colonnes SCT) — invalide les caches texte seul.
+    return Path(PDF_CACHE_DIR) / f"{digest}.act1.txt"
 
 
 def _read_pdf_cache(digest: str) -> str | None:
@@ -400,8 +403,8 @@ def _is_mirror_url(url: str) -> bool:
 # « 4.- Ensenada », « 1. Apia », ou premier item Jina « [1.-](url)Bahía Colonet »
 _HEAD = r"(?:\[\d+\.-\]\([^)]+\)|\d+\.-\s+|\d+[.)]\s+)"
 _CATALOG_HEAD = re.compile(
-    rf"(?:^|\n)(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
-    rf"((?:.*\n){{0,16}}?)(?=(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
+    rf"(?:^|\n)[ \t]*(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
+    rf"((?:.*\n){{0,16}}?)(?=[ \t]*(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
     re.M,
 )
 # Jina : **Latitud:**31.89  — EN : Latitude: -13.8  — tables : | Latitud: | 31.89 |
@@ -520,6 +523,41 @@ _DOUANE_BUREAU_RE = re.compile(
     r"(?i:bureau(?:x)?\s+des?\s+douanes?\s+(?:de\s+|d['’]|du\s+)?)"
     r"([A-ZÀ-Ý][\w'’.\-]+(?:[\s\-][A-ZÀ-Ý][\w'’.\-]+){0,3})",
 )
+_CATALOG_ACTIVITY = re.compile(
+    rf"(?:tipo de actividad|actividad):{_CATALOG_SEP}([^\n|*]+)",
+    re.I,
+)
+_MX_TURISTICA_BLOCK_RE = re.compile(
+    r"\[ACTIVIDAD_TURISTICA\]\s*(.*?)(?:\n\[|\Z)",
+    re.I | re.S,
+)
+_ANNEXE_MARITIME_RE = re.compile(
+    r"fronti[eè]res\s+maritimes\s*(.*?)(?="
+    r"fronti[eè]res\s+a[eé]riennes|"
+    r"liste des documents|"
+    r"annexe\s*i\s*i|"
+    r"annexe\s*ii|"
+    r"\Z)",
+    re.I | re.S,
+)
+_PPC_SITE_RE = re.compile(
+    r"(?m)^\s*\|?\s*([A-ZÀ-Ý][A-Za-zÀ-ÿ'’.\-]+"
+    r"(?:[\s\-][A-ZÀ-Ý][A-Za-zÀ-ÿ'’.\-]+){0,3})"
+    r"(?:\s*\|\s*)?(?:Permanent|Temporaire|sur demande)?\s*\|?\s*$",
+)
+_UK_PLEASURE_SECTION_RE = re.compile(
+    r"(?:list of (?:uk )?(?:ports|marinas)|designated ports|"
+    r"ports? of entry for pleasure|"
+    r"pleasure craft ports?)\s*:?\s*(.*?)(?=\n#{1,3}\s|\Z)",
+    re.I | re.S,
+)
+_JORF_READERS = {
+    "JORFTEXT000030235682": [
+        # Même arrêté (NOR INTV1430080A) : Légifrance est derrière Cloudflare.
+        "https://www.info-droits-etrangers.org/wp-content/uploads/2020/01/"
+        "ARR%C3%8AT%C3%89_du_4_f%C3%A9vrier_2015_version_initiale.pdf",
+    ],
+}
 _FR_AUTH_RE = re.compile(
     r"^(paf|douane|police aux fronti|garde-fronti|autorit|version\s|"
     r"liste des ports|r[eé]gion|commune|port de plaisance|ppf\b)",
@@ -545,7 +583,8 @@ _LIST_PDF_PATH_RE = re.compile(
     r"liste|listen|plaisance|eligibles|ppf|puerto|terminal|habilit|"
     r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
     r"points-d-entree|points-of-entry|designat|gazett|legislat|"
-    r"decreto|decret|arrete|capitanias|jurisdiccion|ley-de-marinas",
+    r"decreto|decret|arrete|capitanias|jurisdiccion|ley-de-marinas|"
+    r"jorftext|c1331|pleasure-craft|pleasure_craft",
     re.I,
 )
 _JUNK_PDF_PATH_RE = re.compile(
@@ -585,6 +624,9 @@ def looks_like_port_catalog(text: str) -> bool:
     if sum(1 for ln in text.splitlines() if _FR_REGION_RE.match(ln.strip())) >= 3:
         return True
     if len(_NZ_POFA_MD_RE.findall(text)) >= 3 or len(_NZ_POFA_PLAIN_RE.findall(text)) >= 3:
+        return True
+    if (re.search(r"points? de passage contr[oô]l[eé]s", text, re.I)
+            and re.search(r"fronti[eè]res\s+maritimes", text, re.I)):
         return True
     if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
         return True
@@ -719,12 +761,46 @@ def _extract_fr_plaisance_table(text: str) -> list[dict]:
     return out
 
 
+def _turistica_allowlist(text: str) -> set[str] | None:
+    """Noms / numéros tagués TURÍSTICA, ou None si le PDF n'a pas été annoté."""
+    m = _MX_TURISTICA_BLOCK_RE.search(text or "")
+    if not m:
+        return None
+    allowed: set[str] = set()
+    for line in m.group(1).splitlines():
+        line = " ".join(line.split())
+        if not line:
+            continue
+        num = re.match(r"^(\d{1,3})\s+(.+)$", line)
+        if num:
+            allowed.add(num.group(1))
+            allowed.add(num.group(2).casefold())
+        else:
+            allowed.add(line.casefold())
+    return allowed
+
+
+def _mx_activity_is_turistica(block: str) -> bool | None:
+    """True / False si « Tipo de actividad » est présent, sinon None."""
+    m = _CATALOG_ACTIVITY.search(block or "")
+    if not m:
+        return None
+    return bool(re.search(r"tur[ií]stic", m.group(1), re.I))
+
+
 def _extract_mx_habilitados_table(text: str) -> list[dict]:
-    """PDF SCT « Puertos y terminales habilitados » : N° / nom / État / type / date / lat / lon."""
+    """PDF SCT : N° / nom / État / type / date / lat / lon — tag TURÍSTICA seulement."""
     out, seen = [], set()
+    allow = _turistica_allowlist(text)
+    has_tag_col = bool(re.search(r"tur[ií]stica", text or "", re.I))
+    if has_tag_col and allow is None:
+        # Colonne présente mais pas d'annotation : ne pas avaler les ports commerciaux.
+        return []
     for m in _MX_HABILITADO_ROW_RE.finditer(text or ""):
         name = " ".join(m.group("name").split()).strip()
         state = " ".join(m.group("state").split()).strip()
+        if allow is not None and m.group("n") not in allow and name.casefold() not in allow:
+            continue
         key = name.casefold()
         if key in seen and state:
             name = f"{name} ({state})"
@@ -735,7 +811,7 @@ def _extract_mx_habilitados_table(text: str) -> list[dict]:
         out.append({
             "name": name[:120], "city": state[:80] or None,
             "lat": float(m.group("lat")), "lon": float(m.group("lon")),
-            "note": "catalogue officiel (nom + coordonnées dans la source)",
+            "note": "catalogue officiel (activité turística)",
             "extraction_engine": "catalog",
         })
     return out
@@ -760,6 +836,55 @@ def _extract_nz_pofa_tables(text: str) -> list[dict]:
             "note": "place of first arrival (registre MPI)",
             "extraction_engine": "catalog",
         })
+    return out
+
+
+def _extract_annexe_ppc_maritime(text: str) -> list[dict]:
+    """Annexe I Mayotte : points de passage contrôlés, frontières maritimes seulement."""
+    out, seen = [], set()
+    skip = _PORT_OF_SKIP | _GENERIC_PORT_NAMES | {
+        "sites", "modalités", "modalites", "ouverture", "liste", "documents",
+        "permanent", "temporaire",
+    }
+    for block in _ANNEXE_MARITIME_RE.findall(text or ""):
+        for m in _PPC_SITE_RE.finditer(block):
+            name = _clean_legal_port_name(m.group(1))
+            fold = name.casefold()
+            if (not name or fold in seen or fold in skip or len(name) < 3
+                    or re.search(r"pamandzi|a[eé]roport|a[eé]rien", name, re.I)):
+                continue
+            seen.add(fold)
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "point de passage contrôlé (annexe I, frontières maritimes)",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _extract_uk_pleasure_ports(text: str) -> list[dict]:
+    """Si une liste de ports de plaisance UK est publiée, tous sont Ports of Entry."""
+    out, seen = [], set()
+    skip = _PORT_OF_SKIP | _GENERIC_PORT_NAMES | {
+        "united kingdom", "border force", "hmrc", "yachtline",
+    }
+    for block in _UK_PLEASURE_SECTION_RE.findall(text or ""):
+        for raw in re.findall(
+            r"(?m)^\s*(?:[-•*]|\d+[.)]|\\|)\s*([A-Z][A-Za-z'’.\-]+"
+            r"(?:[\s\-][A-Z][A-Za-z'’.\-]+){0,4})\s*$",
+            block,
+        ):
+            name = " ".join((raw or "").split()).strip(" |-")
+            fold = name.casefold()
+            if (not name or fold in seen or fold in skip or len(name) < 3
+                    or len(name) > 60):
+                continue
+            seen.add(fold)
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "pleasure craft — port of entry (sPCR / GOV.UK)",
+                "extraction_engine": "catalog",
+            })
     return out
 
 
@@ -788,6 +913,8 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         _extract_nz_pofa_tables(text),
         _extract_capitanias(text),
         _extract_fr_plaisance_table(text),
+        _extract_annexe_ppc_maritime(text),
+        _extract_uk_pleasure_ports(text),
         _extract_douane_bureaux(text),
     ):
         for p in extra:
@@ -801,6 +928,9 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
         block = m.group(2) or ""
         lat_m, lon_m = _CATALOG_LAT.search(block), _CATALOG_LON.search(block)
         if not name or not lat_m or not lon_m:
+            continue
+        activity_ok = _mx_activity_is_turistica(block)
+        if activity_ok is False:
             continue
         st = _CATALOG_STATE.search(block)
         state = st.group(1).strip() if st else None
@@ -1139,6 +1269,29 @@ async def _tinyfish_mirror_text(url: str, log) -> tuple[str | None, list]:
     return text, links
 
 
+async def _jorf_reader_text(url: str, log) -> str | None:
+    """Copies du même texte JORF quand Légifrance répond un challenge Cloudflare."""
+    blob = (url or "").upper()
+    for key, mirrors in _JORF_READERS.items():
+        if key not in blob:
+            continue
+        for mu in mirrors:
+            try:
+                content, ctype = await _fetch_bytes(mu, UA_BROWSER, 45)
+                if content[:5] == b"%PDF-" or "pdf" in (ctype or ""):
+                    text = await asyncio.to_thread(parse_pdf_text, content)
+                else:
+                    parsed = await dual_parse_html(
+                        content.decode("utf-8", errors="replace"))
+                    text = parsed.get("text") or ""
+                if _mirror_usable(text):
+                    log(f"miroir JORF {key}: {len(text)} chars")
+                    return text
+            except Exception as e:
+                log(f"miroir JORF {key}: indisponible ({_mirror_http_err(e)})")
+    return None
+
+
 async def _wayback_mirror_text(url: str, log) -> str | None:
     try:
         snap = await _wayback_snapshot_url(url)
@@ -1185,6 +1338,10 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
     wb = await _wayback_mirror_text(url, log)
     if wb:
         return wb, "N3-mirror-wayback"
+    if "legifrance.gouv.fr" in (url or "").lower():
+        jorf = await _jorf_reader_text(url, log)
+        if jorf:
+            return jorf, "N3-mirror-jorf"
     return None
 
 

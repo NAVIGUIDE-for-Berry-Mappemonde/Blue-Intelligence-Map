@@ -37,6 +37,14 @@ EXAMPLE_ZONES = {
         "iso2": "SX", "sov_iso2": "NL", "name": "Sint-Maarten", "sovereign": "Netherlands",
         "pol_type": "200NM", "mrgid": 21803,
     },
+    48944: {
+        "iso2": "YT", "sov_iso2": "FR", "name": "Mayotte", "sovereign": "France",
+        "pol_type": "200NM", "mrgid": 48944,
+    },
+    5696: {
+        "iso2": "GB", "sov_iso2": "GB", "name": "United Kingdom", "sovereign": "United Kingdom",
+        "pol_type": "200NM", "mrgid": 5696,
+    },
 }
 
 PINNED_NEEDLES = {
@@ -48,6 +56,8 @@ PINNED_NEEDLES = {
     8455: ["places-of-first-arrival-seaports", "sailing-to-new-zealand-this-small-craft-season"],
     8312: ["formalites-douanieres-pour-les-navires-de-plaisance"],
     21803: ["sintmaartengov.org", "Pages/Customs.aspx"],
+    48944: ["JORFTEXT000030235682"],
+    5696: ["submit-a-pleasure-craft-report"],
 }
 
 FOREIGN_NEEDLES = {
@@ -58,6 +68,9 @@ FOREIGN_NEEDLES = {
     8455: ["niue_laws", "vous-naviguez", "gouv.nc", "sintmaartengov"],
     8312: ["vous-naviguez-en-provenance", "mpi.govt.nz", "sintmaartengov"],
     21803: ["vous-naviguez", "mpi.govt.nz", "inea.gob.ve", "gouv.nc"],
+    48944: ["vous-naviguez-en-provenance", "Liste-ports-de-plaisance",
+            "submit-a-pleasure-craft-report"],
+    5696: ["vous-naviguez", "JORFTEXT000030235682", "inea.gob.ve"],
 }
 
 
@@ -83,6 +96,8 @@ def test_france_hexagon_not_mayotte_and_not_caledonia():
     h = " ".join(c["url"] for c in hexagon)
     assert "vous-naviguez" in h
     assert not any("vous-naviguez" in c["url"] for c in mayotte)
+    assert any("JORFTEXT000030235682" in c["url"] for c in mayotte)
+    assert not any("JORFTEXT000030235682" in c["url"] for c in hexagon)
     assert not any("vous-naviguez-en-provenance" in c["url"] for c in nc)
     assert any("formalites-douanieres" in c["url"] for c in nc)
 
@@ -209,6 +224,8 @@ def test_example_hints_stay_on_the_polygon():
     fr = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5677]))
     ve = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[8433]))
     sx = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[21803]))
+    yt = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[48944]))
+    gb = " ".join(poe.search_hint_queries(EXAMPLE_ZONES[5696]))
     assert "places of first arrival" in nz and "Niue" not in nz
     assert "Customs Act" in nu and "places of first arrival" not in nu
     assert "plaisance" in nc and "PPF" not in nc
@@ -216,7 +233,10 @@ def test_example_hints_stay_on_the_polygon():
     assert "Ley de Marinas" in ve and "capitanías" in ve
     assert "Sint Maarten customs" in sx
     assert "havens van binnenkomst" not in sx
+    assert "annexe I" in yt and "PPF" not in yt
+    assert "pleasure craft" in gb and "Mayotte" not in gb
     assert poe.zone_search_lang(EXAMPLE_ZONES[21803]) is None
+    assert "legifrance.gouv.fr" in poe.build_whitelist("YT", "FR")
     assert "sintmaartengov.org" in poe.build_whitelist("SX", "NL")
     assert "government.nl" not in poe.build_whitelist("SX", "NL")
     qsx = poe.localized_query(EXAMPLE_ZONES[21803]) or ""
@@ -259,6 +279,7 @@ def test_mexico_habilitados_table_yields_coords():
     from app.core.extract import catalog_is_sufficient, extract_structured_ports
     text = """
     PUERTOS Y TERMINALES HABILITADOS
+    COMERCIAL PESQUERA TURÍSTICA
     1 Bahía Colonet
     Baja California
     Puerto
@@ -277,14 +298,70 @@ def test_mexico_habilitados_table_yields_coords():
     01/01/2000
     19.057546
     -104.313762
+    [ACTIVIDAD_TURISTICA]
+    4 Ensenada
+    34 Manzanillo
     """
     ports = extract_structured_ports(text)
     by = {p["name"]: p for p in ports}
-    assert "Bahía Colonet" in by and "Ensenada" in by and "Manzanillo" in by
+    assert "Ensenada" in by and "Manzanillo" in by
+    assert "Bahía Colonet" not in by
     assert abs(by["Ensenada"]["lat"] - 31.8522146) < 1e-6
-    assert abs(by["Bahía Colonet"]["lon"] - (-116.2804389)) < 1e-6
     assert by["Ensenada"]["city"] == "Baja California"
     assert catalog_is_sufficient(ports, text)
+
+
+def test_mexico_jina_drops_non_turistica_activity():
+    from app.core.extract import extract_structured_ports
+    text = """
+#### 1.- Bahía Colonet
+**Entidad federativa:**Baja California
+**Tipo de actividad:**Comercial
+**Latitud:**30.96571843
+**Longitud:**-116.2804389
+#### 4.- Ensenada
+**Entidad federativa:**Baja California
+**Tipo de actividad:**Comercial Pesquera Turística
+**Latitud:**31.8522146
+**Longitud:**-116.625788
+"""
+    names = {p["name"] for p in extract_structured_ports(text)}
+    assert "Ensenada" in names
+    assert "Bahía Colonet" not in names
+
+
+def test_mayotte_annexe_i_keeps_maritime_ppc_only():
+    from app.core.extract import extract_structured_ports, looks_like_port_catalog
+    text = """
+    ANNEXE I
+    1. Liste des points de passage contrôlés :
+    | SITES | MODALITÉS D'OUVERTURE |
+    | Frontières aériennes |
+    | Dzaoudzi-Pamandzi | Permanent |
+    Frontières maritimes
+    Dzaoudzi
+    Permanent
+    2. Liste des documents sur lesquels il n'est pas apposé de cachet
+    """
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert looks_like_port_catalog(text)
+    assert "Dzaoudzi" in names
+    assert not any("Pamandzi" in n for n in names)
+
+
+def test_uk_pleasure_list_keeps_every_named_port():
+    from app.core.extract import extract_structured_ports
+    text = """
+    ## Pleasure craft ports
+    - Falmouth
+    - Plymouth
+    - Cowes
+    - Ramsgate
+    All UK pleasure craft ports are Ports of Entry.
+    """
+    names = {p["name"] for p in extract_structured_ports(text)}
+    assert {"Falmouth", "Plymouth", "Cowes", "Ramsgate"} <= names
 
 
 def test_venezuela_ley_prose_is_not_a_capitania_list():

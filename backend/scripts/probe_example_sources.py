@@ -48,6 +48,14 @@ EXAMPLE_ZONES = {
         "iso2": "SX", "sov_iso2": "NL", "name": "Sint-Maarten", "sovereign": "Netherlands",
         "pol_type": "200NM", "mrgid": 21803,
     },
+    48944: {
+        "iso2": "YT", "sov_iso2": "FR", "name": "Mayotte", "sovereign": "France",
+        "pol_type": "200NM", "mrgid": 48944,
+    },
+    5696: {
+        "iso2": "GB", "sov_iso2": "GB", "name": "United Kingdom", "sovereign": "United Kingdom",
+        "pol_type": "200NM", "mrgid": 5696,
+    },
 }
 PINNED_NEEDLES = {
     5677: ["vous-naviguez-en-provenance"],
@@ -59,15 +67,17 @@ PINNED_NEEDLES = {
            "sailing-to-new-zealand-this-small-craft-season"],
     8312: ["formalites-douanieres-pour-les-navires-de-plaisance"],
     21803: ["sintmaartengov.org", "Pages/Customs.aspx"],
+    48944: ["JORFTEXT000030235682"],
+    5696: ["submit-a-pleasure-craft-report"],
 }
 
 FR_PDF_NEEDLES = (
     "Liste-ports-de-plaisance-eligibles.pdf",
     "carte-PPF-maritimes.pdf",
 )
-TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803)
+TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803, 48944, 5696)
 SOV_ISO2 = {5677: "FR", 8429: "MX", 8433: "VE", 8447: "NZ", 8455: "NZ",
-            8312: "FR", 21803: "NL"}
+            8312: "FR", 21803: "NL", 48944: "FR", 5696: "GB"}
 
 
 def _blob(rows: list[dict]) -> str:

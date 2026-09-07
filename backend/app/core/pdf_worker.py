@@ -17,6 +17,44 @@ from pathlib import Path
 
 _OCR_MIN_CHARS = 80
 _OCR_LANGS = "spa+eng+fra"
+_SEMAR_MARKS = frozenset({"si", "sí", "x", "+"})
+
+
+def _semar_turistica_block(pdf, max_pages: int = 180) -> str:
+    """Colonne TURÍSTICA du PDF SCT : les marques (si / x / +) ont une abscisse.
+
+    Le texte linéaire perd cette colonne. On réémet les lignes taguées pour
+    que le parseur ne garde que l'activité touristique.
+    """
+    tur_x = None
+    rows: list[tuple[int, str]] = []
+    for page in list(pdf[:max_pages]):
+        words = page.get_text("words") or []
+        if tur_x is None:
+            for w in words:
+                key = (w[4] or "").upper().replace("Í", "I")
+                if key == "TURISTICA":
+                    tur_x = float(w[0])
+                    break
+        if tur_x is None:
+            continue
+        bands: dict[float, list] = {}
+        for w in words:
+            bands.setdefault(round(float(w[1]) * 2) / 2, []).append(w)
+        for ws in bands.values():
+            ws = sorted(ws, key=lambda t: t[0])
+            if not ws or not (ws[0][4] or "").isdigit() or float(ws[0][0]) > 70:
+                continue
+            name_parts = [w[4] for w in ws if 60 <= float(w[0]) < 112]
+            if not name_parts:
+                continue
+            if any(abs(float(w[0]) - tur_x) < 12
+                   and (w[4] or "").lower() in _SEMAR_MARKS for w in ws):
+                rows.append((int(ws[0][4]), " ".join(name_parts)))
+    if not rows:
+        return ""
+    lines = [f"{n} {name}" for n, name in rows]
+    return "\n[ACTIVIDAD_TURISTICA]\n" + "\n".join(lines) + "\n"
 
 
 def _ocr_page(page, lang: str = _OCR_LANGS) -> str:
@@ -44,6 +82,9 @@ def extract_pdf_file(inp: str, out: str, max_pages: int = 180) -> None:
             ocr = "\n".join(_ocr_page(p) for p in pages)
             if len(ocr.strip()) > len(native.strip()):
                 text = ocr
+        extra = _semar_turistica_block(pdf, max_pages)
+        if extra:
+            text = (text or "") + extra
     Path(out).write_text(text or "", encoding="utf-8")
 
 

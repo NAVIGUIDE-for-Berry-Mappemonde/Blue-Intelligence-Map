@@ -223,7 +223,8 @@
       "reunion.gouv.fr"
     ],
     "YT": [
-      "mayotte.gouv.fr"
+      "mayotte.gouv.fr",
+      "legifrance.gouv.fr"
     ]
   },
   "auto": {
@@ -354,6 +355,12 @@
     ],
     "SX": [
       "https://www.sintmaartengov.org/Ministries/Departments/Pages/Customs.aspx"
+    ],
+    "YT": [
+      "https://www.legifrance.gouv.fr/loda/id/JORFTEXT000030235682/"
+    ],
+    "GB": [
+      "https://www.gov.uk/guidance/submit-a-pleasure-craft-report"
     ]
   },
   "search_hints": {
@@ -380,6 +387,12 @@
     ],
     "SX": [
       "Sint Maarten customs department official"
+    ],
+    "YT": [
+      "Mayotte arrêté 4 février 2015 points de passage contrôlés annexe I"
+    ],
+    "GB": [
+      "United Kingdom submit a pleasure craft report sPCR"
     ]
   }
 }

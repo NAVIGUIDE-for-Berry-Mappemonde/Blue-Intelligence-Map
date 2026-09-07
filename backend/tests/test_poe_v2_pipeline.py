@@ -596,6 +596,8 @@ class TestStructuredDiscovery:
             "NC": "formalites-douanieres-pour-les-navires-de-plaisance",
             "VE": "Ley-de-Marinas-y-Actividades-Conexas.pdf",
             "SX": "Pages/Customs.aspx",
+            "YT": "JORFTEXT000030235682",
+            "GB": "submit-a-pleasure-craft-report",
         }
         for iso, needle in cases.items():
             urls = " ".join(c["url"] for c in poe.seed_url_candidates({"iso2": iso}))

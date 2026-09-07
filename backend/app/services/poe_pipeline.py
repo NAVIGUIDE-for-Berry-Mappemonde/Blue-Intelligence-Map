@@ -215,6 +215,13 @@ def localized_query(zone: dict) -> str | None:
         )
     if polygon_iso2(zone) == "SX":
         return f"Sint Maarten customs department official ports of entry {place}"
+    if polygon_iso2(zone) == "YT":
+        return (
+            f"arrêté 4 février 2015 points de passage contrôlés "
+            f"annexe I frontières maritimes {place}"
+        )
+    if polygon_iso2(zone) == "GB":
+        return f"submit a pleasure craft report sPCR ports of entry {place}"
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
     return tpl.format(name=place) if tpl else None
@@ -390,6 +397,18 @@ def default_search_hints(zone: dict) -> list[str]:
     if iso == "SX":
         return [
             f"Sint Maarten customs department official {poly}",
+            generic,
+        ]
+    if iso == "YT":
+        return [
+            f"arrêté 4 février 2015 points de passage contrôlés annexe I {poly}",
+            f"Légifrance JORFTEXT000030235682 frontières maritimes {poly}",
+            generic,
+        ]
+    if iso == "GB":
+        return [
+            f"submit a pleasure craft report ports of entry {poly}",
+            f"sPCR C1331 pleasure craft sailing {poly}",
             generic,
         ]
     lang = zone_search_lang(zone)
@@ -1286,6 +1305,10 @@ def site_list_pdf_query(domain: str, zone: dict) -> str:
         return f"site:{domain} filetype:pdf (customs act OR port of entry OR niue laws)"
     if iso == "SX":
         return f"site:{domain} filetype:pdf (customs OR ports of entry OR pleasure craft)"
+    if iso == "YT":
+        return f"site:{domain} filetype:pdf (arrêté Mayotte points de passage OR annexe I)"
+    if iso == "GB":
+        return f"site:{domain} filetype:pdf (C1331 OR pleasure craft report)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
@@ -1312,6 +1335,10 @@ def site_list_page_query(domain: str, zone: dict) -> str:
         return f"site:{domain} (customs act port of entry)"
     if iso == "SX":
         return f"site:{domain} (customs department OR ports of entry)"
+    if iso == "YT":
+        return f"site:{domain} (JORFTEXT000030235682 OR arrêté points de passage Mayotte)"
+    if iso == "GB":
+        return f"site:{domain} (submit a pleasure craft report)"
     lang = zone_search_lang(zone)
     if lang == "fr":
         return f"site:{domain} (ports d'entrée OR liste douane)"

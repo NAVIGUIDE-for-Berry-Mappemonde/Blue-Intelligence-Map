@@ -267,7 +267,9 @@ Règles absolues:
   designated ports, gazette, décret, liste de ports de plaisance, places of first arrival.
   Un règlement scanné (OCR) reste une source : extraire les noms malgré les fautes OCR.
   Un tableau SCT « N° Nom État Puerto/Terminal date lat lon » (sans le mot Latitud)
-  est un catalogue : recopier chaque ligne et ses coordonnées.
+  est un catalogue : ne garder QUE les ports tagués turística / Turística.
+  Annexe I Mayotte : uniquement les sites « Frontières maritimes » (pas l'aéroport).
+  Royaume-Uni : si une liste de ports de plaisance est publiée, tous sont Ports of Entry.
   Tableaux MPI « | Nom | / Approved vessels » = places of first arrival.
   La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
