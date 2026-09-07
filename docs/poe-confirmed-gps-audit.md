@@ -76,26 +76,53 @@ Les trois derniers existaient dans `poe_ports` avec le même GPS aberrant :
 corrigés aussi, count 1280 inchangé. Tanjung Pinang n’était pas dans
 `poe_ports` (listing-only).
 
-### Haute — flag seulement (homonyme possible)
+### Corrigés ensuite (recherche UN/LOCODE / autorités, `REVIEWED_GPS`)
 
-| Clé | Nom | GPS actuel | Pourquoi on ne corrige pas |
+15 GPS tranchés, `geocode_source=manual_audit`. Pas de fusion de clés.
+Pas de centroïde de groupe (Savannah ≠ Delaware, Vancouver ≠ Prince Rupert).
+
+| Clé | Nom | GPS avant | GPS après |
 |---|---|---|---|
-| `8456:savannah` | Savannah | NY inland | Listing dit Georgia ; pas d’obs in_eez |
-| `8456:astoria` | Astoria | NY (in_eez USA) | Groupe West Coast ; pas d’obs Oregon |
-| `5677:stnazaire` | St Nazaire | Gard 44,20 / 4,63 | Homonyme Loire-Atlantique ; autre clé `nantessaintnazaire` |
-| `8367:safi` | Safi | inland nominatim | Listing-only, pas d’obs côtière |
-| `8366:gabes` | Gabes | inland nominatim | Idem |
-| `8479:portofmtwara` | Port of Mtwara | 86 km inland v1 | Toutes les obs ont le même GPS |
-| `8479:portoftanga` | Port of Tanga | 82 km inland v1 | Idem |
-| `8464:recife` | Recife | Paraná, pas Recife | Pas d’obs côtière du même nom |
-| `8493:vancouver` | Vancouver | 49,59 / −125,70 (île) | Outlier de groupe ; pas 100 % sûr |
+| `8456:savannah` | Savannah | Finger Lakes NY | **32,08 / −81,09** (USSAV) |
+| `8456:astoria` | Astoria | Queens NY | **46,19 / −123,83** (Oregon) |
+| `5677:stnazaire` | St Nazaire | Gard | **47,28 / −2,20** (FRSNR). Clé `nantessaintnazaire` inchangée |
+| `8367:safi` | Safi | hinterland | **32,31 / −9,25** (MASFI) |
+| `8366:gabes` | Gabes | hinterland | **33,91 / 10,10** (TNGAE) |
+| `8479:portofmtwara` | Port of Mtwara | 86 km inland | **−10,27 / 40,20** (TZMYW) |
+| `8479:portoftanga` | Port of Tanga | 82 km inland | **−5,07 / 39,11** (TZTGT) |
+| `8464:recife` | Recife | Paraná | **−8,06 / −34,87** (BRREC) |
+| `8493:vancouver` | Vancouver | Gold River / Nootka | **49,29 / −123,11** (Canada Place) |
+| `8456:brunswick` | Brunswick | NY inland | **31,13 / −81,54** (Géorgie) |
+| `8484:tpdanang` | Tp Da Nang | Quảng Nam inland | **16,10 / 108,23** (VNDAD) |
+| `5697:canakkale` | Çanakkale | hinterland | **40,10 / 26,38** (Kepez) |
+| `5697:mersin` | Mersin | hinterland Mut | **36,80 / 34,64** (TRMER) |
+| `8349:portofkilifi` | Port of Kilifi | hinterland | **−3,64 / 39,86** (Kilifi Creek) |
+| `8324:portofmadang` | Port of Madang | −5,0 / 145,5 | **−5,21 / 145,80** (PGMAG) |
 
-### Moyenne — city-center / rivière 31–59 km
-
-Brunswick (NY vs Georgia), Melilla, Đà Nẵng, Çanakkale, Mersin, Kilifi,
-Madang. Revue humaine, pas un lot automatique.
+`5693:puertodemelilla` : GPS déjà le quai (~400 m de Wikipedia). Faux positif
+VLIZ (enclave). `REVIEWED_KEEP` → `gps_audit_status=ok`, lat/lon inchangés.
 
 Sidney BC (`8493:portofsidney`) : **ok**, pas flaggé malgré des obs Sydney NS.
+
+## Scorer d'homonymes (géocodage)
+
+`geocode_port_dual` / `pick_geocode` notent jusqu'à 8 candidats :
+
+- parenthèses conservées dans la requête (Bintan avant Sumatra)
+- polygone VLIZ de **ce** mrgid + classe OSM harbour
+- `listing_group` comme filtre (West Coast USA → lon < −90°), jamais un GPS à copier
+- pairs côtiers du même groupe : proximité, pas fusion
+- deux bassins à score proche **sans** hint → `geocode_status=ambiguous`, on ne
+  pose pas de GPS (et on n'écrase pas un GPS existant)
+
+`_needs_geocode` : `name_only` sans point, ou `inland_far` / `ambiguous`.
+Les confirmed `ok` / `corrected` ne sont **pas** re-géocodés.
+
+17 `unverified` inland_far ont été re-géocodés avec le scorer (Ibiza Madrid →
+Ibiza, Semarang, Huatulco, Punta Cana, etc.). Trois retours : **Sevilla**
+(port fluvial Guadalquivir), **Kingston** (saut Terre-Neuve), **Hokkaido**
+(île, pas Sapporo). Le scorer refuse désormais un quai lointain dont le
+libellé n’est pas le toponyme, et un pair listing à > 1 500 km.
 
 ## Tanjung Pinang — avant / après
 
@@ -117,9 +144,8 @@ La suggestion n’est **pas** le GPS de Bandar Bintan Telani (autre marina,
 ## Ce qu’on ne fait pas maintenant
 
 - `POST /api/poe/seeds/build`
-- Enrich `unverified` / `probable` (~1 805)
+- Enrich `unverified` / `probable` (~1 805) — seulement les graines
+  `inland_far` / `ambiguous`, pas les 781 confirmed ok
 - Fusion de clés
-- Écraser `lat`/`lon` sur les flags restants
 
-**Prochain pas** : relire les 16 flags restants, **puis seulement** un lot
-`unverified`.
+**Prochain pas** : lot `unverified` (hors confirmed ok).
