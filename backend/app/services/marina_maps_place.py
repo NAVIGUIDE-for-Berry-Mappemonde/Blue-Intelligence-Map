@@ -1,9 +1,10 @@
 """
 Signal « fiche Google » sans API Places et sans scrape Maps.
 
-On ne suit pas la redirection JS /search → /place (c'est ce que le navigateur
-fait après un laps de temps). On ne garde une URL que si elle est déjà
-« /maps/place/ » : tag OSM, ou hit TinyFish Search.
+On ne pilote pas Maps nous-mêmes. TinyFish Search peut renvoyer une URL
+déjà en /maps/place/. Sinon TinyFish Fetch ouvre le lien de recherche
+déterministe : après le rendu JS (le laps de temps observé), la fiche
+expose un lien /place/ — ou « Impossible de trouver » / can't find.
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ PLACE_PATH_RE = re.compile(r"/maps/place/", re.I)
 SEARCH_PATH_RE = re.compile(r"/maps/search/", re.I)
 TOKEN_RE = re.compile(r"[a-z0-9]{3,}", re.I)
 COORDS_RE = re.compile(r"/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")
+DATA_COORDS_RE = re.compile(r"!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)")
+PLACE_URL_IN_TEXT_RE = re.compile(r"https?://(?:www\.)?google\.[^/\s\"'<>]+/maps/place/[^\s\"'<>]+", re.I)
 NON_MARINA_RE = re.compile(
     r"\b(restaurant|hotel|hôtel|pizzeria|café|cafe|brasserie|nightclub|bar)\b",
     re.I,
@@ -40,6 +43,7 @@ MAPS_PLACE_PURPOSE = (
 )
 
 SearchFn = Callable[[dict], Awaitable[list[dict]]]
+FetchFn = Callable[[dict], Awaitable[dict]]
 
 
 def is_google_place_url(url: str | None) -> bool:
@@ -86,7 +90,8 @@ def hit_blob(hit: dict) -> str:
 
 
 def place_coords(url: str | None) -> tuple[float, float] | None:
-    match = COORDS_RE.search(unquote(url or ""))
+    raw = unquote(url or "")
+    match = COORDS_RE.search(raw) or DATA_COORDS_RE.search(raw)
     if not match:
         return None
     try:
@@ -181,25 +186,68 @@ async def default_search(marina: dict) -> list[dict]:
     )
 
 
+def _link_url(raw) -> str:
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return str(raw.get("url") or raw.get("href") or "").strip()
+    return ""
+
+
+def place_hits_from_fetch(rec: dict | None) -> list[dict]:
+    """Liens /maps/place/ exposés par la page Maps une fois le JS rendu."""
+    rec = rec or {}
+    urls: list[str] = []
+    seen: set[str] = set()
+    candidates = [rec.get("final_url"), *(rec.get("links") or [])]
+    for raw in candidates:
+        url = _link_url(raw)
+        if url and url not in seen and is_google_place_url(url):
+            seen.add(url)
+            urls.append(url)
+    for match in PLACE_URL_IN_TEXT_RE.findall(rec.get("text") or ""):
+        if match not in seen and is_google_place_url(match):
+            seen.add(match)
+            urls.append(match)
+    snippet = (rec.get("text") or "")[:400]
+    title = rec.get("title") or ""
+    return [{"url": u, "title": title, "snippet": snippet} for u in urls]
+
+
+async def default_fetch(marina: dict) -> dict:
+    from app.core.tinyfish import tf_api_key, tf_fetch
+    from app.services.marina_world import google_maps_url
+    key = tf_api_key()
+    name = (marina.get("name") or "").strip()
+    lat, lon = marina.get("lat"), marina.get("lon")
+    if not key or not name or lat is None or lon is None:
+        return {}
+    url = google_maps_url(name, float(lat), float(lon))
+    recs = await tf_fetch([url], key, purpose=MAPS_PLACE_PURPOSE, log=None)
+    return recs.get(url) or next(iter(recs.values()), {}) or {}
+
+
 async def resolve_google_place(
     marina: dict,
     *,
     search_fn: SearchFn | None = None,
+    fetch_fn: FetchFn | None = None,
     now_iso: str | None = None,
 ) -> dict[str, Any]:
     """
     Retourne le patch à $set. N'invente pas d'URL /search/.
-    unnamed → skipped. Search sans /place/ → none.
+    unnamed → skipped. Search/Fetch sans /place/ → none.
     """
     checked = now_iso or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    empty = {
+        "maps_place_url": None,
+        "maps_place_status": "none",
+        "maps_place_source": None,
+        "maps_place_checked_at": checked,
+    }
     name = (marina.get("name") or "").strip()
     if not name:
-        return {
-            "maps_place_url": None,
-            "maps_place_status": "skipped_unnamed",
-            "maps_place_source": None,
-            "maps_place_checked_at": checked,
-        }
+        return {**empty, "maps_place_status": "skipped_unnamed"}
     tagged = place_url_from_doc({**marina, "maps_place_url": None})
     if tagged:
         return {
@@ -208,7 +256,8 @@ async def resolve_google_place(
             "maps_place_source": "osm_tag",
             "maps_place_checked_at": checked,
         }
-    hits = await (search_fn or default_search)(marina)
+    do_search = search_fn if search_fn is not None else default_search
+    hits = await do_search(marina)
     picked = pick_google_place(name, hits, lat=marina.get("lat"), lon=marina.get("lon"))
     if picked:
         return {
@@ -217,12 +266,21 @@ async def resolve_google_place(
             "maps_place_source": "tinyfish_search",
             "maps_place_checked_at": checked,
         }
-    return {
-        "maps_place_url": None,
-        "maps_place_status": "none",
-        "maps_place_source": None,
-        "maps_place_checked_at": checked,
-    }
+    # Tests : search_fn sans fetch_fn → pas d'appel réseau.
+    if fetch_fn is None and search_fn is not None:
+        return empty
+    rec = await (fetch_fn or default_fetch)(marina)
+    picked = pick_google_place(
+        name, place_hits_from_fetch(rec), lat=marina.get("lat"), lon=marina.get("lon"),
+    )
+    if picked:
+        return {
+            "maps_place_url": picked,
+            "maps_place_status": "found",
+            "maps_place_source": "tinyfish_fetch",
+            "maps_place_checked_at": checked,
+        }
+    return empty
 
 
 async def apply_maps_place(coll, marina: dict, patch: dict) -> None:
@@ -236,6 +294,7 @@ async def resolve_maps_places(
     limit: int = 0,
     force: bool = False,
     search_fn: SearchFn | None = None,
+    fetch_fn: FetchFn | None = None,
 ) -> dict:
     state.running = True
     state.started_at = time.time()
@@ -275,7 +334,9 @@ async def resolve_maps_places(
                 state.log("Stop demandé")
                 break
             try:
-                patch = await resolve_google_place(marina, search_fn=search_fn)
+                patch = await resolve_google_place(
+                    marina, search_fn=search_fn, fetch_fn=fetch_fn,
+                )
                 await apply_maps_place(marinas_coll, marina, patch)
                 if patch["maps_place_status"] == "found":
                     found += 1

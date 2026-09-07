@@ -115,6 +115,69 @@ def test_search_found_minimes():
     assert "/maps/place/" in patch["maps_place_url"]
 
 
+MINIMES_FETCH_PLACE = (
+    "https://www.google.com/maps/place/Port+Des+Minimes/"
+    "data=!4m7!3m6!1s0x480153ec40a1fe77:0xe993dbf31a0ee44d"
+    "!8m2!3d46.1445053!4d-1.1676049!16zL20vMGI4N2Rz"
+)
+
+
+def test_fetch_minimes_exposes_place_bout_blanc_does_not():
+    minimes_rec = {
+        "title": "Google Maps",
+        "final_url": SEARCH_URL.replace("Bassin+du+Bout+Blanc+46.14687,-1.16452", "Port+des+Minimes"),
+        "text": "Partial match Port des Minimes 46.14676,-1.16606 Port Des Minimes 4.5 (7,075) Marina",
+        "links": [MINIMES_FETCH_PLACE],
+    }
+    blanc_rec = {
+        "title": "Google Maps",
+        "final_url": SEARCH_URL,
+        "text": "Google Maps can't find Bassin du Bout Blanc 46.14687,-1.16452",
+        "links": [],
+    }
+    hits = mp.place_hits_from_fetch(minimes_rec)
+    assert hits and "/maps/place/" in hits[0]["url"]
+    picked = mp.pick_google_place("Port des Minimes", hits, 46.14676, -1.16606)
+    assert picked and "/maps/place/" in picked
+    assert mp.place_hits_from_fetch(blanc_rec) == []
+    assert mp.pick_google_place("Bassin du Bout Blanc", hits, 46.14687, -1.16452) is None
+
+
+def test_resolve_uses_fetch_when_search_empty():
+    async def search(_m):
+        return []
+
+    async def fetch(marina):
+        if marina["name"] == "Port des Minimes":
+            return {
+                "title": "Google Maps",
+                "text": "Port Des Minimes 4.5 Marina",
+                "links": [MINIMES_FETCH_PLACE],
+            }
+        return {
+            "title": "Google Maps",
+            "text": "Google Maps can't find Bassin du Bout Blanc",
+            "links": [],
+        }
+
+    found = asyncio.run(mp.resolve_google_place({
+        "_id": "way/741789648",
+        "name": "Port des Minimes",
+        "lat": 46.14676,
+        "lon": -1.16606,
+    }, search_fn=search, fetch_fn=fetch))
+    assert found["maps_place_status"] == "found"
+    assert found["maps_place_source"] == "tinyfish_fetch"
+    none = asyncio.run(mp.resolve_google_place({
+        "_id": "way/41585114",
+        "name": "Bassin du Bout Blanc",
+        "lat": 46.14687,
+        "lon": -1.16452,
+    }, search_fn=search, fetch_fn=fetch))
+    assert none["maps_place_status"] == "none"
+    assert none["maps_place_url"] is None
+
+
 def test_slim_feature_flags_place():
     feat = slim_feature({
         "_id": "way/741789648",

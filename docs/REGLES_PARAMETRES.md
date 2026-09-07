@@ -149,8 +149,8 @@ Déjà dans `settings` Mongo : inland, scores, partenaires, URLs, saturation, Ag
 Le mode Marinas charge le catalogue OSM mondial (`leisure=marina`), identité
 `osm_id`, upsert sans purge. On affiche **toutes** les marinas ; un point plus
 gros signale une URL Google `/maps/place/` déjà trouvée (tag OSM ou TinyFish
-Search). On ne scrape pas Maps et on n'attend pas la redirection JS
-`/search` → `/place`. Les règles `corridor_*` / `waypoint_*` /
+Search, ou TinyFish Fetch du lien de recherche Maps une fois le JS rendu).
+On n'invente pas d'URL `/place/` et on ne filtre pas la couche. Les règles `corridor_*` / `waypoint_*` /
 `priority_escale_*` restent pour les **mouillages** (et l'historique).
 
 | Id | Défaut | Famille | Phénomène / ancrage |
