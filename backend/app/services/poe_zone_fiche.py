@@ -290,10 +290,10 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None) -> dict | 
         if not zone:
             return None
         ports = await db.poe_ports.find({"mrgid": mid}).to_list(2000)
-        # Revue v1 : ports publiés + graines BU. On ne scanne pas tous les
-        # poe_run_* (plusieurs mondiaux) — ça bloquait l'onglet Review.
+        # Graines pour les URLs BU ; zones de run seulement pour l'URL TD.
+        # On ne charge pas poe_run_ports (tous les mondiaux) — trop lourd.
         run_ports = []
-        run_zones = []
+        run_zones = await _find_mrgid(getattr(db, "poe_run_zones", None), mid)
     else:
         ports = await _find_run_mrgid(getattr(db, "poe_run_ports", None), run_id, mid)
         run_zones = await _find_run_mrgid(getattr(db, "poe_run_zones", None), run_id, mid)
