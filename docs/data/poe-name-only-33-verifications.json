@@ -2,7 +2,17 @@
   "generated_at": "2026-09-07T05:30:00Z",
   "reviewer": "cursor-agent",
   "branch": "cursor/poe-osm-listing-seeds-fff7",
-  "mongo_written": false,
+  "mongo_written": true,
+  "applied_at": "2026-09-07T05:53:15Z",
+  "applied_summary": {
+    "applied": 33,
+    "total": 33,
+    "poe_ports": 1280,
+    "wrote_poe_ports": false,
+    "poe_seed_ports_after": 4034,
+    "inserted_split_seeds": 7,
+    "kiritimati_target": "8441:kiritimatiseaport"
+  },
   "method": "Revue manuelle documentée : Mongo Atlas poe_seed_ports/poe_ports, Nominatim OSM 2026-09-07, sources officielles publiques. Pas de POST /api/poe/seeds/build, pas d’écriture poe_ports.",
   "summary": {
     "n": 33,

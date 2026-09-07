@@ -12,6 +12,22 @@ les autres graines, le listing et l’index ZEE VLIZ.
 **Ne pas** relancer `POST /api/poe/seeds/build` après correction : le build
 vide `poe_seed_ports` et efface les jugements déjà faits.
 
+## Appliqué dans Atlas (2026-09-07T05:53:15Z)
+
+33/33 fiches écrites dans `poe_seed_ports` seulement.
+`poe_ports` reste **1280**. `wrote_poe_ports: false`.
+
+| Après | Compte |
+|---|---:|
+| `poe_seed_ports` | 4034 (+7 scissions) |
+| `confirmed` | 781 |
+| `probable` | 2157 |
+| `unverified` | 1056 |
+| `name_only` | 40 (33 sources + 7 enfants listing+GPS) |
+
+Kiritimati : fusion vers `8441:kiritimatiseaport` (Navy Harbour).
+Saipan : GPS inchangé (15.16847). Marigot : GPS posé sur `8495:marinamarigot`.
+
 ---
 
 ## Pourquoi ces 33 existent
