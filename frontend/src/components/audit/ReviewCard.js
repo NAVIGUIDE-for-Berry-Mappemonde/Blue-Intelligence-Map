@@ -103,7 +103,7 @@ export default function ReviewCard({ t, status }) {
   };
 
   const exportGold = () => act(async () => {
-    const { data } = await api.post("/projects/gold/export");
+    const { data } = await api.post("/projects/gold/export", {}, { timeout: 180000 });
     setGold(data);
     setMsg(t("reviewGoldExported").replace("{n}", String(data.exported ?? data.gold_count ?? 0)));
   });

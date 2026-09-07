@@ -616,7 +616,12 @@ async def collect_gold_items(db) -> list[dict]:
     """v1 moins snapped moins fallback, plus les acceptés revue absents de ce filtre."""
     items: list[dict] = []
     seen_urls: set[str] = set()
-    for p in await db.projects.find({}).to_list(50000):
+    docs = await db.projects.find({}, {
+        "title": 1, "description": 1, "location": 1, "site_name": 1,
+        "url": 1, "lat": 1, "lon": 1, "funders": 1, "sites": 1,
+        "snapped": 1, "snapped_coastal": 1, "geo_source": 1,
+    }).to_list(50000)
+    for p in docs:
         if not gold_eligible_v1(p):
             continue
         slim = slim_gold(p)
@@ -693,7 +698,7 @@ async def export_gold(db, path=None) -> dict:
         "count": len(items),
         "items": items,
     }
-    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    dest.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     stats = await gold_stats(db)
     stats["exported"] = len(items)
     stats["file_path"] = str(dest)
