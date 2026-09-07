@@ -9,7 +9,7 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | Mode | Couleur | Contenu |
 |------|---------|---------|
 | **Projets** | cyan | ~4 500 projets de conservation marine découverts et extraits automatiquement depuis les portails des grandes fondations (swarm d'agents web + LLM) |
-| **Marinas** | rouge | Marinas et points d'amarrage le long de la route Berry-Mappemonde, curatés depuis OpenStreetMap/SHOM et enrichis par IA (canal VHF, places visiteurs, services…) |
+| **Marinas** | rouge | Annuaire mondial `leisure=marina` (OpenStreetMap), identité `osm_id`, lien Google Maps déterministe. Point plus gros si une fiche `/maps/place/` a été trouvée (TinyFish Search / tag OSM) — on n'en filtre aucune. Les mouillages restent sur le corridor de la route. Hors Formalités / PoE. |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 
 S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
@@ -23,7 +23,7 @@ blue-intelligence/
 │   ├── llm_core.py     Adaptateur LLM — NIM (complétions) ou OpenRouter ; :online reste OpenRouter
 │   ├── pipeline.py     Swarm de découverte/extraction des projets marins
 │   ├── poe.py          Pipeline [ZEE → Ports d'Entrée] (poe_routes.py = endpoints)
-│   ├── marinas.py      Build marinas (Overpass/SHOM), anchorages.py (mouillages)
+│   ├── marinas.py      Dump mondial OSM leisure=marina ; mouillages = corridor route
 │   ├── enrichment.py   Enrichissement marinas (OpenRouter → TinyFish → tags OSM)
 │   ├── geo.py / geo_core.py       Géocodage, snap côtier, validation spatiale
 │   ├── extract_core.py            Cascade de parsing N1 trafilatura → N2 Readability → N3 TinyFish

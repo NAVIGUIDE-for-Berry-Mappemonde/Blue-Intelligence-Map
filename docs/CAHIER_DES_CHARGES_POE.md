@@ -388,7 +388,7 @@ Verdicts de graine (`verdict_for_seed`) :
 - `POST /api/poe/validate-osm` · `POST /api/poe/qualify-unclos`
 - `GET /api/poe/runs/{id}/listing-control`
 
-Le mode **Marinas** (`marina_build.py`, tag `leisure=marina` le long de la route) n’est **pas** le mode Formalités. Les deux se croisent seulement comme signal : une marina OSM près d’une douane peut devenir une **graine**.
+Le mode **Marinas** (`marina_world.py`, dump mondial `leisure=marina`) n’est **pas** le mode Formalités. Les deux se croisent seulement comme signal : une marina OSM près d’une douane peut devenir une **graine**.
 
 ---
 
@@ -882,8 +882,8 @@ cd backend && python3 -m pytest tests/test_poe_seeds.py tests/test_listing_contr
 Ce cahier **ne couvre pas** :
 
 - le mode **Projets** (swarm fondations, 4 463 projets) — voir `docs/CAHIER_DES_CHARGES_PROJETS.md` ;
-- le mode **Marinas** de la route Berry-Mappemonde (corridor ±25 NM, enrichissement VHF / places) — autre produit, autre couche carte ;
-- les **mouillages** OSM ;
+- le mode **Marinas** : dump mondial `leisure=marina` (identité `osm_id`, hors Formalités) — autre produit, autre couche carte ;
+- les **mouillages** OSM le long de la route (±25 NM) ;
 - le crowdsourcing skipper avec lien de loi (backlog P1 du PRD) ;
 - l’abonnement Noonsite premium (refusé) ;
 - la traduction automatique opus-mt des requêtes (matrice 16 langues suffisante pour l’instant) ;

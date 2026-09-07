@@ -16,7 +16,8 @@ effectué, (3) la proposition de rangement et de découpage cible.
 | `pipeline.py` | Swarm de découverte/extraction des projets marins (TinyFish SSE → crawler HTTP → Readability → LLM) | classe `Swarm` (`deploy`, `stop`, `status`, workers), `pick_image` |
 | `poe.py` | Pipeline souverain [ZEE → Ports d'Entrée] : référentiel VLIZ, recherche multilingue, whitelist gouvernementale, collecte, extraction, géocodage, monitoring MD5/sémantique | `build_referential`, `generate_zone_poe`, `build_whitelist`, `url_allowed`, `qualify_unclos`, `zone_to_item`, `ports_to_geojson` |
 | `poe_routes.py` | Endpoints du mode Formalités + rafraîchissement automatique + reprise de jobs | `TaskState`, `_auto_refresh_loop`, endpoints `/api/poe/*` |
-| `marinas.py` | Build du dataset marinas (Overpass OSM + SHOM + curated, corridor ±25 NM, dédup géohash) | `build_marinas`, `marinas_to_geojson`, `BuildState` |
+| `marina_world.py` | Dump mondial `leisure=marina` (tuiles Overpass, identité `osm_id`, slim GeoJSON, lien Maps) | `build_world_marinas`, `marinas_to_slim_geojson` |
+| `marina_maps_place.py` | Signal fiche Google `/maps/place/` (TinyFish Search ou tag OSM, sans scrape Maps) | `resolve_maps_places`, `is_google_place_url` |
 | `anchorages.py` | Build des mouillages (Overpass uniquement, mêmes corridors) | `build_anchorages`, `anchorages_to_geojson` |
 | `enrichment.py` | Enrichissement des marinas — chaîne OpenRouter → TinyFish → tags OSM, garde-fou crédits | `enrich_marina`, `enrich_via_openrouter`, `enrich_via_tinyfish`, `enrich_from_osm_tags`, `openrouter_check_credit` |
 | `geo_core.py` | Géospatial unifié : géocodage Nominatim → GeoNames (cache + rate-limit), masque terrestre, snap côtier, point-in-EEZ, anomalies spatiales | `geocode`, `geocode_port`, `haversine_km`, `is_ocean`, `snap_to_ocean`, `coast_distance_km` |
@@ -96,7 +97,9 @@ backend/
 │   ├── services/               # logique métier (aucun import FastAPI)
 │   │   ├── swarm_pipeline.py   #   ex pipeline.py
 │   │   ├── poe_pipeline.py     #   ex poe.py
-│   │   ├── marina_build.py     #   ex marinas.py
+│   │   ├── marina_build.py     #   corridor / SHOM (mouillages + helpers)
+│   │   ├── marina_world.py     #   dump mondial leisure=marina
+│   │   ├── marina_maps_place.py #  signal /maps/place/ (TinyFish Search, pas de scrape)
 │   │   ├── anchorage_build.py  #   ex anchorages.py
 │   │   ├── marina_enrich.py    #   ex enrichment.py
 │   │   ├── zee_crossings.py    #   ex zee.py

@@ -938,6 +938,18 @@
       "principle": "Budget Agent TinyFish par marina. Assez pour un site JS, pas un crawl.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.1 (Agent = scalpel)",
       "code": ["app/services/marina_enrich.py"]
+    },
+    {
+      "id": "marinas.overpass_throttle_s",
+      "mode": "marinas",
+      "kind": "budget",
+      "value": 3.0,
+      "unit": "s",
+      "interval": [1.2, 8.0],
+      "vary": true,
+      "principle": "AUP Overpass : une tuile monde à la fois. 3 s = poli. Plancher 1,2 s = déjà utilisé par osm_seeds. Ce n'est pas une géographie métier.",
+      "cdc": "wiki OSM API usage policy · marina_world",
+      "code": ["app/services/marina_world.py"]
     }
   ]
 }

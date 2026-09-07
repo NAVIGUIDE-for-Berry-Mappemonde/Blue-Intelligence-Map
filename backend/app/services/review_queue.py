@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import re
 
 from app.core.dedup import normalize_name
+from app.services.marina_world import google_maps_url
 from app.services.poe_zone_fiche import (
     PUBLISHED_RUN,
     bu_by_port_name,
@@ -370,6 +371,13 @@ def _marina_fiche(doc: dict) -> dict:
         "services_disponibles": doc.get("services_disponibles"),
         "telephone_capitainerie": doc.get("telephone_capitainerie"),
         "resume_avis": doc.get("resume_avis"),
+        "website": doc.get("website"),
+        "website_status": doc.get("website_status"),
+        "maps_url": (
+            google_maps_url(doc.get("name"), doc["lat"], doc["lon"])
+            if doc.get("lat") is not None and doc.get("lon") is not None
+            else None
+        ),
         "wrote_marinas": False,
     }
 

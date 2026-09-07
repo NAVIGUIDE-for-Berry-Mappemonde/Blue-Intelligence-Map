@@ -18,8 +18,23 @@ export default function MarinaFiche({ t, fiche }) {
       {fiche.lat != null && fiche.lon != null && (
         <p className="font-mono text-[11px] text-slate-400">
           {t("reviewCoords")} · {Number(fiche.lat).toFixed(4)}, {Number(fiche.lon).toFixed(4)}
+          {fiche.maps_url ? (
+            <>
+              {" · "}
+              <a href={fiche.maps_url} target="_blank" rel="noreferrer" className="text-alert hover:underline">
+                {t("marinasGoogleMaps")}
+              </a>
+            </>
+          ) : null}
         </p>
       )}
+      {fiche.website ? (
+        <p className="font-mono text-[11px] text-slate-400 truncate">
+          <a href={fiche.website} target="_blank" rel="noreferrer" className="text-bio hover:underline">
+            {fiche.website.replace(/^https?:\/\//, "")}
+          </a>
+        </p>
+      ) : null}
       <p className="font-mono text-[10px] uppercase tracking-widest text-slate-300">
         {fiche.enriched ? t("reviewEnriched") : t("reviewNotEnriched")}
         {fiche.enrichment_source ? ` · ${fiche.enrichment_source}` : ""}
