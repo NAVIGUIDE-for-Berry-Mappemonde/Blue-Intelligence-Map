@@ -4,6 +4,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from app.core.tasks import TaskState
+from app.core.run_rules import RuleError
 from app.db import db, get_settings
 from app.services import project_runs
 from app.state import swarm
@@ -17,6 +18,8 @@ class ProjectRunBody(BaseModel):
     mode: str = "test"
     label: str = ""
     force_rescan: bool = False
+    profile: str | None = None
+    rules: dict | None = None
 
 
 @router.post("/projects/runs", status_code=202)
@@ -27,9 +30,13 @@ async def project_run_start(body: ProjectRunBody | None = None):
     if swarm.running:
         raise HTTPException(409, "swarm already running")
     settings = await get_settings()
-    opened = await project_runs.open_run(
-        db, mode=body.mode, label=body.label, settings=settings,
-        force_rescan=body.force_rescan)
+    try:
+        opened = await project_runs.open_run(
+            db, mode=body.mode, label=body.label, settings=settings,
+            force_rescan=body.force_rescan, rules_overrides=body.rules,
+            profile=body.profile)
+    except RuleError as e:
+        raise HTTPException(400, str(e)) from e
     run_id = opened["run_id"]
     state = TaskState(max_logs=2000)
     state.start()

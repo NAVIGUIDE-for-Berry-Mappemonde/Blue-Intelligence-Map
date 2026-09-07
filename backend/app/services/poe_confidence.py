@@ -30,7 +30,8 @@ def listing_role(name: str, listing_ports: list[dict] | None) -> str | None:
         sim = text_similarity(name, other)
         if sim > best:
             best, role = sim, p.get("role")
-    return role if best >= 0.72 else None
+    from app.core.run_rules import get_rule
+    return role if best >= float(get_rule("formalities.listing_role_sim", 0.72)) else None
 
 
 def score_port(port: dict, *,
@@ -38,8 +39,14 @@ def score_port(port: dict, *,
                listing_ports: list[dict] | None = None,
                multi_run: bool = False) -> dict:
     """Retourne {confidence, parts, reasons, listing_role}."""
+    from app.core.run_rules import get_rule
     reasons: list[str] = []
     parts = {"source": 0, "reading": 0, "map": 0, "external": 0}
+    src_max = int(get_rule("formalities.confidence_source_max", 30))
+    read_max = int(get_rule("formalities.confidence_reading_max", 25))
+    map_max = int(get_rule("formalities.confidence_map_max", 25))
+    ext_max = int(get_rule("formalities.confidence_external_max", 20))
+    osm_hi = float(get_rule("formalities.osm_confidence_hi", 0.5))
 
     engine = (port.get("extraction_engine") or "").lower()
     note = port.get("note") or ""
@@ -49,7 +56,7 @@ def score_port(port: dict, *,
     )
 
     if official_source:
-        parts["source"] = 30
+        parts["source"] = src_max
         reasons.append("source d'État")
     elif synthesis_only:
         parts["source"] = 8
@@ -76,7 +83,7 @@ def score_port(port: dict, *,
         readers += 1
         reasons.append("Claude et OpenRouter d'accord")
     if catalog and llm_ner:
-        parts["reading"] = 25
+        parts["reading"] = read_max
         reasons.append("catalogue + LLM + NER")
     elif catalog:
         parts["reading"] = 20
@@ -113,7 +120,7 @@ def score_port(port: dict, *,
         parts["map"] = 0
         reasons.append("hors ZEE et hors bord terrestre")
     elif kind == "in_eez" and agree is True:
-        parts["map"] = 25
+        parts["map"] = map_max
         reasons.append("dans la ZEE, géocodeurs d'accord")
     elif kind == "coastal_land" and agree is True:
         parts["map"] = 22
@@ -147,7 +154,7 @@ def score_port(port: dict, *,
         ext += 2
         reasons.append("listing : autre port (pas un PoE)")
     if osm is not None:
-        if osm >= 0.5:
+        if osm >= osm_hi:
             ext += 8
             reasons.append("OSM : infrastructure portuaire / douane")
         elif osm > 0:
@@ -160,7 +167,7 @@ def score_port(port: dict, *,
         reasons.append("vu dans plusieurs runs")
     if port.get("wpi_commercial"):
         reasons.append("WPI commerce (contre-liste, pas une preuve PoE)")
-    parts["external"] = min(20, ext)
+    parts["external"] = min(ext_max, ext)
 
     total = min(100, sum(parts.values()))
     return {

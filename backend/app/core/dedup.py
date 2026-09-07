@@ -34,16 +34,26 @@ def text_similarity(a: str, b: str) -> float:
     return max(raw, norm, tokens)
 
 
+def _dedup_thresholds() -> tuple[float, float, float]:
+    from app.core.run_rules import get_rule
+    return (
+        float(get_rule("shared.dedup_dist_km", DIST_THRESHOLD_KM)),
+        float(get_rule("shared.dedup_sim_low", SIM_THRESHOLD_LOW)),
+        float(get_rule("shared.dedup_sim_high", SIM_THRESHOLD_HIGH)),
+    )
+
+
 def is_duplicate(doc_a: dict, doc_b: dict, lat_key: str = "lat", lon_key: str = "lon",
                  title_key: str = "title") -> bool:
+    dist_km, sim_low, sim_high = _dedup_thresholds()
     sim = text_similarity(str(doc_a.get(title_key) or ""), str(doc_b.get(title_key) or ""))
-    if sim >= SIM_THRESHOLD_HIGH:
+    if sim >= sim_high:
         return True
     vals = [doc_a.get(lat_key), doc_a.get(lon_key), doc_b.get(lat_key), doc_b.get(lon_key)]
     if all(v is not None for v in vals):
         try:
             dist = haversine_km(float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
-            if dist < DIST_THRESHOLD_KM and sim >= SIM_THRESHOLD_LOW:
+            if dist < dist_km and sim >= sim_low:
                 return True
         except (ValueError, TypeError):
             pass

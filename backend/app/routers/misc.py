@@ -25,6 +25,28 @@ router = APIRouter(prefix="/api")
 async def health():
     return {"service": "Blue Intelligence", "status": "operational", "ts": now_iso()}
 
+
+@router.get("/run-rules")
+async def read_run_rules(mode: str | None = None, profile: str | None = None):
+    """Catalogue des règles modulables + snapshot qui serait pris pour un run."""
+    from app.core.run_rules import RuleError, public_catalog, snapshot_for_run
+    try:
+        catalog = public_catalog(mode)
+        settings = await get_settings()
+        preview = snapshot_for_run(mode=mode, settings=settings, profile=profile)
+    except RuleError as e:
+        raise HTTPException(400, str(e)) from e
+    catalog["preview"] = {
+        "hash": preview["hash"],
+        "profile": preview["profile"],
+        "counts": preview["counts"],
+        "chosen": {
+            k: {"value": v["value"], "source": v["source"], "unit": v["unit"]}
+            for k, v in preview["chosen"].items()
+        },
+    }
+    return catalog
+
 class SettingsBody(BaseModel):
     openrouter_api_key: str | None = None
     tinyfish_api_key: str | None = None

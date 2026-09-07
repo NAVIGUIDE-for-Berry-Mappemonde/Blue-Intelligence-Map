@@ -20,6 +20,7 @@ import uuid
 from app.core.events import RunContext, RunRecorder
 from app.services import poe_pipeline as poe
 from app.services.poe_pipeline import normalize_variant
+from app.core.run_rules import attach_rules, bind_rules, get_rule, snapshot_for_run
 from app.services.run_fingerprint import (
     build_code_fingerprint, merge_run_params, resume_params,
 )
@@ -55,7 +56,9 @@ async def _select_zones(db, limit: int, only_zones: list[int] | None) -> list[di
 async def execute_run(db, state, run_id: str, label: str = "",
                       limit: int = 0, only_zones: list[int] | None = None,
                       concurrency: int = 2, resume: bool = False,
-                      variant: str = "tinyfish") -> dict:
+                      variant: str = "tinyfish",
+                      rules_overrides: dict | None = None,
+                      profile: str | None = None) -> dict:
     """Exécute (ou reprend) un run complet. `state` est un TaskState (logs live,
     progression, annulation) ; l'état durable vit dans db.poe_runs.
     variant : v1 | v2 | tinyfish — n'écrit jamais dans poe_ports."""
@@ -85,16 +88,35 @@ async def execute_run(db, state, run_id: str, label: str = "",
         settings = await get_settings()
     except Exception:
         pass
-    fingerprint = build_code_fingerprint(settings, zone_timeout_s=ZONE_TIMEOUT_S)
-    base = {"label": label, "limit": limit, "concurrency": concurrency,
-            "only_zones": only_zones, "force": True, "variant": variant}
+    timeout_s = int(get_rule("formalities.zone_timeout_s", ZONE_TIMEOUT_S))
     if resume:
         existing = await db.poe_runs.find_one({"_id": run_id}) or {}
-        params = resume_params(existing.get("params") or base, fingerprint)
+        existing_params = existing.get("params") or {}
+        rules = existing_params.get("rules") or snapshot_for_run(
+            mode="formalities", settings=settings,
+            overrides=rules_overrides, profile=profile)
+        timeout_s = int((rules.get("chosen") or {}).get(
+            "formalities.zone_timeout_s", {}).get("value") or timeout_s)
+        fingerprint = build_code_fingerprint(settings, zone_timeout_s=timeout_s)
+        base = {"label": label, "limit": limit, "concurrency": concurrency,
+                "only_zones": only_zones, "force": True, "variant": variant,
+                "profile": rules.get("profile")}
+        params = resume_params(existing_params or base, fingerprint)
         params.update({"label": label, "limit": limit, "concurrency": concurrency,
                        "only_zones": only_zones, "force": True, "variant": variant})
+        if not isinstance(params.get("rules"), dict):
+            params = attach_rules(params, rules)
     else:
-        params = merge_run_params(base, fingerprint)
+        rules = snapshot_for_run(mode="formalities", settings=settings,
+                                 overrides=rules_overrides, profile=profile)
+        timeout_s = int((rules.get("chosen") or {}).get(
+            "formalities.zone_timeout_s", {}).get("value") or timeout_s)
+        fingerprint = build_code_fingerprint(settings, zone_timeout_s=timeout_s)
+        base = {"label": label, "limit": limit, "concurrency": concurrency,
+                "only_zones": only_zones, "force": True, "variant": variant,
+                "profile": rules["profile"]}
+        params = attach_rules(merge_run_params(base, fingerprint), rules)
+    bind_rules(rules)
     await db.poe_runs.update_one({"_id": run_id}, {"$set": {
         "label": label, "params": params, "state": "running",
         "started_at": poe.now_iso() if not resume else None,
@@ -107,7 +129,8 @@ async def execute_run(db, state, run_id: str, label: str = "",
         await recorder.event("run_resume", params=params, zones_total=len(zones),
                              already_done=len(done_mrgids))
     log(f"run {run_id}: variant={variant} — {len(todo)} zone(s) à générer from scratch "
-        f"(concurrency={concurrency}, timeout {ZONE_TIMEOUT_S}s/zone)")
+        f"(concurrency={concurrency}, timeout {timeout_s}s/zone, "
+        f"rules={rules.get('hash')} profile={rules.get('profile')})")
 
     sem = asyncio.Semaphore(max(1, concurrency))
     counter = {"done": len(done_mrgids), "errors": 0}
@@ -125,7 +148,7 @@ async def execute_run(db, state, run_id: str, label: str = "",
                         db, mrgid,
                         logger=lambda m: log(f"[{name}] {m}"),
                         force=True, run=run_ctx),
-                    timeout=ZONE_TIMEOUT_S)
+                    timeout=timeout_s)
                 state.results.append({"mrgid": mrgid, "name": name,
                                       "status": (doc or {}).get("status"),
                                       "poe_count": (doc or {}).get("poe_count", 0)})

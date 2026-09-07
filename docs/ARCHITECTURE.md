@@ -166,4 +166,6 @@ Fonctions re-découpées :
   aux redémarrages (déjà fait pour la validation OSM) ;
 - Extraire les prompts LLM dans des fichiers dédiés (`app/core/prompts/`) ;
 - Basculer la lecture des réglages sur un cache TTL pour éviter un aller-retour
-  Mongo par requête.
+  Mongo par requête ;
+- Catalogue des règles modulables : `data/run_rules.json` + `core/run_rules.py`
+  (snapshot `params.rules` par run — voir `docs/REGLES_PARAMETRES.md`).

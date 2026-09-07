@@ -125,9 +125,60 @@ class MarinasBuildBody(BaseModel):
     radius_nm: float | None = None
     clear_before: bool = False
     include_corridor: bool = True
-    # Phase 8 — continuous 50 NM band: 25 NM sampling step × ±25 NM buffer
-    corridor_step_nm: float = 25.0
-    corridor_radius_nm: float = 25.0
+    corridor_step_nm: float | None = None
+    corridor_radius_nm: float | None = None
+    profile: str | None = None
+    rules: dict | None = None
+
+
+async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | None = None):
+    from app.core.run_rules import RuleError, bind_rules, snapshot_for_run
+    overrides = dict(body.rules or {})
+    if extra_overrides:
+        overrides.update({k: v for k, v in extra_overrides.items() if v is not None})
+    try:
+        rules = snapshot_for_run(mode="marinas", settings=settings,
+                                 overrides=overrides or None, profile=body.profile)
+    except RuleError as e:
+        raise HTTPException(400, str(e)) from e
+    bind_rules(rules)
+    chosen = rules.get("chosen") or {}
+    radius_nm = float(
+        body.radius_nm
+        if body.radius_nm is not None
+        else chosen.get("marinas.waypoint_radius_nm", {}).get("value")
+        or settings.get("marina_search_radius_nm")
+        or 10.0
+    )
+    step = float(
+        body.corridor_step_nm
+        if body.corridor_step_nm is not None
+        else chosen.get("marinas.corridor_step_nm", {}).get("value")
+        or 25.0
+    )
+    rad = float(
+        body.corridor_radius_nm
+        if body.corridor_radius_nm is not None
+        else chosen.get("marinas.corridor_radius_nm", {}).get("value")
+        or 25.0
+    )
+    return rules, radius_nm, step, rad
+
+
+async def _persist_marina_run(kind: str, rules: dict, radii: dict) -> str:
+    from app.services.project_runs import new_run_id
+    from app.services.swarm_pipeline import now_iso
+    rid = new_run_id()
+    await db.marina_runs.insert_one({
+        "_id": rid,
+        "kind": kind,
+        "state": "running",
+        "params": {"rules": rules, **radii},
+        "created_at": now_iso(),
+        "wrote_marinas": kind == "marinas",
+        "wrote_anchorages": kind == "anchorages",
+    })
+    return rid
 
 
 @router.post("/marinas/build")
@@ -136,10 +187,25 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         raise HTTPException(409, "A marinas build is already running")
     body = body or MarinasBuildBody()
     settings = await get_settings()
-    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+    extra = {}
+    if body.corridor_step_nm is not None:
+        extra["marinas.corridor_step_nm"] = body.corridor_step_nm
+    if body.corridor_radius_nm is not None:
+        extra["marinas.corridor_radius_nm"] = body.corridor_radius_nm
+    if body.radius_nm is not None:
+        extra["marinas.waypoint_radius_nm"] = body.radius_nm
+    rules, radius_nm, step, rad = await _marina_rules_and_radii(body, settings, extra)
 
     if body.clear_before:
         await db.marinas.delete_many({})
+
+    run_id = await _persist_marina_run("marinas", rules, {
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": step,
+        "corridor_radius_nm": rad,
+        "profile": rules.get("profile"),
+    })
 
     async def _runner():
         try:
@@ -149,20 +215,28 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                 radius_nm=radius_nm,
                 state=MARINA_BUILD_STATE,
                 include_corridor=body.include_corridor,
-                corridor_step_nm=body.corridor_step_nm,
-                corridor_radius_nm=body.corridor_radius_nm,
+                corridor_step_nm=step,
+                corridor_radius_nm=rad,
             )
-        except Exception:
-            pass
+            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
+                "state": "done", "summary": MARINA_BUILD_STATE.summary,
+            }})
+        except Exception as e:
+            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
+                "state": "failed", "error": str(e)[:200],
+            }})
 
     asyncio.create_task(_runner())
     return {
         "started": True,
+        "run_id": run_id,
         "radius_nm": radius_nm,
         "include_corridor": body.include_corridor,
-        "corridor_step_nm": body.corridor_step_nm,
-        "corridor_radius_nm": body.corridor_radius_nm,
-        "corridor_band_nm": body.corridor_radius_nm * 2,
+        "corridor_step_nm": step,
+        "corridor_radius_nm": rad,
+        "corridor_band_nm": rad * 2,
+        "profile": rules.get("profile"),
+        "rules_hash": rules.get("hash"),
     }
 
 
@@ -205,9 +279,10 @@ class AnchoragesBuildBody(BaseModel):
     radius_nm: float | None = None
     clear_before: bool = False
     include_corridor: bool = True
-    # Same corridor defaults as marinas: ±25 NM band (25 NM step × ±25 NM buffer)
-    corridor_step_nm: float = 25.0
-    corridor_radius_nm: float = 25.0
+    corridor_step_nm: float | None = None
+    corridor_radius_nm: float | None = None
+    profile: str | None = None
+    rules: dict | None = None
 
 
 @router.get("/anchorages")
@@ -240,11 +315,25 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
         raise HTTPException(409, "An anchorages build is already running")
     body = body or AnchoragesBuildBody()
     settings = await get_settings()
-    # Reuse marina_search_radius_nm as default waypoint radius for anchorages too
-    radius_nm = float(body.radius_nm or settings.get("marina_search_radius_nm") or 10.0)
+    extra = {}
+    if body.corridor_step_nm is not None:
+        extra["marinas.corridor_step_nm"] = body.corridor_step_nm
+    if body.corridor_radius_nm is not None:
+        extra["marinas.corridor_radius_nm"] = body.corridor_radius_nm
+    if body.radius_nm is not None:
+        extra["marinas.waypoint_radius_nm"] = body.radius_nm
+    rules, radius_nm, step, rad = await _marina_rules_and_radii(body, settings, extra)
 
     if body.clear_before:
         await db.anchorages.delete_many({})
+
+    run_id = await _persist_marina_run("anchorages", rules, {
+        "radius_nm": radius_nm,
+        "include_corridor": body.include_corridor,
+        "corridor_step_nm": step,
+        "corridor_radius_nm": rad,
+        "profile": rules.get("profile"),
+    })
 
     async def _runner():
         try:
@@ -254,20 +343,28 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
                 radius_nm=radius_nm,
                 state=ANCHORAGE_BUILD_STATE,
                 include_corridor=body.include_corridor,
-                corridor_step_nm=body.corridor_step_nm,
-                corridor_radius_nm=body.corridor_radius_nm,
+                corridor_step_nm=step,
+                corridor_radius_nm=rad,
             )
-        except Exception:
-            pass
+            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
+                "state": "done", "summary": ANCHORAGE_BUILD_STATE.summary,
+            }})
+        except Exception as e:
+            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
+                "state": "failed", "error": str(e)[:200],
+            }})
 
     asyncio.create_task(_runner())
     return {
         "started": True,
+        "run_id": run_id,
         "radius_nm": radius_nm,
         "include_corridor": body.include_corridor,
-        "corridor_step_nm": body.corridor_step_nm,
-        "corridor_radius_nm": body.corridor_radius_nm,
-        "corridor_band_nm": body.corridor_radius_nm * 2,
+        "corridor_step_nm": step,
+        "corridor_radius_nm": rad,
+        "corridor_band_nm": rad * 2,
+        "profile": rules.get("profile"),
+        "rules_hash": rules.get("hash"),
     }
 
 
