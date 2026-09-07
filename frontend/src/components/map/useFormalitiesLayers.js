@@ -10,6 +10,7 @@ import { escH, flagEmoji, zoneStyle } from "./constants";
  */
 export default function useFormalitiesLayers({
   mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
+  poeMarkersById,
   mode, poeZones, poePorts, flyToZone, tRef,
 }) {
   const eezLoadedRef = useRef(false);
@@ -62,6 +63,7 @@ export default function useFormalitiesLayers({
     if (sig === poeSigRef.current && cluster.getLayers().length) return;
     poeSigRef.current = sig;
     cluster.clearLayers();
+    if (poeMarkersById?.current) poeMarkersById.current.clear();
     const markers = feats.map((f) => {
       const [lon, lat] = f.geometry.coordinates;
       const p = f.properties;
@@ -113,7 +115,8 @@ export default function useFormalitiesLayers({
           ${srcs ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px;">${escH(t("poeSourcesTitle"))}</div>${srcs}` : ""}
           <div style="margin-top:7px;font-size:9px;color:#64748b;">${escH(t("poeGeocodeAttribution"))}${p.extracted_at ? " · " + escH(String(p.extracted_at).slice(0, 10)) : ""}</div>
         </div>`;
-      }, { maxWidth: 310, maxHeight: 340, autoPan: true, autoPanPadding: [40, 40] });
+      }, { maxWidth: 310, maxHeight: 340, autoPan: true, autoPanPadding: [40, 40]       });
+      if (poeMarkersById?.current && p.id) poeMarkersById.current.set(p.id, m);
       return m;
     });
     cluster.addLayers(markers);

@@ -357,8 +357,9 @@ def coerce_ports(data, context: str | None = None) -> list[dict]:
 async def extract_ports_openrouter(context: str, zone: dict,
                                    settings: dict | None = None, log=None) -> list[dict]:
     """Lecteur OpenRouter seul — le pipeline l'appelle en parallèle de Claude."""
+    from app.services.poe_zone_label import search_polygon_name
     prompt = POE_EXTRACT_PROMPT.format(
-        name=zone.get("name") or zone.get("geoname"),
+        name=search_polygon_name(zone) or (zone.get("name") or zone.get("geoname") or ""),
         sovereign=zone.get("sovereign") or "",
         context=context[:20000],
     )

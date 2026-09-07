@@ -90,6 +90,27 @@ class TestPickListingMrgid:
         assert mid == 8333
 
 
+class TestFrancePolygonsAreNotOneCountry():
+    def test_listing_splits_hexagon_and_mayotte(self):
+        proj = project_listing()
+        by_slug = {r["slug"]: r for r in proj["resolutions"]}
+        assert by_slug["france-2"]["mrgids"] == [5677]
+        assert by_slug["mayotte"]["mrgids"] == [48944]
+        hex_poe = {p["name"] for p in proj["ports"]
+                   if p.get("mrgid") == 5677 and p.get("role") == "poe"}
+        may_names = {p["name"] for p in proj["ports"] if p.get("mrgid") == 48944}
+        blob = " ".join(hex_poe).lower()
+        assert "dzaoudzi" not in blob
+        assert "mamoudzou" not in blob
+        assert "Dzaoudzi" in may_names
+        assert any("Marseille" in n or "marseille" in n.lower() for n in hex_poe)
+
+    def test_guadeloupe_is_not_france_hexagon(self):
+        res = resolve_slug("guadeloupe", "Guadeloupe")
+        assert 33177 in res["mrgids"]
+        assert 5677 not in res["mrgids"]
+
+
 class TestResolveSlug:
     def test_auto_saba(self):
         res = resolve_slug("saba", "Saba", zones=ZONES, overrides={})
