@@ -1,0 +1,1339 @@
+{
+  "audited_at": "2026-09-07T08:01:30Z",
+  "n_confirmed": 781,
+  "n_flagged": 20,
+  "n_high": 13,
+  "n_medium": 7,
+  "n_will_correct": 4,
+  "n_corrected": 4,
+  "inland_far_km": 30.0,
+  "wrote_poe_ports": true,
+  "seeds_build": false,
+  "flags": [
+    {
+      "key": "8429:lapaz",
+      "name": "La Paz",
+      "mrgid": 8429,
+      "lat": 19.3505168,
+      "lon": -98.9609329,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 24.155081,
+      "suggested_lon": -110.326304,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 230.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": "West Coast (Mexico)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 24.155081,
+        "lon": -110.326304,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "5675:parnu2parnuport",
+      "name": "Pärnu 2 (Pärnu Port)",
+      "mrgid": 5675,
+      "lat": 57.771889,
+      "lon": 26.0296356,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 58.3775193,
+      "suggested_lon": 24.5007085,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 103.5,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "West Coast (Estonia)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 58.3775193,
+        "lon": 24.5007085,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "8492:tanjungpinangbintanislandriauislands",
+      "name": "Tanjung Pinang (Bintan Island, Riau Islands)",
+      "mrgid": 8492,
+      "lat": -3.3564491,
+      "lon": 104.6571166,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "homonym_paren_mismatch",
+        "listing_group_outlier",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": 1.08,
+      "suggested_lon": 104.42,
+      "suggested_source": "island_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 40.8,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Western Indonesia - Bintan, Lingga, Riau and Anambas Islands",
+      "peer_names": [
+        "Bandar Bintan Telani"
+      ],
+      "peer_dist_km": 494.0,
+      "group_dist_km": 503.7,
+      "will_correct": true,
+      "correction": {
+        "lat": 1.08,
+        "lon": 104.42,
+        "geocode_source": "manual_audit"
+      }
+    },
+    {
+      "key": "8429:ensenada",
+      "name": "Ensenada",
+      "mrgid": 8429,
+      "lat": 24.058876,
+      "lon": -106.6994959,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 31.8522146,
+      "suggested_lon": -116.625788,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 31.1,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": "West Coast (Mexico)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 31.8522146,
+        "lon": -116.625788,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "8456:savannah",
+      "name": "Savannah",
+      "mrgid": 8456,
+      "lat": 43.0654611,
+      "lon": -76.7568196,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 38.9694151,
+      "suggested_lon": -75.5696754,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 203.9,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "East Coast (USA)",
+      "peer_names": [
+        "Brunswick"
+      ],
+      "peer_dist_km": 262.8,
+      "group_dist_km": 346.8,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8367:safi",
+      "name": "Safi",
+      "mrgid": 8367,
+      "lat": 31.6048574,
+      "lon": -8.3654032,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 105.8,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Atlantic Coast (Morocco)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8479:portofmtwara",
+      "name": "Port of Mtwara",
+      "mrgid": 8479,
+      "lat": -10.6990264,
+      "lon": 39.0217984,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 86.5,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8479:portoftanga",
+      "name": "Port of Tanga",
+      "mrgid": 8479,
+      "lat": -5.202134,
+      "lon": 38.2275548,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 82.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8464:recife",
+      "name": "Recife",
+      "mrgid": 8464,
+      "lat": -25.5612408,
+      "lon": -49.1662218,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier"
+      ],
+      "suggested_lat": -13.4104904,
+      "suggested_lon": -38.0446263,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 46.3,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260904-073236-8748b2",
+        "listing"
+      ],
+      "listing_group": "Eastern Coast (north of Rio de Janeiro)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 671.9,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5677:stnazaire",
+      "name": "St Nazaire",
+      "mrgid": 5677,
+      "lat": 44.1986,
+      "lon": 4.62529,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": 46.2011138,
+      "suggested_lon": -2.2947054,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 32.3,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Atlantic (France)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 418.8,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8366:gabes",
+      "name": "Gabes",
+      "mrgid": 8366,
+      "lat": 33.7765032,
+      "lon": 9.793063,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 32.0,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8493:vancouver",
+      "name": "Vancouver",
+      "mrgid": 8493,
+      "lat": 49.5929495,
+      "lon": -125.702557,
+      "reasons": [
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 54.3109485,
+      "suggested_lon": -130.3633674,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 26.4,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "British Columbia",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 613.9,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8456:astoria",
+      "name": "Astoria",
+      "mrgid": 8456,
+      "lat": 40.7720145,
+      "lon": -73.9302673,
+      "reasons": [
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 38.042657,
+      "suggested_lon": -120.6901184,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "in_eez",
+      "dist_km_to_eez_poly": 0.6,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "West Coast (USA)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 3913.5,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8456:brunswick",
+      "name": "Brunswick",
+      "mrgid": 8456,
+      "lat": 42.7360586,
+      "lon": -73.562296,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 58.8,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "East Coast (USA)",
+      "peer_names": [
+        "Savannah"
+      ],
+      "peer_dist_km": 262.8,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5693:puertodemelilla",
+      "name": "Puerto de Melilla",
+      "mrgid": 5693,
+      "lat": 35.2909189,
+      "lon": -2.928011,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 46.2,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "Spanish North Africa",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8484:tpdanang",
+      "name": "Tp Da Nang",
+      "mrgid": 8484,
+      "lat": 15.1794882,
+      "lon": 108.1289381,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 45.7,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5697:canakkale",
+      "name": "Çanakkale",
+      "mrgid": 5697,
+      "lat": 40.0549886,
+      "lon": 26.9278292,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 40.7,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Dardanelles",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5697:mersin",
+      "name": "Mersin",
+      "mrgid": 5697,
+      "lat": 36.8328277,
+      "lon": 33.9685895,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 39.1,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Eastern Med",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8349:portofkilifi",
+      "name": "Port of Kilifi",
+      "mrgid": 8349,
+      "lat": -3.1507392,
+      "lon": 39.6750716,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 38.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8324:portofmadang",
+      "name": "Port of Madang",
+      "mrgid": 8324,
+      "lat": -5.0,
+      "lon": 145.5,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 31.3,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Main Island",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    }
+  ],
+  "suspects": [
+    {
+      "key": "8429:lapaz",
+      "name": "La Paz",
+      "mrgid": 8429,
+      "lat": 19.3505168,
+      "lon": -98.9609329,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 24.155081,
+      "suggested_lon": -110.326304,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 230.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": "West Coast (Mexico)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 24.155081,
+        "lon": -110.326304,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "5675:parnu2parnuport",
+      "name": "Pärnu 2 (Pärnu Port)",
+      "mrgid": 5675,
+      "lat": 57.771889,
+      "lon": 26.0296356,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 58.3775193,
+      "suggested_lon": 24.5007085,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 103.5,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "West Coast (Estonia)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 58.3775193,
+        "lon": 24.5007085,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "8492:tanjungpinangbintanislandriauislands",
+      "name": "Tanjung Pinang (Bintan Island, Riau Islands)",
+      "mrgid": 8492,
+      "lat": -3.3564491,
+      "lon": 104.6571166,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "homonym_paren_mismatch",
+        "listing_group_outlier",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": 1.08,
+      "suggested_lon": 104.42,
+      "suggested_source": "island_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 40.8,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Western Indonesia - Bintan, Lingga, Riau and Anambas Islands",
+      "peer_names": [
+        "Bandar Bintan Telani"
+      ],
+      "peer_dist_km": 494.0,
+      "group_dist_km": 503.7,
+      "will_correct": true,
+      "correction": {
+        "lat": 1.08,
+        "lon": 104.42,
+        "geocode_source": "manual_audit"
+      }
+    },
+    {
+      "key": "8429:ensenada",
+      "name": "Ensenada",
+      "mrgid": 8429,
+      "lat": 24.058876,
+      "lon": -106.6994959,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": 31.8522146,
+      "suggested_lon": -116.625788,
+      "suggested_source": "observation",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 31.1,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": "West Coast (Mexico)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": true,
+      "correction": {
+        "lat": 31.8522146,
+        "lon": -116.625788,
+        "geocode_source": "observation"
+      }
+    },
+    {
+      "key": "8456:savannah",
+      "name": "Savannah",
+      "mrgid": 8456,
+      "lat": 43.0654611,
+      "lon": -76.7568196,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 38.9694151,
+      "suggested_lon": -75.5696754,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 203.9,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "East Coast (USA)",
+      "peer_names": [
+        "Brunswick"
+      ],
+      "peer_dist_km": 262.8,
+      "group_dist_km": 346.8,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8367:safi",
+      "name": "Safi",
+      "mrgid": 8367,
+      "lat": 31.6048574,
+      "lon": -8.3654032,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 105.8,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Atlantic Coast (Morocco)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8479:portofmtwara",
+      "name": "Port of Mtwara",
+      "mrgid": 8479,
+      "lat": -10.6990264,
+      "lon": 39.0217984,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 86.5,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8479:portoftanga",
+      "name": "Port of Tanga",
+      "mrgid": 8479,
+      "lat": -5.202134,
+      "lon": 38.2275548,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 82.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8464:recife",
+      "name": "Recife",
+      "mrgid": 8464,
+      "lat": -25.5612408,
+      "lon": -49.1662218,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier"
+      ],
+      "suggested_lat": -13.4104904,
+      "suggested_lon": -38.0446263,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 46.3,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260904-073236-8748b2",
+        "listing"
+      ],
+      "listing_group": "Eastern Coast (north of Rio de Janeiro)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 671.9,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5677:stnazaire",
+      "name": "St Nazaire",
+      "mrgid": 5677,
+      "lat": 44.1986,
+      "lon": 4.62529,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "listing_group_outlier",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": 46.2011138,
+      "suggested_lon": -2.2947054,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 32.3,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "Atlantic (France)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 418.8,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8366:gabes",
+      "name": "Gabes",
+      "mrgid": 8366,
+      "lat": 33.7765032,
+      "lon": 9.793063,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far",
+        "nominatim_inland_listing_only"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 32.0,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8493:vancouver",
+      "name": "Vancouver",
+      "mrgid": 8493,
+      "lat": 49.5929495,
+      "lon": -125.702557,
+      "reasons": [
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 54.3109485,
+      "suggested_lon": -130.3633674,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 26.4,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "British Columbia",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 613.9,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8456:astoria",
+      "name": "Astoria",
+      "mrgid": 8456,
+      "lat": 40.7720145,
+      "lon": -73.9302673,
+      "reasons": [
+        "listing_group_outlier"
+      ],
+      "suggested_lat": 38.042657,
+      "suggested_lon": -120.6901184,
+      "suggested_source": "listing_group_cluster",
+      "severity": "high",
+      "spatial_class": "in_eez",
+      "dist_km_to_eez_poly": 0.6,
+      "geocode_source": "nominatim",
+      "seed_sources": [
+        "listing"
+      ],
+      "listing_group": "West Coast (USA)",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": 3913.5,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8456:brunswick",
+      "name": "Brunswick",
+      "mrgid": 8456,
+      "lat": 42.7360586,
+      "lon": -73.562296,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 58.8,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "East Coast (USA)",
+      "peer_names": [
+        "Savannah"
+      ],
+      "peer_dist_km": 262.8,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5693:puertodemelilla",
+      "name": "Puerto de Melilla",
+      "mrgid": 5693,
+      "lat": 35.2909189,
+      "lon": -2.928011,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 46.2,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": "Spanish North Africa",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8484:tpdanang",
+      "name": "Tp Da Nang",
+      "mrgid": 8484,
+      "lat": 15.1794882,
+      "lon": 108.1289381,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 45.7,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5697:canakkale",
+      "name": "Çanakkale",
+      "mrgid": 5697,
+      "lat": 40.0549886,
+      "lon": 26.9278292,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 40.7,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Dardanelles",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "5697:mersin",
+      "name": "Mersin",
+      "mrgid": 5697,
+      "lat": 36.8328277,
+      "lon": 33.9685895,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 39.1,
+      "geocode_source": null,
+      "seed_sources": [
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Eastern Med",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8349:portofkilifi",
+      "name": "Port of Kilifi",
+      "mrgid": 8349,
+      "lat": -3.1507392,
+      "lon": 39.6750716,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 38.0,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "listing"
+      ],
+      "listing_group": null,
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    },
+    {
+      "key": "8324:portofmadang",
+      "name": "Port of Madang",
+      "mrgid": 8324,
+      "lat": -5.0,
+      "lon": 145.5,
+      "reasons": [
+        "inland_far",
+        "outside_eez_far"
+      ],
+      "suggested_lat": null,
+      "suggested_lon": null,
+      "suggested_source": null,
+      "severity": "medium",
+      "spatial_class": "inland_river",
+      "dist_km_to_eez_poly": 31.3,
+      "geocode_source": null,
+      "seed_sources": [
+        "v1",
+        "run:20260905-201122-91f6da",
+        "run:20260905-084036-fe1e08",
+        "run:20260905-084036-5ecfa7",
+        "run:20260904-073236-8748b2",
+        "run:20260829-003645-d7ab2e",
+        "listing"
+      ],
+      "listing_group": "Main Island",
+      "peer_names": null,
+      "peer_dist_km": null,
+      "group_dist_km": null,
+      "will_correct": false,
+      "correction": null
+    }
+  ],
+  "persist": {
+    "flagged": 16,
+    "corrected": 4,
+    "ok": 761,
+    "poe_ports": 1280,
+    "poe_seed_ports": 4034,
+    "n_confirmed": 781,
+    "poe_ports_patched": 3,
+    "wrote_poe_ports": true,
+    "seeds_build": false,
+    "corrections": [
+      {
+        "key": "5675:parnu2parnuport",
+        "name": "Pärnu 2 (Pärnu Port)",
+        "before": {
+          "lat": 57.771889,
+          "lon": 26.0296356,
+          "geocode_source": null
+        },
+        "after": {
+          "lat": 58.3775193,
+          "lon": 24.5007085,
+          "geocode_source": "observation",
+          "spatial_class": "in_eez"
+        },
+        "reasons": [
+          "inland_far",
+          "outside_eez_far"
+        ]
+      },
+      {
+        "key": "8429:ensenada",
+        "name": "Ensenada",
+        "before": {
+          "lat": 24.058876,
+          "lon": -106.6994959,
+          "geocode_source": null
+        },
+        "after": {
+          "lat": 31.8522146,
+          "lon": -116.625788,
+          "geocode_source": "observation",
+          "spatial_class": "in_eez"
+        },
+        "reasons": [
+          "inland_far",
+          "outside_eez_far"
+        ]
+      },
+      {
+        "key": "8429:lapaz",
+        "name": "La Paz",
+        "before": {
+          "lat": 19.3505168,
+          "lon": -98.9609329,
+          "geocode_source": null
+        },
+        "after": {
+          "lat": 24.155081,
+          "lon": -110.326304,
+          "geocode_source": "observation",
+          "spatial_class": "in_eez"
+        },
+        "reasons": [
+          "inland_far",
+          "outside_eez_far"
+        ]
+      },
+      {
+        "key": "8492:tanjungpinangbintanislandriauislands",
+        "name": "Tanjung Pinang (Bintan Island, Riau Islands)",
+        "before": {
+          "lat": -3.3564491,
+          "lon": 104.6571166,
+          "geocode_source": "nominatim"
+        },
+        "after": {
+          "lat": 1.08,
+          "lon": 104.42,
+          "geocode_source": "manual_audit",
+          "spatial_class": "in_eez"
+        },
+        "reasons": [
+          "inland_far",
+          "outside_eez_far",
+          "homonym_paren_mismatch",
+          "listing_group_outlier",
+          "nominatim_inland_listing_only"
+        ]
+      }
+    ]
+  },
+  "dry_run": false,
+  "poe_ports": 1280,
+  "poe_seed_ports": 4034
+}
