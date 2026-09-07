@@ -98,6 +98,7 @@ def test_fusion_adds_observation_and_optional_gps():
     assert tgt["lat"] == 18.07
     assert tgt["has_coords"] is True
     assert "listing" in tgt["seed_sources"]
+    assert tgt["verify_verdict"] == "confirmed"
     assert any(o.get("name") == "Marigot Bay (St Martin)" for o in tgt["observations"])
 
 
@@ -254,4 +255,4 @@ def test_apply_review_json_all_ok_without_touching_ports():
     assert col.docs["48980:saipan"]["lat"] == 15.2
     assert col.docs["8384:princeedwardisland"]["review_action"] == "abandonner"
     assert col.docs["8488:christmasislandkiritimati"]["review_action"] == "corriger_zee"
-    assert col.docs["8441:christmasislandport"]["lat"] == 2.0075
+    assert col.docs["8441:kiritimatiseaport"]["lat"] == 2.0075

@@ -36,6 +36,20 @@ def _listing_obs(name: str) -> dict:
     })
 
 
+def _refresh_verdict(coll, key: str) -> None:
+    hit = _find(coll, key)
+    if not hit:
+        return
+    tmp = dict(hit)
+    tmp["has_coords"] = bool(
+        tmp.get("has_coords") or (
+            tmp.get("lat") is not None and tmp.get("lon") is not None))
+    coll.update_one({"_id": hit["_id"]}, {"$set": {
+        "has_coords": tmp["has_coords"],
+        "verify_verdict": verdict_for_seed(tmp),
+    }})
+
+
 def _attach_listing(coll, target_key: str, listing_name: str) -> bool:
     hit = _find(coll, target_key)
     if not hit:
@@ -134,6 +148,7 @@ def apply_one(coll, item: dict, reviewed_at: str) -> dict:
             "has_coords": True,
             "geocode_source": "manual_review",
         }})
+        _refresh_verdict(coll, doc["_id"])
         out["ok"] = True
         out["detail"] = "gps posé"
         return out
@@ -154,6 +169,8 @@ def apply_one(coll, item: dict, reviewed_at: str) -> dict:
                 "geocode_source": "manual_review",
             }})
             attached = True
+        if target:
+            _refresh_verdict(coll, target)
         out["ok"] = True
         out["detail"] = f"cible {target} attach={attached}"
         return out
@@ -186,6 +203,7 @@ def apply_one(coll, item: dict, reviewed_at: str) -> dict:
                     "mrgid": item.get("mrgid_correct") or tgt.get("mrgid"),
                     "zone_name": item.get("zone_correcte") or tgt.get("zone_name"),
                 }})
+            _refresh_verdict(coll, tgt["_id"])
             out["ok"] = True
             out["detail"] = f"fusion ZEE → {target}"
             return out

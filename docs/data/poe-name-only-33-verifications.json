@@ -428,7 +428,7 @@
       "mrgid_correct": 8441,
       "zone_correcte": "Line Group",
       "new_dedup_key": "8441:christmasislandkiritimati",
-      "fusion_target_optional": "8441:christmasislandport",
+      "fusion_target_optional": "8441:kiritimatiseaport",
       "lat": 2.0075,
       "lon": -157.48583333,
       "label_point": "Port of Navy Harbour, London / Ronton, Kiritimati",
@@ -446,7 +446,7 @@
         "Wikipedia London, Kiribati 1.98333°N, 157.47500°W",
         "eez_index mrgid 8441 Line Group ; listing group = Line Islands"
       ],
-      "notes": "PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). 8441:christmasislandport existe déjà (unverified, sans GPS) : après correction on peut fusionner vers cette clé et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.",
+      "notes": "PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). Le jumeau Line Group est 8441:kiritimatiseaport (unverified/inconclusive, sans GPS) : fusionner et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.",
       "set_example": {
         "warning": "dedup_key unique : insérer 8441:… puis retirer 8488:christmasislandkiritimati",
         "insert": {

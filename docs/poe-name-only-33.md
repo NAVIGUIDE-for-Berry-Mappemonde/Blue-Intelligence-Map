@@ -954,7 +954,7 @@ Double piège : (1) « Christmas Island » = souvent l’île australienne, pas 
   - Nominatim London, Kiritimati 2.003017, −157.4820927 (Line Islands, KI)
   - Wikipedia London, Kiribati 1.98333°N, 157.47500°W
   - eez_index mrgid 8441 Line Group ; listing group = Line Islands
-- Note : PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). 8441:christmasislandport existe déjà (unverified, sans GPS) : après correction on peut fusionner vers cette clé et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.
+- Note : PAS Christmas Island AU (8309:portofchristmasisland, DAFF −10.4, 105.66). PAS Phoenix 8450 (8450:kiritimatiseaport probable/accepted SANS coords = mauvaise ZEE). Le jumeau Line Group est 8441:kiritimatiseaport (unverified/inconclusive, sans GPS) : fusionner et y poser Navy Harbour. slug_overrides kiribati=[8488,8450,8441] a pris le premier.
 
 **Déjà en base (même ZEE ou nom proche)**
 
