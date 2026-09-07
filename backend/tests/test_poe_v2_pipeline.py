@@ -486,6 +486,27 @@ class TestStructuredDiscovery:
         assert loc and "habilitados" in loc
         assert "yates" not in (poe.localized_query({"iso2": "MX", "name": "Mexico"}) or "")
 
+    def test_search_queries_are_per_vliz_polygon_not_country(self):
+        hexagon = {
+            "iso2": "FR", "sov_iso2": "FR", "name": "France", "sovereign": "France",
+            "pol_type": "200NM", "mrgid": 5677,
+        }
+        mayotte = {
+            "iso2": "YT", "sov_iso2": "FR", "name": "Mayotte", "sovereign": "France",
+            "pol_type": "Overlapping claim", "mrgid": 48944,
+        }
+        qh = poe.localized_query(hexagon)
+        qm = poe.localized_query(mayotte)
+        assert qh and "hexagone" in qh and "Mayotte" not in qh
+        assert qm and "Mayotte" in qm and "hexagone" not in qm
+        hints_h = " ".join(poe.search_hint_queries(hexagon))
+        hints_m = " ".join(poe.search_hint_queries(mayotte))
+        assert "Mayotte" in hints_m
+        assert "Mayotte" not in hints_h
+        assert "Papeete" not in hints_h and "Dzaoudzi" not in hints_m
+        assert poe.zone_search_location(mayotte) == "YT"
+        assert poe.zone_search_location(hexagon) == "FR"
+
     def test_remember_seed_urls_without_port_names(self):
         exc = {"seed_urls": {}}
         added = poe.remember_seed_urls(
@@ -856,3 +877,29 @@ class TestGeocodePolicy:
             self._zone(), "ctx", [], lambda m: None))
         assert docs[0]["lat"] is None
         assert docs[0]["geocode_arbitration"] == "haiku_none"
+
+    def test_sibling_polygon_port_is_not_written_on_this_fiche(self, monkeypatch):
+        from shapely.geometry import mapping, box
+        zone = {
+            "mrgid": 5677, "name": "France", "iso2": "FR", "sovereign": "France",
+            "geometry": mapping(box(-5.0, 42.0, 8.0, 51.5)),
+        }
+
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [
+                {"name": "Marseille", "lat": 43.3, "lon": 5.4,
+                 "extraction_engine": "catalog"},
+                {"name": "Dzaoudzi", "lat": -12.78, "lon": 45.30,
+                 "extraction_engine": "catalog"},
+            ]
+
+        async def fake_dual(port, zone, log=None):
+            raise AssertionError("coords already in source")
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        docs = asyncio.run(poe._extract_and_geocode(zone, "ctx", [], lambda m: None))
+        names = [d["name"] for d in docs]
+        assert names == ["Marseille"]
+        assert docs[0]["mrgid"] == 5677

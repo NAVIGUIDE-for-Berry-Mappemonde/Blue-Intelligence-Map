@@ -80,6 +80,34 @@ def test_sort_puts_hexagon_first_in_france_group():
     assert fr[0]["qualifier_key"] == "hexagone"
 
 
+def test_search_polygon_name_is_not_the_country_aggregate():
+    from app.services.poe_zone_label import search_polygon_name
+    zones = _indexed_zones()
+    by_id = {z["mrgid"]: z for z in zones}
+    hexagon = search_polygon_name(by_id[5677], zones)
+    mayotte = search_polygon_name(by_id[48944], zones)
+    reunion = search_polygon_name(by_id[8338], zones)
+    belgium = search_polygon_name(next(z for z in zones if z["mrgid"] == 3293), zones)
+    saba = search_polygon_name(next(z for z in zones if z["mrgid"] == 26518), zones)
+    nl = search_polygon_name(next(z for z in zones if z["mrgid"] == 5668), zones)
+    assert hexagon == "France hexagone"
+    assert mayotte == "Mayotte"
+    assert reunion == "Réunion"
+    assert "Mayotte" not in hexagon
+    assert belgium == "Belgium"
+    assert saba == "Saba"
+    assert "métropole" in nl
+    assert hexagon != mayotte
+
+
+def test_keep_extracted_skips_other_polygon():
+    from app.services.poe_zone_label import keep_extracted_in_zone
+    assert keep_extracted_in_zone("spatial_rejected") is False
+    assert keep_extracted_in_zone(None) is True
+    assert keep_extracted_in_zone("agree") is True
+    assert keep_extracted_in_zone("not_geocodeable") is True
+
+
 def test_no_duplicate_labels_under_the_same_sovereign():
     zones = attach_zone_labels(_indexed_zones())
     by_sov: dict[str, list[str]] = {}

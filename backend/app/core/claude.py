@@ -417,10 +417,11 @@ STATIC_PREFIX = _build_static_prefix()
 
 def build_extract_payload(zone: dict, context: str) -> dict:
     """Payload Messages : breakpoint sur le préfixe statique, jamais sur le user."""
-    name = zone.get("name") or zone.get("geoname") or ""
+    from app.services.poe_zone_label import search_polygon_name
+    name = search_polygon_name(zone) or (zone.get("name") or zone.get("geoname") or "")
     sovereign = zone.get("sovereign") or ""
     user_text = (
-        f"Zone à extraire : {name} ({sovereign}).\n\n"
+        f"Zone à extraire : {name} ({sovereign}, polygone VLIZ mrgid={zone.get('mrgid')}).\n\n"
         f"EXTRAITS DES SOURCES OFFICIELLES:\n{(context or '')[:CONTEXT_CHARS]}"
     )
     return {

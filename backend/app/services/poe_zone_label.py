@@ -167,3 +167,53 @@ def zone_sort_key(zone: dict) -> tuple:
     label = (zone.get("label") or zone.get("name") or "").strip().casefold()
     primary = 0 if zone.get("qualifier_key") in ("hexagone", "metropole") else 1
     return (sov, primary, label)
+
+
+def sovereign_polygon_count(sovereign: str, zones: list[dict] | None = None) -> int:
+    """Combien de polygones VLIZ pour ce souverain (eez_index si zones omis)."""
+    sov = (sovereign or "").strip()
+    if not sov:
+        return 0
+    if zones is None:
+        from app.services.listing_ref import load_eez_index
+        zones = load_eez_index()
+    fold = _fold(sov)
+    return sum(1 for z in zones if _fold(z.get("sovereign")) == fold)
+
+
+def search_polygon_name(zone: dict, zones: list[dict] | None = None) -> str:
+    """Nom SERP / extraction = ce polygone VLIZ, pas l'agrégat pays.
+
+    Mayotte → « Mayotte ». France hexagone (23 polygones) → « France hexagone ».
+    Belgique (un seul polygone) → « Belgium ». Jamais un nom de port.
+    """
+    name = (zone.get("name") or zone.get("geoname") or "").strip()
+    sov = (zone.get("sovereign") or "").strip()
+    if not name and not sov:
+        return ""
+    if not sov or _fold(name) != _fold(sov):
+        return name or sov
+    if sovereign_polygon_count(sov, zones) <= 1:
+        return name
+    key, qual = zone_qualifier(zone)
+    label = compose_zone_label(sov, key, qual)
+    return " ".join(label.replace("(", " ").replace(")", " ").replace("·", " ").split())
+
+
+def zone_search_lang_iso(zone: dict) -> str | None:
+    """ISO2 pour la langue des requêtes : polygone d'abord, sinon souverain."""
+    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
+        val = (cc or "").strip().upper()
+        if val:
+            return val
+    return None
+
+
+def zone_search_location(zone: dict) -> str | None:
+    """ISO2 TinyFish / géocode : le polygone (YT), pas le souverain (FR)."""
+    return zone_search_lang_iso(zone)
+
+
+def keep_extracted_in_zone(arbitration: str | None) -> bool:
+    """Un GPS hors de CE polygone n'est pas écrit sur cette fiche."""
+    return arbitration != "spatial_rejected"

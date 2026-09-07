@@ -48,6 +48,9 @@ from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception
 from app.core.llm import extract_ports, grounded_search
 from app.core.rag import select_list_context, semantic_similarity
 from app.services.poe_confidence import apply_score, listing_role, score_port, zone_confidence_avg
+from app.services.poe_zone_label import (
+    keep_extracted_in_zone, search_polygon_name, zone_search_location,
+)
 
 from app.config import DATA_DIR as DATA
 
@@ -150,11 +153,20 @@ _LIST_URL_TOKENS = (
 )
 
 
+def zone_search_lang(zone: dict) -> str | None:
+    """Langue SERP : ISO2 du polygone s'il est dans la matrice, sinon le souverain."""
+    for cc in (zone.get("iso2"), zone.get("sov_iso2")):
+        lang = LANG_BY_ISO2.get((cc or "").upper())
+        if lang:
+            return lang
+    return None
+
+
 def localized_query(zone: dict) -> str | None:
-    """Requête traduite dans la langue cible de la ZEE (matrice multilingue)."""
-    lang = LANG_BY_ISO2.get((zone.get("sov_iso2") or zone.get("iso2") or "").upper())
+    """Requête traduite dans la langue du polygone VLIZ (pas l'agrégat pays)."""
+    lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
-    return tpl.format(name=zone.get("name") or zone.get("geoname") or "") if tpl else None
+    return tpl.format(name=search_polygon_name(zone)) if tpl else None
 
 
 # ---------------------------------------------------------------------------
@@ -281,12 +293,12 @@ def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict
 
 
 def default_search_hints(zone: dict) -> list[str]:
-    """Leçon Niue / Mexique, pour TOUTE ZEE : loi douanière + liste désignée.
-    Jamais un nom de port — seulement le souverain et des termes génériques."""
-    sov = (zone.get("sovereign") or zone.get("name") or zone.get("geoname") or "").strip()
-    if not sov:
+    """Leçon Niue / Mexique, pour TOUT polygone VLIZ : loi douanière + liste.
+    Jamais un nom de port. Le nom est celui du polygone (Mayotte ≠ France)."""
+    poly = search_polygon_name(zone)
+    if not poly:
         return []
-    return [f"{sov} customs act designated ports of entry official legislation gazette"]
+    return [f"{poly} customs act designated ports of entry official legislation gazette"]
 
 
 def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]:
@@ -657,12 +669,14 @@ async def search_searxng(query: str, log) -> list[dict]:
 
 async def search_grounded(zone: dict, whitelist: list[str], log, query_override: str | None = None):
     """Recherche groundée via llm_core (OpenRouter :online)."""
-    name = zone.get("name") or zone.get("geoname")
+    name = search_polygon_name(zone)
     hints = ", ".join(whitelist[:6]) if whitelist else "official government domains"
     prompt = query_override or (
         f"Find the OFFICIAL government sources (customs, immigration, maritime/port authority) that list "
         f"the designated ports of entry (clearance ports) for FOREIGN PLEASURE CRAFT / YACHTS in {name} "
-        f"({zone.get('sovereign')}). Prefer official domains such as: {hints}. "
+        f"(VLIZ polygon mrgid={zone.get('mrgid')}, sovereign {zone.get('sovereign')}). "
+        f"Do not mix in ports that belong to another exclusive economic zone of the same country. "
+        f"Prefer official domains such as: {hints}. "
         f"List each official port of entry you find with its town, and cite the official URLs used."
     )
     return await grounded_search(prompt, log=log, domain_fn=domain_of)
@@ -1125,12 +1139,12 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     v2 = SearXNG parallèle EN ∥ local, sans TinyFish ;
     tinyfish = SearXNG ∥ TinyFish + filet include_domains.
     :online en dernier dans tous les cas. Ne touche jamais poe_ports."""
-    name = zone.get("name") or zone.get("geoname")
+    name = search_polygon_name(zone)
     variant = normalize_variant(variant)
     use_tf = variant == "tinyfish"
     key = (await _resolve_tf_key(tf_key)) if use_tf else ""
-    iso = ((zone.get("sov_iso2") or zone.get("iso2") or "") or "").upper() or None
-    lang = LANG_BY_ISO2.get(iso or "")
+    iso = zone_search_location(zone)
+    lang = zone_search_lang(zone)
 
     query_en = (f"official designated ports of entry list customs gazette "
                 f"decree legislation {name}")
@@ -1565,6 +1579,16 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         validated = bool(chosen["validated"]) if chosen else False
         dist_km = chosen["dist_km"] if chosen else None
         spatial_kind = chosen.get("kind") if chosen else "rejected"
+
+        if not keep_extracted_in_zone(arbitration):
+            log(f"  ⚓ {p['name']} → hors de ce polygone VLIZ (mrgid {mrgid}) — non rattaché")
+            await emit(rec, "geocode", port=p["name"],
+                       nominatim=geo.get("nominatim"), geonames=geo.get("geonames"),
+                       geonames_available=geo.get("geonames_available"),
+                       agreement_km=geo.get("agreement_km"), agree=geo.get("agree"),
+                       candidates=cands, chosen=source, arbitration=arbitration,
+                       spatial_kind=spatial_kind, kept=False)
+            continue
 
         await emit(rec, "geocode", port=p["name"],
                    nominatim=geo.get("nominatim"), geonames=geo.get("geonames"),
