@@ -1,8 +1,8 @@
 """
-poe_zone_fiche — Fiche de revue d'une ZEE (lecture seule).
+poe_zone_fiche — Fiche de revue d'un polygone VLIZ (lecture seule).
 
-Assemble la liste des PoE publiés et les URLs d'État Top-Down / Bottom-Up
-à partir des collections déjà en base. N'écrit jamais poe_ports / eez_zones.
+Contrat UI : 1 URL Top-Down (page/PDF d'État listant les PoE) + liste des
+PoE + 1 URL Bottom-Up par port. N'écrit jamais poe_ports / eez_zones.
 Le WPI n'est pas une source. Noonsite et les forums n'entrent pas.
 """
 from __future__ import annotations
