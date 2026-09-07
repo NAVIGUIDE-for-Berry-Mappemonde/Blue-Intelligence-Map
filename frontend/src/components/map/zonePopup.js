@@ -19,10 +19,25 @@ function _buUrl(p) {
   return p?.url_bu?.url || (p?.source_urls || [])[0] || "";
 }
 
+function _pathHint(url) {
+  try {
+    const leaf = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean).pop() || "";
+    if (leaf.length < 3) return "";
+    return leaf.length > 52 ? `${leaf.slice(0, 50)}…` : leaf;
+  } catch (_) {
+    return "";
+  }
+}
+
 function _tdBlock(t, url, both) {
+  const host = (url || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+  const leaf = url ? _pathHint(url) : "";
   const link = url
-    ? `<div style="margin-top:4px;font-size:11px;line-height:1.4;display:flex;gap:6px;align-items:center;justify-content:space-between;">
-        <a href="${escH(url)}" target="_blank" rel="noreferrer" data-testid="poe-fiche-popup-td-url" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0])}</a>
+    ? `<div style="margin-top:4px;font-size:11px;line-height:1.4;display:flex;gap:6px;align-items:flex-start;justify-content:space-between;">
+        <a href="${escH(url)}" target="_blank" rel="noreferrer" data-testid="poe-fiche-popup-td-url" style="color:#00f0ff;text-decoration:none;min-width:0;">
+          <span style="display:block;">${escH(host)}</span>
+          ${leaf ? `<span style="display:block;font-family:'JetBrains Mono',monospace;font-size:10px;color:#94a3b8;word-break:break-all;">${escH(leaf)}</span>` : ""}
+        </a>
         ${both ? `<span style="font-family:'JetBrains Mono',monospace;font-size:8px;color:#39ff14;border:1px solid rgba(57,255,20,0.4);padding:0 4px;border-radius:2px;">★</span>` : ""}
       </div>`
     : `<div style="margin-top:4px;font-size:11px;color:#64748b;">${escH(t("poeFicheEmptyTd"))}</div>`;

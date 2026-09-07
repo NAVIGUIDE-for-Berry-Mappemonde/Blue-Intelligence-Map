@@ -263,7 +263,20 @@ Réponds UNIQUEMENT avec un JSON strict de la forme:
 Règles absolues:
 - Prendre tout port / terminal / harbour que la source officielle désigne comme point d'entrée :
   ports d'entrée, clearance, puertos habilitados (décret), ports of entry,
-  « port of / port de / puerto de X », capitanías, designated ports, gazette, décret.
+  « port of / port de / puerto de X », capitanías de puerto, delegaciones,
+  designated ports, gazette, décret, liste de ports de plaisance, places of first arrival.
+  Un règlement scanné (OCR) reste une source : extraire les noms malgré les fautes OCR.
+  Un tableau SCT « N° Nom État Puerto/Terminal date lat lon » (sans le mot Latitud)
+  est un catalogue : ne garder QUE les ports tagués turística / Turística.
+  Annexe I Mayotte : uniquement les sites « Frontières maritimes » (pas l'aéroport).
+  Royaume-Uni : si une liste de ports de plaisance est publiée, tous sont Ports of Entry.
+  Sint Maarten : la phrase « Some examples include » de Customs.aspx est une liste
+  de PoE (marinas + Greatbay harbor + Cruise Terminal) — ignorer aéroport et poste.
+  Égypte : titres « X Marina: » de la page SIS yacht-tourism — ne pas inventer
+  Alexandria / Port Said / Sharm s'ils ne figurent pas en titre.
+  Albanie : « Porti detar X » de la kartelë akcizë / anijet e peshkimit
+  (Durrës, Shëngjin, Vlorë, Sarandë) — pas Lezhë (dega doganore seulement).
+  Tableaux MPI « | Nom | / Approved vessels » = places of first arrival.
   La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé : {{"ports": []}}.
 - Ignorer les aéroports (sauf s'ils sont le seul point d'entrée maritime nommé — ne pas les extraire).

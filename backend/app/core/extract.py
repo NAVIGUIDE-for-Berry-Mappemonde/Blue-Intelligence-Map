@@ -16,15 +16,17 @@ et suivi sélectif des liens internes (depth=2 : /annuaire, /contacts…).
 import asyncio
 import difflib
 import hashlib
+import html
 import os
 import re
 import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 from contextvars import ContextVar
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 # Désactivé pour les variants v1/v2 (SearXNG only) — TinyFish Fetch reste
 # réservé au variant « tinyfish ». Défaut True pour ne pas casser le Swarm.
@@ -40,7 +42,8 @@ from bs4 import BeautifulSoup
 from app.config import BACKEND_DIR, DATA_DIR
 
 PDF_CACHE_DIR = DATA_DIR / "cached_pdfs"
-PDF_SUBPROCESS_TIMEOUT_S = 25
+# OCR d'une Gaceta scannée (5 pages) dépasse largement 25 s.
+PDF_SUBPROCESS_TIMEOUT_S = 90
 PDF_MAX_CONCURRENT = 3
 _pdf_slots = threading.Semaphore(PDF_MAX_CONCURRENT)
 
@@ -52,7 +55,9 @@ UA_READER = {
 }
 
 HARD_CHALLENGE_RE = re.compile(
-    r"challenge validation|sec-cpt-if|sec-container|akamai",
+    r"challenge validation|sec-cpt-if|sec-container|akamai|"
+    r"just a moment|_cf_chl_|cf-browser-verification|"
+    r"challenges\.cloudflare|performing security verification",
     re.I,
 )
 
@@ -112,6 +117,9 @@ FOLLOWUP_PATTERNS = (
     "clearance", "douane", "customs", "bureaux", "offices", "liste", "list-of",
     "projets", "projects", "annexe", "habilit", "designated", "decreto",
     "gazette", "legislation", "aduana", "anexo",
+    "puerto", "terminal", "plaisance", "first-arrival", "small-craft",
+    "formalit", "seaport", "marina-mercante", "inventario",
+    "capitanias", "jurisdiccion",
 )
 
 
@@ -176,7 +184,8 @@ def pdf_cache_key(content: bytes) -> str:
 
 
 def _pdf_cache_path(digest: str) -> Path:
-    return Path(PDF_CACHE_DIR) / f"{digest}.txt"
+    # .act1 : annotation TURÍSTICA (colonnes SCT) — invalide les caches texte seul.
+    return Path(PDF_CACHE_DIR) / f"{digest}.act1.txt"
 
 
 def _read_pdf_cache(digest: str) -> str | None:
@@ -232,11 +241,12 @@ def parse_pdf_text(content: bytes, max_pages: int = 180) -> str:
         return ""
     digest = pdf_cache_key(content)
     cached = _read_pdf_cache(digest)
-    if cached is not None:
+    # Un cache vide (scan sans OCR, avant tesseract) ne doit pas figer l'échec.
+    if cached is not None and cached.strip():
         return cached
     with _pdf_slots:
         cached = _read_pdf_cache(digest)
-        if cached is not None:
+        if cached is not None and cached.strip():
             return cached
         fd, inp = tempfile.mkstemp(suffix=".pdf")
         out = inp + ".txt"
@@ -379,8 +389,31 @@ def internal_followups(html: str, base_url: str, patterns=FOLLOWUP_PATTERNS, lim
 # ---------------------------------------------------------------------------
 # Cascade principale
 # ---------------------------------------------------------------------------
+def _is_ssl_cert_error(exc: BaseException) -> bool:
+    """Chaîne intermédiaire manquante (leçon SIS Égypte / Sectigo)."""
+    blob = ""
+    cur: BaseException | None = exc
+    for _ in range(6):
+        if cur is None:
+            break
+        blob += f" {type(cur).__name__} {cur}".lower()
+        cur = cur.__cause__ or getattr(cur, "__context__", None)
+    return any(tok in blob for tok in (
+        "certificate", "sslcert", "cert verify", "ssl: certificate",
+    ))
+
+
 async def fetch_raw(url: str, timeout: int = 25):
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=UA_BROWSER) as client:
+    kwargs = dict(timeout=timeout, follow_redirects=True, headers=UA_BROWSER)
+    try:
+        async with httpx.AsyncClient(**kwargs) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return r.content, (r.headers.get("content-type") or "").lower()
+    except httpx.RequestError as e:
+        if not _is_ssl_cert_error(e):
+            raise
+    async with httpx.AsyncClient(**kwargs, verify=False) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content, (r.headers.get("content-type") or "").lower()
@@ -394,8 +427,8 @@ def _is_mirror_url(url: str) -> bool:
 # « 4.- Ensenada », « 1. Apia », ou premier item Jina « [1.-](url)Bahía Colonet »
 _HEAD = r"(?:\[\d+\.-\]\([^)]+\)|\d+\.-\s+|\d+[.)]\s+)"
 _CATALOG_HEAD = re.compile(
-    rf"(?:^|\n)(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
-    rf"((?:.*\n){{0,16}}?)(?=(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
+    rf"(?:^|\n)[ \t]*(?:#{{1,6}}\s+)?{_HEAD}([^\n|#]{{2,80}})\n"
+    rf"((?:.*\n){{0,16}}?)(?=[ \t]*(?:#{{1,6}}\s+)?{_HEAD}|\Z)",
     re.M,
 )
 # Jina : **Latitud:**31.89  — EN : Latitude: -13.8  — tables : | Latitud: | 31.89 |
@@ -411,7 +444,8 @@ _CATALOG_STATE = re.compile(
 _PORT_OF_RE = re.compile(
     r"\b(?:ports?\s+of\s+|porto?s?\s+d(?:e\s+|['’])|puertos?\s+de\s+|"
     r"portos?\s+de\s+|havens?\s+van\s+|hafen\s+von\s+|porti?\s+di\s+)"
-    r"([A-ZÀ-Ý][\w'’. -]{0,40}?)(?=,|;|\.| the | or |\n| et | ou | y | e | und | oder )",
+    r"(?-i:([A-ZÀ-Ý][\w'’. -]{0,40}?))"
+    r"(?=,|;|\.| the | or |\n| et | ou | y | e | und | oder )",
     re.I,
 )
 _PORT_OF_SKIP = frozenset({
@@ -419,12 +453,188 @@ _PORT_OF_SKIP = frozenset({
     "call", "departure", "the", "a", "an", "any",
     "registry", "register", "registre", "destination",
     "commerce", "plaisance", "recreo", "recreio", "mer", "mar",
-    "base", "principal",
+    "base", "principal", "éligibles", "eligibles", "eligible",
+    "rattachement", "liste",
+    "arrival", "first", "marina", "zarpe", "permiso", "funcionario",
+    "autonome", "autonoma", "autónomo",
 })
 _CATALOG_MARKERS_RE = re.compile(
-    r"puertos habilitados|designated ports|ports? d['’]entrée|"
-    r"ports? of entry|puertos de entrada|portos de entrada",
+    r"puertos habilitados|puertos y terminales habilitados|"
+    r"designated ports|ports? d['’]entrée|"
+    r"ports? of entry|puertos de entrada|portos de entrada|"
+    r"ports? de plaisance|capitan[ií]as?\s+de\s+puerto|"
+    r"places of first arrival|approved ports|"
+    r"porti\s+detar|porteve\s+detare|dega\s+doganore",
     re.I,
+)
+# Capitanía / Capitanias — pas « Capitán de Puerto » (titre, prose de loi).
+# Le nom doit commencer par une capitale (indépendant de IGNORECASE).
+_CAPITANIA_RE = re.compile(
+    r"Capitan(?:[ií]as?|te)\s+[«\"']?\s*d[ae]\s+Puerto\s+"
+    r"(?:d[ae]\s+|del?\s+|po\s+)?"
+    r"(?-i:([A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"(?:\s*-\s*[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"|\s+(?:de|del|la|las|los|y|&)\s+[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"|\s+[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚáéíóúñü'’.\-]+"
+    r"){0,4}))",
+    re.I,
+)
+# Ligne OCR du type « 7) Capitante «de Puerto de Puerto: Sucre ».
+_CAPITANIA_NUM_LINE_RE = re.compile(
+    r"(?m)^\s*\d{1,2}\s*[).:—\-]\s*.{0,24}Puerto\s+(?:d[ae]\s+|po\s+)?"
+    r"(?-i:([A-ZÁÉÍÓÚÑÜ][^\n]{1,40}))",
+    re.I,
+)
+_CAPITANIA_CUT_RE = re.compile(
+    r"\b(?:tendr[aá]|art[ií]culo|su sede|geogr[aá]fica|dependencias|"
+    r"estar[aá]|permiso|funcionario|circunscrip|resoluci[oó]n|"
+    r"ministerio|gaceta|contralor[ií]a|decisi[oó]n|indica)\b",
+    re.I,
+)
+_CAPITANIA_SKIP = frozenset({
+    "la republica", "la república", "la circunscripcion", "la circunscripción",
+    "cada circunscripcion", "el permiso", "un funcionario", "puerto",
+})
+_VE_OCR_ALIASES = {
+    "gulria": "Güiria", "guiria": "Güiria", "giliria": "Güiria",
+    "gualra": "La Guaira", "guaira": "La Guaira", "maracalbo": "Maracaibo",
+    "puertosucre": "Puerto Sucre",
+}
+_VE_CANON = (
+    "Maracaibo", "Las Piedras", "La Vela de Coro", "Puerto Cabello",
+    "La Guaira", "Guanta-Puerto La Cruz", "Puerto Sucre", "Carúpano",
+    "Pampatar", "Güiria", "Caripito", "Ciudad Guayana", "Ciudad Bolívar",
+    "Amazonas", "Apure",
+)
+# Uniquement en tête de ligne : la prose « ports de plaisance de français… »
+# de la landing douane ne doit pas devenir un toponyme.
+_PLAISANCE_PORT_RE = re.compile(
+    r"(?m)^(?:[-•*]|\d+[.)])?\s*Ports?\s+de\s+plaisance\s+"
+    r"(?:de\s+|d['’]|du\s+|des\s+)?"
+    r"([A-ZÀ-Ý][\w'’. \-]{1,50})"
+)
+_PLAISANCE_NAME_SKIP_RE = re.compile(
+    r"(?i)\b(français|francais|depuis|également|egalement|eligibles|"
+    r"éligibles|qui|que|non|pas|sont|aussi|cette|ppf|schengen|liste|"
+    r"carte|rattachement|navires?)\b",
+)
+_GENERIC_PORT_NAMES = frozenset({
+    "marina", "plaisance", "port", "puerto", "harbour", "harbor",
+})
+_FR_REGION_RE = re.compile(
+    r"^(hauts?-?\s*de\s+france|normandie|bretagne|paca|nouvelle\s+aquitaine|"
+    r"corse|occitanie|pays\s+de\s+la\s+loire|provence)",
+    re.I,
+)
+# Tableau SCT / SEMAR : « 1 Bahía Colonet\nBaja California\nPuerto\ndate\nlat\nlon »
+_MX_HABILITADO_ROW_RE = re.compile(
+    r"(?m)^\s*(?P<n>\d{1,3})\s+(?P<name>[A-ZÁÉÍÓÚÑÜ][^\n]{1,80})\n"
+    r"\s*(?P<state>[A-ZÁÉÍÓÚÑÜ][^\n]{2,50})\n"
+    r"\s*(?P<kind>Puerto|Terminal|Marina|Muelle|Recinto)[^\n]*\n"
+    r"\s*(?P<date>\d{1,2}/\d{1,2}/\d{4})\n"
+    r"\s*(?P<lat>[+-]?\d{1,3}\.\d+)\n"
+    r"\s*(?P<lon>[+-]?\d{2,3}\.\d+)",
+    re.I,
+)
+# MPI : chaque PoFA est un tableau markdown « | Nom |\n| --- |\n| Approved vessels | »
+_NZ_POFA_MD_RE = re.compile(
+    r"(?m)^\s*\|\s*([A-Z][^|\n]{2,70}?)\s*\|\s*\n\s*\|\s*---\s*\|\s*\n"
+    r"\s*\|\s*Approved vessels\s*\|",
+)
+_NZ_POFA_PLAIN_RE = re.compile(
+    r"(?m)^\s*([A-Z][^\n]{2,70})\n\s*Approved vessels\b",
+)
+_DOUANE_BUREAU_RE = re.compile(
+    r"(?i:bureau(?:x)?\s+des?\s+douanes?\s+(?:de\s+|d['’]|du\s+)?)"
+    r"([A-ZÀ-Ý][\w'’.\-]+(?:[\s\-][A-ZÀ-Ý][\w'’.\-]+){0,3})",
+)
+_CATALOG_ACTIVITY = re.compile(
+    rf"(?:tipo de actividad|actividad):{_CATALOG_SEP}([^\n|*]+)",
+    re.I,
+)
+_MX_TURISTICA_BLOCK_RE = re.compile(
+    r"\[ACTIVIDAD_TURISTICA\]\s*(.*?)(?:\n\[|\Z)",
+    re.I | re.S,
+)
+_ANNEXE_MARITIME_RE = re.compile(
+    r"fronti[eè]res\s+maritimes\s*(.*?)(?="
+    r"fronti[eè]res\s+a[eé]riennes|"
+    r"liste des documents|"
+    r"annexe\s*i\s*i|"
+    r"annexe\s*ii|"
+    r"\Z)",
+    re.I | re.S,
+)
+_PPC_SITE_RE = re.compile(
+    r"(?m)^\s*\|?\s*([A-ZÀ-Ý][A-Za-zÀ-ÿ'’.\-]+"
+    r"(?:[\s\-][A-ZÀ-Ý][A-Za-zÀ-ÿ'’.\-]+){0,3})"
+    r"(?:\s*\|\s*)?(?:Permanent|Temporaire|sur demande)?\s*\|?\s*$",
+)
+_UK_PLEASURE_SECTION_RE = re.compile(
+    r"(?:list of (?:uk )?(?:ports|marinas)|designated ports|"
+    r"ports? of entry for pleasure|"
+    r"pleasure craft ports?)\s*:?\s*(.*?)(?=\n#{1,3}\s|\Z)",
+    re.I | re.S,
+)
+# Page douane SX : « Some examples include: Simpsonbay Marina, … Greatbay harbor »
+# Ne pas matcher « authorized ports in Sint Maarten. » (phrase trop courte).
+_SX_EXAMPLES_RE = re.compile(
+    r"(?:some\s+examples\s+include|examples\s+include)\s*[:\s]+"
+    r"(.+?)(?:Customs Officers have access|\.\s+Furthermore|\Z)",
+    re.I | re.S,
+)
+_SX_SKIP_PLACE_RE = re.compile(
+    r"(?i)\b(airport|aeroport|a[eé]roport|post office|coastline|"
+    r"entire coastline|juliana)\b",
+)
+# SIS Égypte : titres « Hurghada Marina: » dans « specialized marinas … including »
+_EG_SIS_LIST_RE = re.compile(
+    r"specialized marinas.{0,160}?including\s*:?\s*(.+?)"
+    r"(?:The State Sets|legislative framework|"
+    r"Prime Minister.?s decision No\.?\s*2721|\Z)",
+    re.I | re.S,
+)
+_EG_MARINA_HEAD_RE = re.compile(
+    r"(?<![A-Za-z])("
+    r"[A-Z][A-Za-z][\w'’-]*"
+    r"(?:\s+[A-Z][A-Za-z0-9][\w'’-]*){0,4}"
+    r"\s+Marina"
+    r"(?:\s*\([^)]{0,50}\))?"
+    r"(?:\s+North\s+Coast)?"
+    r")\s*:",
+)
+_EG_SKIP_MARINA_RE = re.compile(
+    r"(?i)\b(proposed|planned|establishing|existing|airport|"
+    r"specialized marinas|egyptian marinas|international marinas|"
+    r"tourist harbou?rs?)\b",
+)
+# Kartelë Dogana AL : « 2. Lezhë - Porti detar\nShëngjin » (le port, pas la ville).
+_AL_PORTI_DETAR_RE = re.compile(
+    r"(?i)porti\s+detar\s+([A-ZÀ-ÝË][A-Za-zÀ-ÿËëÇç]{2,24})",
+)
+_AL_PORTI_SKIP = frozenset({
+    "detar", "peshkimit", "aplikantit", "mbikëqyrëse", "kompetente",
+    "qyteti", "adresa", "orari",
+})
+_JORF_READERS = {
+    "JORFTEXT000030235682": [
+        # Même arrêté (NOR INTV1430080A) : Légifrance est derrière Cloudflare.
+        "https://www.info-droits-etrangers.org/wp-content/uploads/2020/01/"
+        "ARR%C3%8AT%C3%89_du_4_f%C3%A9vrier_2015_version_initiale.pdf",
+    ],
+}
+_FR_AUTH_RE = re.compile(
+    r"^(paf|douane|police aux fronti|garde-fronti|autorit|version\s|"
+    r"liste des ports|r[eé]gion|commune|port de plaisance|ppf\b)",
+    re.I,
+)
+_DELEG_BLOCK_RE = re.compile(
+    r"delegaciones\s*:\s*(.*?)(?=art[ií]culo|estaci[oó]n de pilotos|\Z)",
+    re.I | re.S,
+)
+_DELEG_LINE_RE = re.compile(
+    r"^[\s\-—–•·]+([A-ZÁÉÍÓÚÑÜ][\w'’.\-áéíóúñüÁÉÍÓÚÑÜ ()]{2,50})\s*$",
+    re.M,
 )
 _PDF_ABS_RE = re.compile(r"https?://[^\s\]\)'\"<>]+\.pdf(?:\?[^\s\]\)'\"<>]*)?", re.I)
 _PDF_HREF_RE = re.compile(
@@ -432,11 +642,23 @@ _PDF_HREF_RE = re.compile(
     re.I,
 )
 _PDF_MD_RE = re.compile(r"\[[^\]]*\]\(([^)]+\.pdf(?:\?[^)]*)?)\)", re.I)
-_LIST_PDF_RE = re.compile(
-    r"puerto|terminal|habilit|port.?of.?entry|ports.?of.?entry|"
-    r"customs|douane|aduana|clearance|gazett|legislat|designat|liste",
+# Chemin seulement — « douane » / « customs » dans le hostname matchent
+# toutes les brochures d'une home douanes (leçon France : 31 PDF anglais).
+_LIST_PDF_PATH_RE = re.compile(
+    r"liste|listen|plaisance|eligibles|ppf|puerto|terminal|habilit|"
+    r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
+    r"points-d-entree|points-of-entry|designat|gazett|legislat|"
+    r"decreto|decret|arrete|capitanias|jurisdiccion|ley-de-marinas|"
+    r"jorftext|c1331|pleasure-craft|pleasure_craft|"
+    r"akciz|peshkimit|anijet|autorizim|porti-detar",
     re.I,
 )
+_JUNK_PDF_PATH_RE = re.compile(
+    r"formulaire|immigration|export|brexit|travellers?|tax-refund|"
+    r"leaflet|brochure|results-en|counterfeit",
+    re.I,
+)
+_YEAR_IN_PATH_RE = re.compile(r"/20(\d{2})/")
 
 
 def looks_hard_challenge(text: str = "", html: str = "", title: str = "") -> bool:
@@ -456,6 +678,38 @@ def looks_like_port_catalog(text: str) -> bool:
     if lat_hits >= lat_need:
         return True
     if _CATALOG_MARKERS_RE.search(text) and (text.count(".-") >= lat_need or lat_hits >= 3):
+        return True
+    if re.search(r"puertos\s+y\s+terminales\s+habilitados", text, re.I):
+        return True
+    if len(_MX_HABILITADO_ROW_RE.findall(text)) >= 5:
+        return True
+    if len(_CAPITANIA_RE.findall(text)) >= 4:
+        return True
+    if re.search(r"liste des ports de plaisance [ée]ligibles", text, re.I):
+        return True
+    if sum(1 for ln in text.splitlines() if _FR_REGION_RE.match(ln.strip())) >= 3:
+        return True
+    if len(_NZ_POFA_MD_RE.findall(text)) >= 3 or len(_NZ_POFA_PLAIN_RE.findall(text)) >= 3:
+        return True
+    if (re.search(r"points? de passage contr[oô]l[eé]s", text, re.I)
+            and re.search(r"fronti[eè]res\s+maritimes", text, re.I)):
+        return True
+    if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
+        return True
+    if (re.search(r"simpson\s*bay", text, re.I)
+            and re.search(r"great\s*bay", text, re.I)):
+        return True
+    if (re.search(r"examples include", text, re.I)
+            and len(re.findall(r"\bmarina\b", text, re.I)) >= 3):
+        return True
+    if (re.search(r"specialized marinas.{0,200}?including", text, re.I)
+            and sum(1 for raw in _EG_MARINA_HEAD_RE.findall(text)
+                    if _eg_normalize_marina(raw)) >= 3):
+        return True
+    if (re.search(r"porti\s+detar", text, re.I)
+            and re.search(r"dega\s+doganore|porteve\s+detare|anijet?\s+e\s+peshkimit",
+                          text, re.I)
+            and len(_AL_PORTI_DETAR_RE.findall(text)) >= 3):
         return True
     return False
 
@@ -482,13 +736,382 @@ def extract_structured_ports(text: str) -> list[dict]:
     return out
 
 
+def _clean_legal_port_name(raw: str) -> str:
+    n = " ".join((raw or "").replace(":", " ").split()).strip(" .;,-«»\"'")
+    n = _CAPITANIA_CUT_RE.split(n, maxsplit=1)[0]
+    n = re.sub(r"\s+tendr[aá].*$", "", n, flags=re.I)
+    n = re.sub(r"\s+ten-\s*$", "", n, flags=re.I)
+    n = re.sub(r"^(?:po|da|del)\s+", "", n, flags=re.I)
+    return n.strip(" .;,-«»\"'")[:120]
+
+
+def _fold_ocr(s: str) -> str:
+    nfd = unicodedata.normalize("NFD", (s or "").casefold())
+    return re.sub(r"[^a-z]+", "", "".join(
+        ch for ch in nfd if unicodedata.category(ch) != "Mn"))
+
+
+def _normalize_capitania_name(name: str) -> str:
+    """Corrige une faute OCR évidente (Gúlria → Güiria), sans inventer de port."""
+    fold = _fold_ocr(name)
+    if fold in _VE_OCR_ALIASES:
+        return _VE_OCR_ALIASES[fold]
+    best, best_r = None, 0.0
+    for canon in _VE_CANON:
+        ratio = difflib.SequenceMatcher(None, fold, _fold_ocr(canon)).ratio()
+        if ratio > best_r:
+            best, best_r = canon, ratio
+    if best and best_r >= 0.82:
+        return best
+    return name
+
+
+def _extract_capitanias(text: str) -> list[dict]:
+    out, seen = [], set()
+    raw_names = [m.group(1) for m in _CAPITANIA_RE.finditer(text or "")]
+    raw_names += [m.group(1) for m in _CAPITANIA_NUM_LINE_RE.finditer(text or "")]
+    for raw in raw_names:
+        name = _normalize_capitania_name(_clean_legal_port_name(raw))
+        fold = name.casefold()
+        if (not name or len(name) < 3 or fold in _CAPITANIA_SKIP or fold in seen
+                or "republica" in fold or "república" in fold
+                or "refrend" in fold or fold.endswith(("tendrá", "tendra", "su"))
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": name, "city": None,
+            "note": "capitanía de puerto (règlement de juridiction)",
+            "extraction_engine": "catalog",
+        })
+    for block in _DELEG_BLOCK_RE.findall(text or ""):
+        for m in _DELEG_LINE_RE.finditer(block):
+            name = _clean_legal_port_name(m.group(1))
+            if (not name or len(name) < 3 or name.casefold() in seen
+                    or _FR_AUTH_RE.match(name)):
+                continue
+            seen.add(name.casefold())
+            out.append({
+                "name": name, "city": None,
+                "note": "délégation de capitanía",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _extract_fr_plaisance_table(text: str) -> list[dict]:
+    """Table douane : Région / Commune / Port de plaisance / PPF / autorité."""
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    out, seen = [], set()
+    i = 0
+    while i < len(lines):
+        if not _FR_REGION_RE.match(lines[i]):
+            i += 1
+            continue
+        if i + 2 >= len(lines):
+            break
+        commune, port = lines[i + 1], lines[i + 2]
+        if (_FR_AUTH_RE.match(commune) or _FR_REGION_RE.match(commune)
+                or _FR_AUTH_RE.match(port) or _FR_REGION_RE.match(port)):
+            i += 1
+            continue
+        key = port.casefold()
+        if key not in seen and 3 <= len(port) <= 80:
+            seen.add(key)
+            out.append({
+                "name": port[:120], "city": commune[:80],
+                "note": "liste ports de plaisance éligibles",
+                "extraction_engine": "catalog",
+            })
+        i += 3
+    for m in _PLAISANCE_PORT_RE.finditer(text or ""):
+        name = _clean_legal_port_name(m.group(1))
+        fold = name.casefold()
+        if (not name or fold in seen or fold in _PORT_OF_SKIP or len(name) < 3
+                or fold in _GENERIC_PORT_NAMES
+                or fold.startswith(("éligibl", "eligibl", "ppf", "rattachement"))
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": f"Port de plaisance de {name}"[:120], "city": None,
+            "note": "liste ports de plaisance éligibles",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _turistica_allowlist(text: str) -> set[str] | None:
+    """Noms / numéros tagués TURÍSTICA, ou None si le PDF n'a pas été annoté."""
+    m = _MX_TURISTICA_BLOCK_RE.search(text or "")
+    if not m:
+        return None
+    allowed: set[str] = set()
+    for line in m.group(1).splitlines():
+        line = " ".join(line.split())
+        if not line:
+            continue
+        num = re.match(r"^(\d{1,3})\s+(.+)$", line)
+        if num:
+            allowed.add(num.group(1))
+            allowed.add(num.group(2).casefold())
+        else:
+            allowed.add(line.casefold())
+    return allowed
+
+
+def _mx_activity_is_turistica(block: str) -> bool | None:
+    """True / False si « Tipo de actividad » est présent, sinon None."""
+    m = _CATALOG_ACTIVITY.search(block or "")
+    if not m:
+        return None
+    return bool(re.search(r"tur[ií]stic", m.group(1), re.I))
+
+
+def _extract_mx_habilitados_table(text: str) -> list[dict]:
+    """PDF SCT : N° / nom / État / type / date / lat / lon — tag TURÍSTICA seulement."""
+    out, seen = [], set()
+    allow = _turistica_allowlist(text)
+    has_tag_col = bool(re.search(r"tur[ií]stica", text or "", re.I))
+    if has_tag_col and allow is None:
+        # Colonne présente mais pas d'annotation : ne pas avaler les ports commerciaux.
+        return []
+    for m in _MX_HABILITADO_ROW_RE.finditer(text or ""):
+        name = " ".join(m.group("name").split()).strip()
+        state = " ".join(m.group("state").split()).strip()
+        if allow is not None and m.group("n") not in allow and name.casefold() not in allow:
+            continue
+        key = name.casefold()
+        if key in seen and state:
+            name = f"{name} ({state})"
+            key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name[:120], "city": state[:80] or None,
+            "lat": float(m.group("lat")), "lon": float(m.group("lon")),
+            "note": "catalogue officiel (activité turística)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_nz_pofa_tables(text: str) -> list[dict]:
+    """Registre MPI « places of first arrival – seaports » (tableau par port)."""
+    out, seen = [], set()
+    names = [m.group(1) for m in _NZ_POFA_MD_RE.finditer(text or "")]
+    names += [m.group(1) for m in _NZ_POFA_PLAIN_RE.finditer(text or "")]
+    skip = _PORT_OF_SKIP | {"approved vessels", "choose from this list",
+                            "what you must do", "northland", "approved ports"}
+    for raw in names:
+        name = " ".join((raw or "").split()).strip(" |-")
+        fold = name.casefold()
+        if (not name or fold in seen or fold in skip or len(name) < 3
+                or len(name) > 80 or fold in _GENERIC_PORT_NAMES):
+            continue
+        seen.add(fold)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "place of first arrival (registre MPI)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_annexe_ppc_maritime(text: str) -> list[dict]:
+    """Annexe I Mayotte : points de passage contrôlés, frontières maritimes seulement."""
+    out, seen = [], set()
+    skip = _PORT_OF_SKIP | _GENERIC_PORT_NAMES | {
+        "sites", "modalités", "modalites", "ouverture", "liste", "documents",
+        "permanent", "temporaire",
+    }
+    for block in _ANNEXE_MARITIME_RE.findall(text or ""):
+        for m in _PPC_SITE_RE.finditer(block):
+            name = _clean_legal_port_name(m.group(1))
+            fold = name.casefold()
+            if (not name or fold in seen or fold in skip or len(name) < 3
+                    or re.search(r"pamandzi|a[eé]roport|a[eé]rien", name, re.I)):
+                continue
+            seen.add(fold)
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "point de passage contrôlé (annexe I, frontières maritimes)",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _sx_normalize_place(raw: str) -> str | None:
+    """Simpsonbay Marina, Greatbay harbor, Cruise Terminal — pas l'aéroport."""
+    n = " ".join((raw or "").split()).strip(" .;:")
+    n = re.sub(r"^(?:including|and)\s+(?:the\s+)?", "", n, flags=re.I).strip()
+    if not n or len(n) < 4 or _SX_SKIP_PLACE_RE.search(n):
+        return None
+    fold = re.sub(r"[^a-z]+", "", n.casefold())
+    if fold.startswith("simpson"):
+        return "Simpsonbay Marina"
+    if fold in {"greatbay", "greatbayharbor", "greatbayharbour"}:
+        return "Greatbay harbor"
+    if fold in {"cruiseterminal", "thecruiseterminal"}:
+        return "Cruise Terminal"
+    if re.search(r"\b(marina|harbor|harbour|port|cruise\s+terminal)\b", n, re.I) and len(n) >= 8:
+        return n[:120]
+    return None
+
+
+def _eg_normalize_marina(raw: str) -> str | None:
+    """Titre SIS « Hurghada Marina: » — pas une ville citée en prose."""
+    n = " ".join(html.unescape(raw or "").split()).strip(" .;:*")
+    n = re.sub(r"^\*+", "", n).strip()
+    if not n or len(n) < 8 or len(n) > 80:
+        return None
+    if not re.search(r"\bmarina\b", n, re.I):
+        return None
+    if _EG_SKIP_MARINA_RE.search(n) or n.casefold() in _GENERIC_PORT_NAMES:
+        return None
+    return n[:120]
+
+
+def _extract_eg_sis_yacht_marinas(text: str) -> list[dict]:
+    """Liste SIS « specialized marinas … including » (non exhaustive)."""
+    out, seen = [], set()
+    text = html.unescape(text or "")
+    block = text
+    m = _EG_SIS_LIST_RE.search(text)
+    if m:
+        block = m.group(1)
+    for raw in _EG_MARINA_HEAD_RE.findall(block):
+        name = _eg_normalize_marina(raw)
+        if not name or name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "marina SIS (liste yacht tourism, Égypte — non exhaustive)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_al_porti_detar(text: str) -> list[dict]:
+    """Quatre ports de la kartelë Dogana (accise carburant, anijet e peshkimit)."""
+    out, seen = [], set()
+    text = html.unescape(text or "")
+    for m in _AL_PORTI_DETAR_RE.finditer(text):
+        place = " ".join((m.group(1) or "").split()).strip(" .;:-")
+        if not place or place.casefold() in _AL_PORTI_SKIP:
+            continue
+        name = f"Porti detar {place}"
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "port detar (kartelë Dogana, accise anijet e peshkimit)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
+def _extract_sx_customs_examples(text: str) -> list[dict]:
+    """Lieux d'autorité listés par la douane de Sint Maarten (pas l'aéroport)."""
+    out, seen = [], set()
+    # SharePoint encode le deux-points : « examples include&#58; ».
+    text = html.unescape(text or "")
+    blobs = _SX_EXAMPLES_RE.findall(text)
+    if not blobs and re.search(r"simpson\s*bay", text, re.I):
+        blobs = [text]
+    for blob in blobs:
+        chunk = re.sub(r"\s+", " ", blob)
+        chunk = re.sub(r"\band\b", ",", chunk, flags=re.I)
+        for raw in chunk.split(","):
+            name = _sx_normalize_place(raw)
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "lieu d'autorité douanière (Sint Maarten)",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _extract_uk_pleasure_ports(text: str) -> list[dict]:
+    """Si une liste de ports de plaisance UK est publiée, tous sont Ports of Entry."""
+    out, seen = [], set()
+    skip = _PORT_OF_SKIP | _GENERIC_PORT_NAMES | {
+        "united kingdom", "border force", "hmrc", "yachtline",
+    }
+    for block in _UK_PLEASURE_SECTION_RE.findall(text or ""):
+        for raw in re.findall(
+            r"(?m)^\s*(?:[-•*]|\d+[.)]|\\|)\s*([A-Z][A-Za-z'’.\-]+"
+            r"(?:[\s\-][A-Z][A-Za-z'’.\-]+){0,4})\s*$",
+            block,
+        ):
+            name = " ".join((raw or "").split()).strip(" |-")
+            fold = name.casefold()
+            if (not name or fold in seen or fold in skip or len(name) < 3
+                    or len(name) > 60):
+                continue
+            seen.add(fold)
+            out.append({
+                "name": name[:120], "city": None,
+                "note": "pleasure craft — port of entry (sPCR / GOV.UK)",
+                "extraction_engine": "catalog",
+            })
+    return out
+
+
+def _extract_douane_bureaux(text: str) -> list[dict]:
+    """« bureau de douane de Nouméa Port » — page formalités sans tableau."""
+    out, seen = [], set()
+    for m in _DOUANE_BUREAU_RE.finditer(text or ""):
+        name = _clean_legal_port_name(m.group(1))
+        fold = name.casefold()
+        if (not name or fold in seen or fold in _PORT_OF_SKIP or len(name) < 3
+                or _PLAISANCE_NAME_SKIP_RE.search(name)):
+            continue
+        seen.add(fold)
+        out.append({
+            "name": name[:120], "city": None,
+            "note": "bureau de douane (page formalités)",
+            "extraction_engine": "catalog",
+        })
+    return out
+
+
 def _extract_structured_ports_one(text: str) -> list[dict]:
     out, seen = [], set()
+    for extra in (
+        _extract_mx_habilitados_table(text),
+        _extract_nz_pofa_tables(text),
+        _extract_capitanias(text),
+        _extract_fr_plaisance_table(text),
+        _extract_annexe_ppc_maritime(text),
+        _extract_uk_pleasure_ports(text),
+        _extract_sx_customs_examples(text),
+        _extract_eg_sis_yacht_marinas(text),
+        _extract_al_porti_detar(text),
+        _extract_douane_bureaux(text),
+    ):
+        for p in extra:
+            key = p["name"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
     for m in _CATALOG_HEAD.finditer(text or ""):
         name = " ".join(m.group(1).split()).strip()
         block = m.group(2) or ""
         lat_m, lon_m = _CATALOG_LAT.search(block), _CATALOG_LON.search(block)
         if not name or not lat_m or not lon_m:
+            continue
+        activity_ok = _mx_activity_is_turistica(block)
+        if activity_ok is False:
             continue
         st = _CATALOG_STATE.search(block)
         state = st.group(1).strip() if st else None
@@ -505,12 +1128,18 @@ def _extract_structured_ports_one(text: str) -> list[dict]:
             "note": "catalogue officiel (nom + coordonnées dans la source)",
             "extraction_engine": "catalog",
         })
+    if len(out) >= 10:
+        return out
+    if len(out) >= 3 and looks_like_port_catalog(text or ""):
+        return out
     for m in _PORT_OF_RE.finditer(text or ""):
         name = m.group(1).strip().rstrip(".")
         first = name.split()[0].casefold() if name else ""
         if not name or first in _PORT_OF_SKIP or name.casefold() in seen:
             continue
         if len(name) < 3 or len(name) > 60:
+            continue
+        if re.search(r"\b(airport|aeropuerto|aéroport|zarpe)\b", name, re.I):
             continue
         seen.add(name.casefold())
         out.append({
@@ -545,7 +1174,14 @@ def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
     like_min = int(get_rule("formalities.catalog_looks_like_min_coords", 1))
     if with_coords >= min_coords:
         return True
-    return bool(looks_like_port_catalog(text or "") and with_coords >= like_min)
+    if looks_like_port_catalog(text or "") and with_coords >= like_min:
+        return True
+    named = [p for p in ports if (p.get("name") or "").strip()]
+    min_names = int(get_rule("formalities.catalog_min_names", 8))
+    if looks_like_port_catalog(text or "") and len(named) >= min_names:
+        return True
+    cat = [p for p in named if p.get("extraction_engine") == "catalog"]
+    return bool(looks_like_port_catalog(text or "") and len(cat) >= 4)
 
 
 _JUNK_NAME_RE = re.compile(
@@ -609,8 +1245,53 @@ def is_geocodeable_name(name: str, geocodeable=None) -> bool:
     return True
 
 
-def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
-    """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret)."""
+def _pdf_path(url: str) -> str:
+    return unquote(urlparse(url or "").path or "")
+
+
+def _pdf_stem(url: str) -> str:
+    leaf = Path(_pdf_path(url)).name
+    return leaf.rsplit(".", 1)[0].casefold()
+
+
+def _pdf_recency_bonus(path: str) -> int:
+    """Préfère le millésime courant à une carte PPF de 2022 encore en lien."""
+    years = [2000 + int(y) for y in _YEAR_IN_PATH_RE.findall(path or "")]
+    if years:
+        return max(0, max(years) - 2020)
+    if "/uploads/" in (path or "").lower():
+        return 4
+    return 0
+
+
+def _pdf_list_score(url: str) -> int:
+    """Score le chemin du PDF, jamais le hostname (douane.gouv.fr ≠ liste)."""
+    path = _pdf_path(url)
+    if not path:
+        return 0
+    score = 0
+    if _LIST_PDF_PATH_RE.search(path):
+        score += 2
+    low = path.lower()
+    for tok, pts in (
+        ("plaisance", 3), ("eligibles", 2), ("ppf", 2), ("liste", 2),
+        ("habilit", 2), ("ports-entree", 2), ("port-of-entry", 2),
+    ):
+        if tok in low:
+            score += pts
+    if _JUNK_PDF_PATH_RE.search(path):
+        score -= 4
+    if score > 0:
+        score += _pdf_recency_bonus(path)
+    return score
+
+
+def official_attachments(text: str, base_url: str, limit: int = 4) -> list[str]:
+    """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret).
+
+    On ne garde que les PDF dont le *chemin* ressemble à une liste. Un PDF
+    « 10-questions-before-exporting-en.pdf » sur douane.gouv.fr n'en est pas une.
+    """
     if not text or not base_url:
         return []
     raw: list[str] = list(_PDF_ABS_RE.findall(text))
@@ -625,23 +1306,37 @@ def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
         if SERP_HARD_RE.search(u):
             continue
         host = (urlparse(u).hostname or "").lower()
-        listish = bool(_LIST_PDF_RE.search(u))
-        if host != base_host and not listish:
+        score = _pdf_list_score(u)
+        if host != base_host and score <= 0:
+            continue
+        if score <= 0:
             continue
         seen.add(u)
-        scored.append((0 if listish else 1, u))
+        scored.append((-score, u))
     scored.sort()
-    return [u for _, u in scored[:limit]]
+    out, stems = [], set()
+    for _, u in scored:
+        stem = _pdf_stem(u)
+        if stem in stems:
+            continue
+        stems.add(stem)
+        out.append(u)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def should_follow_attachments(text: str, url: str) -> bool:
     """Suivre un PDF même si la page est déjà longue (leçon SCT : la liste
     est souvent le fichier lié, pas le HTML)."""
-    blob = f"{url} {text[:4000]}"
-    return (looks_like_port_catalog(text or "")
+    blob = (text or "")[:4000]
+    path = _pdf_path(url)
+    if (looks_like_port_catalog(text or "")
             or bool(_CATALOG_MARKERS_RE.search(blob))
-            or bool(_LIST_PDF_RE.search(url or ""))
-            or len(text or "") < 800)
+            or bool(_LIST_PDF_PATH_RE.search(path))):
+        return True
+    # Page sans marqueur catalogue, mais un PDF « liste / PPF » est déjà lié.
+    return bool(url and official_attachments(text or "", url, limit=1))
 
 
 async def _fetch_bytes(url: str, headers: dict, timeout: float):
@@ -758,6 +1453,29 @@ async def _tinyfish_mirror_text(url: str, log) -> tuple[str | None, list]:
     return text, links
 
 
+async def _jorf_reader_text(url: str, log) -> str | None:
+    """Copies du même texte JORF quand Légifrance répond un challenge Cloudflare."""
+    blob = (url or "").upper()
+    for key, mirrors in _JORF_READERS.items():
+        if key not in blob:
+            continue
+        for mu in mirrors:
+            try:
+                content, ctype = await _fetch_bytes(mu, UA_BROWSER, 45)
+                if content[:5] == b"%PDF-" or "pdf" in (ctype or ""):
+                    text = await asyncio.to_thread(parse_pdf_text, content)
+                else:
+                    parsed = await dual_parse_html(
+                        content.decode("utf-8", errors="replace"))
+                    text = parsed.get("text") or ""
+                if _mirror_usable(text):
+                    log(f"miroir JORF {key}: {len(text)} chars")
+                    return text
+            except Exception as e:
+                log(f"miroir JORF {key}: indisponible ({_mirror_http_err(e)})")
+    return None
+
+
 async def _wayback_mirror_text(url: str, log) -> str | None:
     try:
         snap = await _wayback_snapshot_url(url)
@@ -804,6 +1522,10 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
     wb = await _wayback_mirror_text(url, log)
     if wb:
         return wb, "N3-mirror-wayback"
+    if "legifrance.gouv.fr" in (url or "").lower():
+        jorf = await _jorf_reader_text(url, log)
+        if jorf:
+            return jorf, "N3-mirror-jorf"
     return None
 
 

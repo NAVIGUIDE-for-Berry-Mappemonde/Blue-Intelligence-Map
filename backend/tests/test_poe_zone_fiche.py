@@ -159,6 +159,73 @@ def test_one_url_per_domain_prefers_list_pdf():
     assert fiche["url_td"]["url"].endswith(".pdf")
 
 
+def test_english_customs_homepage_loses_to_list_pdf():
+    zone = {
+        **_ZONE,
+        "sources": [
+            {
+                "url": "http://www.douane.gouv.fr/french-customs-information-available-english",
+                "domain": "douane.gouv.fr", "official": True,
+            },
+            {
+                "url": "https://www.douane.gouv.fr/sites/default/files/2025-02/28/Liste%20des%20ports%20de%20plaisance%20rattach%C3%A9s%20au%20dispositif.pdf",
+                "domain": "douane.gouv.fr", "official": True,
+            },
+        ],
+    }
+    fiche = assemble_zone_fiche(zone, [])
+    assert "dispositif.pdf" in fiche["url_td"]["url"]
+    assert "information-available-english" not in fiche["url_td"]["url"]
+
+
+def test_france_hexagon_uses_curated_pleasure_list():
+    from app.services.poe_zone_fiche import build_zone_fiche
+
+    hexagon = {
+        "mrgid": 5677, "name": "France", "geoname": "French Exclusive Economic Zone",
+        "iso2": "FR", "sov_iso2": "FR", "sovereign": "France", "pol_type": "200NM",
+        "status": "ia", "poe_count": 0, "sources": [
+            {"url": "http://www.douane.gouv.fr/french-customs-information-available-english",
+             "domain": "douane.gouv.fr", "official": True},
+        ],
+    }
+    db = _FakeDB(zones=[hexagon], ports=[])
+    fiche = asyncio.run(build_zone_fiche(db, 5677))
+    assert "plaisance" in (fiche["url_td"]["url"] or "").lower()
+    assert "information-available-english" not in (fiche["url_td"]["url"] or "")
+
+
+def test_mayotte_does_not_inherit_metropolitan_pdf():
+    from app.services.poe_zone_fiche import build_zone_fiche
+
+    mayotte = {
+        "mrgid": 48944, "name": "Mayotte",
+        "geoname": "Overlapping claim Mayotte: France / Comores",
+        "iso2": "YT", "sov_iso2": "FR", "sovereign": "France",
+        "pol_type": "Overlapping claim", "status": "non_generee", "poe_count": 0,
+        "sources": [],
+    }
+    db = _FakeDB(zones=[mayotte], ports=[])
+    fiche = asyncio.run(build_zone_fiche(db, 48944))
+    url = (fiche.get("url_td") or {}).get("url") or ""
+    assert "plaisance" not in url.lower()
+    assert "ics-liste" in url or "mayotte" in url
+
+
+def test_list_like_seed_can_become_td():
+    zone = {**_ZONE, "mrgid": 5670, "sources": [
+        {"url": "https://dogana.gov.al/accueil", "domain": "dogana.gov.al"},
+    ]}
+    seeds = [{
+        "mrgid": 5670, "name": "Durrës",
+        "judge_sources": [
+            "https://asp.gov.al/wp-content/uploads/2024/11/Udhezim-PER-LISTEN-E-PKK.pdf",
+        ],
+    }]
+    fiche = assemble_zone_fiche(zone, [], seeds=seeds)
+    assert fiche["url_td"]["url"].endswith("LISTEN-E-PKK.pdf")
+
+
 def test_build_zone_fiche_reads_only():
     from app.services.poe_zone_fiche import build_zone_fiche
 
@@ -205,6 +272,8 @@ def test_france_hexagon_fiche_does_not_absorb_mayotte():
     assert f2["label"] == "France (Mayotte)"
     assert [p["name"] for p in f1["ports"]] == ["Marseille"]
     assert [p["name"] for p in f2["ports"]] == ["Mamoudzou"]
+    assert "plaisance" in (f1["url_td"]["url"] or "").lower()
+    assert "plaisance" not in ((f2.get("url_td") or {}).get("url") or "").lower()
     assert f1["wrote_poe_ports"] is False
 
 
@@ -221,6 +290,7 @@ def test_frontend_fiche_has_no_generate_button():
         assert "/generate" not in src
     assert "wpi_commercial" not in fiche
     assert "poe-fiche-td-url" in fiche
+    assert "poe-fiche-td-path" in fiche
     assert "poe-fiche-port-bu" in fiche
     assert "poe-fiche-sources-bu" not in fiche
     assert "poe-zone-fiche" in fiche

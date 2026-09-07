@@ -238,13 +238,27 @@ Schéma obligatoire :
 Règles absolues :
 - Extraire tout port, terminal ou harbour que la source officielle désigne comme
   point d'entrée des navires étrangers : ports d'entrée, clearance, puertos
-  habilitados, ports of entry, « port of / port de / puerto de X », capitanías,
-  designated ports, gazette, décret, arrêté, customs act.
+  habilitados, ports of entry, « port of / port de / puerto de X », capitanías
+  de puerto, delegaciones, designated ports, gazette, décret, arrêté,
+  customs act, liste de ports de plaisance, places of first arrival,
+  points de passage contrôlés (annexe I, frontières maritimes).
+  Un scan OCR de Gaceta reste une source : extraire les noms malgré les fautes.
+  Mexique : ignorer un port sans tag turística / Turística.
+  Royaume-Uni : tout port de plaisance nommé est un Port of Entry (sPCR).
+  Sint Maarten : extraire tous les exemples de la page douane (Simpsonbay,
+  Port de Plaisance, Il de Sol, Cupecoy, Captain Olivers, Greatbay harbor,
+  Cruise Terminal). Ignorer aéroport, poste et coastline.
+  Égypte : titres de la liste SIS yacht tourism (Hurghada Marina, Marassi,
+  Taba Heights, Abu Teeg / El Gouna, Porto Marina North Coast). Ne pas inventer
+  d'autres ports (la liste officielle n'est pas exhaustive).
+  Albanie : kartelë Dogana accise carburant — uniquement les « Porti detar »
+  (Durrës, Shëngjin, Vlorë, Sarandë). Ignorer Dega Doganore Lezhë (ville, pas le port).
 - La mention « plaisance » n'est PAS exigée si l'État publie une liste officielle.
 - Ne JAMAIS inventer un nom absent des extraits. Si aucun port n'est nommé :
   {"ports": []}.
 - Ignorer les aéroports, bureaux de poste, passages terrestres, marinas de
-  plaisance non désignées, et les ports d'un AUTRE pays cités par comparaison.
+  plaisance non désignées (sauf source UK sPCR : tout port de plaisance nommé
+  est un Port of Entry), et les ports d'un AUTRE pays cités par comparaison.
 - "name" = nom du port tel qu'écrit dans la source (ne pas traduire).
 - "city" = ville ou entité fédérative si elle figure dans la source, sinon null.
 - "note" en français, max 120 caractères.
@@ -276,6 +290,31 @@ JSON attendu :
    "lat": 31.8522146, "lon": -116.625788, "geocodeable": true},
   {"name": "Manzanillo", "city": "Colima", "note": "catalogue officiel",
    "lat": 19.057546, "lon": -104.313762, "geocodeable": true}
+]}
+
+--- Exemple A2 : tableau SCT — ne garder que l'activité turística ---
+SOURCE:
+PUERTOS Y TERMINALES HABILITADOS
+1 Bahía Colonet
+Baja California
+Puerto
+07/08/2006
+30.96571843
+-116.2804389
+Tipo de actividad: Comercial
+4 Ensenada
+Baja California
+Puerto
+31/05/1974
+31.8522146
+-116.625788
+Tipo de actividad: Comercial Pesquera Turística
+[ACTIVIDAD_TURISTICA]
+4 Ensenada
+JSON attendu :
+{"ports": [
+  {"name": "Ensenada", "city": "Baja California", "note": "catalogue officiel turística",
+   "lat": 31.8522146, "lon": -116.625788, "geocodeable": true}
 ]}
 
 --- Exemple B : tournure légale isolée (ne pas extraire l'aéroport) ---
