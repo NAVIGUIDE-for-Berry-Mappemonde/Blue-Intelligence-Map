@@ -100,6 +100,15 @@ def test_search_polygon_name_is_not_the_country_aggregate():
     assert hexagon != mayotte
 
 
+def test_serp_place_name_drops_internal_hexagone_qualifier():
+    from app.services.poe_zone_label import serp_place_name
+    zones = _indexed_zones()
+    by_id = {z["mrgid"]: z for z in zones}
+    assert serp_place_name(by_id[5677], zones) == "France"
+    assert serp_place_name(by_id[48944], zones) == "Mayotte"
+    assert "hexagone" not in serp_place_name(by_id[5677], zones)
+
+
 def test_keep_extracted_skips_other_polygon():
     from app.services.poe_zone_label import keep_extracted_in_zone
     assert keep_extracted_in_zone("spatial_rejected") is False

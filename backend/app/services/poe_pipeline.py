@@ -49,7 +49,8 @@ from app.core.llm import extract_ports, grounded_search
 from app.core.rag import select_list_context, semantic_similarity
 from app.services.poe_confidence import apply_score, listing_role, score_port, zone_confidence_avg
 from app.services.poe_zone_label import (
-    keep_extracted_in_zone, search_polygon_name, zone_search_location,
+    keep_extracted_in_zone, search_polygon_name, serp_place_name,
+    zone_qualifier, zone_search_location,
 )
 
 from app.config import DATA_DIR as DATA
@@ -153,7 +154,11 @@ _LIST_PATH_TOKENS = (
     "habilit", "puertos", "designated", "decreto", "decree", "decret",
     "arrete", "arrêté", "gazette", "legislat", "jorf", "liste", "listen",
     "list-of", "listing", "ordonnance", "ordinance", "plaisance",
-    "points-d-entree", "points-of-entry",
+    "points-d-entree", "points-of-entry", "eligibles", "ppf",
+)
+_JUNK_PATH_TOKENS = (
+    "formulaire", "immigration", "export", "brexit", "leaflet",
+    "brochure", "travellers", "tax-refund", "counterfeit",
 )
 _HOME_PATH_RE = re.compile(
     r"(^/?$|/accueil\b|/home\b|/en/?$|information-available|"
@@ -171,11 +176,27 @@ def zone_search_lang(zone: dict) -> str | None:
     return None
 
 
+def is_france_mainland_eez(zone: dict) -> bool:
+    """Hexagone / régimes conjoints métropole — pas Mayotte ni les DROM."""
+    if (zone.get("iso2") or "").upper() != "FR":
+        return False
+    key, _ = zone_qualifier(zone)
+    return key in ("hexagone", "metropole", "joint")
+
+
 def localized_query(zone: dict) -> str | None:
     """Requête traduite dans la langue du polygone VLIZ (pas l'agrégat pays)."""
+    place = serp_place_name(zone)
+    if not place:
+        return None
+    if is_france_mainland_eez(zone):
+        return (
+            "liste ports de plaisance éligibles PPF "
+            f"points de passage frontaliers douane {place}"
+        )
     lang = zone_search_lang(zone)
     tpl = QUERY_TEMPLATES.get(lang or "")
-    return tpl.format(name=search_polygon_name(zone)) if tpl else None
+    return tpl.format(name=place) if tpl else None
 
 
 # ---------------------------------------------------------------------------
@@ -304,10 +325,22 @@ def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict
 def default_search_hints(zone: dict) -> list[str]:
     """Leçon Niue / Mexique, pour TOUT polygone VLIZ : loi douanière + liste.
     Jamais un nom de port. Le nom est celui du polygone (Mayotte ≠ France)."""
-    poly = search_polygon_name(zone)
+    poly = serp_place_name(zone)
     if not poly:
         return []
-    return [f"{poly} customs act designated ports of entry official legislation gazette"]
+    generic = f"{poly} customs act designated ports of entry official legislation gazette"
+    if is_france_mainland_eez(zone):
+        return [
+            f"liste ports de plaisance éligibles douane {poly}",
+            f"carte PPF maritimes points de passage frontaliers {poly}",
+            generic,
+        ]
+    lang = zone_search_lang(zone)
+    if lang == "es":
+        return [f"{poly} puertos habilitados decreto lista oficial", generic]
+    if lang == "fr":
+        return [f"ports d'entrée officiels liste douane décret {poly}", generic]
+    return [generic]
 
 
 def search_hint_queries(zone: dict, exceptions: dict | None = None) -> list[str]:
@@ -337,6 +370,7 @@ def list_url_bonus(url: str) -> float:
     score = sum(0.15 for tok in _LIST_PATH_TOKENS if tok in path)
     if path.endswith(".pdf") or ".pdf" in path:
         score += 0.35
+    score -= sum(0.2 for tok in _JUNK_PATH_TOKENS if tok in path)
     if _HOME_PATH_RE.search(path.split("?", 1)[0]):
         score -= 0.45
     leaf = path.split("?", 1)[0].strip("/")
@@ -1079,8 +1113,8 @@ def _url_score(c: dict) -> float:
     return list_url_bonus(c.get("url") or "") + (serp if serp is not None else 0.5)
 
 
-def _best_per_domain(candidates: list[dict], max_per_domain: int = 2) -> list[dict]:
-    """Jusqu'à 2 URLs par domaine : la meilleure page et le meilleur PDF/liste."""
+def _best_per_domain(candidates: list[dict], max_per_domain: int = 3) -> list[dict]:
+    """1 page + jusqu'à 2 PDF liste par domaine (leçon France : liste + carte PPF)."""
     groups: dict[str, list[dict]] = {}
     order: list[str] = []
     for c in candidates or []:
@@ -1099,8 +1133,12 @@ def _best_per_domain(candidates: list[dict], max_per_domain: int = 2) -> list[di
         picked: list[dict] = []
         if pages:
             picked.append(pages[0])
-        if pdfs:
-            picked.append(pdfs[0])
+        list_pdfs = [c for c in pdfs if list_url_bonus(c.get("url") or "") >= 0.45]
+        pool = list_pdfs or pdfs[:1]
+        for c in pool:
+            if len(picked) >= max_per_domain:
+                break
+            picked.append(c)
         if not picked:
             picked = items[:1]
         seen: set[str] = set()
@@ -1172,6 +1210,48 @@ async def _tf_search_safe(query: str, key: str, log, *, location=None, language=
         return []
 
 
+def site_list_pdf_query(domain: str, zone: dict) -> str:
+    """Requête `site:` une fois le domaine d'État connu."""
+    if is_france_mainland_eez(zone):
+        return (f"site:{domain} filetype:pdf "
+                f"(liste ports de plaisance OR carte PPF OR points de passage frontaliers)")
+    lang = zone_search_lang(zone)
+    if lang == "fr":
+        return f"site:{domain} filetype:pdf (liste ports d'entrée OR décret OR arrêté)"
+    if lang == "es":
+        return f"site:{domain} filetype:pdf (puertos habilitados OR decreto lista)"
+    return f"site:{domain} filetype:pdf (ports of entry OR designated ports list)"
+
+
+def landing_url_candidates(zone: dict) -> list[dict]:
+    """Page d'État de CE mrgid (territories.json) — à crawler, pas à afficher."""
+    from app.services.territory_ref import curated_landing_urls
+    out, seen = [], set()
+    for rec in curated_landing_urls(zone.get("mrgid")):
+        u = rec.get("url") or ""
+        n = _normalize_url(u)
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        out.append({"url": u, "domain": domain_of(u)})
+    return out
+
+
+async def _site_list_pdf_search(domains: list[str], zone: dict, log) -> list[dict]:
+    """Deuxième hop : le domaine d'État est connu, la liste est souvent un PDF
+    hors SERP générique (leçon France : Liste-ports-de-plaisance-eligibles.pdf)."""
+    out: list[dict] = []
+    for dom in domains[:3]:
+        if not dom:
+            continue
+        q = site_list_pdf_query(dom, zone)
+        res = await search_searxng(q, log)
+        if res:
+            log(f"site PDF {dom}: {len(res)} résultat(s)")
+            out.extend(res)
+    return out
+
+
 async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log, rec=None,
                         tf_key: str | None = None, variant: str = "tinyfish",
                         ) -> tuple[list[dict], bool, str | None]:
@@ -1181,6 +1261,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     tinyfish = SearXNG ∥ TinyFish + filet include_domains.
     :online en dernier dans tous les cas. Ne touche jamais poe_ports."""
     name = search_polygon_name(zone)
+    place = serp_place_name(zone) or name
     variant = normalize_variant(variant)
     use_tf = variant == "tinyfish"
     key = (await _resolve_tf_key(tf_key)) if use_tf else ""
@@ -1188,7 +1269,7 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
     lang = zone_search_lang(zone)
 
     query_en = (f"official designated ports of entry list customs gazette "
-                f"decree legislation {name}")
+                f"decree legislation {place}")
     loc_q = localized_query(zone)
 
     searx_groups, tf_groups = [], []
@@ -1351,12 +1432,44 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             log(f"bootstrapping: {[c['domain'] for c in boot]} ajoutés à exceptions.json (auto)")
             await emit(rec, "bootstrap", domains=[c["domain"] for c in boot])
             official = boot
+
+    if official and not any(
+        (c.get("url") or "").lower().endswith(".pdf")
+        and list_url_bonus(c.get("url") or "") >= 0.5
+        for c in official
+    ):
+        domains: list[str] = []
+        for c in official:
+            d = (c.get("domain") or domain_of(c.get("url") or "")).lower()
+            if d and d not in domains:
+                domains.append(d)
+        extra_pdfs = await _site_list_pdf_search(domains, zone, log)
+        await emit(rec, "search", engine="searxng", lang="site-pdf",
+                   query="site:domain filetype:pdf", n=len(extra_pdfs),
+                   results=extra_pdfs, domains=domains[:3])
+        if extra_pdfs:
+            extra_pdfs = serp_filter(extra_pdfs, protect_fn=protect)
+            candidates = _merge_candidates(candidates, extra_pdfs)
+            official = [c for c in candidates if url_allowed(c.get("url") or "", whitelist)]
+            log(f"site PDF: {len(extra_pdfs)} candidat(s) sur {domains[:3]}")
+
     seeds = seed_url_candidates(zone, exceptions)
-    if seeds:
-        seed_urls = {c["url"] for c in seeds}
-        rest = _best_per_domain([c for c in official if c["url"] not in seed_urls])
-        official = seeds + rest
-        log(f"sources épinglées: {[c['url'] for c in seeds]}")
+    landings = landing_url_candidates(zone)
+    pinned = []
+    pinned_norm: set[str] = set()
+    for c in seeds + landings:
+        n = _normalize_url(c.get("url") or "")
+        if not n or n in pinned_norm:
+            continue
+        pinned_norm.add(n)
+        pinned.append(c)
+    if pinned:
+        rest = _best_per_domain([
+            c for c in official
+            if _normalize_url(c.get("url") or "") not in pinned_norm
+        ])
+        official = pinned + rest
+        log(f"sources épinglées: {[c['url'] for c in pinned]}")
     else:
         official = _best_per_domain(official)
     strictly_official = bool(official)
@@ -1420,7 +1533,7 @@ async def _collect_texts(official: list[dict], log, rec=None, max_fetch: int = 5
         log(f"fetch {c.get('domain') or domain_of(url)}: {len(text)} chars via {res['level']}")
         blob = (res.get("html") or "") + "\n" + (text or "")
         if should_follow_attachments(text or "", url):
-            for att in official_attachments(blob, url, limit=2):
+            for att in official_attachments(blob, url, limit=4):
                 if att not in seen_urls:
                     log(f"pièce jointe officielle: {att[:90]}")
                     await emit(rec, "attachment", parent=url, url=att)

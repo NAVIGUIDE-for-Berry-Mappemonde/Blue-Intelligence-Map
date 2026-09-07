@@ -24,7 +24,7 @@ import tempfile
 import threading
 from contextvars import ContextVar
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 # Désactivé pour les variants v1/v2 (SearXNG only) — TinyFish Fetch reste
 # réservé au variant « tinyfish ». Défaut True pour ne pas casser le Swarm.
@@ -432,11 +432,21 @@ _PDF_HREF_RE = re.compile(
     re.I,
 )
 _PDF_MD_RE = re.compile(r"\[[^\]]*\]\(([^)]+\.pdf(?:\?[^)]*)?)\)", re.I)
-_LIST_PDF_RE = re.compile(
-    r"puerto|terminal|habilit|port.?of.?entry|ports.?of.?entry|"
-    r"customs|douane|aduana|clearance|gazett|legislat|designat|liste",
+# Chemin seulement — « douane » / « customs » dans le hostname matchent
+# toutes les brochures d'une home douanes (leçon France : 31 PDF anglais).
+_LIST_PDF_PATH_RE = re.compile(
+    r"liste|listen|plaisance|eligibles|ppf|puerto|terminal|habilit|"
+    r"port.?of.?entry|ports.?of.?entry|ports-entree|portos-de-entrada|"
+    r"points-d-entree|points-of-entry|designat|gazett|legislat|"
+    r"decreto|decret|arrete|clearance",
     re.I,
 )
+_JUNK_PDF_PATH_RE = re.compile(
+    r"formulaire|immigration|export|brexit|travellers?|tax-refund|"
+    r"leaflet|brochure|results-en|counterfeit",
+    re.I,
+)
+_YEAR_IN_PATH_RE = re.compile(r"/20(\d{2})/")
 
 
 def looks_hard_challenge(text: str = "", html: str = "", title: str = "") -> bool:
@@ -609,8 +619,47 @@ def is_geocodeable_name(name: str, geocodeable=None) -> bool:
     return True
 
 
-def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
-    """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret)."""
+def _pdf_path(url: str) -> str:
+    return unquote(urlparse(url or "").path or "")
+
+
+def _pdf_recency_bonus(path: str) -> int:
+    """Préfère le millésime courant à une carte PPF de 2022 encore en lien."""
+    years = [2000 + int(y) for y in _YEAR_IN_PATH_RE.findall(path or "")]
+    if years:
+        return max(0, max(years) - 2020)
+    if "/uploads/" in (path or "").lower():
+        return 4
+    return 0
+
+
+def _pdf_list_score(url: str) -> int:
+    """Score le chemin du PDF, jamais le hostname (douane.gouv.fr ≠ liste)."""
+    path = _pdf_path(url)
+    if not path:
+        return 0
+    score = 0
+    if _LIST_PDF_PATH_RE.search(path):
+        score += 2
+    low = path.lower()
+    for tok, pts in (
+        ("plaisance", 3), ("eligibles", 2), ("ppf", 2), ("liste", 2),
+        ("habilit", 2), ("ports-entree", 2), ("port-of-entry", 2),
+    ):
+        if tok in low:
+            score += pts
+    if _JUNK_PDF_PATH_RE.search(path):
+        score -= 4
+    score += _pdf_recency_bonus(path)
+    return score
+
+
+def official_attachments(text: str, base_url: str, limit: int = 4) -> list[str]:
+    """PDF officiels liés depuis une page d'État (pièce jointe de liste, décret).
+
+    On ne garde que les PDF dont le *chemin* ressemble à une liste. Un PDF
+    « 10-questions-before-exporting-en.pdf » sur douane.gouv.fr n'en est pas une.
+    """
     if not text or not base_url:
         return []
     raw: list[str] = list(_PDF_ABS_RE.findall(text))
@@ -625,11 +674,13 @@ def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
         if SERP_HARD_RE.search(u):
             continue
         host = (urlparse(u).hostname or "").lower()
-        listish = bool(_LIST_PDF_RE.search(u))
-        if host != base_host and not listish:
+        score = _pdf_list_score(u)
+        if host != base_host and score <= 0:
+            continue
+        if score <= 0:
             continue
         seen.add(u)
-        scored.append((0 if listish else 1, u))
+        scored.append((-score, u))
     scored.sort()
     return [u for _, u in scored[:limit]]
 
@@ -637,11 +688,14 @@ def official_attachments(text: str, base_url: str, limit: int = 2) -> list[str]:
 def should_follow_attachments(text: str, url: str) -> bool:
     """Suivre un PDF même si la page est déjà longue (leçon SCT : la liste
     est souvent le fichier lié, pas le HTML)."""
-    blob = f"{url} {text[:4000]}"
-    return (looks_like_port_catalog(text or "")
+    blob = (text or "")[:4000]
+    path = _pdf_path(url)
+    if (looks_like_port_catalog(text or "")
             or bool(_CATALOG_MARKERS_RE.search(blob))
-            or bool(_LIST_PDF_RE.search(url or ""))
-            or len(text or "") < 800)
+            or bool(_LIST_PDF_PATH_RE.search(path))):
+        return True
+    # Page sans marqueur catalogue, mais un PDF « liste / PPF » est déjà lié.
+    return bool(url and official_attachments(text or "", url, limit=1))
 
 
 async def _fetch_bytes(url: str, headers: dict, timeout: float):

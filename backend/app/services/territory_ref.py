@@ -54,16 +54,35 @@ def _territories() -> dict[str, dict]:
     return out
 
 
-def curated_td_urls(mrgid) -> list[dict]:
-    """Pages / PDF d'État curés pour CE polygone — pas l'agrégat souverain."""
+def _territory_for_mrgid(mrgid) -> dict:
     try:
         mid = int(mrgid or 0)
     except (TypeError, ValueError):
-        return []
+        return {}
     code = MRGID_TO_TERRITORY.get(mid)
     if not code:
+        return {}
+    return _territories().get(code) or {}
+
+
+def curated_landing_urls(mrgid) -> list[dict]:
+    """Page d'État de CE polygone — point d'entrée crawl, pas un PDF figé.
+
+    Les PDF liés changent (liste plaisance 2025 → 2026). On part de la page
+    et on suit les pièces jointes courantes. Jamais les ref_url des ports
+    (elles pinent un fichier périmé).
+    """
+    raw = (_territory_for_mrgid(mrgid).get("ref_url") or "").strip()
+    if not raw.startswith("http"):
         return []
-    terr = _territories().get(code) or {}
+    return [{"url": raw, "official": True, "from_arm": "landing"}]
+
+
+def curated_td_urls(mrgid) -> list[dict]:
+    """Pages / PDF d'État curés pour CE polygone — pas l'agrégat souverain."""
+    terr = _territory_for_mrgid(mrgid)
+    if not terr:
+        return []
     urls: list[str] = []
     for port in terr.get("ports_of_entry") or []:
         if isinstance(port, dict) and port.get("ref_url"):

@@ -485,7 +485,11 @@ class TestStructuredDiscovery:
             hints = poe.search_hint_queries(zone)
             assert hints, zone
             blob = " ".join(hints)
-            assert "customs act" in blob.lower() or "legislation" in blob.lower()
+            assert (
+                "customs act" in blob.lower()
+                or "legislation" in blob.lower()
+                or "plaisance" in blob.lower()
+            )
             assert "Papeete" not in blob and "Ensenada" not in blob and "Alofi" not in blob
         loc = poe.localized_query({"iso2": "ES", "name": "Spain"})
         assert loc and "habilitados" in loc
@@ -502,15 +506,22 @@ class TestStructuredDiscovery:
         }
         qh = poe.localized_query(hexagon)
         qm = poe.localized_query(mayotte)
-        assert qh and "hexagone" in qh and "Mayotte" not in qh
+        assert qh and "France" in qh and "Mayotte" not in qh
+        assert "hexagone" not in qh
+        assert "plaisance" in qh and "PPF" in qh
         assert qm and "Mayotte" in qm and "hexagone" not in qm
+        assert "PPF" not in qm
         hints_h = " ".join(poe.search_hint_queries(hexagon))
         hints_m = " ".join(poe.search_hint_queries(mayotte))
+        assert "plaisance" in hints_h and "PPF" in hints_h
         assert "Mayotte" in hints_m
         assert "Mayotte" not in hints_h
+        assert "PPF" not in hints_m
         assert "Papeete" not in hints_h and "Dzaoudzi" not in hints_m
         assert poe.zone_search_location(mayotte) == "YT"
         assert poe.zone_search_location(hexagon) == "FR"
+        assert poe.is_france_mainland_eez(hexagon)
+        assert not poe.is_france_mainland_eez(mayotte)
 
     def test_remember_seed_urls_without_port_names(self):
         exc = {"seed_urls": {}}
@@ -532,6 +543,36 @@ class TestStructuredDiscovery:
         atts = official_attachments(md, "https://www.gob.mx/page")
         assert atts and "Habilitados" in atts[0]
         assert should_follow_attachments(md, "https://www.gob.mx/page")
+
+    def test_france_landing_attachments_keep_plaisance_and_ppf(self):
+        from app.core.extract import official_attachments, should_follow_attachments
+        html = """
+        <a href="/sites/default/files/2023-01/25/liste-EM-Schengen.pdf">Schengen</a>
+        <a href="/sites/default/files/2022-07/11/carte-ppf-maritimes.pdf">old map</a>
+        <a href="https://www.douane.gouv.fr/sites/default/files/uploads/files/carte-PPF-maritimes.pdf">PPF</a>
+        <a href="/sites/default/files/2022-07/11/formulaire-immigration.pdf">form</a>
+        <a href="/sites/default/files/2026-07/06/Liste-ports-de-plaisance-eligibles.pdf">liste</a>
+        """
+        base = "https://www.douane.gouv.fr/particuliers/vous-naviguez/vous-naviguez-en-provenance"
+        atts = official_attachments(html, base)
+        blob = " ".join(atts)
+        assert "Liste-ports-de-plaisance-eligibles.pdf" in blob
+        assert "uploads/files/carte-PPF-maritimes.pdf" in blob
+        assert "formulaire-immigration" not in blob
+        assert "2022-07/11/carte-ppf" not in blob
+        assert should_follow_attachments(html, base)
+
+    def test_english_customs_home_attachments_are_not_the_list(self):
+        from app.core.extract import official_attachments, should_follow_attachments
+        html = """
+        <a href="/sites/default/files/2018-11/10-questions-before-exporting-en.pdf">export</a>
+        <a href="/sites/default/files/2019-08/leaflet-trouble-free-travel-french-customs-advices-en.pdf">leaflet</a>
+        <a href="/sites/default/files/2021-04/16/Brexit-How-to-make-a-successful-import.pdf">brexit</a>
+        """
+        base = "https://www.douane.gouv.fr/french-customs-information-available-english"
+        atts = official_attachments(html, base)
+        assert atts == []
+        assert should_follow_attachments(html, base) is False
 
     def test_seed_urls_point_to_official_pages_not_names(self):
         mx = poe.seed_url_candidates({"iso2": "MX"})
@@ -652,6 +693,55 @@ class TestSearchMergeAgreement:
         urls = [c["url"] for c in best]
         assert any(u.endswith("decreto.pdf") for u in urls)
         assert any("noticias" in u for u in urls)
+
+    def test_best_per_domain_keeps_france_list_and_ppf_pdfs(self):
+        cands = [
+            {"url": "http://www.douane.gouv.fr/french-customs-information-available-english",
+             "domain": "douane.gouv.fr", "score_serp": 0.9},
+            {"url": "https://www.douane.gouv.fr/particuliers/vous-naviguez/"
+                    "vous-naviguez-en-provenance-ou-destination-dun-pays-non-membre-de",
+             "domain": "douane.gouv.fr", "score_serp": 0.5},
+            {"url": "https://www.douane.gouv.fr/sites/default/files/2018-11/"
+                    "10-questions-before-exporting-en.pdf",
+             "domain": "douane.gouv.fr", "score_serp": 0.8},
+            {"url": "https://www.douane.gouv.fr/sites/default/files/2026-07/06/"
+                    "Liste-ports-de-plaisance-eligibles.pdf",
+             "domain": "douane.gouv.fr", "score_serp": 0.4},
+            {"url": "https://www.douane.gouv.fr/sites/default/files/uploads/files/"
+                    "carte-PPF-maritimes.pdf",
+             "domain": "douane.gouv.fr", "score_serp": 0.4},
+        ]
+        best = poe._best_per_domain(cands)
+        blob = " ".join(c["url"] for c in best)
+        assert "Liste-ports-de-plaisance-eligibles.pdf" in blob
+        assert "carte-PPF-maritimes.pdf" in blob
+        assert "exporting-en.pdf" not in blob
+        assert "information-available-english" not in blob
+
+    def test_site_list_pdf_query_is_scoped_to_mainland(self):
+        hexagon = {
+            "iso2": "FR", "sov_iso2": "FR", "name": "France", "sovereign": "France",
+            "pol_type": "200NM", "mrgid": 5677,
+        }
+        mayotte = {
+            "iso2": "YT", "sov_iso2": "FR", "name": "Mayotte", "sovereign": "France",
+            "pol_type": "Overlapping claim", "mrgid": 48944,
+        }
+        qh = poe.site_list_pdf_query("douane.gouv.fr", hexagon)
+        qm = poe.site_list_pdf_query("douane.gouv.fr", mayotte)
+        assert "filetype:pdf" in qh and "plaisance" in qh and "PPF" in qh
+        assert "filetype:pdf" in qm and "PPF" not in qm
+        assert "plaisance" not in qm
+
+    def test_landing_candidates_are_per_mrgid_not_iso2(self):
+        hexagon = poe.landing_url_candidates({"mrgid": 5677, "iso2": "FR"})
+        mayotte = poe.landing_url_candidates({"mrgid": 48944, "iso2": "YT", "sov_iso2": "FR"})
+        h = " ".join(c["url"] for c in hexagon)
+        m = " ".join(c["url"] for c in mayotte)
+        assert "vous-naviguez" in h
+        assert not any(c["url"].lower().endswith(".pdf") for c in hexagon)
+        assert "mayotte" in m.lower()
+        assert "vous-naviguez-en-provenance" not in m
 
     def test_agreement_high_overlap_not_discordant(self):
         shared = [
