@@ -5,10 +5,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.osm_seeds import (  # noqa: E402
-    COMMERCIAL_CATHAF, OSM_POE_TAGS, OSM_SEED_CLAUSES, TAGINFO_CATALOG,
-    _overpass_query, cache_doc_to_seed, element_coords, element_name,
-    has_commercial_category, how_many_ports, is_marina_only, is_seed_candidate,
-    osm_confidence, osm_role, osm_tag_list, taginfo_snapshot,
+    COMMERCIAL_CATHAF, MARINA_CONTROL_RADIUS_M, OSM_POE_TAGS, OSM_SEED_CLAUSES,
+    TAGINFO_CATALOG, _overpass_marina_near_control_query, _overpass_query,
+    cache_doc_to_seed, collect_control_points, element_coords, element_name,
+    enrich_elements, has_commercial_category, how_many_ports, is_control_facility,
+    is_marina_only, is_seed_candidate, nearest_control, osm_confidence, osm_role,
+    osm_tag_list, taginfo_snapshot,
 )
 
 
@@ -99,6 +101,30 @@ def test_cache_doc_to_seed_rejects_marina_only():
     }) is None
 
 
+def test_cache_doc_to_seed_keeps_marina_near_control():
+    seed = cache_doc_to_seed({
+        "osm_id": "node/1",
+        "name": "Yacht Club",
+        "lat": 1.0,
+        "lon": 2.0,
+        "tags": {
+            "leisure": "marina",
+            "seamark:type": "harbour",
+            "seamark:harbour:category": "marina",
+        },
+        "mrgid": 1,
+        "in_eez": True,
+        "osm_near_control": True,
+        "osm_customs": True,
+        "osm_border": False,
+    })
+    assert seed is not None
+    assert seed["osm_role"] == "marina_pleasure"
+    assert seed["osm_near_control"] is True
+    assert seed["osm_customs"] is True
+    assert "marina" in seed["osm_kinds"]
+
+
 def test_marina_only_vs_commercial():
     marina = {
         "leisure": "marina",
@@ -124,6 +150,10 @@ def test_marina_only_vs_commercial():
     assert is_seed_candidate(poe_marina) is True
     assert osm_role(poe_marina) == "poe_explicit"
 
+    assert is_seed_candidate(marina, near_control=True) is True
+    assert osm_role(marina, near_control=True) == "marina_pleasure"
+    assert osm_confidence("Yacht Club", marina, True, near_control=True) == 0.55
+
 
 def test_seed_candidates_from_wiki_tags():
     assert is_seed_candidate({"industrial": "port"}) is True
@@ -137,6 +167,7 @@ def test_seed_candidates_from_wiki_tags():
     assert is_seed_candidate({"amenity": "ferry_terminal"}) is False
     assert is_seed_candidate({"seamark:type": "berth"}) is False
     assert is_seed_candidate({"government": "customs"}) is False
+    assert is_seed_candidate({"government": "customs"}, near_control=True) is False
 
 
 def test_overpass_query_uses_wiki_tags_not_all_hbrfac():
@@ -155,6 +186,20 @@ def test_overpass_query_uses_wiki_tags_not_all_hbrfac():
     assert 'nwr["seamark:type"="harbour"](10.0000,-70.0000,20.0000,-60.0000);' not in q
     kinds = {c[0] for c in OSM_SEED_CLAUSES}
     assert "eq" in kinds and "regex" in kinds and "and" in kinds
+
+
+def test_overpass_marina_query_uses_around_control_not_world_dump():
+    q = _overpass_marina_near_control_query(10, -70, 20, -60)
+    assert f"(around.ctrl:{MARINA_CONTROL_RADIUS_M})" in q
+    assert 'nwr["leisure"="marina"]' in q
+    assert "->.ctrl" in q
+    assert '["government"' in q or "government" in q
+    assert '["amenity"="customs"]' in q
+    assert '["barrier"="border_control"]' in q
+    assert '["port_of_entry"="yes"]' in q
+    main = _overpass_query(10, -70, 20, -60)
+    assert "(around.ctrl:" not in main
+    assert 'nwr["leisure"="marina"]' not in main
 
 
 def test_catalog_covers_taginfo_layers():
@@ -208,3 +253,65 @@ def test_taginfo_snapshot_offline_uses_measured():
     assert snap["included_tags"]["port_of_entry=yes"] == 59
     assert snap["excluded_tags"]["leisure=marina"] == 31792
     assert "harbours" in snap["wiki"]
+    assert "≤ 800 m" in snap["note"]
+
+
+def _el(osm_id: str, lat: float, lon: float, tags: dict, name: str = ""):
+    typ, raw_id = osm_id.split("/", 1)
+    t = dict(tags)
+    if name:
+        t["name"] = name
+    return {"type": typ, "id": int(raw_id), "lat": lat, "lon": lon, "tags": t}
+
+
+def test_nearest_control_radius_is_800m_inclusive():
+    from app.core.geo import destination_point, haversine_km
+
+    clat, clon = 17.62, -63.25
+    controls = [(clat, clon, {"government": "customs"})]
+    close_lat, close_lon = destination_point(clat, clon, 0, 0.4)
+    assert haversine_km(clat, clon, close_lat, close_lon) <= 0.8
+    assert nearest_control(close_lat, close_lon, controls) is not None
+    far_lat, far_lon = destination_point(clat, clon, 0, 2.0)
+    assert haversine_km(clat, clon, far_lat, far_lon) > 0.8
+    assert nearest_control(far_lat, far_lon, controls) is None
+    edge_lat, edge_lon = destination_point(clat, clon, 90, 0.79)
+    hit = nearest_control(edge_lat, edge_lon, controls)
+    assert hit is not None
+    assert hit[0] <= 0.8
+    out_lat, out_lon = destination_point(clat, clon, 90, 0.81)
+    assert nearest_control(out_lat, out_lon, controls) is None
+
+
+def test_airport_customs_is_not_a_marina_anchor():
+    docs = [{
+        "lat": 17.62, "lon": -63.25,
+        "tags": {"amenity": "customs", "name": "Princess Juliana Airport Customs"},
+    }]
+    assert collect_control_points(docs) == []
+    assert is_control_facility({"amenity": "customs"}) is True
+
+
+def test_enrich_keeps_marina_near_customs_drops_far_and_office():
+    from app.core.geo import destination_point
+
+    clat, clon = 17.62, -63.25
+    near_lat, near_lon = destination_point(clat, clon, 0, 0.3)
+    far_lat, far_lon = destination_point(clat, clon, 0, 3.0)
+    elements = [
+        _el("node/1", clat, clon, {"government": "customs"}, "Fort Bay Customs"),
+        _el("node/2", near_lat, near_lon, {"leisure": "marina"}, "Yacht Basin"),
+        _el("node/3", far_lat, far_lon, {"leisure": "marina"}, "Remote Club"),
+        _el("way/4", 17.70, -63.20, {"harbour": "yes"}, "Ladder Bay"),
+    ]
+    docs = enrich_elements(elements, zones=[])
+    by_id = {d["osm_id"]: d for d in docs}
+    assert "node/1" not in by_id
+    assert "node/3" not in by_id
+    marina = by_id["node/2"]
+    assert marina["osm_role"] == "marina_pleasure"
+    assert marina["osm_near_control"] is True
+    assert marina["osm_customs"] is True
+    assert marina["osm_kinds"] == ["marina"]
+    assert by_id["way/4"]["osm_role"] == "harbour_facility"
+    assert by_id["way/4"]["osm_near_control"] is False

@@ -469,7 +469,7 @@ Canaris Top-Down 12 ZEE : **NO-GO** qualité (bruit, listing ~10 %, Venezuela à
 | **Bottom-Up = oui/non seulement** | `judge_one` répond pour **un** nom et **jette le reste** de la page d’État. Commentaires Word #3 / #20 : le BU **peut** découvrir une liste inconnue. Contrat §6.3 pas encore dans le code. |
 | **`remember_seed_urls` TD seulement** | Les URLs productives du BU ne sont pas mémorisées pour les autres ZEE du même pays. |
 | **WPI absent du code** | Spécifié ici comme contre-liste commerce/industriel. À brancher en signal Bottom-Up, comme OSM : jamais comme preuve PoE. |
-| **Marinas OSM exclues des graines** | `is_marina_only` écarte `leisure=marina` (31 792 objets). Or le livrable est bien la **plaisance**. Il faut réintroduire les marinas **comme candidats** (surtout près d’une douane / `border_control`), sans les promouvoir automatiquement. |
+| **Marinas OSM exclues des graines** | **Recalé (code + tests, pas de rebuild).** `leisure=marina` / CATHAF marina* = graine P si douane / `border_control` / `port_of_entry` à ≤ 800 m (`around.ctrl`, `osm_role=marina_pleasure`). Loin d’un contrôle : toujours exclu. **Ne pas** `POST /api/poe/seeds/build` ni Overpass refresh tant qu’un rebuild n’est pas décidé (4034 / 1280 / 781 figés). |
 | **Juge trop « port désigné »** | **Recalé (prompt + parse, pas WPI).** `JUDGE_SYSTEM` et TinyFish exigent **plaisance ou mixte** pour `is_poe=true` ; `kind=cargo` → `rejected`. Une marina avec clearance officielle n’est plus un faux automatique. Contre-liste WPI encore absente. |
 | **Top-Down encore bruyant** | Utile pour découvrir les **URLs officielles par ZEE** (2ᵉ livrable), pas pour remplir la carte d’un coup. |
 | **Promotion manuelle** | Pas d’UI de revue → carte. |
@@ -749,7 +749,7 @@ OSM n’a pas d’objet « Port d’Entrée plaisance ». On assemble des tags. 
 | `leisure=marina` | ~31 792 | **Plaisance.** Trop nombreux pour tout prendre. Graine P **seulement** si douane / border / `port_of_entry` à ≤ 800 m, ou déjà dans listing/v1. |
 | CATHAF `marina` / `marina_no_facilities` | ~21 800 | OpenSeaMap plaisance. Même règle que `leisure=marina`. |
 
-Aujourd’hui le code (`is_marina_only`) **écarte** les marinas des graines. Ce cahier inverse la logique : marina = candidat P, jamais PoE tout seul.
+Aujourd’hui le code **accepte** une marina comme graine P si un contrôle est à ≤ 800 m (`osm_near_control`) ; sinon elle reste exclue. Ce n’est **pas** un PoE tout seul. L’union Atlas n’est pas reconstruite tant qu’un rebuild n’est pas décidé.
 
 ### À ne pas prendre comme PoE
 

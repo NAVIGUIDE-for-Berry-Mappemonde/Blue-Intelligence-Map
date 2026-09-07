@@ -277,6 +277,55 @@ class TestOsmUnion:
         assert stats["osm_skipped_not_candidate"] == 1
         assert len(extracted) == 1
 
+    def test_marina_within_800m_of_customs_is_a_p_seed(self):
+        from app.core.geo import destination_point
+
+        extracted = union_extracted([("v1", [])])
+        clat, clon = 17.62, -63.25
+        mlat, mlon = destination_point(clat, clon, 0, 0.4)
+        marina = self._osm(26518, "Yacht Basin", mlat, mlon, "node/8")
+        marina["tags"] = {"leisure": "marina"}
+        customs = {
+            "osm_id": "node/90",
+            "name": "Fort Bay Customs",
+            "lat": clat,
+            "lon": clon,
+            "tags": {"government": "customs"},
+            "mrgid": 26518,
+            "iso": "BQ",
+            "zone_name": "Saba",
+            "in_eez": True,
+        }
+        stats = attach_osm_seeds(extracted, [marina, customs])
+        assert stats["osm_created"] == 1
+        assert extracted[0]["name"] == "Yacht Basin"
+        assert extracted[0]["osm_role"] == "marina_pleasure"
+        assert extracted[0]["osm_customs"] is True
+        assert "marina" in extracted[0]["osm_kinds"]
+        assert "osm:marina" in format_seed_line(extracted[0])
+        assert "osm:customs" in format_seed_line(extracted[0])
+
+    def test_marina_far_from_customs_is_not_a_seed(self):
+        from app.core.geo import destination_point
+
+        extracted = union_extracted([("v1", [])])
+        clat, clon = 17.62, -63.25
+        mlat, mlon = destination_point(clat, clon, 0, 3.0)
+        marina = self._osm(26518, "Remote Club", mlat, mlon, "node/8")
+        marina["tags"] = {"leisure": "marina"}
+        customs = {
+            "osm_id": "node/90",
+            "name": "Fort Bay Customs",
+            "lat": clat,
+            "lon": clon,
+            "tags": {"government": "customs"},
+            "mrgid": 26518,
+            "in_eez": True,
+        }
+        stats = attach_osm_seeds(extracted, [marina, customs])
+        assert stats["osm_created"] == 0
+        assert extracted == []
+
     def test_listing_intersects_new_osm_seed(self):
         extracted = union_extracted([("v1", [])])
         attach_osm_seeds(extracted, [

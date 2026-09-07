@@ -59,7 +59,7 @@ Un même toponyme dans deux ZEE reste deux graines.
 | Carte v1 | `poe_ports` | Nom, coords, URLs — **intacte** |
 | Runs mondiaux | `poe_run_ports` | Extraíts versionnés (5 runs 285 ZEE par défaut) |
 | Listing Noonsite | `backend/data/listing_control/all_countries.json` | Rôle `poe` ou `other`, souvent sans GPS |
-| OSM cache | Mongo `osm_port_seeds` | Havres commerciaux, `port_of_entry`, contrôles |
+| OSM cache | Mongo `osm_port_seeds` | Havres commerciaux, `port_of_entry`, contrôles ; marinas **seulement** si douane / border / PoE ≤ 800 m (`marina_pleasure`) |
 | Priors OSM | `backend/data/osm_port_priors.json` | Harbour / marina ≤ 800 m d’une douane ou `border_control` |
 
 Une graine vue seulement par v1, seulement par OSM ou seulement par le
