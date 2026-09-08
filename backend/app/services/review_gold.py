@@ -209,6 +209,8 @@ async def is_pre_gold_entity(db, kind: str, entity_id: str, doc: dict | None = N
         return is_pre_gold_project(doc)
     if kind == "marina":
         return is_pre_gold_marina(doc)
+    if kind == "capitainerie":
+        return True
     if kind == "eez":
         try:
             mid = int(entity_id)

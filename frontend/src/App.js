@@ -4,6 +4,7 @@ import { makeT } from "./i18n";
 import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
 import MarinasPanel from "./components/MarinasPanel";
+import CapitaineriesPanel from "./components/CapitaineriesPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
@@ -15,7 +16,7 @@ import ReportModal from "./components/ReportModal";
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects" || v === "formalities") return v;
+    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries") return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -39,6 +40,8 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [marinas, setMarinas] = useState({ type: "FeatureCollection", features: [] });
   const [flyToMarina, setFlyToMarina] = useState(null); // {id, lat, lon} used as a one-shot signal
+  const [capitaineries, setCapitaineries] = useState({ type: "FeatureCollection", features: [] });
+  const [flyToCapitainerie, setFlyToCapitainerie] = useState(null);
   // Phase 8 — Anchorages (mouillages) layer
   const [anchorages, setAnchorages] = useState({ type: "FeatureCollection", features: [] });
   const [showAnchorages, setShowAnchoragesRaw] = useState(() => {
@@ -117,6 +120,13 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
+  const fetchCapitaineries = useCallback(async () => {
+    try {
+      const { data } = await api.get("/capitaineries");
+      setCapitaineries(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
   // Phase 8 — anchorages fetcher
   const fetchAnchorages = useCallback(async () => {
     try {
@@ -143,9 +153,10 @@ export default function App() {
   const refreshMapData = useCallback(() => {
     fetchProjects(true);
     fetchMarinas();
+    fetchCapitaineries();
     fetchPoeZones();
     fetchPoePorts();
-  }, [fetchProjects, fetchMarinas, fetchPoeZones, fetchPoePorts]);
+  }, [fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoeZones, fetchPoePorts]);
 
   useEffect(() => {
     // Phase 3.1 — async enrichment via 202 + poll status.
@@ -267,6 +278,7 @@ export default function App() {
     fetchSettings();
     fetchCategories();
     fetchMarinas();
+    fetchCapitaineries();
     fetchAnchorages();
     fetchPoeZones();
     fetchPoePorts();
@@ -279,15 +291,20 @@ export default function App() {
     const c = setInterval(fetchCategories, 15000);
     // Marinas refresh only when a build might be running — a light 8s poll.
     const m = setInterval(unlessReview(fetchMarinas), 8000);
+    const cap = setInterval(unlessReview(fetchCapitaineries), 8000);
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(a); clearInterval(z); clearInterval(pp); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(z); clearInterval(pp); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
     setFlyToMarina({ id, lat, lon, ts: Date.now() });
+  }, []);
+
+  const handleFlyToCapitainerie = useCallback((id, lat, lon) => {
+    setFlyToCapitainerie({ id, lat, lon, ts: Date.now() });
   }, []);
 
   // Refactor 2026-06 — Handler wired to the sidebar rows and the EEZ polygons:
@@ -346,6 +363,14 @@ export default function App() {
             onRefreshAnchorages={fetchAnchorages}
           />
         )}
+        {view !== "review" && mode === "capitaineries" && (
+          <CapitaineriesPanel
+            t={t}
+            capitaineries={capitaineries}
+            onFlyTo={handleFlyToCapitainerie}
+            onRefresh={fetchCapitaineries}
+          />
+        )}
         {view !== "review" && mode === "formalities" && (
           <FormalitiesPanel
             t={t}
@@ -364,6 +389,8 @@ export default function App() {
               mode={mode}
               projects={projects}
               marinas={marinas}
+              capitaineries={capitaineries}
+              flyToCapitainerie={flyToCapitainerie}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
               poeZones={poeZones.items}
@@ -393,6 +420,7 @@ export default function App() {
             // dataset (never both, to avoid unnecessary re-fetches).
             onImported={(importedMode) => {
               if (importedMode === "marinas") fetchMarinas();
+              else if (importedMode === "capitaineries") fetchCapitaineries();
               else fetchProjects(true);
             }}
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />

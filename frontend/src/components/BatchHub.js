@@ -1,5 +1,6 @@
 import FormalitiesCard from "./audit/FormalitiesCard";
 import MarinasCard from "./audit/MarinasCard";
+import CapitaineriesCard from "./audit/CapitaineriesCard";
 import ProjectsCard from "./audit/ProjectsCard";
 
 /**
@@ -19,6 +20,9 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
         anchoragesCount={anchoragesCount}
       />
     );
+  }
+  if (mode === "capitaineries") {
+    return <CapitaineriesCard t={t} />;
   }
   if (mode === "formalities") {
     return <FormalitiesCard t={t} onPoeRefresh={onPoeRefresh} />;

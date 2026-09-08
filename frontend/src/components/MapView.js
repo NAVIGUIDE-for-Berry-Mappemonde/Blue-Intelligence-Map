@@ -5,6 +5,7 @@ import "leaflet.markercluster";
 import { FALLBACK_COLORS, TILE_URLS, zoneStyle } from "./map/constants";
 import { zonePopupHtml } from "./map/zonePopup";
 import useAnchoragesLayer from "./map/useAnchoragesLayer";
+import useCapitaineriesLayer from "./map/useCapitaineriesLayer";
 import useFormalitiesLayers from "./map/useFormalitiesLayers";
 import useMarinasLayer from "./map/useMarinasLayer";
 import useProjectsLayer from "./map/useProjectsLayer";
@@ -21,6 +22,8 @@ export default function MapView({
   mode = "projects",
   projects,
   marinas,
+  capitaineries,
+  flyToCapitainerie,
   anchorages,
   showAnchorages = true,
   poeZones,
@@ -44,6 +47,8 @@ export default function MapView({
   const mapObj = useRef(null);
   const clusterRef = useRef(null);
   const marinaClusterRef = useRef(null);
+  const capitainerieClusterRef = useRef(null);
+  const capitainerieMarkersById = useRef(new Map());
   const anchorClusterRef = useRef(null);
   const formalitiesClusterRef = useRef(null);
   const marinaMarkersById = useRef(new Map());
@@ -133,6 +138,19 @@ export default function MapView({
       }),
     });
     marinaClusterRef.current = marinaCluster;
+    const capitainerieCluster = L.markerClusterGroup({
+      maxClusterRadius: 40,
+      chunkedLoading: true,
+      chunkInterval: 100,
+      removeOutsideVisibleBounds: true,
+      animate: false,
+      iconCreateFunction: (c) => L.divIcon({
+        html: `<div class="bi-cluster-capitainerie" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
+        className: "",
+        iconSize: [32, 32],
+      }),
+    });
+    capitainerieClusterRef.current = capitainerieCluster;
     // Anchorages cluster (teal), shown alongside marinas in marinas mode
     const anchorCluster = L.markerClusterGroup({
       maxClusterRadius: 40,
@@ -185,6 +203,7 @@ export default function MapView({
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
     // if the user is starting in another mode.
     if (mode === "marinas") map.addLayer(marinaCluster);
+    else if (mode === "capitaineries") map.addLayer(capitainerieCluster);
     else if (mode === "formalities") map.addLayer(formalitiesGroup);
     else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
@@ -228,7 +247,7 @@ export default function MapView({
     // Debug hook — expose the map + all clusters on window for headless
     // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster };
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster };
     }
     // eslint-disable-next-line
   }, [minZoom]);
@@ -240,6 +259,10 @@ export default function MapView({
   // ---------- Couches déléguées aux hooks dédiés ----------
   useRouteLayer(mapObj, tRef, t);
   useMarinasLayer({ mapObj, marinaClusterRef, marinaMarkersById, marinas, tRef });
+  useCapitaineriesLayer({
+    mapObj, clusterRef: capitainerieClusterRef, markersById: capitainerieMarkersById,
+    capitaineries, tRef,
+  });
   useAnchoragesLayer({ mapObj, anchorClusterRef, anchorages, tRef });
   useFormalitiesLayers({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
@@ -256,17 +279,21 @@ export default function MapView({
     const map = mapObj.current;
     const proj = clusterRef.current;
     const mar = marinaClusterRef.current;
+    const cap = capitainerieClusterRef.current;
     const anch = anchorClusterRef.current;
     const formCluster = formalitiesClusterRef.current;
     if (!map || !proj || !mar || !formCluster) return;
     // Detach everything first, then attach only the layer(s) for the current mode.
     if (map.hasLayer(proj)) map.removeLayer(proj);
     if (map.hasLayer(mar)) map.removeLayer(mar);
+    if (cap && map.hasLayer(cap)) map.removeLayer(cap);
     if (anch && map.hasLayer(anch)) map.removeLayer(anch);
     if (map.hasLayer(formCluster)) map.removeLayer(formCluster);
     if (mode === "marinas") {
       map.addLayer(mar);
       if (anch && showAnchorages) map.addLayer(anch);
+    } else if (mode === "capitaineries") {
+      if (cap) map.addLayer(cap);
     } else if (mode === "formalities") {
       map.addLayer(formCluster);
     } else {
@@ -284,6 +311,15 @@ export default function MapView({
     map.flyTo([flyToMarina.lat, flyToMarina.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
     setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToMarina]);
+
+  useEffect(() => {
+    if (!flyToCapitainerie) return;
+    const map = mapObj.current;
+    if (!map) return;
+    const m = capitainerieMarkersById.current.get(flyToCapitainerie.id);
+    map.flyTo([flyToCapitainerie.lat, flyToCapitainerie.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
+    setTimeout(() => { if (m) m.openPopup(); }, 1100);
+  }, [flyToCapitainerie]);
 
   useEffect(() => {
     if (!flyToPoe) return;

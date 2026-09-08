@@ -4,11 +4,13 @@ import api from "../api";
 import ZoneFiche from "./ZoneFiche";
 import ProjectFiche from "./review/ProjectFiche";
 import MarinaFiche from "./review/MarinaFiche";
+import CapitainerieFiche from "./review/CapitainerieFiche";
 
 const PAGE = 500;
 
 function kindFromMode(mode) {
   if (mode === "marinas") return "marina";
+  if (mode === "capitaineries") return "capitainerie";
   if (mode === "formalities") return "eez";
   return "project";
 }
@@ -16,6 +18,7 @@ function kindFromMode(mode) {
 function kindLabelKey(kind) {
   if (kind === "eez") return "reviewKindEez";
   if (kind === "marina") return "reviewKindMarina";
+  if (kind === "capitainerie") return "reviewKindCapitainerie";
   return "reviewKindProject";
 }
 
@@ -258,6 +261,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     }
     if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
     if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
+    if (kind === "capitainerie") return <CapitainerieFiche t={t} fiche={fiche} />;
     return <MarinaFiche t={t} fiche={fiche} />;
   };
 
@@ -412,6 +416,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {saving ? t("reviewSaving") : t("reviewSave")}
             </button>
+            {kind !== "capitainerie" && (
             <button
               type="button"
               data-testid="review-gold"
@@ -426,6 +431,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {t("reviewGold")}
             </button>
+            )}
           </div>
         </div>
       </div>

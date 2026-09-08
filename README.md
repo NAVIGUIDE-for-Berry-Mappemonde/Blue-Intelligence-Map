@@ -4,12 +4,13 @@
 
 Application publiée sur **[blueintelligence.online](https://blueintelligence.online)** — un projet [Berry-Mappemonde](https://berrymappemonde.org).
 
-## Les trois modes
+## Les quatre modes
 
 | Mode | Couleur | Contenu |
 |------|---------|---------|
 | **Projets** | cyan | ~4 500 projets de conservation marine découverts et extraits automatiquement depuis les portails des grandes fondations (swarm d'agents web + LLM) |
 | **Marinas** | rouge | Annuaire mondial `leisure=marina` (OpenStreetMap), identité `osm_id`, lien Google Maps déterministe. Point plus gros si une fiche `/maps/place/` a été trouvée (TinyFish Search / tag OSM) — on n'en filtre aucune. Les mouillages restent sur le corridor de la route. Hors Formalités / PoE. |
+| **Capitaineries** | ciel | Bureaux `office=harbour_master` OSM (monde) + overlay SHOM CATSCF=6 (France). Téléphone et VHF lus dans les tags, puis les sites officiels. Pas de rattachement aux marinas. |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 
 S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
@@ -128,9 +129,10 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 - `GET /api/projects` · `GET /api/funders` · `GET /api/categories` — mode Projets
 - `POST /api/swarm/deploy` · `GET /api/swarm/status` — pipeline de découverte
 - `GET /api/marinas` · `POST /api/marinas/build` · `POST /api/marinas/enrich-batch` — mode Marinas
+- `GET /api/capitaineries` · `POST /api/capitaineries/build` · `POST /api/capitaineries/enrich-batch` — mode Capitaineries
 - `GET /api/poe/zones` · `GET /api/poe/ports` — mode Formalités (`POST …/generate` et `generate-batch` : 410)
 - `POST /api/poe/runs` · `GET /api/poe/runs/{id}/status` · `GET /api/poe/runs/{id}/diff` · `GET /api/poe/runs/{id}/report` — runs versionnés PoE
-- `GET /api/export/{geojson|marinas.geojson|poe.geojson}` — exports GeoJSON
+- `GET /api/export/{geojson|marinas.geojson|capitaineries.geojson|poe.geojson}` — exports GeoJSON
 
 ## Données initiales (seed)
 

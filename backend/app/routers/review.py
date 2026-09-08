@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api")
 
 def _kind_or_400(kind: str) -> str:
     if kind not in review_queue.KINDS:
-        raise HTTPException(400, "kind must be project|eez|poe|marina")
+        raise HTTPException(400, "kind must be project|eez|poe|marina|capitainerie")
     return kind
 
 
