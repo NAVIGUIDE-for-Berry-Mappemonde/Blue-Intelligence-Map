@@ -10,9 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core.tasks import BuildState
 from app.services import capitainerie_world as cw
 from app.services.capitainerie_enrich import (
+    allow_web_lookup,
     enrich_capitainerie,
     merge_contact_payload,
     needs_website_enrich,
+    rank_enrich_candidates,
 )
 
 
@@ -291,3 +293,24 @@ def test_enrich_tags_skip_website():
     assert result["enrichment_source"] == "tags"
     assert result["enriched"] is True
     assert result["_tinyfish_attempted"] is False
+
+
+def test_rank_enrich_prefers_official_website():
+    anon = {"_id": "a", "name": "", "lat": 1, "lon": 1}
+    named = {"_id": "b", "name": "Bureau du port", "lat": 1, "lon": 1}
+    site = {"_id": "c", "name": "Capitainerie", "website": "https://port.example/", "lat": 1, "lon": 1}
+    ordered = rank_enrich_candidates([anon, named, site])
+    assert [d["_id"] for d in ordered] == ["c", "b", "a"]
+    assert allow_web_lookup(site) is True
+    assert allow_web_lookup(named) is True
+    assert allow_web_lookup(anon) is False
+
+
+def test_enrich_unnamed_without_site_skips_web():
+    doc = {"_id": "node/9", "name": "", "lat": 46.15, "lon": -1.16, "tags": {}}
+    result = asyncio.run(enrich_capitainerie(
+        doc, openrouter_key="sk-or-fake", tinyfish_key="tf-fake",
+    ))
+    assert result["_tinyfish_attempted"] is False
+    assert result["enrichment_source"] is None
+    assert result["enriched"] is False

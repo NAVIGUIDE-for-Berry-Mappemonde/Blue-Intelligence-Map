@@ -75,6 +75,24 @@ def needs_website_enrich(doc: dict) -> bool:
     return not (phone and vhf)
 
 
+def allow_web_lookup(doc: dict) -> bool:
+    """Site officiel, ou au moins un nom pour une recherche ciblée. Pas de DDG générique."""
+    if official_website(doc):
+        return True
+    if (doc.get("tags") or {}).get("website"):
+        return True
+    return bool(str(doc.get("name") or "").strip())
+
+
+def rank_enrich_candidates(docs: list[dict]) -> list[dict]:
+    """Site officiel d'abord, puis nommées — évite les bureaux anonymes en tête."""
+    def key(d: dict):
+        site = 1 if official_website(d) else 0
+        named = 1 if str(d.get("name") or "").strip() else 0
+        return (-site, -named, str(d.get("name") or "").lower())
+    return sorted(docs, key=key)
+
+
 async def enrich_via_openrouter(
     doc: dict,
     or_key: str,
@@ -89,7 +107,12 @@ async def enrich_via_openrouter(
             return None
         url = official_website(doc) or (doc.get("tags") or {}).get("website")
         if not url:
-            q = f"{doc.get('name') or 'capitainerie'} harbour master VHF telephone"
+            name = str(doc.get("name") or "").strip()
+            if not name:
+                if logger:
+                    logger("[openrouter] no website and no name — skip DDG")
+                return None
+            q = f"{name} harbour master capitainerie VHF telephone"
             hits = await duckduckgo_html_search(q, client)
             url = hits[0]["url"] if hits else None
             if url and logger:
@@ -239,6 +262,18 @@ async def enrich_capitainerie(
             "enriched": True,
             "enrichment_source": "tags",
             "enriched_at": now,
+            "_tinyfish_attempted": False,
+        }
+
+    if not allow_web_lookup(working):
+        if logger:
+            logger("no official site and no name — skip web lookup")
+        filled = any(from_tags.get(k) for k in ENRICH_FIELDS)
+        return {
+            **from_tags,
+            "enriched": bool(filled),
+            "enrichment_source": "tags" if filled else None,
+            "enriched_at": now if filled else None,
             "_tinyfish_attempted": False,
         }
 

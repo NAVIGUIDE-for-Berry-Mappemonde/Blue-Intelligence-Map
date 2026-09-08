@@ -12,7 +12,11 @@ from pydantic import BaseModel
 from app.core.llm import get_llm_key
 from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
 from app.db import db, get_settings
-from app.services.capitainerie_enrich import ENRICH_FIELDS, enrich_capitainerie
+from app.services.capitainerie_enrich import (
+    ENRICH_FIELDS,
+    enrich_capitainerie,
+    rank_enrich_candidates,
+)
 from app.services.capitainerie_world import (
     SLIM_PROJECTION,
     build_world_capitaineries as run_build,
@@ -318,10 +322,10 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
         q["$or"] = [{"enriched": {"$ne": True}}, {"enriched": False}]
         q["enrich_attempts"] = {"$not": {"$gte": 2}}
 
+    pool = await db.capitaineries.find(q).to_list(None)
+    ranked = rank_enrich_candidates(pool)
     limit = int(body.limit or 0)
-    candidates = await db.capitaineries.find(q).sort("name", 1).to_list(
-        limit if limit > 0 else None
-    )
+    candidates = ranked[:limit] if limit > 0 else ranked
 
     ENRICH_BATCH_STATE.running = True
     ENRICH_BATCH_STATE.started_at = time.time()
