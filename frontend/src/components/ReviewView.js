@@ -49,6 +49,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setFilter("");
     setQ("");
     setPreGold(true);
+    if (mode === "formalities") setRunId("published");
   }, [mode]);
 
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   }, [filter]);
 
   const current = queue[index] || null;
+  const effectiveRunId = kind === "eez" ? "published" : runId;
 
   const persistIfDirty = useCallback(async () => {
     const id = currentIdRef.current;
@@ -68,7 +70,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     try {
       setSaving(true);
       const { data } = await api.put("/review/comment", {
-        kind, run_id: runId, id, comment: commentRef.current,
+        kind, run_id: effectiveRunId, id, comment: commentRef.current,
       });
       dirtyRef.current = false;
       setSavedAt(data.updated_at || new Date().toISOString());
@@ -80,7 +82,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     } finally {
       setSaving(false);
     }
-  }, [kind, runId]);
+  }, [kind, effectiveRunId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +106,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     (async () => {
       try {
         const { data } = await api.get("/review/queue", {
-          params: { kind, run_id: runId, offset, limit: PAGE, q, pre_gold: preGold },
+          params: { kind, run_id: effectiveRunId, offset, limit: PAGE, q, pre_gold: preGold },
         });
         if (cancelled) return;
         const items = data.items || [];
@@ -123,14 +125,14 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, runId, offset, q, preGold]);
+  }, [kind, effectiveRunId, offset, q, preGold]);
 
   useEffect(() => {
     setFiche(null);
     setComment("");
     setSavedAt(null);
     setGoldOn(false);
-  }, [kind, runId, preGold]);
+  }, [kind, effectiveRunId, preGold]);
 
   useEffect(() => {
     commentRef.current = comment;
@@ -151,7 +153,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     (async () => {
       try {
         const { data } = await api.get("/review/fiche", {
-          params: { kind, run_id: runId, id: current.id },
+          params: { kind, run_id: effectiveRunId, id: current.id },
         });
         if (cancelled) return;
         setFiche(data.fiche);
@@ -166,7 +168,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, runId, current?.id]);
+  }, [kind, effectiveRunId, current?.id]);
 
   const go = useCallback(async (delta) => {
     if (!total) return;
@@ -214,7 +216,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     try {
       setSaving(true);
       const { data } = await api.put("/review/comment", {
-        kind, run_id: runId, id: current.id, comment,
+        kind, run_id: effectiveRunId, id: current.id, comment,
       });
       dirtyRef.current = false;
       setSavedAt(data.updated_at || new Date().toISOString());
@@ -233,7 +235,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     try {
       setGoldBusy(true);
       const { data } = await api.put("/review/gold", {
-        kind, run_id: runId, id: current.id,
+        kind, run_id: effectiveRunId, id: current.id,
       });
       const pressed = Boolean(data.gold_on);
       setGoldOn(pressed);
@@ -334,7 +336,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               {t(kindLabelKey(kind))}
             </span>
           </h2>
-          {kind !== "marina" && (
+          {kind === "project" && (
             <select
               data-testid="review-run-select"
               value={runId}
@@ -371,8 +373,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             {t("reviewNext")} <ChevronRight size={13} />
           </button>
         </div>
-        <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line">
-          {t("reviewHint")}
+        <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line" data-testid="review-hint">
+          {t(kind === "eez" ? "reviewHintFormalities" : "reviewHint")}
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
           {queue.length === 0 && !loading ? (

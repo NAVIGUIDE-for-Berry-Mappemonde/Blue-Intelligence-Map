@@ -19,6 +19,20 @@ function pathHint(url) {
   }
 }
 
+function tdListOf(fiche) {
+  const list = (fiche?.sources_td || []).filter((rec) => rec?.url);
+  if (list.length) return list;
+  if (fiche?.url_td?.url) return [fiche.url_td];
+  return [];
+}
+
+function buListOf(port) {
+  const list = (port?.urls_bu || []).filter((rec) => rec?.url);
+  if (list.length) return list;
+  const href = buUrlOf(port);
+  return href ? [{ url: href }] : [];
+}
+
 function tdUrlOf(fiche) {
   return fiche?.url_td?.url || (fiche?.sources_td || [])[0]?.url || "";
 }
@@ -28,10 +42,47 @@ function buUrlOf(port) {
   return port?.url_bu?.url || (port?.source_urls || [])[0] || "";
 }
 
+function TdRow({ rec, testId, pathTestId }) {
+  const href = rec?.url || "";
+  const both = rec?.from_arm === "both";
+  return (
+    <div className="flex items-center justify-between gap-2 min-w-0">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        data-testid={testId}
+        className="min-w-0 text-[11px] text-accent hover:text-white font-medium"
+        title={href}
+      >
+        <span className="block truncate">{hostOf(href)}</span>
+        {pathHint(href) ? (
+          <span
+            className="block font-mono text-[10px] text-slate-400 truncate"
+            data-testid={pathTestId}
+          >
+            {pathHint(href)}
+          </span>
+        ) : null}
+      </a>
+      <div className="flex items-center gap-1 shrink-0">
+        {both && (
+          <span className="font-mono text-[8px] uppercase tracking-widest text-bio border border-bio/40 px-1 py-px rounded-sm">
+            {rec.bothLabel}
+          </span>
+        )}
+        <a href={href} target="_blank" rel="noreferrer" className="text-accent hover:text-white">
+          <ExternalLink size={11} />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Fiche de revue d'un polygone VLIZ — même geste que ProjectList :
- * une URL TD (liste officielle) + chaque PoE avec une URL BU.
- * Pas de bouton Générer.
+ * Review (variant=page) : toutes les TD + toutes les BU par port.
+ * Carte (sidebar) : une URL TD + une BU par PoE. Pas de bouton Générer.
  */
 export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "sidebar" }) {
   if (loading) {
@@ -43,8 +94,10 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
   }
   if (!fiche) return null;
   const ports = fiche.ports || [];
+  const tdSources = tdListOf(fiche);
   const td = tdUrlOf(fiche);
   const tdBoth = fiche?.url_td?.from_arm === "both" || (fiche?.sources_td || [])[0]?.from_arm === "both";
+  const showAllTd = variant === "page";
   const portsMax = variant === "page" ? "max-h-[45vh]" : "max-h-56";
   const unclos = fiche.unclos && typeof fiche.unclos === "object" ? fiche.unclos : null;
   const unclosKey = unclos?.code ? `poeUnclos_${unclos.code}` : "";
@@ -67,13 +120,37 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
         {zoneSubtitle(fiche) ? (
           <p className="font-mono text-[10px] text-slate-500 mt-0.5">{zoneSubtitle(fiche)}</p>
         ) : null}
+        {variant === "page" && fiche.fiche_scope === "union" ? (
+          <p className="font-mono text-[10px] text-slate-500 mt-1" data-testid="poe-fiche-union-hint">
+            {t("reviewUnionHint")}
+          </p>
+        ) : null}
       </div>
 
       <div data-testid="poe-fiche-sources-td">
         <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1.5">
           {t("poeSourcesTd")}
+          {showAllTd && tdSources.length > 1 ? (
+            <span className="text-accent"> ({tdSources.length})</span>
+          ) : null}
         </p>
-        {td ? (
+        {showAllTd ? (
+          tdSources.length ? (
+            <ul className="space-y-1.5" data-testid="poe-fiche-td-list">
+              {tdSources.map((rec, i) => (
+                <li key={rec.url}>
+                  <TdRow
+                    rec={{ ...rec, bothLabel: t("poeSourceBoth") }}
+                    testId={i === 0 ? "poe-fiche-td-url" : `poe-fiche-td-url-${i}`}
+                    pathTestId={i === 0 ? "poe-fiche-td-path" : undefined}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[11px] text-slate-500 leading-relaxed">{t("poeFicheEmptyTd")}</p>
+          )
+        ) : td ? (
           <div className="flex items-center justify-between gap-2 min-w-0">
             <a
               href={td}
@@ -116,6 +193,7 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
           <div className={`divide-y divide-line/60 border border-line/60 rounded-sm ${portsMax} overflow-y-auto`}>
             {ports.map((p) => {
               const href = buUrlOf(p);
+              const bus = showAllTd ? buListOf(p) : (href ? [{ url: href }] : []);
               const canFly = p.lat != null && p.lon != null && onFlyToPort;
               return (
                 <div
@@ -137,13 +215,31 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
                     <span className="font-mono text-[10px] text-slate-500 truncate">
                       {p.confidence != null ? `${t("poeConfidence")} ${p.confidence}` : (p.city || "")}
                     </span>
-                    {href ? (
-                      <a href={href} target="_blank" rel="noreferrer"
-                        className="text-accent hover:text-white shrink-0"
-                        data-testid="poe-fiche-port-bu"
-                        title={href}>
-                        <ExternalLink size={11} />
-                      </a>
+                    {bus.length ? (
+                      <div
+                        className="flex flex-wrap items-center justify-end gap-1.5 min-w-0"
+                        data-testid="poe-fiche-port-bu-list"
+                      >
+                        {bus.map((rec, i) => (
+                          <a
+                            key={rec.url}
+                            href={rec.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent hover:text-white shrink-0"
+                            data-testid={i === 0 ? "poe-fiche-port-bu" : `poe-fiche-port-bu-${i}`}
+                            title={rec.url}
+                          >
+                            {showAllTd && bus.length > 1 ? (
+                              <span className="font-mono text-[9px] underline decoration-accent/40">
+                                {hostOf(rec.url)}
+                              </span>
+                            ) : (
+                              <ExternalLink size={11} />
+                            )}
+                          </a>
+                        ))}
+                      </div>
                     ) : (
                       <span className="font-mono text-[9px] text-slate-600" data-testid="poe-fiche-port-bu-empty">—</span>
                     )}
