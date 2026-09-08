@@ -42,22 +42,24 @@ pip install --no-deps "emergentintegrations==0.2.0" --extra-index-url "$EMERGENT
 deactivate
 
 echo "==> [3/4] backend/.env"
+# Squelette localhost seulement si le fichier n'existe pas. Puis on aligne
+# MONGO_URL / clés API sur les secrets du process (Atlas, NIM) sans les logger.
 if [ ! -f "$REPO/backend/.env" ]; then
   cat > "$REPO/backend/.env" <<EOF
 MONGO_URL=mongodb://localhost:27017
-DB_NAME=blueintel_db
+DB_NAME=${DB_NAME:-}
 CORS_ORIGINS=*
-GEONAMES_USERNAME=BerryMappemonde
+GEONAMES_USERNAME=${GEONAMES_USERNAME:-}
 # Optional LLM / scraping keys (cascade falls back gracefully when empty).
 EMERGENT_LLM_KEY=${EMERGENT_LLM_KEY:-}
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
 TINYFISH_API_KEY=${TINYFISH_API_KEY:-}
 GEMINI_API_KEY=${GEMINI_API_KEY:-}
+NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
 EOF
-  echo "    wrote backend/.env"
-else
-  echo "    backend/.env already present — leaving it untouched"
+  echo "    wrote backend/.env skeleton"
 fi
+python3 "$REPO/backend/scripts/sync_backend_env.py" --env-file "$REPO/backend/.env"
 
 echo "==> [4/4] Frontend (npm)"
 if [ ! -f "$REPO/frontend/.env" ]; then

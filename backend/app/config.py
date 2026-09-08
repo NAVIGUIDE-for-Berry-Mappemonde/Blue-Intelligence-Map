@@ -19,8 +19,9 @@ ROUTE_FILE = DATA_DIR / "route.geojson"
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 
-# Complétions : NVIDIA NIM si NVIDIA_API_KEY (Laguna / Muse / Kimi).
+# Complétions : NVIDIA NIM si NVIDIA_API_KEY (Muse / Kimi ; Laguna hors service).
 # OpenRouter reste pour la recherche web (:online) et le fallback.
+# load_dotenv n'écrase pas un MONGO_URL déjà présent dans le process.
 DEFAULT_SETTINGS = {
     "_id": "global",
     "nvidia_api_key": "",
