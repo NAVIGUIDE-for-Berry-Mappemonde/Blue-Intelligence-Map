@@ -67,15 +67,29 @@ def test_score_rejects_manager_homepage():
         "https://parc-marin.fr/equipe", "https://parc-marin.fr") == 0
 
 
-def test_search_query_scopes_to_manager_host():
+def test_search_query_is_open_web():
     q, host = amp_visit.search_query({
         "name": "Cap de Creus",
         "country": "Spain",
         "manager_url": "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici",
     })
     assert host == "parcsnaturals.gencat.cat"
-    assert q.startswith("site:parcsnaturals.gencat.cat")
+    assert "site:" not in q
     assert "Cap de Creus" in q
+    assert "visit" in q
+
+
+def test_search_queries_prefer_same_host_then_open_web():
+    scoped, open_q = amp_visit.search_queries({
+        "name": "Cap de Creus",
+        "country": "Spain",
+        "manager_url": "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici",
+    })
+    assert scoped[1] == "parcsnaturals.gencat.cat"
+    assert scoped[0].startswith("site:parcsnaturals.gencat.cat")
+    assert open_q[1] is None
+    assert "site:" not in open_q[0]
+    assert "Cap de Creus" in open_q[0]
 
 
 def test_score_prefers_same_domain_procedure_page():
@@ -176,6 +190,35 @@ def test_discover_fetch_then_search_and_keeps_urls_apart():
     assert out["from_fetch"] == 1
     assert out["from_search"] == 1
     assert out["found"] == 3
+
+
+def test_discover_search_accepts_offhost_visit_page():
+    docs = [{
+        "_id": "F", "site_id": "F", "name": "Parc F",
+        "manager_url": "https://parc-f.fr",
+        "other_helpful_links": "",
+        "visit_url": None, "visit_url_status": "none",
+    }]
+    db = _FakeDB(docs)
+    state = TaskState()
+
+    async def fetch_many(urls):
+        return {u: {"links": [], "text": ""} for u in urls}
+
+    async def search(query, include_domains=None):
+        if include_domains:
+            return []
+        return [{"url": "https://ofb.gouv.fr/visite-parc-f", "title": "Visite Parc F"}]
+
+    out = asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=False,
+        fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
+    ))
+    assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-parc-f"
+    assert db.amp_sites.docs[0]["visit_url_source"] == "tinyfish_search"
+    assert not amp_svc.is_manager_suburl(
+        db.amp_sites.docs[0]["visit_url"], "https://parc-f.fr")
+    assert out["from_search"] == 1
 
 
 def test_discover_without_tinyfish_key_keeps_heuristic_only():

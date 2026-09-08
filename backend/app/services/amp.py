@@ -218,7 +218,8 @@ def pick_visit_url(
 ) -> tuple[str | None, str]:
     """Choisit une URL de visite distincte du gestionnaire.
 
-    Privilegie une sous-URL du même hôte déjà présente dans ProtectedSeas.
+    Privilegie une sous-URL du même hôte si elle existe, mais accepte
+    un autre domaine déjà présent dans ProtectedSeas ou découvert.
     Retourne ``(url, status)``. ``status`` ∈ VISIT_STATUSES.
     """
     if discovered:
@@ -254,12 +255,8 @@ def pick_visit_url(
         _consider(raw, curated=True, count_manager_copy=True)
     for blob in extra_blobs or []:
         for raw in extract_urls(blob):
-            # Sous-URL du Website PS = curée ; le 2e label (OFB, etc.) reste strict.
-            _consider(
-                raw,
-                curated=is_manager_suburl(raw, manager_url),
-                count_manager_copy=False,
-            )
+            # Tout lien distinct déjà écrit par ProtectedSeas compte, même hors hôte.
+            _consider(raw, curated=True, count_manager_copy=False)
 
     if ranked:
         ranked.sort(key=lambda item: (-item[0], -len(urlparse(item[1]).path or "")))

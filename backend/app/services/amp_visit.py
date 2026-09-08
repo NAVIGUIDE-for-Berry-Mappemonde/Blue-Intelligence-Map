@@ -84,17 +84,28 @@ def urls_from_fetch_record(rec: dict | None) -> list[str]:
 
 
 def search_query(doc: dict) -> tuple[str, str | None]:
+    """Requête ouverte : la page visite n'est pas toujours sur l'hôte gestionnaire."""
+    name = (doc.get("name") or "").strip()
+    country = (doc.get("country") or "").strip()
+    q = f'"{name}" {country} visit permit anchoring mooring plaisance réglementation'.strip()
+    return q, manager_host(doc.get("manager_url"))
+
+
+def search_queries(doc: dict) -> list[tuple[str, str | None]]:
+    """site:hôte d'abord (bonus), puis recherche ouverte si besoin."""
     name = (doc.get("name") or "").strip()
     country = (doc.get("country") or "").strip()
     host = manager_host(doc.get("manager_url"))
+    open_q, _ = search_query(doc)
+    out: list[tuple[str, str | None]] = []
     if host:
-        q = (
+        scoped = (
             f"site:{host} (visite OR visit OR plaisance OR mouillage OR permit "
             f"OR réglementation OR anchoring) \"{name}\""
         ).strip()
-    else:
-        q = f'"{name}" {country} visit permit anchoring mooring plaisance réglementation'.strip()
-    return q, host
+        out.append((scoped, host))
+    out.append((open_q, None))
+    return out
 
 
 def _needs_visit(doc: dict) -> bool:
@@ -255,20 +266,23 @@ async def discover_visit_urls(
                         break
                     if not _needs_visit(doc):
                         continue
-                    query, host = search_query(doc)
+                    picked = None
                     try:
-                        hits = await search(query, include_domains=host)
+                        for query, host in search_queries(doc):
+                            hits = await search(query, include_domains=host)
+                            titles = {h.get("url"): h.get("title") or "" for h in hits if h.get("url")}
+                            picked = pick_visit_from_urls(
+                                doc.get("manager_url"),
+                                [h.get("url") for h in hits if h.get("url")],
+                                titles=titles,
+                            )
+                            if picked:
+                                break
                     except Exception as exc:
                         counters["errors"] += 1
                         state.log(f"✗ Search {doc.get('name')}: {type(exc).__name__}")
                         counters["unchanged"] += 1
                         continue
-                    titles = {h.get("url"): h.get("title") or "" for h in hits if h.get("url")}
-                    picked = pick_visit_from_urls(
-                        doc.get("manager_url"),
-                        [h.get("url") for h in hits if h.get("url")],
-                        titles=titles,
-                    )
                     verdict = await _commit_discovered(
                         db, doc, picked, "tinyfish_search")
                     if verdict == "found":
