@@ -133,6 +133,11 @@ async def list_marinas(
         q["priority"] = int(priority)
     if source:
         q["source"] = source
+    if MARINA_BUILD_STATE.running:
+        raise HTTPException(
+            503,
+            "marina dump running — skip full GeoJSON until the tile job finishes",
+        )
     docs = await _all_marinas(q)
     if visible:
         from app.services.review_gold import filter_visible
@@ -281,19 +286,39 @@ async def marinas_build_status():
 
 @router.get("/marinas/count")
 async def marinas_count():
+    async def _count(q: dict):
+        try:
+            return await db.marinas.count_documents(q, maxTimeMS=4000)
+        except Exception:
+            return None
+
+    async def _est():
+        try:
+            return await db.marinas.estimated_document_count()
+        except Exception:
+            return None
+
+    total, named, with_website, osm, shom, curated, enriched, place = await asyncio.gather(
+        _est(),
+        _count({"name": {"$nin": ["", None]}}),
+        _count({"website": {"$nin": ["", None]}}),
+        _count({"source": "openstreetmap"}),
+        _count({"source": "shom"}),
+        _count({"source": "curated"}),
+        _count({"enriched": True}),
+        _count({"maps_place_status": "found"}),
+    )
     return {
-        "total": await db.marinas.count_documents({}),
-        "named": await db.marinas.count_documents({"name": {"$nin": ["", None]}}),
-        "with_website": await db.marinas.count_documents({"website": {"$nin": ["", None]}}),
+        "total": total,
+        "named": named,
+        "with_website": with_website,
         "by_source": {
-            "openstreetmap": await db.marinas.count_documents({"source": "openstreetmap"}),
-            "shom": await db.marinas.count_documents({"source": "shom"}),
-            "curated": await db.marinas.count_documents({"source": "curated"}),
+            "openstreetmap": osm,
+            "shom": shom,
+            "curated": curated,
         },
-        "enriched": await db.marinas.count_documents({"enriched": True}),
-        "with_google_place": await db.marinas.count_documents(
-            {"maps_place_url": {"$regex": "/maps/place/"}}
-        ),
+        "enriched": enriched,
+        "with_google_place": place,
     }
 
 

@@ -274,11 +274,21 @@ export default function App() {
       if (viewRef.current === "review") return;
       fn();
     };
+    const fetchMarinasIfIdle = async () => {
+      if (viewRef.current === "review") return;
+      try {
+        const { data } = await api.get("/marinas/build/status", { timeout: 5000 });
+        if (data?.running) return;
+      } catch (_) {
+        return;
+      }
+      await fetchMarinas();
+    };
     const s = setInterval(fetchStatus, 2000);
     const p = setInterval(unlessReview(() => fetchProjects()), 5000);
     const c = setInterval(fetchCategories, 15000);
-    // Marinas refresh only when a build might be running — a light 8s poll.
-    const m = setInterval(unlessReview(fetchMarinas), 8000);
+    // Full GeoJSON is expensive; MarinasPanel already refreshes when a dump ends.
+    const m = setInterval(fetchMarinasIfIdle, 60000);
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);

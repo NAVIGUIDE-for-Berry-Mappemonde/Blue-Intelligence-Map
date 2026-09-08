@@ -283,3 +283,11 @@ def test_build_world_is_resumable_and_does_not_purge():
 def test_overpass_throttle_is_catalogued():
     reload_catalog()
     assert catalog_default("marinas.overpass_throttle_s") == mw.OVERPASS_THROTTLE_S
+
+
+def test_world_tiles_split_before_overpass():
+    east_asia = (20.0, 90.0, 50.0, 180.0)
+    assert mw.tile_span_deg(east_asia) == 90.0
+    assert mw.should_split_before_overpass(east_asia)
+    small = (44.0, -2.0, 47.0, 1.0)
+    assert not mw.should_split_before_overpass(small)
