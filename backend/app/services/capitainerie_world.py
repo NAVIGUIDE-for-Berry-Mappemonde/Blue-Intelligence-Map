@@ -643,8 +643,9 @@ async def shom_fetch_catscf6(
 
 
 async def _all_docs(coll) -> list[dict]:
-    if hasattr(coll, "docs"):
-        return list(coll.docs)
+    fake = getattr(coll, "docs", None)
+    if isinstance(fake, list):
+        return list(fake)
     cur = coll.find({})
     if hasattr(cur, "to_list"):
         return await cur.to_list(50000)
