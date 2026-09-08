@@ -65,6 +65,9 @@ async def stats(mode: str = "projects"):
     if m == "marinas":
         items = await db.marinas.count_documents({})
         tele_filter = {"dataset": "marinas"}
+    elif m == "capitaineries":
+        items = await db.capitaineries.count_documents({})
+        tele_filter = {"dataset": "capitaineries"}
     elif m == "formalities":
         # Refactor 2026-06 — mode Formalités = carte mondiale [ZEE -> PoE].
         # ITEMS MAPPED = nombre de ports d'entrée extraits.
@@ -91,6 +94,8 @@ def _dataset_filter(mode: str) -> dict:
     m = (mode or "projects").lower()
     if m == "marinas":
         return {"dataset": "marinas"}
+    if m == "capitaineries":
+        return {"dataset": "capitaineries"}
     if m == "formalities":
         return {"dataset": "formalities"}
     return {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}

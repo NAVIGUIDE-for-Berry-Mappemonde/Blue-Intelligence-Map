@@ -34,13 +34,14 @@ _POE_QUEUE_PROJ = {
     "_id": 1, "dedup_key": 1, "name": 1, "mrgid": 1, "zone_name": 1,
 }
 _MARINA_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1}
+_CAPITAINERIE_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1, "telephone": 1, "canal_vhf": 1}
 _EEZ_QUEUE_PROJ = {
     "_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
     "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1, "status": 1,
     "run_id": 1, "sources": 1, "sources_official": 1,
 }
 
-KINDS = ("project", "eez", "poe", "marina")
+KINDS = ("project", "eez", "poe", "marina", "capitainerie")
 QUEUE_LIMIT_MAX = 2000
 QUEUE_LIMIT_DEFAULT = 500
 
@@ -69,7 +70,7 @@ async def ensure_review_indexes(db) -> None:
         await db.project_run_projects.create_index([("run_id", 1), ("title", 1)])
         await db.poe_ports.create_index("name")
         await db.poe_run_ports.create_index([("run_id", 1), ("name", 1)])
-        await db.marinas.create_index("name")
+        await db.capitaineries.create_index("name")
         await review_gold.ensure_gold_indexes(db)
     except Exception:
         pass
@@ -112,7 +113,7 @@ async def _count(coll, q: dict | None = None) -> int:
 async def list_runs(db, kind: str) -> dict:
     """Runs disponibles pour un type de fiche, plus la carte publiée (v1)."""
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|capitainerie")
     published_count = 0
     if kind == "project":
         published_count = await _count(db.projects)
@@ -120,6 +121,8 @@ async def list_runs(db, kind: str) -> dict:
         published_count = await _count(db.eez_zones)
     elif kind == "poe":
         published_count = await _count(db.poe_ports)
+    elif kind == "capitainerie":
+        published_count = await _count(db.capitaineries)
     else:
         published_count = await _count(db.marinas)
 
@@ -288,7 +291,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                      q: str = "", pre_gold: bool = False,
                      stable: bool = False) -> dict:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|capitainerie")
     rid = run_id or PUBLISHED_RUN
     offset, limit = _clamp_page(offset, limit)
     flags = await _comment_flags(db, kind, rid)
@@ -371,6 +374,21 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 d.get("zone_name") or str(d.get("mrgid") or ""),
                 flags,
                 {"mrgid": d.get("mrgid"), "pre_gold": False, "gold_on": False},
+            ))
+
+    elif kind == "capitainerie":
+        filt = _title_filter("name", q)
+        docs = await (db.capitaineries.find(filt, _CAPITAINERIE_QUEUE_PROJ)
+                      .sort("name", 1).to_list(50000))
+        for d in docs:
+            eid = _sid(d.get("_id"))
+            if not eid:
+                continue
+            items.append(_queue_item(
+                eid, d.get("name") or "",
+                d.get("source") or "",
+                flags,
+                {"pre_gold": True, "gold_on": True},
             ))
 
     else:
@@ -469,6 +487,32 @@ def _marina_fiche(doc: dict) -> dict:
     }
 
 
+def _capitainerie_fiche(doc: dict) -> dict:
+    return {
+        "kind": "capitainerie",
+        "id": _sid(doc.get("_id")),
+        "name": doc.get("name"),
+        "lat": doc.get("lat"),
+        "lon": doc.get("lon"),
+        "source": doc.get("source"),
+        "sources": doc.get("sources") or [],
+        "osm_id": doc.get("osm_id"),
+        "shom_id": doc.get("shom_id"),
+        "tags": doc.get("tags") or {},
+        "enriched": bool(doc.get("enriched")),
+        "enrichment_source": doc.get("enrichment_source"),
+        "canal_vhf": doc.get("canal_vhf"),
+        "telephone": doc.get("telephone"),
+        "website": doc.get("website"),
+        "maps_url": (
+            google_maps_url(doc.get("name"), doc["lat"], doc["lon"])
+            if doc.get("lat") is not None and doc.get("lon") is not None
+            else None
+        ),
+        "wrote_marinas": False,
+    }
+
+
 async def _poe_fiche(db, doc: dict, run_id: str) -> dict:
     mrgid = doc.get("mrgid")
     seeds: list[dict] = []
@@ -524,7 +568,7 @@ async def get_comment(db, kind: str, run_id: str, entity_id: str) -> dict:
 
 async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str) -> dict:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|capitainerie")
     rid = run_id or PUBLISHED_RUN
     eid = _sid(entity_id)
     cid = comment_key(kind, rid, eid)
@@ -555,7 +599,7 @@ async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str)
 async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
                     content_run_id: str | None = None) -> dict | None:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|capitainerie")
     rid = run_id or PUBLISHED_RUN
     content_rid = content_run_id or rid
     eid = _sid(entity_id)
@@ -602,6 +646,12 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
             return None
         fiche = await _poe_fiche(db, doc, rid)
 
+    elif kind == "capitainerie":
+        doc = await db.capitaineries.find_one({"_id": eid})
+        if not doc:
+            return None
+        fiche = _capitainerie_fiche(doc)
+
     else:
         doc = await db.marinas.find_one({"_id": eid})
         if not doc:
@@ -612,7 +662,7 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
     source = None
     if kind == "project":
         source = doc
-    elif kind == "marina":
+    elif kind in ("marina", "capitainerie"):
         source = doc
     pre = await review_gold.is_pre_gold_entity(db, kind, eid, source)
     override = await review_gold.get_override(db, kind, eid)

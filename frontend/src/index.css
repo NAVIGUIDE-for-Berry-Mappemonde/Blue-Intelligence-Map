@@ -47,6 +47,17 @@
   --marker-fill: #fbbf24;
   --marker-stroke: #0f172a;
 }
+[data-mode="capitaineries"] {
+  --accent-rgb: 56 189 248;        /* #38bdf8 — sky */
+  --accent-glow: rgba(56, 189, 248, 0.35);
+  --accent-tint: rgba(56, 189, 248, 0.05);
+  --accent-tint-strong: rgba(56, 189, 248, 0.10);
+  --surface-rgb: 12 22 32;
+  --raised-rgb: 20 36 52;
+  --line-rgb: 36 64 90;
+  --marker-fill: #38bdf8;
+  --marker-stroke: #0f172a;
+}
 
 html, body, #root {
   height: 100%;
@@ -175,6 +186,18 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
+}
+.bi-cluster-capitainerie {
+  background: rgba(56, 189, 248, 0.15);
+  border: 2px solid #38bdf8;
+  border-radius: 9999px;
+  color: #38bdf8;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.35);
 }
 /* Phase 7bis — Formalities status marker.
    Explicitly override the default `.leaflet-div-icon` styles (white bg +

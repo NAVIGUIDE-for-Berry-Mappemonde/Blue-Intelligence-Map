@@ -1,4 +1,4 @@
-import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
@@ -54,6 +54,17 @@ export default function Header({
             }`}
           >
             <Anchor size={13} /> {t("modeMarinas")}
+          </button>
+          <button
+            data-testid="mode-toggle-capitaineries"
+            onClick={() => setMode("capitaineries")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
+              mode === "capitaineries"
+                ? "bg-accent/15 text-accent"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <Radio size={13} /> {t("modeCapitaineries")}
           </button>
           <button
             data-testid="mode-toggle-formalities"
