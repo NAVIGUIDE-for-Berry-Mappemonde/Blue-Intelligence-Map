@@ -189,6 +189,59 @@ def _as_lfp(value: Any) -> int:
     return n if 0 <= n <= 5 else 0
 
 
+def _ring_ok(ring) -> bool:
+    """Mongo 2dsphere exige ≥ 3 sommets distincts (anneau fermé ≥ 4 positions)."""
+    if not isinstance(ring, (list, tuple)) or len(ring) < 4:
+        return False
+    uniq: list[tuple[float, float]] = []
+    for pt in ring:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            continue
+        try:
+            pair = (float(pt[0]), float(pt[1]))
+        except (TypeError, ValueError):
+            continue
+        if not uniq or pair != uniq[-1]:
+            uniq.append(pair)
+    if len(uniq) >= 2 and uniq[0] == uniq[-1]:
+        uniq = uniq[:-1]
+    return len(uniq) >= 3
+
+
+def sanitize_geometry(geom: dict | None) -> dict | None:
+    """Retire les anneaux dégénérés (simplification ArcGIS) avant index 2dsphere."""
+    if not geom or not isinstance(geom, dict):
+        return None
+    kind = geom.get("type")
+    coords = geom.get("coordinates")
+    if kind == "Polygon":
+        rings = [r for r in (coords or []) if _ring_ok(r)]
+        return {"type": "Polygon", "coordinates": rings} if rings else None
+    if kind == "MultiPolygon":
+        polys = []
+        for poly in coords or []:
+            rings = [r for r in (poly or []) if _ring_ok(r)]
+            if rings:
+                polys.append(rings)
+        if not polys:
+            return None
+        if len(polys) == 1:
+            return {"type": "Polygon", "coordinates": polys[0]}
+        return {"type": "MultiPolygon", "coordinates": polys}
+    if kind == "Point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        try:
+            return {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _point_geom(lat: float | None, lon: float | None) -> dict | None:
+    if lat is None or lon is None:
+        return None
+    return {"type": "Point", "coordinates": [float(lon), float(lat)]}
+
+
 def _centroid(geom: dict | None) -> tuple[float | None, float | None]:
     if not geom:
         return None, None
@@ -215,8 +268,9 @@ def attrs_from_feature(feat: dict) -> dict:
     props = feat.get("properties") or {}
     site_id = str(props.get("SITE_ID") or props.get("site_id") or "").strip()
     manager = normalize_url(props.get("url"))
-    geom = feat.get("geometry")
-    lat, lon = _centroid(geom)
+    raw_geom = feat.get("geometry")
+    lat, lon = _centroid(raw_geom)
+    geom = sanitize_geometry(raw_geom) or _point_geom(lat, lon)
     doc = {
         "_id": site_id,
         "site_id": site_id,
@@ -395,7 +449,16 @@ async def upsert_sites(db, docs: list[dict]) -> int:
             continue
         existing = await db.amp_sites.find_one({"_id": sid})
         merged = merge_cached(existing, incoming)
-        await db.amp_sites.update_one({"_id": sid}, {"$set": merged}, upsert=True)
+        try:
+            await db.amp_sites.update_one({"_id": sid}, {"$set": merged}, upsert=True)
+        except Exception:
+            merged["geometry"] = _point_geom(merged.get("lat"), merged.get("lon"))
+            if not merged.get("geometry"):
+                continue
+            try:
+                await db.amp_sites.update_one({"_id": sid}, {"$set": merged}, upsert=True)
+            except Exception:
+                continue
         n += 1
     return n
 
@@ -417,9 +480,13 @@ async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
         meta["error"] = str(exc)[:180]
         return cached, meta
     if remote:
-        meta["fetched"] = await upsert_sites(db, remote)
-        meta["source"] = "arcgis"
-        cached = await query_cache(db, bbox, limit=max_features) or remote
+        try:
+            meta["fetched"] = await upsert_sites(db, remote)
+            meta["source"] = "arcgis"
+            cached = await query_cache(db, bbox, limit=max_features) or remote
+        except Exception as exc:
+            meta["error"] = str(exc)[:180]
+            cached = remote or cached
     meta["truncated"] = len(cached) >= max_features
     return cached, meta
 
