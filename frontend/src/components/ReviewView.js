@@ -309,6 +309,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
+          {kind !== "amp" && (
           <button
             type="button"
             data-testid="review-pregold-filter"
@@ -322,6 +323,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           >
             {t("reviewPreGold")}
           </button>
+          )}
           {kind === "eez" && (
             <button
               type="button"
