@@ -85,6 +85,9 @@ class TestParseAndVerdict:
         assert enr.parse_judge({"is_poe": None})["judge_status"] == "inconclusive"
         assert enr.parse_judge({})["judge_status"] == "inconclusive"
         assert enr.parse_judge({"is_poe": True})["judge_kind"] == "unknown"
+        assert enr.parse_judge({"is_poe": True, "confidence": 0.9})["judge_confidence"] == 90
+        assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
+        assert enr.parse_judge({"is_poe": True, "confidence": 80})["judge_confidence"] == 80
 
     def test_parse_judge_pleasure_or_mixed_accepted(self):
         pleasure = enr.parse_judge({

@@ -50,8 +50,9 @@ from app.services.poe_seeds import (
 
 JUDGE_SYSTEM = (
     "Tu es un juge Ports d'Entrée pour la plaisance. Réponds uniquement en JSON strict : "
-    '{"is_poe": true, "confidence": 0, "reason": "", "official_name": null, '
+    '{"is_poe": true, "confidence": 80, "reason": "", "official_name": null, '
     '"kind": "pleasure"} '
+    "confidence = entier 0-100 (pas une fraction 0-1). "
     'kind = pleasure | mixed | cargo | other | unknown. '
     "is_poe=true seulement si une source officielle désigne CE lieu comme "
     "port d'entrée / clearance / puerto habilitado / designated port "
@@ -97,6 +98,19 @@ def normalize_judge_kind(raw) -> str:
     return _KIND_CANON.get(key, "unknown")
 
 
+def _judge_confidence(raw) -> int:
+    """0-100. Muse/Kimi/Laguna renvoient souvent 0.9 au lieu de 90."""
+    if raw is None or raw == "":
+        return 0
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 0
+    if 0 < val <= 1:
+        val *= 100
+    return max(0, min(100, int(round(val))))
+
+
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
 VERIFY_ORDER = ("name_only", "unverified", "probable")
 DEFAULT_ENRICH_LIMIT = 200
@@ -132,13 +146,10 @@ def parse_judge(data: dict | None) -> dict:
     # Filet déterministe : cargo-only n'est jamais un PoE plaisance.
     if kind == "cargo" and status == "accepted":
         status = "rejected"
-    try:
-        conf = int(data.get("confidence") or 0)
-    except (TypeError, ValueError):
-        conf = 0
+    conf = _judge_confidence(data.get("confidence"))
     return {
         "judge_status": status,
-        "judge_confidence": max(0, min(100, conf)),
+        "judge_confidence": conf,
         "judge_reason": str(data.get("reason") or "")[:240],
         "official_name": data.get("official_name"),
         "judge_kind": kind,
