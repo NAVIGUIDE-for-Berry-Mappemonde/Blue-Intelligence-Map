@@ -362,7 +362,7 @@ Critère de sortie C : sur un échantillon (Hope Spots, un programme multi-îles
 
 | Tâche | Fichiers | Détail |
 |-------|----------|--------|
-| D1. File de revue | collection `project_review`, UI Console | Files : `snapped` v1, `fallback`, `unlocated`, `hq_suspect`, discordances run↔v1. Actions : accepter site, éditer GPS, rejeter, promouvoir run→carte. |
+| D1. File de revue | collection `project_review`, onglet Review (`docs/CAHIER_DES_CHARGES_REVIEW.md`) | Files : `snapped` v1, `fallback`, `unlocated`, `hq_suspect`, discordances run↔v1. Actions : accepter site, éditer GPS, rejeter, **Gold** (fiche acceptée sur la carte). |
 | D2. Gold | export | v1 **moins** snapped **moins** fallback, **plus** les acceptés revue. Sert au gatekeeper. |
 | D3. Ré-entraîner le gatekeeper | `ml.py` | **Après** D2, pas avant le premier run isolé. Le modèle v1 est biaisé ; le relancer maintenant recopie les sièges. |
 | D4. Catégories | plus tard | Entraîner les indices `normalize_category`. **Non prioritaire** (les 9 familles restent un bonus d’affichage). |

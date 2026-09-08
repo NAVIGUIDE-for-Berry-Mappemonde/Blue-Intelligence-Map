@@ -727,7 +727,7 @@ Le run graines `20260906-071347-6a9509` vit dans `poe_run_ports`. L’atelier ul
 - Diff run ↔ v1, rapport markdown, listing-control, file de revue.
 - Auto-refresh : toutes les 12 h, max 60 ZEE, re-télécharge les sources de plus de 30 jours, ne ré-extrait que si le MD5 a changé ; réessaie les erreurs après 7 jours.
 
-Ce qui **manque** à l’UI (écart de ce cahier) : écran de revue D/P + juge + listing ; comparateur d’étapes ; bouton **Promouvoir vers la carte** seulement après §12. La fiche polygone (1 URL TD + PoE + 1 URL BU/port, sans Générer) est le geste de revue.
+Ce qui **manque** à l’UI (écart de ce cahier) : écran de revue D/P + juge + listing. L’onglet Review et le bouton **Gold** sont cadrés dans `docs/CAHIER_DES_CHARGES_REVIEW.md` v1.1 : **une** fiche par polygone (ports dessus), **toutes** les URLs TD/BU de tous les runs dédupliquées et cliquables, Gold = fiche acceptée **sur la carte**. La phrase « n’afficher qu’une TD » vaut pour le bandeau carte, pas pour Review.
 
 ---
 

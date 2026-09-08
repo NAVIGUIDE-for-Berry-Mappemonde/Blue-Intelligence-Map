@@ -12,7 +12,7 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | **Marinas** | rouge | Annuaire mondial `leisure=marina` (OpenStreetMap), identité `osm_id`, lien Google Maps déterministe. Point plus gros si une fiche `/maps/place/` a été trouvée (TinyFish Search / tag OSM) — on n'en filtre aucune. Les mouillages restent sur le corridor de la route. Hors Formalités / PoE. |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 
-S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
+S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs), un onglet **Review** (relecture puis Gold — voir `docs/CAHIER_DES_CHARGES_REVIEW.md`) et des exports/imports GeoJSON contextuels.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ blue-intelligence/
 │   └── models/         Modèles ML locaux entraînés (gatekeeper, classifieur SERP, NER)
 ├── frontend/           React (CRA) + Leaflet + Tailwind
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
-├── docs/               PRD, CDC Projets, CDC Formalités (PoE), règles/paramètres, architecture
+├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, règles/paramètres, architecture
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 
