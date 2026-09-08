@@ -93,6 +93,20 @@ def engine_label(model: str | None = None) -> str:
     return "nvidia"
 
 
+def muse_generation_extras(model: str | None = None) -> dict:
+    """Muse raisonne par défaut (effort high) et épuise max_tokens sans JSON.
+
+    NVIDIA : reasoning_effort + chat_template_kwargs.reasoning_strength.
+    """
+    m = (model or primary_model()).lower()
+    if "muse" not in m:
+        return {}
+    return {
+        "reasoning_effort": "low",
+        "chat_template_kwargs": {"reasoning_strength": "low"},
+    }
+
+
 def looks_like_legal_text(text: str | None) -> bool:
     """True si l'extrait ressemble à un décret / gazette (Kimi, pas le juge courant)."""
     blob = (text or "").strip()
@@ -161,8 +175,9 @@ async def complete_json_nvidia(system: str, prompt: str,
     key = get_nvidia_key(settings)
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing")
+    used = model or primary_model()
     payload = {
-        "model": model or primary_model(),
+        "model": used,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -171,6 +186,7 @@ async def complete_json_nvidia(system: str, prompt: str,
         "max_tokens": max_tokens,
         "stream": False,
         "response_format": {"type": "json_object"},
+        **muse_generation_extras(used),
     }
     headers = {
         "Authorization": f"Bearer {key}",

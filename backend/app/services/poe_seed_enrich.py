@@ -552,7 +552,7 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
     async def _nvidia(model: str, engine: str) -> dict | None:
         try:
             parsed = await nvidia.complete_json_nvidia(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=400, log=log)
+                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=800, log=log)
             out = parse_judge(parsed)
             out["judge_engine"] = engine
             return out

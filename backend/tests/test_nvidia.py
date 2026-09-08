@@ -86,6 +86,12 @@ class TestProvider:
         assert nvidia.secondary_model() == nvidia.PRIMARY_MODEL
         assert nvidia.engine_label(nvidia.primary_model()) == "nvidia-muse"
 
+    def test_muse_payload_lowers_reasoning(self):
+        extras = nvidia.muse_generation_extras("meta/muse-glimmer-30b")
+        assert extras["reasoning_effort"] == "low"
+        assert extras["chat_template_kwargs"]["reasoning_strength"] == "low"
+        assert nvidia.muse_generation_extras("moonshotai/kimi-k3") == {}
+
 
 class TestJudgeNvidia:
     def test_muse_only_when_secondary_is_same(self, monkeypatch):
