@@ -854,8 +854,12 @@ class TestFindSourcesTinyfish:
             grounded_calls.append(query_override or "default")
             return grounded_return if grounded_return is not None else ([], None)
 
+        async def fake_serper(query, key, log, gl=None, hl="en"):
+            return []
+
         monkeypatch.setattr(poe, "search_searxng", fake_searx)
         monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "_serper_search_safe", fake_serper)
         monkeypatch.setattr(poe, "search_grounded", fake_grounded)
         monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
         official, strict, syn = asyncio.run(poe._find_sources(
@@ -901,8 +905,12 @@ class TestFindSourcesTinyfish:
         async def fake_grounded(zone, whitelist, log, query_override=None):
             return [], None
 
+        async def fake_serper(query, key, log, gl=None, hl="en"):
+            return []
+
         monkeypatch.setattr(poe, "search_searxng", fake_searx)
         monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "_serper_search_safe", fake_serper)
         monkeypatch.setattr(poe, "search_grounded", fake_grounded)
         monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
         monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
@@ -927,8 +935,12 @@ class TestFindSourcesTinyfish:
         async def fake_grounded(zone, whitelist, log, query_override=None):
             return [], None
 
+        async def fake_serper(query, key, log, gl=None, hl="en"):
+            return []
+
         monkeypatch.setattr(poe, "search_searxng", fake_searx)
         monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "_serper_search_safe", fake_serper)
         monkeypatch.setattr(poe, "search_grounded", fake_grounded)
         monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
         monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
@@ -955,6 +967,42 @@ class TestFindSourcesTinyfish:
     def test_both_empty_grounded_once(self, monkeypatch):
         _official, _strict, _syn, grounded = self._run(monkeypatch, [], [])
         assert len(grounded) == 1
+
+    def test_serper_google_style_merged(self, monkeypatch):
+        serper_queries = []
+
+        async def fake_searx(query, log):
+            return []
+
+        async def fake_tf(query, key, log, location=None, language=None,
+                          include_domains=None):
+            return []
+
+        async def fake_serper(query, key, log, gl=None, hl="en"):
+            serper_queries.append(query)
+            return [{
+                "url": "https://www.douane.gouv.fr/demarche/liste-ports",
+                "domain": "douane.gouv.fr", "engine": "serper",
+            }]
+
+        async def fake_grounded(zone, whitelist, log, query_override=None):
+            return [], None
+
+        monkeypatch.setattr(poe, "search_searxng", fake_searx)
+        monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "_serper_search_safe", fake_serper)
+        monkeypatch.setattr(poe, "search_grounded", fake_grounded)
+        monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
+        monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)
+        official, strict, _syn = asyncio.run(poe._find_sources(
+            self.zone, poe.build_whitelist("FR", "FR"), {}, lambda m: None,
+            tf_key="test"))
+        assert any("Ports of Entry" in q or "port d'entrée" in q for q in serper_queries)
+        assert any(".fr" in q for q in serper_queries)
+        assert official
+        assert any(c.get("engine") == "serper" or "douane.gouv.fr" in (c.get("domain") or "")
+                   for c in official)
+        assert strict is True
 
 
 def _catalog_text(n=10):

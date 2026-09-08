@@ -48,7 +48,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", anthropic_api_key: "", nvidia_api_key: "" });
+    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", serper_api_key: "", anthropic_api_key: "", nvidia_api_key: "" });
   }, [settings]);
 
   if (!form) return null;
@@ -59,6 +59,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     const body = { ...form };
     delete body.openrouter_api_key_set;
     delete body.tinyfish_api_key_set;
+    delete body.serper_api_key_set;
     delete body.anthropic_api_key_set;
     delete body.nvidia_api_key_set;
     ["claude_enabled", "claude_spend_usd", "claude_calls", "claude_cache_read_tokens",
@@ -231,6 +232,18 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
             <input data-testid="tinyfish-key-input" type="password" value={form.tinyfish_api_key}
               placeholder={t("leavePlaceholder")}
               onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
+          </Field>
+          <Field label={
+            <>
+              {t("serperKey")}{" "}
+              <span className={form.serper_api_key_set ? "text-bio" : "text-amberx"}>
+                ({form.serper_api_key_set ? t("keySet") : t("keyNotSet")})
+              </span>
+            </>
+          }>
+            <input data-testid="serper-key-input" type="password" value={form.serper_api_key || ""}
+              placeholder={t("leavePlaceholder")}
+              onChange={(e) => set("serper_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
           <Field label={
             <>

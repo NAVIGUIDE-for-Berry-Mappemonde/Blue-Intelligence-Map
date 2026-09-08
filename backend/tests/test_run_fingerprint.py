@@ -26,6 +26,7 @@ class TestFingerprint:
     def test_no_secrets_and_features(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-secret")
         monkeypatch.setenv("TINYFISH_API_KEY", "tf-secret")
+        monkeypatch.setenv("SERPER_API_KEY", "sp-secret")
         monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:8888/")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
         monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-secret")
@@ -36,12 +37,14 @@ class TestFingerprint:
         blob = str(fp)
         assert "sk-or-secret" not in blob
         assert "tf-secret" not in blob
+        assert "sp-secret" not in blob
         assert "sk-ant-secret" not in blob
         assert "nvapi-secret" not in blob
         assert fp["nvidia_configured"] is True
         assert fp["features"]["nvidia_adapter"] is True
         assert fp["openrouter_configured"] is True
         assert fp["tinyfish_configured"] is True
+        assert fp["serper_configured"] is True
         assert fp["searxng_url"] == "http://127.0.0.1:8888"
         assert fp["claude_enabled"] is True
         assert fp["claude_budget_usd"] == 12

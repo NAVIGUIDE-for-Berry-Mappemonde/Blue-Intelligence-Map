@@ -54,8 +54,12 @@ class TestFindSourcesVariants:
         async def fake_grounded(zone, whitelist, log, query_override=None):
             return [], None
 
+        async def fake_serper(query, key, log, gl=None, hl="en"):
+            return []
+
         monkeypatch.setattr(poe, "search_searxng", fake_searx)
         monkeypatch.setattr(poe, "_tf_search_safe", fake_tf)
+        monkeypatch.setattr(poe, "_serper_search_safe", fake_serper)
         monkeypatch.setattr(poe, "search_grounded", fake_grounded)
         monkeypatch.setattr(poe, "search_hint_queries", lambda zone, exceptions=None: [])
         monkeypatch.setattr(poe, "save_exceptions", lambda exc: None)

@@ -60,6 +60,7 @@ def build_code_fingerprint(settings: dict | None = None,
     env_or = os.environ.get("OPENROUTER_API_KEY") or ""
     env_nv = os.environ.get("NVIDIA_API_KEY") or ""
     env_tf = os.environ.get("TINYFISH_API_KEY") or ""
+    env_serper = os.environ.get("SERPER_API_KEY") or ""
     env_searx = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/") or None
 
     return {
@@ -77,6 +78,8 @@ def build_code_fingerprint(settings: dict | None = None,
             s.get("openrouter_api_key"), env_or),
         "tinyfish_configured": _key_configured(
             s.get("tinyfish_api_key"), env_tf),
+        "serper_configured": _key_configured(
+            s.get("serper_api_key"), env_serper),
         "searxng_url": env_searx,
         "catalog_skip": True,
         "zone_timeout_s": timeout,
