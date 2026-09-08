@@ -53,22 +53,23 @@ class TestParseAndLegal:
 
     def test_short_or_forum_is_not_legal(self):
         assert nvidia.looks_like_legal_text("Fort Bay is nice") is False
-        # Muse est déjà le lecteur principal : pas de second appel identique.
+        # Flash est déjà le lecteur principal : pas de second appel identique.
         assert nvidia.second_extract_choice(
             "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4) is None
 
     def test_engine_label(self):
-        assert nvidia.engine_label() == "nvidia-muse"
+        assert nvidia.engine_label() == "nvidia-deepseek"
+        assert nvidia.engine_label("deepseek-ai/deepseek-v4-flash-0731") == "nvidia-deepseek"
         assert nvidia.engine_label("meta/muse-glimmer-30b") == "nvidia-muse"
         assert nvidia.engine_label("moonshotai/kimi-k3") == "nvidia-kimi"
         assert nvidia.engine_label("poolside/laguna-xs-2.1") == "nvidia-laguna"
 
-    def test_second_extract_muse_if_primary_overridden(self, monkeypatch):
+    def test_second_extract_flash_if_primary_overridden(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "other/reader")
         model, engine = nvidia.second_extract_choice(
             "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4)
         assert model == nvidia.SECONDARY_MODEL
-        assert engine == "nvidia-muse"
+        assert engine == "nvidia-deepseek"
 
 
 class TestProvider:
@@ -88,28 +89,31 @@ class TestProvider:
         monkeypatch.setenv("LLM_PROVIDER", "auto")
         assert nvidia.nvidia_enabled({"nvidia_api_key": "nvapi-ui"}) is True
 
-    def test_laguna_env_is_remapped_to_muse(self, monkeypatch):
+    def test_laguna_and_muse_env_are_remapped_to_flash(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "poolside/laguna-xs-2.1")
-        monkeypatch.setenv("NVIDIA_MODEL_SECONDARY", "poolside/laguna-xs-2.1")
+        monkeypatch.setenv("NVIDIA_MODEL_SECONDARY", "meta/muse-glimmer-30b")
+        monkeypatch.setenv("NVIDIA_MODEL_LEGAL", "meta/muse-glimmer-30b")
         assert nvidia.primary_model() == nvidia.PRIMARY_MODEL
         assert nvidia.secondary_model() == nvidia.PRIMARY_MODEL
-        assert nvidia.engine_label(nvidia.primary_model()) == "nvidia-muse"
+        assert nvidia.legal_model() == nvidia.PRIMARY_MODEL
+        assert nvidia.engine_label(nvidia.primary_model()) == "nvidia-deepseek"
 
     def test_muse_payload_lowers_reasoning(self):
         extras = nvidia.muse_generation_extras("meta/muse-glimmer-30b")
         assert extras["reasoning_effort"] == "low"
         assert extras["chat_template_kwargs"]["reasoning_strength"] == "low"
         assert nvidia.muse_generation_extras("moonshotai/kimi-k3") == {}
+        assert nvidia.muse_generation_extras("deepseek-ai/deepseek-v4-flash-0731") == {}
 
 
 class TestJudgeNvidia:
-    def test_muse_only_when_secondary_is_same(self, monkeypatch):
+    def test_primary_only_when_secondary_is_same(self, monkeypatch):
         models = []
 
         async def fake_complete(system, user, settings=None, *, model=None, **k):
             models.append(model)
             return {"is_poe": True, "confidence": 40, "kind": "pleasure",
-                    "reason": "muse"}
+                    "reason": "flash"}
 
         monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
         monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
@@ -119,7 +123,7 @@ class TestJudgeNvidia:
             {"name": "NC"}, "extrait officiel", {}, lambda m: None))
         assert models == [nvidia.PRIMARY_MODEL]
         assert nvidia.PRIMARY_MODEL == nvidia.SECONDARY_MODEL
-        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_engine"] == "nvidia-deepseek"
         assert out["judge_status"] == "accepted"
 
     def test_escalates_only_if_secondary_differs(self, monkeypatch):
@@ -145,7 +149,7 @@ class TestJudgeNvidia:
         assert out["judge_engine"] == "nvidia-muse"
         assert out["judge_status"] == "accepted"
 
-    def test_cargo_stays_on_muse(self, monkeypatch):
+    def test_cargo_stays_on_primary(self, monkeypatch):
         models = []
 
         async def fake_complete(system, user, settings=None, *, model=None, **k):
@@ -165,7 +169,7 @@ class TestJudgeNvidia:
             {"name": "XX"}, "terminal conteneur", {}, lambda m: None))
         assert models == [nvidia.PRIMARY_MODEL]
         assert out["judge_status"] == "rejected"
-        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_engine"] == "nvidia-deepseek"
 
 
 class TestExtractSecondReader:

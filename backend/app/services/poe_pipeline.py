@@ -1029,7 +1029,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
     Une vraie table (noms + coords) court-circuite le LLM ; les fragments
     « port de X » ne suffisent plus — les lecteurs JSON lisent ces pages.
-    Second lecteur : Muse (ou Kimi si décret) si NVIDIA est allumé,
+    Second lecteur : DeepSeek-V4-Flash (ou Kimi si décret) si NVIDIA est allumé,
     sinon Claude s'il est allumé, à côté du lecteur principal.
     """
     raw_catalog = catalog_text if catalog_text is not None else context
@@ -1047,7 +1047,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
 
     _KNOWN_ENGINES = (
         "claude", "openrouter", "catalog", "ner",
-        "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "llm",
+        "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "nvidia-deepseek", "llm",
     )
 
     async def _primary():

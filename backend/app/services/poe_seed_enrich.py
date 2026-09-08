@@ -2,7 +2,7 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge Muse si NVIDIA, sinon Haiku → Sonnet → OpenRouter.
+juge DeepSeek-V4-Flash si NVIDIA, sinon Haiku → Sonnet → OpenRouter.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
@@ -99,7 +99,7 @@ def normalize_judge_kind(raw) -> str:
 
 
 def _judge_confidence(raw) -> int:
-    """0-100. Muse/Kimi/Laguna renvoient souvent 0.9 au lieu de 90."""
+    """0-100. Les NIM (DeepSeek / Kimi) renvoient souvent 0.9 au lieu de 90."""
     if raw is None or raw == "":
         return 0
     try:

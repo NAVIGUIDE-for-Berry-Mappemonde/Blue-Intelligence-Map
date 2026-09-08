@@ -3,9 +3,10 @@
 Complétions JSON uniquement — jamais la recherche web (:online reste
 OpenRouter). Modèles par défaut, mesurés sur le juge / extracteur PoE :
 
-  - Muse     meta/muse-glimmer-30b      lecteur principal (juge + extract)
-  - Kimi     moonshotai/kimi-k3         textes juridiques (décret, gazette)
-  - Laguna   poolside/laguna-xs-2.1     hors service (ne plus appeler)
+  - DeepSeek deepseek-ai/deepseek-v4-flash-0731  lecteur principal (juge + extract)
+  - Kimi     moonshotai/kimi-k3                 textes juridiques (décret, gazette)
+  - Muse     meta/muse-glimmer-30b               hors service (timeout hosted)
+  - Laguna   poolside/laguna-xs-2.1              hors service (503)
 
 Clé : NVIDIA_API_KEY (env) ou settings["nvidia_api_key"] (UI).
 Provider : LLM_PROVIDER=nvidia|openrouter|auto (auto = NVIDIA si clé présente).
@@ -20,9 +21,10 @@ import re
 import httpx
 
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-PRIMARY_MODEL = "meta/muse-glimmer-30b"
-SECONDARY_MODEL = "meta/muse-glimmer-30b"
+PRIMARY_MODEL = "deepseek-ai/deepseek-v4-flash-0731"
+SECONDARY_MODEL = "deepseek-ai/deepseek-v4-flash-0731"
 LEGAL_MODEL = "moonshotai/kimi-k3"
+# Hosted trial : Muse ne rend plus (timeout > 180 s) ; Laguna 503.
 
 _THINKING_RE = re.compile(r"^\s*here's a thinking process", re.I)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
@@ -63,8 +65,9 @@ def nvidia_enabled(settings: dict | None = None) -> bool:
 
 
 def _usable_nim(model: str) -> str:
-    """Laguna répond 503 : ne jamais l'appeler, même via NVIDIA_MODEL."""
-    if "laguna" in (model or "").lower():
+    """Laguna 503 et Muse timeout : ne jamais les appeler, même via NVIDIA_MODEL."""
+    blob = (model or "").lower()
+    if "laguna" in blob or "muse-glimmer" in blob:
         return PRIMARY_MODEL
     return model
 
@@ -78,12 +81,14 @@ def secondary_model() -> str:
 
 
 def legal_model() -> str:
-    return _env("NVIDIA_MODEL_LEGAL") or LEGAL_MODEL
+    return _usable_nim(_env("NVIDIA_MODEL_LEGAL") or LEGAL_MODEL)
 
 
 def engine_label(model: str | None = None) -> str:
     """Étiquette persistée (judge_engine / extraction_engine)."""
     m = (model or primary_model()).lower()
+    if "deepseek" in m:
+        return "nvidia-deepseek"
     if "muse" in m:
         return "nvidia-muse"
     if "kimi" in m:
@@ -116,9 +121,10 @@ def looks_like_legal_text(text: str | None) -> bool:
 
 
 def second_extract_choice(context: str | None) -> tuple[str, str] | None:
-    """Second lecteur : Kimi sur décret ; sinon Muse seulement s'il n'est pas déjà le principal."""
+    """Second lecteur : Kimi sur décret ; sinon le secondaire s'il n'est pas déjà le principal."""
     if looks_like_legal_text(context):
-        return legal_model(), "nvidia-kimi"
+        model = legal_model()
+        return model, engine_label(model)
     sec = secondary_model()
     if sec == primary_model():
         return None
@@ -175,7 +181,7 @@ async def complete_json_nvidia(system: str, prompt: str,
     key = get_nvidia_key(settings)
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing")
-    used = model or primary_model()
+    used = _usable_nim(model or primary_model())
     payload = {
         "model": used,
         "messages": [
@@ -240,7 +246,7 @@ async def extract_ports_nvidia(context: str, zone: dict,
                                engine: str | None = None) -> list[dict]:
     from app.core.llm import POE_EXTRACT_PROMPT, coerce_ports
 
-    used = model or primary_model()
+    used = _usable_nim(model or primary_model())
     tag = engine or engine_label(used)
     prompt = POE_EXTRACT_PROMPT.format(
         name=zone.get("name") or zone.get("geoname"),
