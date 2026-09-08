@@ -627,10 +627,10 @@ def harvest_bu_catalog(fetched: dict, urls: list[str]) -> dict:
         rec = (fetched or {}).get(u) or {}
         if rec.get("blocked") or rec.get("error"):
             continue
-        text = (rec.get("text") or "").strip()
-        if not text:
+        text = rec.get("text") or ""
+        if not str(text).strip():
             continue
-        blocks.append(f"[SOURCE: {u}]\n{text[:CATALOG_FETCH_CHARS]}")
+        blocks.append(f"[SOURCE: {u}]\n{text[:CATALOG_FETCH_CHARS].rstrip()}\n")
     raw = "\n\n".join(blocks)
     ports = extract_structured_ports(raw)
     sufficient = catalog_is_sufficient(ports, raw)

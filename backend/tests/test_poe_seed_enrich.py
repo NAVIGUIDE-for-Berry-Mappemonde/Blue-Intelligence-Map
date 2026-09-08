@@ -528,6 +528,7 @@ class TestPickGeocode:
 
 
 _MX_SCT = """
+### **Puertos habilitados**
 #### 4.- Ensenada
 **Entidad federativa:**Baja California
 **Latitud:**31.8522146
@@ -579,6 +580,11 @@ class TestBuCatalog:
         assert found["sufficient"] is True
         assert {"Ensenada", "Guaymas", "Manzanillo"} <= names
         assert _MX_URL in found["urls"]
+        stripped = enr.harvest_bu_catalog(
+            {_MX_URL: {"text": _MX_SCT.strip(), "blocked": False}}, [_MX_URL])
+        assert stripped["sufficient"] is True
+        assert {"Ensenada", "Guaymas", "Manzanillo"} <= {
+            p.get("name") for p in stripped["ports"]}
         lone = enr.harvest_bu_catalog(
             {"https://gov.nu/act": {"text": _ALOFI, "blocked": False}},
             ["https://gov.nu/act"])

@@ -722,6 +722,11 @@ def extract_structured_ports(text: str) -> list[dict]:
     catalogue ne doit pas avaler le dernier port."""
     if not text:
         return []
+    # _CATALOG_HEAD lit les blocs via (?:.*\n) : sans newline final, le dernier
+    # port (coords sur la dernière ligne) est avalé. TinyFish Fetch n'en met
+    # pas toujours une.
+    if not text.endswith("\n"):
+        text = text + "\n"
     parts = re.split(r"\n(?=\[SOURCE: )", text) if "[SOURCE:" in text else [text]
     if len(parts) == 1:
         return _extract_structured_ports_one(text)
