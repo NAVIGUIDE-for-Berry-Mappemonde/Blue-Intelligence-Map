@@ -2,7 +2,8 @@
 File de revue humaine — une fiche à la fois, commentaire persisté.
 
 Ne lit que les collections de run / v1. N'écrit JAMAIS dans `projects`,
-`poe_ports`, `eez_zones`, `marinas` ni `amp_sites`. Seule `review_comments` est mutée.
+`poe_ports`, `eez_zones`, `marinas` ni `amp_sites`. Mutées : `review_comments`,
+`review_gold`, `review_choices`.
 """
 from __future__ import annotations
 
@@ -18,6 +19,12 @@ from app.services.poe_zone_fiche import (
 )
 from app.services.poe_zone_label import attach_zone_labels
 from app.services import review_gold
+from app.services.review_choices import (
+    empty_choices,
+    ensure_choice_indexes,
+    get_choices,
+    gold_ready,
+)
 from app.services.poe_stable import (
     STABLE_REVIEW_MRGIDS,
     STABLE_REVIEW_ORDER,
@@ -76,6 +83,7 @@ async def ensure_review_indexes(db) -> None:
         await db.poe_run_ports.create_index([("run_id", 1), ("name", 1)])
         await db.capitaineries.create_index("name")
         await review_gold.ensure_gold_indexes(db)
+        await ensure_choice_indexes(db)
     except Exception:
         pass
 
@@ -352,7 +360,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 "poe_count": z.get("poe_count") or 0,
                 "stable": is_stable_review_mrgid(mid),
                 "pre_gold": pre,
-                "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                "gold_on": review_gold.eez_is_published(overrides.get(eid)),
             }
             src_run = _sid(z.get("_source_run_id"))
             if src_run:
@@ -714,6 +722,14 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         source = doc
     pre = await review_gold.is_pre_gold_entity(db, kind, eid, source)
     override = await review_gold.get_override(db, kind, eid)
+    if kind == "eez":
+        gold_on = review_gold.eez_is_published(override)
+        choices = await get_choices(db, kind, eid)
+        ready = gold_ready(fiche, choices)
+    else:
+        gold_on = review_gold.gold_pressed(pre, override)
+        choices = empty_choices()
+        ready = True
     return {
         "kind": kind,
         "run_id": rid,
@@ -722,7 +738,9 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         "comment": comment.get("comment") or "",
         "comment_updated_at": comment.get("updated_at"),
         "pre_gold": pre,
-        "gold_on": review_gold.gold_pressed(pre, override),
+        "gold_on": gold_on,
+        "choices": choices,
+        "gold_ready": ready,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,

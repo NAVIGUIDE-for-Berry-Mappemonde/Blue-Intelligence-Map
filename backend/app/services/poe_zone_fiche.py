@@ -1,9 +1,10 @@
 """
 poe_zone_fiche — Fiche de revue d'un polygone VLIZ (lecture seule).
 
-Review (union) : toutes les URLs TD uniques, tous les ports (v1 + runs
-prod + graines), toutes les BU par port. La carte Formalités reste v1 :
-``url_td`` = la meilleure liste, un port = une BU.
+Review (union) : toutes les URLs TD uniques, tous les ports (v1 traité
+comme un run + runs prod + graines), toutes les BU par port.
+
+Carte Formalités : uniquement le snapshot Gold. La v1 n'est pas affichée.
 
 N'écrit jamais poe_ports / eez_zones. Le WPI n'est pas une source.
 Noonsite et les forums n'entrent pas.
@@ -24,6 +25,7 @@ from app.services.territory_ref import curated_td_urls
 
 # Bannière / popup carte : une URL TD (liste/PDF d'abord). Review n'applique pas ce cap.
 FICHE_TD_URL_CAP = 1
+PUBLISHED_RUN = "published"
 
 
 @lru_cache(maxsize=1)
@@ -184,8 +186,24 @@ def bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
     return {key: recs[0] for key, recs in bus_by_port_name(docs).items() if recs}
 
 
+def stable_port_id(doc: dict, mrgid: int | None = None) -> str:
+    """Identité Review / Gold : dedup_key, sinon `{mrgid}:{nom normalisé}`."""
+    key = str(doc.get("dedup_key") or "").strip()
+    if key:
+        return key
+    try:
+        mid = int(mrgid if mrgid is not None else doc.get("mrgid") or 0)
+    except (TypeError, ValueError):
+        mid = 0
+    name = normalize_name(doc.get("name") or "")
+    if mid and name:
+        return f"{mid}:{name}"
+    return str(doc.get("_id") or doc.get("id") or name or "")
+
+
 def _port_row(doc: dict, url_bu: dict | None = None,
-              urls_bu: list[dict] | None = None) -> dict | None:
+              urls_bu: list[dict] | None = None, *,
+              mrgid: int | None = None) -> dict | None:
     name = (doc.get("name") or "").strip()
     if not name:
         return None
@@ -193,8 +211,10 @@ def _port_row(doc: dict, url_bu: dict | None = None,
     if not bu_list and url_bu and url_bu.get("url"):
         bu_list = [url_bu]
     best = url_bu if url_bu and url_bu.get("url") else (bu_list[0] if bu_list else None)
+    pid = stable_port_id(doc, mrgid)
     row = {
-        "id": str(doc.get("_id") or doc.get("id") or name),
+        "id": pid,
+        "port_id": pid,
         "name": name,
         "city": doc.get("city"),
         "lat": doc.get("lat"),
@@ -239,11 +259,15 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
 
     rows = []
     bu_seen: dict[str, dict] = {}
+    try:
+        zone_mrgid = int(zone.get("mrgid") or 0) or None
+    except (TypeError, ValueError):
+        zone_mrgid = None
     for doc in ports or []:
         key = normalize_name(doc.get("name") or "")
         urls_bu = list(bu_lists.get(key) or [])
         url_bu = urls_bu[0] if urls_bu else None
-        row = _port_row(doc, url_bu, urls_bu)
+        row = _port_row(doc, url_bu, urls_bu, mrgid=zone_mrgid)
         if not row:
             continue
         rows.append(row)
@@ -332,9 +356,6 @@ async def _label_zone(db, zone: dict) -> dict:
     return zone
 
 
-PUBLISHED_RUN = "published"
-
-
 def _is_published(run_id: str | None) -> bool:
     return not run_id or run_id == PUBLISHED_RUN
 
@@ -380,24 +401,26 @@ def _port_rank(doc: dict) -> tuple:
     )
 
 
+def _as_run_port(doc: dict, run_id: str) -> dict:
+    if doc.get("run_id"):
+        return doc
+    out = dict(doc)
+    out["run_id"] = run_id
+    return out
+
+
 def _merge_union_ports(v1: list[dict], run_ports: list[dict],
                        seeds: list[dict]) -> list[dict]:
-    """v1 gagne à nom égal ; runs puis graines pour les noms absents."""
+    """v1 = run `published`, à égalité avec les autres runs ; graines ensuite."""
     by: dict[str, dict] = {}
-    locked: set[str] = set()
-    for doc in v1 or []:
+    for doc in list(v1 or []) + list(run_ports or []):
         key = normalize_name(doc.get("name") or "")
         if not key:
             continue
-        by[key] = doc
-        locked.add(key)
-    for doc in run_ports or []:
-        key = normalize_name(doc.get("name") or "")
-        if not key or key in locked:
-            continue
+        tagged = doc if doc.get("run_id") else _as_run_port(doc, PUBLISHED_RUN)
         prev = by.get(key)
-        if prev is None or _port_rank(doc) > _port_rank(prev):
-            by[key] = doc
+        if prev is None or _port_rank(tagged) > _port_rank(prev):
+            by[key] = tagged
     for doc in seeds or []:
         key = normalize_name(doc.get("name") or "")
         if not key or key in by:
@@ -410,8 +433,9 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None,
                            *, union: bool = False) -> dict | None:
     """Charge Atlas en lecture seule et assemble la fiche.
 
-    ``run_id=None`` / ``published`` : ports v1. ``union=True`` (Review) :
-    v1 + ``poe_run_ports`` du polygone + graines, runs test exclus.
+    ``run_id=None`` / ``published`` : ce run-là seulement (l'ancien v1).
+    ``union=True`` (Review) : v1 comme les autres runs + ``poe_run_ports``
+    du polygone + graines, canaris exclus.
     Un ``run_id`` précis : ports et sources de CE run (debug).
     """
     mid = int(mrgid)
@@ -459,3 +483,19 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None,
         zone, ports, seeds=seeds, run_ports=run_ports, run_zones=run_zones)
     fiche["fiche_scope"] = scope
     return fiche
+
+
+async def build_map_zone_fiche(db, mrgid: int) -> dict | None:
+    """Fiche carte : snapshot Gold uniquement. Pas de v1."""
+    from app.services.review_choices import snapshot_to_fiche
+    from app.services.review_gold import eez_is_published, get_override
+
+    mid = int(mrgid)
+    ov = await get_override(db, "eez", str(mid))
+    if not eez_is_published(ov):
+        return None
+    zone = await db.eez_zones.find_one({"mrgid": mid}, {"geometry": 0})
+    if not zone:
+        return None
+    zone = await _label_zone(db, zone)
+    return snapshot_to_fiche(zone, ov.get("snapshot") or {})

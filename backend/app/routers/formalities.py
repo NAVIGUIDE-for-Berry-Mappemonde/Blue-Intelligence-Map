@@ -206,9 +206,17 @@ async def poe_zones(visible: bool = False):
     for z in items:
         by_status[z["status"]] = by_status.get(z["status"], 0) + 1
     if visible:
-        allowed = [z["mrgid"] for z in items]
-        total_ports = await _db.poe_ports.count_documents(
-            {"mrgid": {"$in": allowed}}) if allowed else 0
+        from app.services.review_gold import published_snapshots
+        snaps = await published_snapshots(_db)
+        total_ports = 0
+        for z in items:
+            snap = snaps.get(int(z["mrgid"]))
+            if not snap:
+                continue
+            n = len(snap.get("ports") or [])
+            z["poe_count"] = n
+            z["gold_published"] = True
+            total_ports += n
     else:
         total_ports = await _db.poe_ports.count_documents({})
     return {
@@ -259,10 +267,10 @@ async def poe_zones_geojson(visible: bool = False):
 
 @router.get("/poe/zones/{mrgid}")
 async def poe_zone_fiche(mrgid: int):
-    """Fiche de revue d'une ZEE : PoE + URLs TD/BU. Lecture seule, pas de Générer."""
-    from app.services.poe_zone_fiche import build_zone_fiche
+    """Fiche carte d'une ZEE : snapshot Gold uniquement. Pas de v1."""
+    from app.services.poe_zone_fiche import build_map_zone_fiche
 
-    fiche = await build_zone_fiche(_db, mrgid)
+    fiche = await build_map_zone_fiche(_db, mrgid)
     if fiche is None:
         raise HTTPException(404, f"ZEE {mrgid} inconnue")
     return fiche
@@ -434,16 +442,16 @@ async def poe_qualify_unclos():
 @router.get("/poe/ports")
 async def poe_ports(mrgid: int | None = None, country: str | None = None,
                     visible: bool = False):
-    q: dict = {}
-    if mrgid is not None:
-        q["mrgid"] = mrgid
-    if country:
-        q["country_iso2"] = country.upper()
-    docs = await _db.poe_ports.find(q).to_list(10000)
     if visible:
-        from app.services.review_gold import visible_eez_mrgids
-        allowed = await visible_eez_mrgids(_db)
-        docs = [d for d in docs if int(d.get("mrgid") or 0) in allowed]
+        from app.services.review_gold import visible_poe_port_docs
+        docs = await visible_poe_port_docs(_db, mrgid=mrgid, country=country)
+    else:
+        q: dict = {}
+        if mrgid is not None:
+            q["mrgid"] = mrgid
+        if country:
+            q["country_iso2"] = country.upper()
+        docs = await _db.poe_ports.find(q).to_list(10000)
     return poe.ports_to_geojson(docs)
 
 

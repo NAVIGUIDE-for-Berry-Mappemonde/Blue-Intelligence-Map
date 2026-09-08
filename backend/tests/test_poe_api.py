@@ -110,10 +110,13 @@ class TestZoneFiche:
         assert gen, "aucune ZEE avec des PoE"
         mrgid = gen[0]["mrgid"]
         r = client.get(f"{BASE_URL}/api/poe/zones/{mrgid}", timeout=60)
+        if r.status_code == 404:
+            pytest.skip("carte Formalités = Gold seulement")
         assert r.status_code == 200, r.text[:300]
         d = r.json()
         assert d["mrgid"] == mrgid
         assert d["wrote_poe_ports"] is False
+        assert d.get("fiche_scope") == "gold"
         assert "sources_td" in d and "sources_bu" in d and "ports" in d
         assert isinstance(d["ports"], list)
         blob = " ".join(
@@ -149,20 +152,22 @@ class TestZoneFiche:
         fr_labels = [z["label"] for z in zones["items"] if z.get("sovereign") == "France"]
         assert len(fr_labels) == len(set(fr_labels))
         r = client.get(f"{BASE_URL}/api/poe/zones/5677", timeout=60)
-        assert r.status_code == 200, r.text[:300]
-        fiche = r.json()
-        assert fiche["mrgid"] == 5677
-        assert fiche["label"] == "France (hexagone)"
-        assert fiche["wrote_poe_ports"] is False
-        blob = " ".join(p.get("name") or "" for p in fiche["ports"]).lower()
-        assert "mamoudzou" not in blob
-        assert "dzaoudzi" not in blob
+        assert r.status_code in (200, 404)
+        if r.status_code == 200:
+            fiche = r.json()
+            assert fiche["mrgid"] == 5677
+            assert fiche["label"] == "France (hexagone)"
+            assert fiche["wrote_poe_ports"] is False
+            assert fiche.get("fiche_scope") == "gold"
+            blob = " ".join(p.get("name") or "" for p in fiche["ports"]).lower()
+            assert "mamoudzou" not in blob
+            assert "dzaoudzi" not in blob
         r2 = client.get(f"{BASE_URL}/api/poe/zones/48944", timeout=60)
-        assert r2.status_code == 200
-        f2 = r2.json()
-        assert f2["mrgid"] == 48944
-        assert f2["label"] == "France (Mayotte)"
-        assert f2["mrgid"] != fiche["mrgid"]
+        assert r2.status_code in (200, 404)
+        if r2.status_code == 200:
+            f2 = r2.json()
+            assert f2["mrgid"] == 48944
+            assert f2["label"] == "France (Mayotte)"
 
 
 # --- Module: task status endpoints ------------------------------------------

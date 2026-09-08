@@ -42,29 +42,59 @@ function buUrlOf(port) {
   return port?.url_bu?.url || (port?.source_urls || [])[0] || "";
 }
 
-function TdRow({ rec, testId, pathTestId }) {
+function TdRow({ rec, testId, pathTestId, selectable, kept, onToggle, keepTestId }) {
   const href = rec?.url || "";
   const both = rec?.from_arm === "both";
   return (
     <div className="flex items-center justify-between gap-2 min-w-0">
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        data-testid={testId}
-        className="min-w-0 text-[11px] text-accent hover:text-white font-medium"
-        title={href}
-      >
-        <span className="block truncate">{hostOf(href)}</span>
-        {pathHint(href) ? (
-          <span
-            className="block font-mono text-[10px] text-slate-400 truncate"
-            data-testid={pathTestId}
+      {selectable ? (
+        <label className="flex items-center gap-2 min-w-0 flex-1">
+          <input
+            type="checkbox"
+            data-testid={keepTestId}
+            checked={Boolean(kept)}
+            onChange={onToggle}
+            className="shrink-0 accent-accent"
+          />
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            data-testid={testId}
+            className="min-w-0 text-[11px] text-accent hover:text-white font-medium"
+            title={href}
           >
-            {pathHint(href)}
-          </span>
-        ) : null}
-      </a>
+            <span className="block truncate">{hostOf(href)}</span>
+            {pathHint(href) ? (
+              <span
+                className="block font-mono text-[10px] text-slate-400 truncate"
+                data-testid={pathTestId}
+              >
+                {pathHint(href)}
+              </span>
+            ) : null}
+          </a>
+        </label>
+      ) : (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          data-testid={testId}
+          className="min-w-0 text-[11px] text-accent hover:text-white font-medium"
+          title={href}
+        >
+          <span className="block truncate">{hostOf(href)}</span>
+          {pathHint(href) ? (
+            <span
+              className="block font-mono text-[10px] text-slate-400 truncate"
+              data-testid={pathTestId}
+            >
+              {pathHint(href)}
+            </span>
+          ) : null}
+        </a>
+      )}
       <div className="flex items-center gap-1 shrink-0">
         {both && (
           <span className="font-mono text-[8px] uppercase tracking-widest text-bio border border-bio/40 px-1 py-px rounded-sm">
@@ -84,7 +114,10 @@ function TdRow({ rec, testId, pathTestId }) {
  * Review (variant=page) : toutes les TD + toutes les BU par port.
  * Carte (sidebar) : une URL TD + une BU par PoE. Pas de bouton Générer.
  */
-export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "sidebar" }) {
+export default function ZoneFiche({
+  t, fiche, loading, onFlyToPort, variant = "sidebar",
+  choices, onChoice,
+}) {
   if (loading) {
     return (
       <section className="p-3 border-b border-line" data-testid="poe-zone-fiche-loading">
@@ -93,6 +126,10 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
     );
   }
   if (!fiche) return null;
+  const selectable = variant === "page" && typeof onChoice === "function";
+  const tdMap = choices?.td || {};
+  const portMap = choices?.ports || {};
+  const buMap = choices?.bu || {};
   const ports = fiche.ports || [];
   const tdSources = tdListOf(fiche);
   const td = tdUrlOf(fiche);
@@ -143,6 +180,14 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
                     rec={{ ...rec, bothLabel: t("poeSourceBoth") }}
                     testId={i === 0 ? "poe-fiche-td-url" : `poe-fiche-td-url-${i}`}
                     pathTestId={i === 0 ? "poe-fiche-td-path" : undefined}
+                    selectable={selectable}
+                    kept={tdMap[rec.url] === "keep"}
+                    keepTestId={i === 0 ? "poe-fiche-td-keep" : `poe-fiche-td-keep-${i}`}
+                    onToggle={() => onChoice({
+                      target: "td",
+                      url: rec.url,
+                      action: tdMap[rec.url] === "keep" ? "clear" : "keep",
+                    })}
                   />
                 </li>
               ))}
@@ -195,22 +240,64 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
               const href = buUrlOf(p);
               const bus = showAllTd ? buListOf(p) : (href ? [{ url: href }] : []);
               const canFly = p.lat != null && p.lon != null && onFlyToPort;
+              const pid = p.port_id || p.id || p.name;
+              const verdict = portMap[pid];
               return (
                 <div
-                  key={p.id || p.name}
-                  data-testid={`poe-fiche-port-${p.id || p.name}`}
+                  key={pid || p.name}
+                  data-testid={`poe-fiche-port-${pid || p.name}`}
                   className="p-2 hover:bg-raised/60"
                 >
-                  <button
-                    type="button"
-                    disabled={!canFly}
-                    onClick={() => canFly && onFlyToPort({
-                      id: p.id, lat: p.lat, lon: p.lon, name: p.name,
-                    })}
-                    className="w-full text-left disabled:cursor-default"
-                  >
-                    <p className="text-xs font-semibold text-slate-200 leading-snug">{p.name}</p>
-                  </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      type="button"
+                      disabled={!canFly}
+                      onClick={() => canFly && onFlyToPort({
+                        id: pid, lat: p.lat, lon: p.lon, name: p.name,
+                      })}
+                      className="min-w-0 flex-1 text-left disabled:cursor-default"
+                    >
+                      <p className="text-xs font-semibold text-slate-200 leading-snug">{p.name}</p>
+                    </button>
+                    {selectable ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          data-testid={`poe-fiche-port-keep-${pid}`}
+                          aria-pressed={verdict === "keep"}
+                          onClick={() => onChoice({
+                            target: "port",
+                            port_id: pid,
+                            action: verdict === "keep" ? "clear" : "keep",
+                          })}
+                          className={`px-1.5 py-0.5 font-mono text-[9px] border rounded-sm ${
+                            verdict === "keep"
+                              ? "border-bio/50 bg-bio/15 text-bio"
+                              : "border-line text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {t("reviewKeep")}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`poe-fiche-port-drop-${pid}`}
+                          aria-pressed={verdict === "drop"}
+                          onClick={() => onChoice({
+                            target: "port",
+                            port_id: pid,
+                            action: verdict === "drop" ? "clear" : "drop",
+                          })}
+                          className={`px-1.5 py-0.5 font-mono text-[9px] border rounded-sm ${
+                            verdict === "drop"
+                              ? "border-alert/50 bg-alert/10 text-alert"
+                              : "border-line text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {t("reviewDrop")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="flex items-center justify-between mt-1 gap-2">
                     <span className="font-mono text-[10px] text-slate-500 truncate">
                       {p.confidence != null ? `${t("poeConfidence")} ${p.confidence}` : (p.city || "")}
@@ -221,23 +308,38 @@ export default function ZoneFiche({ t, fiche, loading, onFlyToPort, variant = "s
                         data-testid="poe-fiche-port-bu-list"
                       >
                         {bus.map((rec, i) => (
-                          <a
-                            key={rec.url}
-                            href={rec.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-accent hover:text-white shrink-0"
-                            data-testid={i === 0 ? "poe-fiche-port-bu" : `poe-fiche-port-bu-${i}`}
-                            title={rec.url}
-                          >
-                            {showAllTd && bus.length > 1 ? (
-                              <span className="font-mono text-[9px] underline decoration-accent/40">
-                                {hostOf(rec.url)}
-                              </span>
-                            ) : (
-                              <ExternalLink size={11} />
-                            )}
-                          </a>
+                          <span key={rec.url} className="inline-flex items-center gap-1 shrink-0">
+                            {selectable ? (
+                              <input
+                                type="checkbox"
+                                data-testid={i === 0 ? `poe-fiche-bu-keep-${pid}` : `poe-fiche-bu-keep-${pid}-${i}`}
+                                checked={(buMap[pid] || {})[rec.url] === "keep"}
+                                onChange={() => onChoice({
+                                  target: "bu",
+                                  port_id: pid,
+                                  url: rec.url,
+                                  action: (buMap[pid] || {})[rec.url] === "keep" ? "clear" : "keep",
+                                })}
+                                className="accent-accent"
+                              />
+                            ) : null}
+                            <a
+                              href={rec.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-accent hover:text-white shrink-0"
+                              data-testid={i === 0 ? "poe-fiche-port-bu" : `poe-fiche-port-bu-${i}`}
+                              title={rec.url}
+                            >
+                              {showAllTd && bus.length > 1 ? (
+                                <span className="font-mono text-[9px] underline decoration-accent/40">
+                                  {hostOf(rec.url)}
+                                </span>
+                              ) : (
+                                <ExternalLink size={11} />
+                              )}
+                            </a>
+                          </span>
                         ))}
                       </div>
                     ) : (

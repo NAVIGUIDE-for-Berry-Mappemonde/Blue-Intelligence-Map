@@ -60,6 +60,7 @@ export default function App() {
   const [flyToZone, setFlyToZone] = useState(null);         // {mrgid, bbox, ts}
   const [zoneFiche, setZoneFiche] = useState(null);
   const [ficheLoading, setFicheLoading] = useState(false);
+  const [mapEpoch, setMapEpoch] = useState(0);
   const [flyToPoe, setFlyToPoe] = useState(null);
   const [ampSites, setAmpSites] = useState({ type: "FeatureCollection", features: [] });
   const [flyToAmp, setFlyToAmp] = useState(null);
@@ -159,6 +160,7 @@ export default function App() {
     fetchCapitaineries();
     fetchPoeZones();
     fetchPoePorts();
+    setMapEpoch((n) => n + 1);
   }, [fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoeZones, fetchPoePorts]);
 
   useEffect(() => {
@@ -342,7 +344,7 @@ export default function App() {
       .catch(() => { if (alive) setZoneFiche(null); })
       .finally(() => { if (alive) setFicheLoading(false); });
     return () => { alive = false; };
-  }, [selectedZone]);
+  }, [selectedZone, mapEpoch]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss" data-mode={mode}>
