@@ -21,6 +21,8 @@ VISIT_HINT_RE = amp_svc.VISIT_HINT_RE
 BAD_URL_RE = re.compile(
     r"facebook\.|twitter\.|instagram\.|tiktok\.|linkedin\.|"
     r"tripadvisor\.|booking\.|airbnb\.|youtube\.|"
+    r"researchgate\.|atraques\.|yachtmate\.|noonsite\.|"
+    r"safetyanchoralarm\.|leportvauban\.|"
     r"/contact|/about|/news|/presse|/donate|/privacy|/legal|"
     r"/login|/cart|/shop",
     re.I,
@@ -42,12 +44,15 @@ def score_visit_candidate(
     title: str = "",
     snippet: str = "",
     curated: bool = False,
+    name: str = "",
+    require_name: bool = False,
 ) -> int:
     """Score > 0 = candidat plausible. 0 = rejeter (homepage, pub, hors sujet)."""
     if BAD_URL_RE.search(url or ""):
         return 0
     return amp_svc.rank_visit_candidate(
-        url, manager_url, curated=curated, title=title, snippet=snippet)
+        url, manager_url, curated=curated, title=title, snippet=snippet,
+        name=name, require_name=require_name)
 
 
 def pick_visit_from_urls(
@@ -55,11 +60,15 @@ def pick_visit_from_urls(
     urls: list[str],
     *,
     titles: dict[str, str] | None = None,
+    name: str = "",
+    require_name: bool = False,
 ) -> str | None:
     titles = titles or {}
     best_url, best_score = None, 0
     for raw in urls:
-        sc = score_visit_candidate(raw, manager_url, title=titles.get(raw, ""))
+        sc = score_visit_candidate(
+            raw, manager_url, title=titles.get(raw, ""),
+            name=name, require_name=require_name)
         if sc > best_score:
             best_url, best_score = raw, sc
     if not best_url:
@@ -247,7 +256,8 @@ async def discover_visit_urls(
                 for doc in chunk:
                     rec = recs.get(doc.get("manager_url") or "") or {}
                     picked = pick_visit_from_urls(
-                        doc.get("manager_url"), urls_from_fetch_record(rec))
+                        doc.get("manager_url"), urls_from_fetch_record(rec),
+                        name=doc.get("name") or "")
                     verdict = await _commit_discovered(
                         db, doc, picked, "tinyfish_fetch")
                     if verdict == "found":
@@ -275,6 +285,8 @@ async def discover_visit_urls(
                                 doc.get("manager_url"),
                                 [h.get("url") for h in hits if h.get("url")],
                                 titles=titles,
+                                name=doc.get("name") or "",
+                                require_name=True,
                             )
                             if picked:
                                 break

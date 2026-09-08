@@ -101,6 +101,21 @@ def test_score_prefers_same_domain_procedure_page():
     assert visite > other > 0
 
 
+def test_search_score_rejects_unrelated_offhost_even_with_visit_hint():
+    home = "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici"
+    assert amp_visit.score_visit_candidate(
+        "https://www.mom.gov.sg", home,
+        title="Visit Singapore", name="Cap de Creus", require_name=True) == 0
+    assert amp_visit.score_visit_candidate(
+        "https://atraques.es/en/guides/free-anchoring-spain-permitted-bays/",
+        home, title="Free anchoring Spain", name="Aiguamolls de l'Alt Empordà",
+        require_name=True) == 0
+    assert amp_visit.score_visit_candidate(
+        "https://ofb.gouv.fr/aires/cap-de-creus/visite",
+        home, title="Visite Cap de Creus", name="Cap de Creus",
+        require_name=True) > 0
+
+
 def test_pick_from_fetch_links_never_returns_homepage():
     manager = "https://parc-marin.fr"
     picked = amp_visit.pick_visit_from_urls(manager, [
@@ -192,9 +207,9 @@ def test_discover_fetch_then_search_and_keeps_urls_apart():
     assert out["found"] == 3
 
 
-def test_discover_search_accepts_offhost_visit_page():
+def test_discover_search_accepts_named_offhost_visit_page():
     docs = [{
-        "_id": "F", "site_id": "F", "name": "Parc F",
+        "_id": "F", "site_id": "F", "name": "Cerbère-Banyuls",
         "manager_url": "https://parc-f.fr",
         "other_helpful_links": "",
         "visit_url": None, "visit_url_status": "none",
@@ -207,14 +222,18 @@ def test_discover_search_accepts_offhost_visit_page():
 
     async def search(query, include_domains=None):
         if include_domains:
-            return []
-        return [{"url": "https://ofb.gouv.fr/visite-parc-f", "title": "Visite Parc F"}]
+            return [{"url": "https://www.mom.gov.sg", "title": "Visit Singapore"}]
+        return [
+            {"url": "https://www.mom.gov.sg", "title": "Visit Singapore"},
+            {"url": "https://ofb.gouv.fr/visite-cerbere-banyuls",
+             "title": "Visite Cerbère-Banyuls"},
+        ]
 
     out = asyncio.run(amp_visit.discover_visit_urls(
         db, state=state, limit=10, skip_search=False,
         fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
     ))
-    assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-parc-f"
+    assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-cerbere-banyuls"
     assert db.amp_sites.docs[0]["visit_url_source"] == "tinyfish_search"
     assert not amp_svc.is_manager_suburl(
         db.amp_sites.docs[0]["visit_url"], "https://parc-f.fr")

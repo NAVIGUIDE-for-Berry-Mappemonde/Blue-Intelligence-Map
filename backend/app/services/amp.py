@@ -13,6 +13,7 @@ stocké dans ``amp_sites`` (pas l'ancienne ``mpa_cache``).
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Iterable
@@ -49,6 +50,17 @@ _VISIT_HINT = (
     r"turismo|tourisme|nautism\w*|zoning|regulat\w*"
 )
 VISIT_HINT_RE = re.compile(rf"(?:^|[\W_])(?:{_VISIT_HINT})(?:$|[\W_])", re.I)
+_NAME_TOKEN_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]{4,}")
+_NAME_STOP = frozenset({
+    "area", "aire", "amp", "mpa", "zone", "zona", "park", "parc", "marine",
+    "marin", "natural", "naturel", "naturelle", "national", "nacional",
+    "reserve", "reserva", "protected", "site", "sites", "gulf", "golfe",
+    "golf", "port", "ports", "isla", "isle", "illes", "islas", "cape",
+    "cabo", "west", "east", "north", "south", "nord", "sud", "ouest",
+    "france", "french", "spain", "spanish", "italia", "italy", "waters",
+    "mediterranean", "mediterranee", "special", "integral", "partial",
+    "partiale", "protection", "protegida", "this", "that", "with", "from",
+})
 
 SLIM_PROJECTION = {
     "_id": 1,
@@ -160,6 +172,32 @@ def is_manager_suburl(url: str | None, manager_url: str | None) -> bool:
     return bool(hu and hm and hu == hm)
 
 
+def fold_text(value: str | None) -> str:
+    raw = unicodedata.normalize("NFD", value or "")
+    return "".join(ch for ch in raw if unicodedata.category(ch) != "Mn").lower()
+
+
+def name_tokens(name: str | None) -> set[str]:
+    return {
+        tok for tok in _NAME_TOKEN_RE.findall(fold_text(name))
+        if tok not in _NAME_STOP
+    }
+
+
+def name_matches(name: str | None, blob: str | None) -> bool:
+    """Le nom du site doit apparaître dans l'URL / le titre (recherche hors hôte)."""
+    toks = name_tokens(name)
+    if not toks:
+        return False
+    hay = fold_text(blob)
+    long_toks = {tok for tok in toks if len(tok) >= 5}
+    if long_toks:
+        return any(tok in hay for tok in long_toks)
+    if len(toks) >= 2:
+        return sum(1 for tok in toks if tok in hay) >= 2
+    return next(iter(toks)) in hay
+
+
 def split_protectedseas_website(raw: str | None) -> tuple[str | None, list[str]]:
     """Champ Website PS : parfois ``Label|https://a; Autre|https://b``."""
     urls = extract_urls(raw)
@@ -184,6 +222,8 @@ def rank_visit_candidate(
     curated: bool = False,
     title: str = "",
     snippet: str = "",
+    name: str = "",
+    require_name: bool = False,
 ) -> int:
     """Score > 0 = candidat. 0 = homepage, pub, ou hors sujet."""
     if not normalize_url(url) or urls_equivalent(url, manager_url):
@@ -193,6 +233,10 @@ def rank_visit_candidate(
     hint_path = bool(VISIT_HINT_RE.search(path))
     hint_blob = bool(VISIT_HINT_RE.search(blob))
     same = is_manager_suburl(url, manager_url)
+    if require_name and not same and not name_matches(name, blob):
+        return 0
+    if require_name and not same and not path.strip("/"):
+        return 0
     score = 0
     if hint_path:
         score += 4
@@ -206,6 +250,8 @@ def rank_visit_candidate(
         score += 2
     if curated and not same and not hint_path and not hint_blob:
         # Lien extra PS hors hôte, sans mot-clé : brochure / dive-map souvent utile.
+        score += 2
+    if not same and name_matches(name, blob):
         score += 2
     return score
 

@@ -77,6 +77,18 @@ def test_pick_visit_prefers_same_host_suburl_from_website_blob():
     assert not amp_svc.urls_equivalent(url, "https://parcsnaturals.gencat.cat")
 
 
+def test_name_matches_requires_distinctive_token():
+    assert amp_svc.name_matches(
+        "Cap de Creus", "https://parcsnaturals.gencat.cat/cap-creus/normativa")
+    assert not amp_svc.name_matches(
+        "Cap de Creus", "https://www.mom.gov.sg Visit Singapore")
+    assert amp_svc.name_matches(
+        "Cerbère-Banyuls", "http://www.amp.afbiodiversite.fr/visite-cerbere")
+    assert not amp_svc.name_matches(
+        "Aiguamolls de l'Alt Empordà",
+        "https://atraques.es/en/guides/free-anchoring-spain-permitted-bays/")
+
+
 def test_pick_visit_accepts_offhost_extra_when_it_is_not_the_manager():
     url, status = amp_svc.pick_visit_url(
         "https://reserves-naturelles.org/cerbere-banyuls",
