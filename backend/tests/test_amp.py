@@ -254,6 +254,7 @@ def test_amp_router_and_legacy_mpa_stay_apart():
     mpa_paths = {getattr(r, "path", "") for r in projects_router.router.routes}
     assert "/api/amp" in amp_paths
     assert "/api/amp/sites/{site_id}/visit-url" in amp_paths
+    assert "/api/amp/discover-visit-urls" in amp_paths
     assert "/api/export/amp.geojson" in amp_paths
     assert "/api/mpa" in mpa_paths
     gone = [r for r in projects_router.router.routes if getattr(r, "path", "") == "/api/mpa"]

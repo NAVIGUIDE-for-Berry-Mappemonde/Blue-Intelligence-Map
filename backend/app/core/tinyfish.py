@@ -18,6 +18,12 @@ POE_PURPOSE = (
     "Prefer government domains. Ignore airports."
 )
 
+AMP_VISIT_PURPOSE = (
+    "Skipper-facing visit / entry / anchoring / mooring / permit page for a "
+    "named marine protected area. Prefer a path such as /visite, /plaisance, "
+    "/permits or /reglementation — never the organization homepage alone."
+)
+
 # Une retry 429 ; monkeypatchable dans les tests.
 SEARCH_RETRY_SLEEP_S = 2.0
 FETCH_LEVEL = "N3-mirror-tinyfish"
