@@ -432,25 +432,56 @@ async def _count_todo(coll, q: dict, fetch_n: int, state) -> int:
     return n
 
 
-async def _iter_todo(coll, q: dict, fetch_n: int) -> AsyncIterator[dict]:
-    """Curseur Motor par lots. Jamais to_list() sur toute la collection."""
+def _page_query(q: dict, last_id: Any) -> dict:
+    if last_id is None:
+        return q
+    return {"$and": [q, {"_id": {"$gt": last_id}}]}
+
+
+async def _next_page(coll, q: dict, last_id: Any, page: int) -> list[dict]:
+    """Page courte : le curseur Atlas est fermé avant TinyFish (évite CursorNotFound)."""
+    qq = _page_query(q, last_id)
     try:
-        cur = coll.find(q, _PLACE_PROJ)
+        cur = coll.find(qq, _PLACE_PROJ)
     except TypeError:
-        cur = coll.find(q)
-    if hasattr(cur, "batch_size"):
+        cur = coll.find(qq)
+    if hasattr(cur, "sort"):
         try:
-            cur = cur.batch_size(CURSOR_BATCH)
+            cur = cur.sort("_id", 1)
         except Exception:
             pass
-    if hasattr(cur, "limit") and fetch_n < 200_000:
-        cur = cur.limit(fetch_n)
-    n = 0
+    if hasattr(cur, "limit"):
+        cur = cur.limit(page)
+    if hasattr(cur, "batch_size"):
+        try:
+            cur = cur.batch_size(page)
+        except Exception:
+            pass
+    docs: list[dict] = []
     async for doc in cur:
-        yield doc
-        n += 1
-        if n >= fetch_n:
+        docs.append(doc)
+        if len(docs) >= page:
             break
+    return docs
+
+
+async def _iter_todo(coll, q: dict, fetch_n: int) -> AsyncIterator[dict]:
+    """Pages de CURSOR_BATCH docs. Jamais to_list() sur toute la collection."""
+    last_id: Any = None
+    n = 0
+    while n < fetch_n:
+        page = min(CURSOR_BATCH, fetch_n - n)
+        docs = await _next_page(coll, q, last_id, page)
+        if not docs:
+            return
+        for doc in docs:
+            last_id = doc["_id"]
+            n += 1
+            yield doc
+            if n >= fetch_n:
+                return
+        if len(docs) < page:
+            return
 
 
 async def resolve_maps_places(

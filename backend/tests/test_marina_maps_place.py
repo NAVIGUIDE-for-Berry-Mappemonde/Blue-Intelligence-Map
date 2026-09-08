@@ -257,10 +257,19 @@ class _Coll:
         self.docs = list(docs)
 
     def find(self, q, projection=None):
+        last_id = None
+        qq = q or {}
+        if "$and" in qq:
+            for part in qq["$and"]:
+                raw = part.get("_id") if isinstance(part, dict) else None
+                if isinstance(raw, dict) and "$gt" in raw:
+                    last_id = raw["$gt"]
         out = []
         for d in self.docs:
             name = d.get("name")
             if name in ("", None):
+                continue
+            if last_id is not None and str(d.get("_id")) <= str(last_id):
                 continue
             if d.get("maps_place_status") not in (None,):
                 # force=False query uses $or missing/None
@@ -358,3 +367,28 @@ def test_resolve_batch_signals_without_filtering():
     assert "maps_place_status" not in by_id["node/1"] or by_id["node/1"].get("maps_place_status") in (None, "skipped_unnamed")
     # On n'a pas filtré : les 3 docs restent.
     assert len(coll.docs) == 3
+
+
+def test_resolve_pages_across_cursor_batches():
+    from app.core.tasks import TaskState
+
+    n = mp.CURSOR_BATCH + 3
+    docs = [
+        {"_id": f"way/{i:05d}", "name": f"Marina {i:05d}", "lat": 46.0, "lon": -1.0}
+        for i in range(n)
+    ]
+    coll = _Coll(docs)
+    calls = {"n": 0}
+
+    async def fetch_many(marinas):
+        calls["n"] += 1
+        return {m["_id"]: {"title": "Google Maps", "text": "can't find", "links": []} for m in marinas}
+
+    state = TaskState()
+    summary = asyncio.run(mp.resolve_maps_places(
+        marinas_coll=coll, state=state, skip_search=True, fetch_many_fn=fetch_many,
+    ))
+    assert summary["selected"] == n
+    assert summary["none"] == n
+    assert calls["n"] == (n + 9) // 10
+    assert all(d.get("maps_place_status") == "none" for d in coll.docs)
