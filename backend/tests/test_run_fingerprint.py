@@ -60,6 +60,8 @@ class TestFingerprint:
         assert fp["features"]["seed_verify"] is True
         assert fp["features"]["seed_osm"] is True
         assert fp["features"]["seed_enrich"] is True
+        assert fp["features"]["seed_mine_sources"] is True
+        assert fp["features"]["seed_mine_sources"] is True
         assert fp["features"]["tinyfish_poe_agent"] is True
         assert fp["features"]["claude_sonnet_judge"] is True
         assert fp["features"]["seed_database"] is True

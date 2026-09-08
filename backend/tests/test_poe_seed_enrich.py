@@ -726,3 +726,154 @@ class TestBuCatalog:
             if u[1].get("$set", {}).get("judge_status")
         ]
         assert verdicts == ["catalog", "catalog"]
+
+
+class TestMinePaidSources:
+    def test_select_list_url_drops_noonsite_and_embassy(self):
+        items = enr.collect_paid_source_urls([
+            {"name": "A", "mrgid": 8429, "judge_sources": [
+                "https://www.noonsite.com/country/mx/ensenada",
+                "https://www.gob.mx/sct/puertos-habilitados",
+                "https://www.mfa.government.bg/en/embassyinfo/india",
+            ]},
+            {"name": "B", "mrgid": 8429, "judge_sources": [
+                "https://www.gob.mx/sct/puertos-habilitados",
+            ]},
+        ])
+        picked = enr.select_mine_urls(items, cap=10)
+        urls = [it["url"] for it in picked]
+        assert urls == [_MX_URL] or any("habilitados" in u for u in urls)
+        assert not any("noonsite" in u for u in urls)
+        assert not any("embassyinfo" in u for u in urls)
+        assert enr.select_mine_urls(items, cap=1)[0]["url"] == _MX_URL
+
+    def test_mine_fetch_without_search_marks_named(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "unverified", "has_coords": True,
+             "judge_sources": [_MX_URL]},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429,
+             "verify_verdict": "unverified", "has_coords": True,
+             "judge_sources": [_MX_URL]},
+            {"_id": "m1", "name": "Manzanillo", "mrgid": 8429,
+             "verify_verdict": "probable", "judge_status": "accepted",
+             "has_coords": True, "judge_sources": [_MX_URL]},
+        ])
+        db.eez_zones = _FakeColl([{
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX", "sov_iso2": "MX",
+        }])
+        db.poe_run_ports = _FakeColl([])
+
+        async def boom_search(*a, **k):
+            raise AssertionError("mine = 0 Search")
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [_MX_URL])
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.mine_paid_sources(
+            db, state, fetch_cap=20, persist_memory=False,
+            mark_named=True, judge_residue=False, include_runs=False))
+        assert summary["search"] is False
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert 8429 in summary["eez_catalog"]
+        assert _MX_URL in summary["urls_catalog"]
+        assert summary["counts"]["named_catalog"] == 1
+        assert summary["counts"]["named_kept"] == 1
+        assert db.eez_zones.updates
+        named = [
+            u[1]["$set"]
+            for u in db.poe_seed_ports.updates
+            if u[1].get("$set", {}).get("judge_status") == "catalog"
+        ]
+        assert named and named[0].get("official_name") == "Ensenada"
+
+    def test_mine_residue_restricted_to_catalog_eez(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "unverified",
+             "judge_sources": [_MX_URL]},
+        ])
+        db.eez_zones = _FakeColl([
+            {"mrgid": 8429, "name": "Mexico", "iso2": "MX"},
+        ])
+        db.poe_run_ports = _FakeColl([])
+        seen = {}
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        async def fake_enrich(*a, **k):
+            seen.update(k)
+            return {"judge_todo": 1, "counts": {"judge_inconclusive": 1},
+                    "run_id": "seed-enrich"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+        monkeypatch.setattr(enr, "execute_enrich", fake_enrich)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.mine_paid_sources(
+            db, state, persist_memory=False, mark_named=False,
+            judge_residue=True, include_runs=False))
+        assert seen.get("residue_only") is True
+        assert seen.get("do_geocode") is False
+        assert 8429 in set(seen.get("only_mrgids") or [])
+
+    def test_execute_enrich_residue_skips_named(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429, "lat": 31.85,
+             "lon": -116.62, "has_coords": True, "verify_verdict": "unverified"},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429, "lat": 1,
+             "lon": 1, "has_coords": True, "verify_verdict": "unverified"},
+        ])
+        db.eez_zones = _FakeColl([{
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX",
+            "sources_bu": [_MX_URL],
+            "catalog_bu": [
+                {"name": "Ensenada", "lat": 31.85, "lon": -116.62},
+                {"name": "Guaymas", "lat": 27.9, "lon": -110.9},
+                {"name": "Manzanillo", "lat": 19.05, "lon": -104.31},
+            ],
+        }])
+        judged = []
+
+        async def fake_judge(doc, *a, **k):
+            judged.append(doc["name"])
+            return {**enr.parse_judge({"is_poe": None, "reason": "hors liste"}),
+                    "judge_engine": "claude-haiku", "judge_at": "t"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "judge_one", fake_judge)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.execute_enrich(
+            db, state, source="seeds", limit=0, do_geocode=False,
+            verdicts=["unverified"], use_agent=False, concurrency=1,
+            persist_memory=False, only_mrgids={8429}, residue_only=True))
+        assert judged == ["Puerto Fantasma"]
