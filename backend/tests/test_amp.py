@@ -77,7 +77,7 @@ def test_pick_visit_prefers_same_host_suburl_from_website_blob():
     assert not amp_svc.urls_equivalent(url, "https://parcsnaturals.gencat.cat")
 
 
-def test_pick_visit_ignores_offhost_ofb_label_without_hints():
+def test_pick_visit_accepts_offhost_extra_when_it_is_not_the_manager():
     url, status = amp_svc.pick_visit_url(
         "https://reserves-naturelles.org/cerbere-banyuls",
         extra_blobs=[
@@ -85,8 +85,11 @@ def test_pick_visit_ignores_offhost_ofb_label_without_hints():
             "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
         ],
     )
-    assert url is None
-    assert status == "not_found"
+    assert status == "found"
+    assert url == "https://www.amp.afbiodiversite.fr/accueil_fr/fiche" or (
+        url and "afbiodiversite.fr" in url)
+    assert not amp_svc.urls_equivalent(url, "https://reserves-naturelles.org/cerbere-banyuls")
+    assert not amp_svc.is_manager_suburl(url, "https://reserves-naturelles.org/cerbere-banyuls")
 
 
 def test_attrs_parses_dirty_website_and_keeps_suburl_visit():
