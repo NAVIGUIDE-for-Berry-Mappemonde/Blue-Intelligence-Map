@@ -465,6 +465,33 @@ def test_stable_eez_queue_is_the_eleven_in_order():
     assert {i["id"] for i in run_pre["items"]} == {"5677", "9999"}
 
 
+def test_recommended_run_prefers_broader_stable_coverage():
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    reset_eez_pre_gold_cache()
+    db = _db()
+    db.poe_runs.docs.append({
+        "_id": "poe-run-0", "label": "serper-11-tinyfish", "state": "done",
+        "created_at": "2026-09-07T10:00:00Z",
+    })
+    db.poe_run_zones.docs.extend([
+        {**_HEX, "run_id": "poe-run-0", "sources_official": True, "sources": [
+            {"url": "https://douane.gouv.fr/hexagone.pdf", "official": True},
+        ]},
+        {
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX", "poe_count": 8,
+            "run_id": "poe-run-0", "sources_official": True,
+            "sources": [{"url": "https://gob.mx/puertos", "official": True}],
+        },
+        {
+            "mrgid": 8455, "name": "New Zealand", "iso2": "NZ", "poe_count": 26,
+            "run_id": "poe-run-0", "sources_official": True,
+            "sources": [{"url": "https://mpi.govt.nz/places", "official": True}],
+        },
+    ])
+    runs = asyncio.run(review_queue.list_runs(db, "eez"))
+    assert runs["recommended_id"] == "poe-run-0"
+
+
 def test_gold_toggle_does_not_write_v1():
     from app.services.review_gold import filter_visible, reset_eez_pre_gold_cache, toggle_gold
     reset_eez_pre_gold_cache()

@@ -195,7 +195,10 @@ async def pre_gold_eez_mrgids(db) -> set[int]:
 
 
 async def recommended_eez_run_id(db) -> str | None:
-    """Dernier run prod qui a extrait au moins un des 11 de façon productive."""
+    """Run prod qui couvre le plus des 11 de façon productive, puis le plus récent.
+
+    Un rerun France (1 zone) ne doit pas masquer le run des 11 (FR+NZ+EG…).
+    """
     prod = await production_poe_runs(db)
     by_id = {_sid(d.get("_id")): d for d in prod if _sid(d.get("_id"))}
     if not by_id:
@@ -211,18 +214,21 @@ async def recommended_eez_run_id(db) -> str | None:
         ).to_list(400)
     except Exception:
         return None
-    productive_rids: set[str] = set()
+    scores: dict[str, int] = {}
     for z in zones:
-        if eez_extraction_is_productive(z):
-            rid = _sid(z.get("run_id"))
-            if rid in by_id:
-                productive_rids.add(rid)
+        if not eez_extraction_is_productive(z):
+            continue
+        rid = _sid(z.get("run_id"))
+        if rid in by_id:
+            scores[rid] = scores.get(rid, 0) + 1
     best: str | None = None
+    best_score = 0
     best_at = ""
-    for rid in productive_rids:
+    for rid, n in scores.items():
         created = str((by_id.get(rid) or {}).get("created_at") or "")
-        if best is None or created > best_at:
+        if best is None or n > best_score or (n == best_score and created > best_at):
             best = rid
+            best_score = n
             best_at = created
     return best
 
