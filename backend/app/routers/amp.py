@@ -1,12 +1,17 @@
 """app.routers.amp — 4e mode : Aires Marines Protégées (ProtectedSeas)."""
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.run_rules import catalog_default
+from app.core.tasks import TaskState
 from app.db import db
 from app.services import amp as amp_svc
+from app.services import amp_visit
 
 router = APIRouter(prefix="/api")
+VISIT_DISCOVER_STATE = TaskState(max_logs=400)
 
 
 class VisitUrlBody(BaseModel):
@@ -16,6 +21,11 @@ class VisitUrlBody(BaseModel):
 class RefreshBody(BaseModel):
     bbox: str
     force: bool = True
+
+
+class DiscoverBody(BaseModel):
+    limit: int = 200
+    skip_search: bool = False
 
 
 def _parse_bbox(raw: str):
@@ -97,7 +107,56 @@ async def amp_set_visit_url(site_id: str, body: VisitUrlBody):
 
 @router.post("/amp/resolve-visit-urls")
 async def amp_resolve_visit_urls(limit: int = 500):
+    """Heuristique synchrone : other_helpful_links seulement."""
     return await amp_svc.resolve_visit_urls(db, limit=min(max(limit, 1), 2000))
+
+
+@router.post("/amp/discover-visit-urls")
+async def amp_discover_visit_start(body: DiscoverBody | None = None):
+    """Job de fond : liens extra → TinyFish Fetch → TinyFish Search (comme Marinas)."""
+    if VISIT_DISCOVER_STATE.running:
+        raise HTTPException(409, "A visit-URL discover is already running")
+    body = body or DiscoverBody()
+    limit = min(max(int(body.limit or 200), 1), 2000)
+
+    async def _runner():
+        try:
+            await amp_visit.discover_visit_urls(
+                db,
+                state=VISIT_DISCOVER_STATE,
+                limit=limit,
+                skip_search=bool(body.skip_search),
+            )
+        except Exception as exc:
+            VISIT_DISCOVER_STATE.error = f"{type(exc).__name__}: {exc}"
+
+    asyncio.create_task(_runner())
+    return {"started": True, "limit": limit, "skip_search": bool(body.skip_search)}
+
+
+@router.post("/amp/discover-visit-urls/cancel")
+async def amp_discover_visit_cancel():
+    if not VISIT_DISCOVER_STATE.running:
+        raise HTTPException(409, "No visit-URL discover is running")
+    VISIT_DISCOVER_STATE.cancel = True
+    VISIT_DISCOVER_STATE.log("Stop demandé")
+    return {"cancelling": True}
+
+
+@router.get("/amp/discover-visit-urls/status")
+async def amp_discover_visit_status():
+    s = VISIT_DISCOVER_STATE
+    return {
+        "running": s.running,
+        "cancelling": s.cancel,
+        "started_at": s.started_at,
+        "finished_at": s.finished_at,
+        "progress": s.progress,
+        "total": s.total,
+        "summary": s.summary,
+        "error": s.error,
+        "logs_tail": s.logs[-40:],
+    }
 
 
 @router.get("/export/amp.geojson")

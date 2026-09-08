@@ -174,7 +174,7 @@ Operator console reserved for the crew / admin. It groups **all batch triggers**
 - **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
 - **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). A second Console action resolves Google `/place/` pages via TinyFish Search (signal only, no filter). Anchorages stay on the route corridor.
 - **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
-- **MPA / AMP**: cache coverage and visit-URL coverage. A Console action applies the extra-links heuristic (never copies the ProtectedSeas manager Website).
+- **MPA / AMP**: cache coverage and visit-URL coverage. A Console job fills visit URLs like Marinas Google-place: ProtectedSeas extra links, then TinyFish Fetch on the manager page, then Search. Never the manager homepage.
 - **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
 ## Settings (right panel, gear icon)
@@ -242,7 +242,7 @@ Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les d
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
 - **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Une seconde action Console résout les fiches Google `/place/` via TinyFish Search (signal seulement, pas de filtre). Les mouillages restent sur le corridor de la route.
 - **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
-- **AMP** : couverture du cache et des URL de visite. Une action Console applique l'heuristique des liens extra (jamais une copie du Website gestionnaire ProtectedSeas).
+- **AMP** : couverture du cache et des URL de visite. Un job Console remplit les URL de visite comme les fiches Google Marinas : liens extra ProtectedSeas, puis TinyFish Fetch sur la page gestionnaire, puis Search. Jamais la homepage gestionnaire.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 
 ## Paramètres (bandeau droit, icône engrenage)
