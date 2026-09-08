@@ -597,7 +597,7 @@ def test_gold_toggle_does_not_write_v1():
         pass
     vis_eez = asyncio.run(filter_visible(
         db, "eez", db.eez_zones.docs, lambda z: str(z["mrgid"])))
-    assert {z["mrgid"] for z in vis_eez} == {5677}
+    assert vis_eez == []
     assert len(db.poe_ports.docs) == n_ports
     assert len(db.eez_zones.docs) == n_zones
     assert len(db.marinas.docs) == n_marinas
@@ -683,6 +683,9 @@ def test_gold_france_publishes_snapshot_not_v1():
     assert "Marseille" in names
     assert "Sète" in names
     assert union["gold_ready"] is False
+    assert asyncio.run(visible_eez_mrgids(db)) == set()
+    assert asyncio.run(visible_poe_port_docs(db, mrgid=5677)) == []
+    assert asyncio.run(build_map_zone_fiche(db, 5677)) is None
     _prepare_france_gold(db)
     ready = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     assert ready["gold_ready"] is True
@@ -703,7 +706,7 @@ def test_gold_france_publishes_snapshot_not_v1():
     assert snap_names == ["Marseille", "Sète"]
     assert "Cambridge" not in snap_names
     vis = asyncio.run(visible_eez_mrgids(db))
-    assert 5677 in vis
+    assert vis == {5677}
     ports = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
     assert {d["name"] for d in ports} == {"Marseille", "Sète"}
     assert all(str(d["_id"]).startswith("gold:5677:") for d in ports)
@@ -720,16 +723,15 @@ def test_gold_france_publishes_snapshot_not_v1():
     assert off["wrote_poe_ports"] is False
     assert len(db.poe_ports.docs) == n_ports
     after = asyncio.run(build_map_zone_fiche(db, 5677))
-    assert after["fiche_scope"] == "published"
-    assert [p["name"] for p in after["ports"]] == ["Marseille"]
-    v1_ports = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
-    assert [d["name"] for d in v1_ports] == ["Marseille"]
-    assert all(not str(d["_id"]).startswith("gold:") for d in v1_ports)
+    assert after is None
+    hidden = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
+    assert hidden == []
     vis_after = asyncio.run(visible_eez_mrgids(db))
-    assert 5677 in vis_after
+    assert 5677 not in vis_after
     still = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     assert still["gold_on"] is False
     assert still["gold_ready"] is True
+    assert "Marseille" in [p["name"] for p in still["fiche"]["ports"]]
 
 
 def test_gold_ready_none_and_zero_ports():

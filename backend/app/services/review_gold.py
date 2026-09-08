@@ -5,8 +5,8 @@ Les bases v1 (`projects`, `poe_ports`, `eez_zones`, `marinas`) ne sont
 jamais écrites. Seule `review_gold` porte les overrides (on / off + snapshot).
 
 Projets / marinas : interrupteur. Formalités : Gold = publier la fiche
-(snapshot des TD / PoE gardés). Le polygone pré-Gold reste visible ; après
-Gold, la carte lit le snapshot au lieu de `poe_ports`.
+(snapshot des TD / PoE gardés). La carte ne montre que ce snapshot — la v1
+est un run de Review, pas une couche carte.
 """
 from __future__ import annotations
 
@@ -118,18 +118,9 @@ def eez_is_published(override: dict | None) -> bool:
     return bool(override and override.get("on") and override.get("snapshot"))
 
 
-def eez_on_map(mid: int, pre: set[int], override: dict | None) -> bool:
-    """Polygone visible : publié, ou pré-Gold (sauf hide legacy sans snapshot)."""
-    if eez_is_published(override):
-        return True
-    if mid in pre:
-        if (override is not None and override.get("on") is False
-                and not override.get("snapshot")):
-            return False
-        return True
-    if override is not None and override.get("on"):
-        return True
-    return False
+def eez_on_map(override: dict | None) -> bool:
+    """Polygone Formalités visible = fiche Gold publiée. Pas de v1."""
+    return eez_is_published(override)
 
 
 def reset_eez_pre_gold_cache() -> None:
@@ -339,19 +330,8 @@ async def is_pre_gold_entity(db, kind: str, entity_id: str, doc: dict | None = N
 
 
 async def visible_eez_mrgids(db) -> set[int]:
-    pre = await pre_gold_eez_mrgids(db)
-    overrides = await overrides_map(db, "eez")
-    visible: set[int] = set()
-    candidates = set(pre)
-    for eid, ov in overrides.items():
-        try:
-            candidates.add(int(eid))
-        except (TypeError, ValueError):
-            continue
-    for mid in candidates:
-        if eez_on_map(mid, pre, overrides.get(str(mid))):
-            visible.add(mid)
-    return visible
+    """mrgid sur la carte Formalités : uniquement les fiches Gold publiées."""
+    return set(await published_snapshots(db))
 
 
 async def published_snapshots(db) -> dict[int, dict]:
@@ -372,40 +352,19 @@ async def published_snapshots(db) -> dict[int, dict]:
 
 async def visible_poe_port_docs(db, mrgid: int | None = None,
                                   country: str | None = None) -> list[dict]:
-    """Ports carte Formalités : snapshot Gold s'il est publié, sinon v1."""
-    allowed = await visible_eez_mrgids(db)
+    """Ports carte Formalités : snapshot Gold uniquement, jamais `poe_ports`."""
     snaps = await published_snapshots(db)
     if mrgid is not None:
         try:
             mid = int(mrgid)
         except (TypeError, ValueError):
             return []
-        if mid not in allowed:
+        if mid not in snaps:
             return []
-        allowed = {mid}
+        snaps = {mid: snaps[mid]}
     iso = (country or "").strip().upper()
-    q: dict = {}
-    if mrgid is not None:
-        q["mrgid"] = int(mrgid)
-    if iso:
-        q["country_iso2"] = iso
-    try:
-        docs = await db.poe_ports.find(q).to_list(10000)
-    except Exception:
-        docs = []
     out: list[dict] = []
-    for d in docs:
-        try:
-            mid = int(d.get("mrgid") or 0)
-        except (TypeError, ValueError):
-            continue
-        if mid not in allowed or mid in snaps:
-            continue
-        out.append(d)
-    for mid in allowed:
-        snap = snaps.get(mid)
-        if not snap:
-            continue
+    for mid, snap in snaps.items():
         for doc in snapshot_port_docs(mid, snap):
             if iso and str(doc.get("country_iso2") or "").upper() != iso:
                 continue
@@ -415,7 +374,6 @@ async def visible_poe_port_docs(db, mrgid: int | None = None,
 
 async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
     overrides = await overrides_map(db, kind)
-    pre_eez = await pre_gold_eez_mrgids(db) if kind == "eez" else None
     out: list[dict] = []
     for d in docs:
         eid = _sid(id_fn(d))
@@ -430,7 +388,7 @@ async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
                 mid = int(d.get("mrgid") or eid)
             except (TypeError, ValueError):
                 continue
-            if eez_on_map(mid, pre_eez or set(), overrides.get(str(mid))):
+            if eez_on_map(overrides.get(str(mid))):
                 out.append(d)
             continue
         else:

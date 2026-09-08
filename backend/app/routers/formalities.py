@@ -211,13 +211,12 @@ async def poe_zones(visible: bool = False):
         total_ports = 0
         for z in items:
             snap = snaps.get(int(z["mrgid"]))
-            if snap:
-                n = len(snap.get("ports") or [])
-                z["poe_count"] = n
-                z["gold_published"] = True
-                total_ports += n
-            else:
-                total_ports += await _db.poe_ports.count_documents({"mrgid": z["mrgid"]})
+            if not snap:
+                continue
+            n = len(snap.get("ports") or [])
+            z["poe_count"] = n
+            z["gold_published"] = True
+            total_ports += n
     else:
         total_ports = await _db.poe_ports.count_documents({})
     return {
@@ -268,7 +267,7 @@ async def poe_zones_geojson(visible: bool = False):
 
 @router.get("/poe/zones/{mrgid}")
 async def poe_zone_fiche(mrgid: int):
-    """Fiche carte d'une ZEE : snapshot Gold si publié, sinon v1. Lecture seule."""
+    """Fiche carte d'une ZEE : snapshot Gold uniquement. Pas de v1."""
     from app.services.poe_zone_fiche import build_map_zone_fiche
 
     fiche = await build_map_zone_fiche(_db, mrgid)
