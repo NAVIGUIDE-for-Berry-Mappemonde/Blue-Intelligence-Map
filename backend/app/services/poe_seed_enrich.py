@@ -1297,10 +1297,18 @@ async def apply_remembered_catalogs(db, state, *, persist_memory: bool = False,
         for cc, urls in (exc.get("seed_urls") or {}).items()
         if urls
     }
-    seeds = await db.poe_seed_ports.find({}).to_list(20000)
+    seeds = await db.poe_seed_ports.find(
+        {},
+        {"name": 1, "mrgid": 1, "judge_status": 1, "judge_sources": 1,
+         "verify_verdict": 1, "has_coords": 1, "lat": 1, "lon": 1},
+    ).to_list(20000)
     if not seeds:
         raise ValueError("poe_seed_ports vide — lancer POST /api/poe/seeds/build")
-    zones = await db.eez_zones.find({}).to_list(500)
+    zones = await db.eez_zones.find(
+        {},
+        {"mrgid": 1, "name": 1, "geoname": 1, "iso2": 1, "sov_iso2": 1,
+         "pol_type": 1, "catalog_bu": 1, "sources_bu": 1},
+    ).to_list(500)
     targets = []
     for z in zones:
         cc = (z.get("iso2") or "").upper()
