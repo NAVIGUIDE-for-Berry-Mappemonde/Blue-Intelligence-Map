@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.tasks import TaskState
-from app.services.poe_seed_enrich import mine_paid_sources
+from app.services.poe_seed_enrich import apply_remembered_catalogs, mine_paid_sources
 
 
 async def main() -> None:
@@ -24,6 +24,8 @@ async def main() -> None:
     p.add_argument("--no-residue", action="store_true")
     p.add_argument("--no-memory", action="store_true")
     p.add_argument("--no-runs", action="store_true")
+    p.add_argument("--remembered", action="store_true",
+                   help="Fetch seed_urls mémorisées (0 Search), puis résidu")
     args = p.parse_args()
 
     from motor.motor_asyncio import AsyncIOMotorClient
@@ -38,17 +40,28 @@ async def main() -> None:
 
     state.log = _log
     try:
-        summary = await mine_paid_sources(
-            db, state,
-            fetch_cap=args.fetch_cap,
-            persist_memory=not args.no_memory,
-            mark_named=True,
-            judge_residue=not args.no_residue,
-            residue_limit=args.residue_limit,
-            include_runs=not args.no_runs,
-            concurrency=2,
-            use_agent=False,
-        )
+        if args.remembered:
+            summary = await apply_remembered_catalogs(
+                db, state,
+                persist_memory=not args.no_memory,
+                mark_named=True,
+                judge_residue=not args.no_residue,
+                residue_limit=args.residue_limit or 25,
+                concurrency=2,
+                use_agent=False,
+            )
+        else:
+            summary = await mine_paid_sources(
+                db, state,
+                fetch_cap=args.fetch_cap,
+                persist_memory=not args.no_memory,
+                mark_named=True,
+                judge_residue=not args.no_residue,
+                residue_limit=args.residue_limit,
+                include_runs=not args.no_runs,
+                concurrency=2,
+                use_agent=False,
+            )
     finally:
         state.finish()
     print(json.dumps({

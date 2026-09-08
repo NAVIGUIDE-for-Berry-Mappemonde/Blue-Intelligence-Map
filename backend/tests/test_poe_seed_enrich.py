@@ -877,3 +877,74 @@ class TestMinePaidSources:
             verdicts=["unverified"], use_agent=False, concurrency=1,
             persist_memory=False, only_mrgids={8429}, residue_only=True))
         assert judged == ["Puerto Fantasma"]
+
+
+class TestRememberedCatalogs:
+    def test_fetch_seed_urls_skips_joint_and_existing(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "probable"},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429,
+             "verify_verdict": "probable"},
+        ])
+        db.eez_zones = _FakeColl([
+            {"mrgid": 8429, "name": "Mexico", "iso2": "MX", "pol_type": "200NM"},
+            {"mrgid": 48966, "name": "France", "iso2": "FR",
+             "pol_type": "Joint regime"},
+            {"mrgid": 8367, "name": "Morocco", "iso2": "MA", "pol_type": "200NM",
+             "sources_bu": [_MX_URL],
+             "catalog_bu": [
+                 {"name": "Agadir", "lat": 30.4, "lon": -9.6},
+                 {"name": "Tanger", "lat": 35.8, "lon": -5.8},
+                 {"name": "Casablanca", "lat": 33.6, "lon": -7.6},
+             ]},
+        ])
+        fetched_urls = []
+
+        async def boom_search(*a, **k):
+            raise AssertionError("remembered = 0 Search")
+
+        async def fake_fetch(urls, key, **k):
+            fetched_urls.extend(urls)
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        seen = {}
+
+        async def fake_enrich(*a, **k):
+            seen.update(k)
+            return {"judge_todo": 1, "counts": {"judge_inconclusive": 1},
+                    "run_id": "seed-enrich"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "load_exceptions", lambda: {"seed_urls": {
+            "MX": [_MX_URL],
+            "FR": ["https://www.douane.gouv.fr/liste-ports-de-plaisance-eligibles.pdf"],
+            "MA": ["https://www.douane.gov.ma/already"],
+        }})
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+        monkeypatch.setattr(enr, "execute_enrich", fake_enrich)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.apply_remembered_catalogs(
+            db, state, persist_memory=False, mark_named=True,
+            judge_residue=True, residue_limit=25))
+        assert summary["search"] is False
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert fetched_urls == [_MX_URL]
+        assert 8429 in summary["eez_catalog"]
+        assert 48966 not in summary["eez_catalog"]
+        assert 8367 not in summary["eez_catalog"]
+        assert seen.get("residue_only") is True
+        assert seen.get("source") == "seeds"
+        assert seen.get("verdicts") == ["probable", "unverified"]
+        assert 8429 in set(seen.get("only_mrgids") or [])
