@@ -3,7 +3,7 @@ llm_core.py — Adaptateur LLM.
 
 Complétions JSON : NVIDIA NIM si LLM_PROVIDER=nvidia (ou auto + clé),
 sinon OpenRouter. extract_ports_openrouter reste le lecteur OpenRouter ;
-le second lecteur (DeepSeek / Kimi / Claude) est orchestré dans le pipeline.
+le second lecteur (Muse / Kimi / Claude) est orchestré dans le pipeline.
 grounded_search reste OpenRouter (:online) — NIM n'a pas de recherche web.
 
   - ask_json / ask_text        : complétions (JSON strict ou texte libre)
@@ -122,7 +122,8 @@ async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None
     from app.core.nvidia import complete_json_nvidia, nvidia_enabled
     if nvidia_enabled(settings):
         return await complete_json_nvidia(
-            system, prompt, settings, max_tokens=max_tokens, log=log)
+            system, prompt, settings, max_tokens=max_tokens, log=log,
+            role="json")
     key = get_llm_key(settings)
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing")
@@ -394,7 +395,7 @@ async def extract_ports_openrouter(context: str, zone: dict,
 
 
 async def extract_ports(context: str, zone: dict, settings: dict | None = None, log=None) -> list[dict]:
-    """Lecteur principal. Le second lecteur (DeepSeek / Kimi / Claude) est
+    """Lecteur principal. Le second lecteur (Muse / Kimi / Claude) est
     orchestré dans poe_pipeline.extract_ports_llm."""
     s = settings
     if s is None:

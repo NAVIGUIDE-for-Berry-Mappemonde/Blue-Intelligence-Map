@@ -44,32 +44,75 @@ _SKIP_RE = re.compile(
     re.I,
 )
 
-# Pile actuelle + candidats texte utiles pour le juge / l'extracteur.
-CURATED = (
-    nvidia.PRIMARY_MODEL,
-    nvidia.LEGAL_MODEL,
-    "poolside/laguna-xs-2.1",
-    "moonshotai/kimi-k2.6",
-    "google/gemma-4-31b-it",
-    "google/gemma-3-12b-it",
-    "google/gemma-3-4b-it",
-    "google/diffusiongemma-26b-a4b-it",
-    "mistralai/mistral-nemotron",
-    "nvidia/nemotron-3.5-lightning-30b-a3b",
-    "nvidia/nemotron-3-super-120b-a12b",
-    "nvidia/nemotron-nano-3-30b-a3b",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "openai/gpt-oss-20b",
+# Source de vérité : docs.api.nvidia.com/nim/reference/llm-apis
+# + fiches chat du catalogue build.nvidia.com/models.
+# GET /v1/models est un index OpenAI périmé (ids 404 : yi-large, dbrx, …).
+# Beaucoup d'ids docs répondent 410 Gone (hosted trial EOL) alors que la
+# fiche catalogue reste en ligne (playground / NIM self-host).
+OFFICIAL_CHAT_IDS = (
+    "deepseek-ai/deepseek-v4-flash",
     "deepseek-ai/deepseek-v4-flash-0731",
+    "deepseek-ai/deepseek-v4-pro",
     "deepseek-ai/deepseek-v4-pro-0813",
+    "google/gemma-2-2b-it",
+    "google/gemma-3n-e4b-it",
+    "google/gemma-4-31b-it",
+    "google/diffusiongemma-26b-a4b-it",
+    "meta/llama-3.1-8b-instruct",
+    "meta/llama-3.1-70b-instruct",
+    "meta/llama-3.2-1b-instruct",
+    "meta/llama-3.2-3b-instruct",
+    "meta/llama-3.2-11b-vision-instruct",
+    "meta/llama-3.3-70b-instruct",
+    "meta/llama-4-maverick-17b-128e-instruct",
+    "meta/muse-glimmer-30b",
+    "microsoft/phi-4-mini-instruct",
+    "microsoft/phi-4-mini-flash-reasoning",
+    "minimaxai/minimax-m2.5",
+    "minimaxai/minimax-m2.7",
     "minimaxai/minimax-m3",
-    "nvidia/llama-3.1-nemotron-70b-instruct",
-    "nv-mistralai/mistral-nemo-12b-instruct",
-    "microsoft/phi-3.5-moe-instruct",
-    "ibm/granite-3.0-8b-instruct",
-    "mistralai/mistral-7b-instruct-v0.3",
-    "mistralai/mistral-large-2-instruct",
+    "mistralai/mistral-nemotron",
+    "mistralai/mixtral-8x7b-instruct",
+    "mistralai/mixtral-8x7b-instruct-v0.1",
+    "mistralai/mixtral-8x22b-instruct",
+    "mistralai/ministral-14b-instruct-2512",
+    "mistralai/mistral-large-3-675b-instruct-2512",
+    "mistralai/mistral-medium-3.5-128b",
+    "mistralai/mistral-small-4-119b-2603",
+    "moonshotai/kimi-k2-instruct",
+    "moonshotai/kimi-k2-thinking",
+    "moonshotai/kimi-k2.6",
+    "moonshotai/kimi-k3",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "nvidia/nemotron-3-nano-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-mini-4b-instruct",
+    "nvidia/nvidia-nemotron-nano-9b-v2",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "poolside/laguna-xs-2.1",
+    "poolside/laguna-xs-2-1",
+    "qwen/qwen2.5-coder-32b-instruct",
+    "qwen/qwen3-next-80b-a3b-instruct",
+    "qwen/qwen3-next-80b-a3b-thinking",
+    "qwen/qwq-32b",
+    "sarvamai/sarvam-m",
+    "stepfun-ai/step-3.5-flash",
+    "stockmark/stockmark-2-100b-instruct",
+    "thinkingmachines/inkling",
+    "upstage/solar-10.7b-instruct",
+    "z-ai/glm4.7",
+    "z-ai/glm5.1",
+    "z-ai/glm-5.2",
 )
+
+# Ancienne liste (index /v1/models). Conservée pour --curated.
+CURATED = OFFICIAL_CHAT_IDS
 
 PING_USER = 'Réponds uniquement avec {"ok": true}.'
 EXTRACT_CONTEXT = (
@@ -130,22 +173,42 @@ def is_chat_candidate(model_id: str) -> bool:
     return bool(model_id) and not _SKIP_RE.search(model_id)
 
 
+QUALITY_FOCUS = (
+    nvidia.PRIMARY_MODEL,
+    nvidia.SECONDARY_MODEL,
+    nvidia.LEGAL_MODEL,
+    nvidia.GPT_OSS_MODEL,
+    "poolside/laguna-xs-2.1",
+    "deepseek-ai/deepseek-v4-pro-0813",
+    "minimaxai/minimax-m3",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "google/gemma-4-31b-it",
+)
+
+
+def classify_ping(p: dict) -> str:
+    st = p.get("status")
+    err = p.get("error") or ""
+    if p.get("ok") and st == 200:
+        return "live"
+    if st == 410:
+        return "eol_410"
+    if st == 404 and "Function" in err:
+        return "nvcf_404"
+    if st == 404:
+        return "slug_404"
+    if st in (0, None) and "timeout" in err.lower():
+        return "timeout"
+    if st:
+        return f"http_{st}"
+    return "error"
+
+
 def _payload(model: str, system: str, user: str, max_tokens: int,
-              json_object: bool = True) -> dict:
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "stream": False,
-        **nvidia.muse_generation_extras(model),
-    }
-    if json_object:
-        body["response_format"] = {"type": "json_object"}
-    return body
+              json_object: bool | None = None) -> dict:
+    """json_object=None : selon la fiche Build (Muse/Laguna/Gemma 4 = off)."""
+    return nvidia.chat_payload(
+        model, system, user, max_tokens, json_object=json_object)
 
 
 def _err_text(status: int, text: str, limit: int = 220) -> str:
@@ -158,7 +221,7 @@ def _retry_wait(response: httpx.Response, fallback: float = 8.0) -> float:
 
 
 async def post_chat(client: httpx.AsyncClient, key: str, payload: dict,
-                     *, retries: int = 1) -> dict:
+                     *, retries: int = 1, require_json: bool = True) -> dict:
     """Un POST chat/completions. 1 retry 429 ; retry sans json_object si 400."""
     used = dict(payload)
     last = {"ok": False, "status": 0, "error": "no response", "raw": "",
@@ -218,22 +281,15 @@ async def post_chat(client: httpx.AsyncClient, key: str, payload: dict,
         choices = parsed_body.get("choices") or []
         msg = (choices[0].get("message") or {}) if choices else {}
         raw = nvidia._message_text(msg)
-        data = nvidia.parse_json_strict(raw)
+        data = nvidia._json_from_message(msg)
         if not isinstance(data, dict):
-            # Filet : JSON noyé après une courte prose (hors adaptateur).
-            data = None
-            try:
-                from app.core.llm import parse_json_flexible
-                flex = parse_json_flexible(raw)
-                if isinstance(flex, dict):
-                    data = flex
-            except Exception:
-                pass
+            data = nvidia.parse_json_strict(raw)
         finish = (choices[0].get("finish_reason") if choices else None)
         return {
-            "ok": isinstance(data, dict),
+            "ok": isinstance(data, dict) if require_json else True,
             "status": r.status_code,
-            "error": None if isinstance(data, dict) else "no JSON in output",
+            "error": (None if isinstance(data, dict)
+                      else ("no JSON in output" if require_json else None)),
             "raw": (raw or "")[:500],
             "json": data if isinstance(data, dict) else None,
             "latency_s": latency,
@@ -288,12 +344,20 @@ def score_judge(case: dict, data: dict | None) -> dict:
     }
 
 
-async def ping_one(client: httpx.AsyncClient, key: str, model: str) -> dict:
-    payload = _payload(model, "Tu réponds uniquement en JSON strict.",
-                       PING_USER, 300)
-    out = await post_chat(client, key, payload, retries=1)
+async def ping_one(client: httpx.AsyncClient, key: str, model: str,
+                   *, plain: bool = False) -> dict:
+    if plain:
+        payload = _payload(
+            model, "You reply with a single word.",
+            "Reply with the single word pong.", 32, json_object=False)
+        out = await post_chat(client, key, payload, retries=1, require_json=False)
+    else:
+        payload = _payload(model, "Tu réponds uniquement en JSON strict.",
+                           PING_USER, 300)
+        out = await post_chat(client, key, payload, retries=1)
     out["model"] = model
     out["task"] = "ping"
+    out["plain"] = plain
     return out
 
 
@@ -338,13 +402,18 @@ async def quality_one(client: httpx.AsyncClient, key: str, model: str) -> dict:
 
 def _summary_table(pings: list[dict], qualities: list[dict]) -> str:
     by_q = {q["model"]: q for q in qualities}
+    counts: dict[str, int] = {}
+    for p in pings:
+        cls = classify_ping(p)
+        counts[cls] = counts.get(cls, 0) + 1
     lines = [
-        f"{'modèle':<52} {'ping':<6} {'ms':>7} {'juge+extract':<14} détail",
+        "classes: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
+        f"{'modèle':<52} {'class':<10} {'ms':>7} {'juge+extract':<14} détail",
         "-" * 110,
     ]
     for p in pings:
         q = by_q.get(p["model"])
-        ping = "OK" if p.get("ok") else "FAIL"
+        cls = classify_ping(p)
         qflag = ""
         detail = (p.get("error") or "")[:40]
         if q:
@@ -357,7 +426,7 @@ def _summary_table(pings: list[dict], qualities: list[dict]) -> str:
         elif not p.get("ok"):
             detail = (p.get("error") or "")[:50]
         ms = int((p.get("latency_s") or 0) * 1000)
-        lines.append(f"{p['model']:<52} {ping:<6} {ms:7d} {qflag:<14} {detail}")
+        lines.append(f"{p['model']:<52} {cls:<10} {ms:7d} {qflag:<14} {detail}")
     return "\n".join(lines)
 
 
@@ -367,13 +436,15 @@ async def main() -> None:
     ap.add_argument("--only", default="",
                     help="Liste d'id séparés par des virgules")
     ap.add_argument("--all-catalog", action="store_true",
-                    help="Ping tous les chat du catalogue, pas seulement CURATED")
+                    help="Ping les ids GET /v1/models (index OpenAI, souvent périmé)")
+    ap.add_argument("--plain", action="store_true",
+                    help="Ping chat sans json_object (disponibilité hosted)")
     ap.add_argument("--concurrency", type=int, default=3)
     ap.add_argument("--no-quality", action="store_true")
     args = ap.parse_args()
 
     key = _key()
-    timeout = httpx.Timeout(90.0, connect=20.0)
+    timeout = httpx.Timeout(150.0, connect=20.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         catalog = await list_models(client, key)
         chat = [m for m in catalog if is_chat_candidate(m)]
@@ -382,20 +453,18 @@ async def main() -> None:
         elif args.all_catalog:
             wanted = chat
         else:
-            wanted = [m for m in CURATED if m in catalog]
-            for extra in (nvidia.PRIMARY_MODEL, nvidia.LEGAL_MODEL,
-                          "poolside/laguna-xs-2.1"):
-                if extra not in wanted:
-                    wanted.append(extra)
+            # IDs des fiches Build / llm-apis, même absents de GET /v1/models.
+            wanted = list(dict.fromkeys(OFFICIAL_CHAT_IDS))
 
         sem = asyncio.Semaphore(max(1, args.concurrency))
 
         async def ping_guarded(model: str) -> dict:
             async with sem:
-                row = await ping_one(client, key, model)
-                flag = "OK" if row.get("ok") else "FAIL"
-                print(f"[ping] {flag:4} {model}  {row.get('latency_s')}s  "
-                      f"{row.get('error') or (row.get('json') or {})}",
+                row = await ping_one(client, key, model, plain=args.plain)
+                cls = classify_ping(row)
+                snippet = row.get("error") or (row.get("json") or row.get("raw") or "")
+                print(f"[ping] {cls:10} {model}  {row.get('latency_s')}s  "
+                      f"{str(snippet)[:80]}",
                       flush=True)
                 await asyncio.sleep(0.4)
                 return row
@@ -405,12 +474,16 @@ async def main() -> None:
         qualities: list[dict] = []
         if not args.no_quality:
             quality_ids = []
+            focus = set(QUALITY_FOCUS)
             for m in wanted:
                 ping = next((p for p in pings if p["model"] == m), None)
-                if m in (nvidia.PRIMARY_MODEL, nvidia.LEGAL_MODEL,
-                           "poolside/laguna-xs-2.1"):
-                    quality_ids.append(m)
-                elif ping and ping.get("ok"):
+                live = bool(ping and ping.get("ok"))
+                if args.only:
+                    if live or m in focus:
+                        quality_ids.append(m)
+                elif m in focus and (live or m in (
+                        nvidia.PRIMARY_MODEL, nvidia.SECONDARY_MODEL,
+                        nvidia.LEGAL_MODEL, "poolside/laguna-xs-2.1")):
                     quality_ids.append(m)
             # Un modèle à la fois : juge + extract ≈ 3 appels.
             for model in quality_ids:
@@ -431,6 +504,9 @@ async def main() -> None:
             "primary": nvidia.PRIMARY_MODEL,
             "secondary": nvidia.SECONDARY_MODEL,
             "legal": nvidia.LEGAL_MODEL,
+            "judge_chain": list(nvidia.models_for("judge")),
+            "extract_chain": list(nvidia.models_for("extract")),
+            "json_chain": list(nvidia.models_for("json")),
         },
     }
     out_path = Path(args.out)

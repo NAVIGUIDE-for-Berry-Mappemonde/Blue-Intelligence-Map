@@ -18,6 +18,11 @@ class TestChatFilter:
         assert probe.is_chat_candidate("moonshotai/kimi-k3") is True
         assert probe.is_chat_candidate("poolside/laguna-xs-2.1") is True
         assert probe.is_chat_candidate("nvidia/nemotron-3.5-lightning-30b-a3b") is True
+        assert "meta/llama-3.1-70b-instruct" in probe.OFFICIAL_CHAT_IDS
+        assert "z-ai/glm-5.2" in probe.OFFICIAL_CHAT_IDS
+        assert "01-ai/yi-large" not in probe.OFFICIAL_CHAT_IDS
+        assert probe.classify_ping({"ok": False, "status": 410, "error": "Gone"}) == "eol_410"
+        assert probe.classify_ping({"ok": True, "status": 200, "error": None}) == "live"
 
 
 class TestScoring:

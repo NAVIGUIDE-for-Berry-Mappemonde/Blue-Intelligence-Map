@@ -40,6 +40,16 @@ class TestParseAndLegal:
             "content": '{"is_poe": false}',
         }) == '{"is_poe": false}'
 
+    def test_json_from_reasoning_content(self):
+        assert nvidia._json_from_message({
+            "content": None,
+            "reasoning_content": 'notes...\n{"is_poe": true, "kind": "pleasure"}',
+        })["kind"] == "pleasure"
+        assert nvidia._json_from_message({
+            "content": '{"is_poe": false}',
+            "reasoning_content": '{"is_poe": true}',
+        })["is_poe"] is False
+
     def test_legal_gazette_fr(self):
         text = (
             "Arrêté relatif aux points de passage frontaliers maritimes pour la "
@@ -53,9 +63,10 @@ class TestParseAndLegal:
 
     def test_short_or_forum_is_not_legal(self):
         assert nvidia.looks_like_legal_text("Fort Bay is nice") is False
-        # Flash est déjà le lecteur principal : pas de second appel identique.
-        assert nvidia.second_extract_choice(
-            "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4) is None
+        model, engine = nvidia.second_extract_choice(
+            "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4)
+        assert model == nvidia.SECONDARY_MODEL
+        assert engine == "nvidia-muse"
 
     def test_engine_label(self):
         assert nvidia.engine_label() == "nvidia-deepseek"
@@ -63,13 +74,14 @@ class TestParseAndLegal:
         assert nvidia.engine_label("meta/muse-glimmer-30b") == "nvidia-muse"
         assert nvidia.engine_label("moonshotai/kimi-k3") == "nvidia-kimi"
         assert nvidia.engine_label("poolside/laguna-xs-2.1") == "nvidia-laguna"
+        assert nvidia.engine_label("openai/gpt-oss-20b") == "nvidia-gpt-oss"
 
-    def test_second_extract_flash_if_primary_overridden(self, monkeypatch):
+    def test_second_extract_muse_if_primary_overridden(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "other/reader")
         model, engine = nvidia.second_extract_choice(
             "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4)
         assert model == nvidia.SECONDARY_MODEL
-        assert engine == "nvidia-deepseek"
+        assert engine == "nvidia-muse"
 
 
 class TestProvider:
@@ -89,14 +101,35 @@ class TestProvider:
         monkeypatch.setenv("LLM_PROVIDER", "auto")
         assert nvidia.nvidia_enabled({"nvidia_api_key": "nvapi-ui"}) is True
 
-    def test_laguna_and_muse_env_are_remapped_to_flash(self, monkeypatch):
-        monkeypatch.setenv("NVIDIA_MODEL", "poolside/laguna-xs-2.1")
+    def test_eol_alias_only_not_muse(self, monkeypatch):
+        monkeypatch.setenv("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash")
         monkeypatch.setenv("NVIDIA_MODEL_SECONDARY", "meta/muse-glimmer-30b")
-        monkeypatch.setenv("NVIDIA_MODEL_LEGAL", "meta/muse-glimmer-30b")
+        monkeypatch.setenv("NVIDIA_MODEL_LEGAL", "poolside/laguna-xs-2-1")
         assert nvidia.primary_model() == nvidia.PRIMARY_MODEL
-        assert nvidia.secondary_model() == nvidia.PRIMARY_MODEL
-        assert nvidia.legal_model() == nvidia.PRIMARY_MODEL
-        assert nvidia.engine_label(nvidia.primary_model()) == "nvidia-deepseek"
+        assert nvidia.secondary_model() == "meta/muse-glimmer-30b"
+        assert nvidia.legal_model() == "poolside/laguna-xs-2.1"
+
+    def test_json_object_omitted_for_muse_and_laguna(self):
+        muse = nvidia.chat_payload(
+            "meta/muse-glimmer-30b", "sys", "user", 32)
+        assert "response_format" not in muse
+        flash = nvidia.chat_payload(
+            "deepseek-ai/deepseek-v4-flash-0731", "sys", "user", 32)
+        assert flash["response_format"] == {"type": "json_object"}
+        laguna = nvidia.chat_payload(
+            "poolside/laguna-xs-2.1", "sys", "user", 32)
+        assert "response_format" not in laguna
+        gemma = nvidia.chat_payload("google/gemma-4-31b-it", "sys", "user", 32)
+        assert "response_format" not in gemma
+
+    def test_judge_chain_order(self, monkeypatch):
+        monkeypatch.delenv("NVIDIA_MODEL", raising=False)
+        monkeypatch.delenv("NVIDIA_MODEL_SECONDARY", raising=False)
+        monkeypatch.delenv("NVIDIA_MODEL_LEGAL", raising=False)
+        chain = nvidia.models_for("judge")
+        assert chain[0] == nvidia.PRIMARY_MODEL
+        assert chain[1] == nvidia.SECONDARY_MODEL
+        assert nvidia.LEGAL_MODEL in chain
 
     def test_muse_payload_lowers_reasoning(self):
         extras = nvidia.muse_generation_extras("meta/muse-glimmer-30b")
@@ -107,7 +140,7 @@ class TestProvider:
 
 
 class TestJudgeNvidia:
-    def test_primary_only_when_secondary_is_same(self, monkeypatch):
+    def test_listing_escalates_to_muse(self, monkeypatch):
         models = []
 
         async def fake_complete(system, user, settings=None, *, model=None, **k):
@@ -121,9 +154,29 @@ class TestJudgeNvidia:
         out = _run(enr._judge_llm(
             {"name": "Nouméa", "seed_sources": ["listing"]},
             {"name": "NC"}, "extrait officiel", {}, lambda m: None))
-        assert models == [nvidia.PRIMARY_MODEL]
-        assert nvidia.PRIMARY_MODEL == nvidia.SECONDARY_MODEL
-        assert out["judge_engine"] == "nvidia-deepseek"
+        assert models == [nvidia.PRIMARY_MODEL, nvidia.SECONDARY_MODEL]
+        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_status"] == "accepted"
+
+    def test_failure_skips_to_next_model(self, monkeypatch):
+        models = []
+
+        async def fake_complete(system, user, settings=None, *, model=None, **k):
+            models.append(model)
+            if model == nvidia.PRIMARY_MODEL:
+                raise RuntimeError("nvidia HTTP 410: gone")
+            return {"is_poe": True, "confidence": 90, "kind": "pleasure",
+                    "reason": "muse"}
+
+        monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
+        monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
+
+        out = _run(enr._judge_llm(
+            {"name": "Port Commerce", "seed_sources": ["v1"]},
+            {"name": "XX"}, "clearance yachts", {}, lambda m: None))
+        assert models[0] == nvidia.PRIMARY_MODEL
+        assert models[1] == nvidia.SECONDARY_MODEL
+        assert out["judge_engine"] == "nvidia-muse"
         assert out["judge_status"] == "accepted"
 
     def test_escalates_only_if_secondary_differs(self, monkeypatch):
@@ -179,7 +232,7 @@ class TestExtractSecondReader:
                      "extraction_engine": "nvidia-laguna"}]
 
         async def fake_muse(context, zone, settings=None, log=None,
-                            model=None, engine="nvidia-muse"):
+                            model=None, engine="nvidia-muse", **k):
             assert engine == "nvidia-muse"
             return [{"name": "Fort Bay", "extraction_engine": engine},
                     {"name": "Cinta Oil Terminal", "extraction_engine": engine}]
@@ -199,3 +252,23 @@ class TestExtractSecondReader:
         assert by["Fort Bay"]["claude_agreement"] is True
         assert by["Cinta Oil Terminal"]["extraction_engine"] == "nvidia-muse"
         assert "vu par nvidia-muse" in (by["Cinta Oil Terminal"].get("note") or "")
+
+
+class TestTrackedFallback:
+    def test_json_chain_skips_410(self, monkeypatch):
+        calls = []
+
+        async def fake_one(key, payload, *, max_tokens, log=None):
+            calls.append(payload["model"])
+            if payload["model"] == nvidia.PRIMARY_MODEL:
+                raise RuntimeError("nvidia HTTP 410: gone")
+            assert "response_format" not in payload  # Muse
+            return {"ok": True}
+
+        monkeypatch.setattr(nvidia, "_complete_one", fake_one)
+        monkeypatch.setattr(nvidia, "get_nvidia_key", lambda s=None: "k")
+        data, used = _run(nvidia.complete_json_nvidia_tracked(
+            "sys", "user", role="json"))
+        assert used == nvidia.SECONDARY_MODEL
+        assert data == {"ok": True}
+        assert calls[0] == nvidia.PRIMARY_MODEL

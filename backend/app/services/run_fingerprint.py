@@ -74,6 +74,7 @@ def build_code_fingerprint(settings: dict | None = None,
             s.get("nvidia_api_key"), env_nv),
         "nvidia_enabled": nvidia.nvidia_enabled(s),
         "nvidia_model": nvidia.primary_model() if nvidia.nvidia_enabled(s) else None,
+        "nvidia_judge_chain": list(nvidia.models_for("judge")) if nvidia.nvidia_enabled(s) else None,
         "openrouter_configured": _key_configured(
             s.get("openrouter_api_key"), env_or),
         "tinyfish_configured": _key_configured(

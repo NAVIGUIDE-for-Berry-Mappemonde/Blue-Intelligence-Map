@@ -2,7 +2,7 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge DeepSeek-V4-Flash si NVIDIA, sinon Haiku → Sonnet → OpenRouter.
+juge NVIDIA (Flash → Muse → gpt-oss → Kimi) si clé NIM, sinon Haiku → Sonnet → OpenRouter.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
@@ -563,7 +563,8 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
     async def _nvidia(model: str, engine: str) -> dict | None:
         try:
             parsed = await nvidia.complete_json_nvidia(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=800, log=log)
+                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=800, log=log,
+                role="judge", fallback=False)
             out = parse_judge(parsed)
             out["judge_engine"] = engine
             return out
@@ -585,15 +586,28 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
             return None
 
     if nvidia.nvidia_enabled(settings):
-        prim = nvidia.primary_model()
-        result = await _nvidia(prim, nvidia.engine_label(prim))
-        sec = nvidia.secondary_model()
-        if sec != prim and should_escalate_sonnet(result, doc):
-            extra = await _nvidia(sec, nvidia.engine_label(sec))
-            if extra:
-                result = extra
-        if result is not None:
-            return result
+        tried: list[str] = []
+        last = None
+        for model in nvidia.models_for("judge"):
+            if model in tried:
+                continue
+            tried.append(model)
+            extra = await _nvidia(model, nvidia.engine_label(model))
+            if extra is None:
+                continue
+            last = extra
+            if not should_escalate_sonnet(extra, doc):
+                return extra
+            for nxt in nvidia.models_for("judge"):
+                if nxt in tried:
+                    continue
+                tried.append(nxt)
+                alt = await _nvidia(nxt, nvidia.engine_label(nxt))
+                if alt is not None:
+                    return alt
+            return extra
+        if last is not None:
+            return last
 
     result = await _claude(claude.CLAUDE_HAIKU_MODEL, "claude-haiku")
     if should_escalate_sonnet(result, doc):
