@@ -2524,6 +2524,7 @@ def ports_to_geojson(docs: list[dict]) -> dict:
                 "validated": bool(d.get("validated")), "distance_km": d.get("distance_km"),
                 "geocode_source": d.get("geocode_source"),
                 "source_urls": d.get("source_urls") or [],
+                "url_bu": d.get("url_bu"),
                 "extracted_at": d.get("extracted_at"),
                 "osm_confidence": d.get("osm_confidence"),
                 "osm_tags": d.get("osm_tags"),

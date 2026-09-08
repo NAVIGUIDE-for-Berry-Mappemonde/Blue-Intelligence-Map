@@ -46,6 +46,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   const [saving, setSaving] = useState(false);
   const [goldOn, setGoldOn] = useState(false);
   const [goldBusy, setGoldBusy] = useState(false);
+  const [goldReady, setGoldReady] = useState(false);
+  const [choices, setChoices] = useState({ td: {}, ports: {}, bu: {} });
   const dirtyRef = useRef(false);
   const commentRef = useRef("");
   const currentIdRef = useRef(null);
@@ -152,6 +154,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setComment("");
     setSavedAt(null);
     setGoldOn(false);
+    setGoldReady(false);
+    setChoices({ td: {}, ports: {}, bu: {} });
   }, [kind, effectiveRunId, preGold, stableOnly]);
 
   useEffect(() => {
@@ -165,6 +169,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       setComment("");
       setSavedAt(null);
       setGoldOn(false);
+      setGoldReady(false);
+      setChoices({ td: {}, ports: {}, bu: {} });
       dirtyRef.current = false;
       return undefined;
     }
@@ -186,6 +192,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         setComment(data.comment || "");
         setSavedAt(data.comment_updated_at || null);
         setGoldOn(Boolean(data.gold_on));
+        setGoldReady(kind !== "eez" || Boolean(data.gold_ready));
+        setChoices(data.choices || { td: {}, ports: {}, bu: {} });
         dirtyRef.current = false;
       } catch (e) {
         if (!cancelled) setFiche(null);
@@ -256,8 +264,22 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     }
   };
 
+  const applyChoice = async (payload) => {
+    if (!current || kind !== "eez") return;
+    try {
+      const { data } = await api.put("/review/choice", {
+        kind, id: current.id, ...payload,
+      });
+      setChoices(data.choices || { td: {}, ports: {}, bu: {} });
+      setGoldReady(Boolean(data.gold_ready));
+    } catch (e) {
+      /* transient */
+    }
+  };
+
   const toggleGold = async () => {
     if (!current || goldBusy) return;
+    if (kind === "eez" && !goldOn && !goldReady) return;
     try {
       setGoldBusy(true);
       const { data } = await api.put("/review/gold", {
@@ -265,6 +287,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       });
       const pressed = Boolean(data.gold_on);
       setGoldOn(pressed);
+      if (data.choices) setChoices(data.choices);
+      if (data.gold_ready != null) setGoldReady(Boolean(data.gold_ready));
       setQueue((items) => items.map((it) => (
         it.id === current.id ? { ...it, gold_on: pressed } : it
       )));
@@ -284,7 +308,17 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         </p>
       );
     }
-    if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
+    if (kind === "eez") {
+      return (
+        <ZoneFiche
+          t={t}
+          fiche={fiche}
+          variant="page"
+          choices={choices}
+          onChoice={applyChoice}
+        />
+      );
+    }
     if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
     if (kind === "capitainerie") return <CapitainerieFiche t={t} fiche={fiche} />;
     if (kind === "amp") return <AmpFiche t={t} fiche={fiche} />;
@@ -472,8 +506,9 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               type="button"
               data-testid="review-gold"
               aria-pressed={goldOn}
+              title={kind === "eez" && !goldOn && !goldReady ? t("reviewGoldIncomplete") : undefined}
               onClick={toggleGold}
-              disabled={!current || goldBusy}
+              disabled={!current || goldBusy || (kind === "eez" && !goldOn && !goldReady)}
               className={`px-3 py-1.5 text-[11px] font-semibold border rounded-sm disabled:opacity-40 ${
                 goldOn
                   ? "border-accent bg-accent/20 text-accent"

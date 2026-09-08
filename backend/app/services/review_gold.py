@@ -1,12 +1,12 @@
 """
-Gold Dataset — interrupteur de publication carte.
+Gold Dataset — publication carte.
 
 Les bases v1 (`projects`, `poe_ports`, `eez_zones`, `marinas`) ne sont
-jamais écrites. Seule `review_gold` porte les overrides (on / off).
+jamais écrites. Seule `review_gold` porte les overrides (on / off + snapshot).
 
-Règle de visibilité carte :
-    sur_la_carte = override.on  si un override existe
-                 = pré-Gold     sinon
+Projets / marinas : interrupteur. Formalités : Gold = publier la fiche
+(snapshot des TD / PoE gardés). Le polygone pré-Gold reste visible ; après
+Gold, la carte lit le snapshot au lieu de `poe_ports`.
 """
 from __future__ import annotations
 
@@ -17,6 +17,19 @@ from datetime import datetime, timezone
 
 from app.core.geo import haversine_km, ocean_fallback_coords
 from app.services.poe_stable import STABLE_REVIEW_MRGIDS
+from app.services.review_choices import (
+    GOLD_INCOMPLETE,
+    build_gold_snapshot,
+    finalize_choices,
+    get_choices,
+    gold_ready,
+    save_choices_doc,
+    snapshot_port_docs,
+)
+
+
+class GoldNotReady(ValueError):
+    """Gold Formalités cliqué trop tôt — TD / PoE pas encore tranchés."""
 
 GOLD_KINDS = ("project", "eez", "marina")
 FALLBACK_SOURCES = frozenset({
@@ -98,6 +111,25 @@ def gold_pressed(is_pre_gold: bool, override: dict | None) -> bool:
     if override is not None and "on" in override:
         return bool(override["on"])
     return bool(is_pre_gold)
+
+
+def eez_is_published(override: dict | None) -> bool:
+    """Gold Formalités = override allumé ET snapshot de fiche."""
+    return bool(override and override.get("on") and override.get("snapshot"))
+
+
+def eez_on_map(mid: int, pre: set[int], override: dict | None) -> bool:
+    """Polygone visible : publié, ou pré-Gold (sauf hide legacy sans snapshot)."""
+    if eez_is_published(override):
+        return True
+    if mid in pre:
+        if (override is not None and override.get("on") is False
+                and not override.get("snapshot")):
+            return False
+        return True
+    if override is not None and override.get("on"):
+        return True
+    return False
 
 
 def reset_eez_pre_gold_cache() -> None:
@@ -317,10 +349,68 @@ async def visible_eez_mrgids(db) -> set[int]:
         except (TypeError, ValueError):
             continue
     for mid in candidates:
-        pressed = gold_pressed(mid in pre, overrides.get(str(mid)))
-        if pressed:
+        if eez_on_map(mid, pre, overrides.get(str(mid))):
             visible.add(mid)
     return visible
+
+
+async def published_snapshots(db) -> dict[int, dict]:
+    overrides = await overrides_map(db, "eez")
+    out: dict[int, dict] = {}
+    for eid, ov in overrides.items():
+        if not eez_is_published(ov):
+            continue
+        try:
+            mid = int(eid)
+        except (TypeError, ValueError):
+            continue
+        snap = ov.get("snapshot")
+        if isinstance(snap, dict):
+            out[mid] = snap
+    return out
+
+
+async def visible_poe_port_docs(db, mrgid: int | None = None,
+                                  country: str | None = None) -> list[dict]:
+    """Ports carte Formalités : snapshot Gold s'il est publié, sinon v1."""
+    allowed = await visible_eez_mrgids(db)
+    snaps = await published_snapshots(db)
+    if mrgid is not None:
+        try:
+            mid = int(mrgid)
+        except (TypeError, ValueError):
+            return []
+        if mid not in allowed:
+            return []
+        allowed = {mid}
+    iso = (country or "").strip().upper()
+    q: dict = {}
+    if mrgid is not None:
+        q["mrgid"] = int(mrgid)
+    if iso:
+        q["country_iso2"] = iso
+    try:
+        docs = await db.poe_ports.find(q).to_list(10000)
+    except Exception:
+        docs = []
+    out: list[dict] = []
+    for d in docs:
+        try:
+            mid = int(d.get("mrgid") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mid not in allowed or mid in snaps:
+            continue
+        out.append(d)
+    for mid in allowed:
+        snap = snaps.get(mid)
+        if not snap:
+            continue
+        for doc in snapshot_port_docs(mid, snap):
+            if iso and str(doc.get("country_iso2") or "").upper() != iso:
+                continue
+            out.append(doc)
+    return out
 
 
 async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
@@ -337,9 +427,12 @@ async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
             pre = is_pre_gold_marina(d)
         elif kind == "eez":
             try:
-                pre = int(d.get("mrgid") or eid) in (pre_eez or set())
+                mid = int(d.get("mrgid") or eid)
             except (TypeError, ValueError):
-                pre = False
+                continue
+            if eez_on_map(mid, pre_eez or set(), overrides.get(str(mid))):
+                out.append(d)
+            continue
         else:
             pre = False
         if gold_pressed(pre, overrides.get(eid)):
@@ -349,12 +442,19 @@ async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
 
 async def toggle_gold(db, kind: str, entity_id: str, *,
                       run_id: str | None = None,
-                      snapshot: dict | None = None) -> dict:
+                      snapshot: dict | None = None,
+                      fiche: dict | None = None,
+                      comment: str = "",
+                      choices: dict | None = None) -> dict:
     if kind not in GOLD_KINDS:
         raise ValueError("kind must be project|eez|marina")
     eid = _sid(entity_id)
     if not eid:
         raise ValueError("id required")
+    if kind == "eez":
+        return await _toggle_eez_gold(
+            db, eid, run_id=run_id, fiche=fiche, comment=comment, choices=choices)
+
     pre = await is_pre_gold_entity(db, kind, eid, None)
     if kind == "project" or kind == "marina":
         # Re-évaluer avec le doc v1 si possible (pré-Gold dépend du contenu).
@@ -399,6 +499,67 @@ async def toggle_gold(db, kind: str, entity_id: str, *,
         "id": eid,
         "gold_on": pressed,
         "pre_gold": pre,
+        "wrote_projects": False,
+        "wrote_poe_ports": False,
+        "wrote_marinas": False,
+    }
+
+
+async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
+                           fiche: dict | None, comment: str,
+                           choices: dict | None) -> dict:
+    pre = await is_pre_gold_entity(db, "eez", eid, None)
+    override = await get_override(db, "eez", eid)
+    cid = gold_key("eez", eid)
+    if eez_is_published(override):
+        payload = {
+            "_id": cid, "kind": "eez", "entity_id": eid,
+            "on": False, "run_id": run_id, "updated_at": now_iso(),
+        }
+        if override.get("snapshot"):
+            payload["snapshot"] = override["snapshot"]
+        await db.review_gold.update_one({"_id": cid}, {"$set": payload}, upsert=True)
+        ch = choices if choices is not None else await get_choices(db, "eez", eid)
+        return {
+            "kind": "eez",
+            "id": eid,
+            "gold_on": False,
+            "pre_gold": pre,
+            "choices": ch,
+            "gold_ready": gold_ready(fiche, ch) if fiche is not None else True,
+            "wrote_projects": False,
+            "wrote_poe_ports": False,
+            "wrote_marinas": False,
+        }
+
+    if fiche is None:
+        from app.services.poe_zone_fiche import build_zone_fiche
+        try:
+            mid = int(eid)
+        except (TypeError, ValueError) as e:
+            raise ValueError("id required") from e
+        fiche = await build_zone_fiche(db, mid, union=True)
+    if not fiche:
+        raise ValueError("fiche not found")
+    ch = choices if choices is not None else await get_choices(db, "eez", eid)
+    if not gold_ready(fiche, ch):
+        raise GoldNotReady(GOLD_INCOMPLETE)
+    ch = finalize_choices(fiche, ch)
+    await save_choices_doc(db, "eez", eid, ch)
+    snap = build_gold_snapshot(fiche, ch, comment)
+    payload = {
+        "_id": cid, "kind": "eez", "entity_id": eid,
+        "on": True, "run_id": run_id, "updated_at": now_iso(),
+        "snapshot": snap,
+    }
+    await db.review_gold.update_one({"_id": cid}, {"$set": payload}, upsert=True)
+    return {
+        "kind": "eez",
+        "id": eid,
+        "gold_on": True,
+        "pre_gold": pre,
+        "choices": ch,
+        "gold_ready": True,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,

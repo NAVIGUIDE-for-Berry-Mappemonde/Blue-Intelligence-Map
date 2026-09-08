@@ -85,6 +85,7 @@ def test_assemble_td_bu_ports_no_write_and_no_noonsite():
     assert fiche["url_td"]["url"] == "https://douane.gouv.fr/saba-list"
     assert [s["url"] for s in fiche["sources_td"]] == ["https://douane.gouv.fr/saba-list"]
     assert fiche["ports"][0]["name"] == "Fort Bay"
+    assert fiche["ports"][0]["port_id"] == "26518:fortbay"
     assert fiche["ports"][0]["url_bu"]["url"] == "https://www.rvo.nl/saba-clearance"
     assert "noonsite" not in (fiche["ports"][0]["url_bu"]["url"] or "").lower()
     assert "noonsite" not in (fiche["url_td"]["url"] or "").lower()
@@ -387,6 +388,9 @@ def test_frontend_fiche_has_no_generate_button():
     assert "poe-fiche-td-path" in fiche
     assert "poe-fiche-td-list" in fiche
     assert "poe-fiche-port-bu" in fiche
+    assert "poe-fiche-td-keep" in fiche
+    assert "poe-fiche-port-keep" in fiche
+    assert "poe-fiche-bu-keep" in fiche
     assert "poe-fiche-sources-bu" not in fiche
     assert "poe-zone-fiche" in fiche
     assert "ExternalLink" in fiche

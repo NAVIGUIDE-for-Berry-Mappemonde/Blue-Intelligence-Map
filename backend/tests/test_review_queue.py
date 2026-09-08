@@ -219,6 +219,7 @@ def _db():
         }],
         review_comments=[],
         review_gold=[],
+        review_choices=[],
         amp_sites=[{
             "_id": "PS-1", "site_id": "PS-1", "name": "Parc marin du cap",
             "country": "France", "lfp": 3,
@@ -369,6 +370,7 @@ def test_frontend_review_tab_exists():
     assert "mode-toggle-amp" in header
     assert 'setView("review")' in header
     assert "ReviewView" in app
+    assert "mapEpoch" in app
     assert "AmpFiche" in review
     assert "kind !== \"amp\"" in review
     assert "review-kind-switch" not in review
@@ -376,6 +378,10 @@ def test_frontend_review_tab_exists():
     assert "reviewKindPoe" not in review
     assert "PoeFiche" not in review
     assert "review-gold" in review
+    assert "/review/choice" in review
+    assert "gold_ready" in review
+    assert "reviewGoldIncomplete" in review
+    assert "poe-fiche-td-keep" in (root / "components" / "ZoneFiche.js").read_text(encoding="utf-8")
     assert "review-pregold-filter" in review
     assert "review-stable-filter" in review
     assert "content_run_id" in review
@@ -384,6 +390,9 @@ def test_frontend_review_tab_exists():
     i18n = (root / "i18n.js").read_text(encoding="utf-8")
     assert "reviewStable" in i18n
     assert "reviewRecommended" in i18n
+    assert "reviewKeep" in i18n
+    assert "reviewDrop" in i18n
+    assert "reviewGoldIncomplete" in i18n
     assert "review-comment" in review
     assert "review-next" in review
     assert 'kind === "project"' in review
@@ -457,7 +466,7 @@ def test_pre_gold_eez_is_productive_prod_run():
     all_z = asyncio.run(review_queue.list_queue(db, "eez", "published"))
     by = {i["id"]: i for i in all_z["items"]}
     assert by["5677"]["pre_gold"] is True
-    assert by["5677"]["gold_on"] is True
+    assert by["5677"]["gold_on"] is False
     assert by["5677"]["stable"] is True
     assert by["5677"]["subtitle"].endswith("1 port")
     assert by["48944"]["pre_gold"] is False
@@ -581,11 +590,168 @@ def test_gold_toggle_does_not_write_v1():
     visible = asyncio.run(filter_visible(
         db, "project", db.projects.docs, lambda p: p.get("_id")))
     assert {p["_id"] for p in visible} == {"p1", "p-snap"}
-    eez_off = asyncio.run(toggle_gold(db, "eez", "5677"))
-    assert eez_off["gold_on"] is False
+    try:
+        asyncio.run(toggle_gold(db, "eez", "5677"))
+        raise AssertionError("Gold EEZ without choices must fail")
+    except review_gold.GoldNotReady:
+        pass
     vis_eez = asyncio.run(filter_visible(
         db, "eez", db.eez_zones.docs, lambda z: str(z["mrgid"])))
-    assert vis_eez == []
+    assert {z["mrgid"] for z in vis_eez} == {5677}
     assert len(db.poe_ports.docs) == n_ports
     assert len(db.eez_zones.docs) == n_zones
     assert len(db.marinas.docs) == n_marinas
+
+
+def _prepare_france_gold(db, *, drop_cambridge=True):
+    from app.services.review_choices import save_choice
+
+    fiche = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    body = fiche["fiche"]
+    assert body["sources_td"], "France Review fiche must have TD URLs"
+    td0 = body["sources_td"][0]["url"]
+    asyncio.run(save_choice(db, "eez", "5677", "td", "keep", url=td0))
+    for p in body["ports"]:
+        name = (p.get("name") or "").lower()
+        action = "drop" if drop_cambridge and "cambridge" in name else "keep"
+        asyncio.run(save_choice(
+            db, "eez", "5677", "port", action, port_id=p["port_id"]))
+        if action != "keep":
+            continue
+        for rec in p.get("urls_bu") or []:
+            if rec.get("url"):
+                asyncio.run(save_choice(
+                    db, "eez", "5677", "bu", "keep",
+                    port_id=p["port_id"], url=rec["url"]))
+    return fiche
+
+
+def test_choice_persists_without_writing_v1():
+    from app.services.review_choices import get_choices, save_choice
+
+    db = _db()
+    n_ports = len(db.poe_ports.docs)
+    out = asyncio.run(save_choice(
+        db, "eez", "5677", "td", "keep",
+        url="https://douane.gouv.fr/hexagone.pdf"))
+    assert out["wrote_poe_ports"] is False
+    ch = asyncio.run(get_choices(db, "eez", "5677"))
+    assert ch["td"]["https://douane.gouv.fr/hexagone.pdf"] == "keep"
+    packed = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    assert packed["choices"]["td"]["https://douane.gouv.fr/hexagone.pdf"] == "keep"
+    assert packed["gold_ready"] is False
+    assert packed["gold_on"] is False
+    assert len(db.poe_ports.docs) == n_ports
+
+
+def test_gold_eez_incomplete_does_not_write_snapshot():
+    from app.services.review_gold import reset_eez_pre_gold_cache, toggle_gold
+
+    reset_eez_pre_gold_cache()
+    db = _db()
+    n_ports = len(db.poe_ports.docs)
+    try:
+        asyncio.run(toggle_gold(db, "eez", "5677"))
+        raise AssertionError("expected GoldNotReady")
+    except review_gold.GoldNotReady as e:
+        assert "gold incomplete" in str(e)
+    assert db.review_gold.docs == []
+    assert len(db.poe_ports.docs) == n_ports
+
+
+def test_gold_france_publishes_snapshot_not_v1():
+    from app.services.poe_zone_fiche import build_map_zone_fiche
+    from app.services.review_gold import (
+        reset_eez_pre_gold_cache,
+        toggle_gold,
+        visible_eez_mrgids,
+        visible_poe_port_docs,
+    )
+
+    reset_eez_pre_gold_cache()
+    db = _db()
+    db.poe_seed_ports.docs.append({
+        "mrgid": 5677, "name": "Cambridge",
+        "lat": 52.2, "lon": 0.12,
+        "judge_sources": ["https://gov.uk/cambridge-port"],
+    })
+    n_ports = len(db.poe_ports.docs)
+    n_v1_ids = {d["_id"] for d in db.poe_ports.docs}
+    union = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    names = [p["name"] for p in union["fiche"]["ports"]]
+    assert "Cambridge" in names
+    assert "Marseille" in names
+    assert "Sète" in names
+    assert union["gold_ready"] is False
+    _prepare_france_gold(db)
+    ready = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    assert ready["gold_ready"] is True
+    on = asyncio.run(toggle_gold(
+        db, "eez", "5677",
+        fiche=ready["fiche"],
+        comment=ready.get("comment") or "",
+        choices=ready["choices"],
+    ))
+    assert on["gold_on"] is True
+    assert on["wrote_poe_ports"] is False
+    assert on["gold_ready"] is True
+    assert len(db.poe_ports.docs) == n_ports
+    assert {d["_id"] for d in db.poe_ports.docs} == n_v1_ids
+    ov = db.review_gold.docs[0]
+    assert ov["on"] is True
+    snap_names = [p["name"] for p in ov["snapshot"]["ports"]]
+    assert snap_names == ["Marseille", "Sète"]
+    assert "Cambridge" not in snap_names
+    vis = asyncio.run(visible_eez_mrgids(db))
+    assert 5677 in vis
+    ports = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
+    assert {d["name"] for d in ports} == {"Marseille", "Sète"}
+    assert all(str(d["_id"]).startswith("gold:5677:") for d in ports)
+    map_fiche = asyncio.run(build_map_zone_fiche(db, 5677))
+    assert map_fiche["fiche_scope"] == "gold"
+    assert [p["name"] for p in map_fiche["ports"]] == ["Marseille", "Sète"]
+    td_kept = [s["url"] for s in map_fiche["sources_td"]]
+    assert ready["fiche"]["sources_td"][0]["url"] in td_kept
+    listed = asyncio.run(review_queue.list_queue(db, "eez", "published"))
+    fr = next(i for i in listed["items"] if i["id"] == "5677")
+    assert fr["gold_on"] is True
+    off = asyncio.run(toggle_gold(db, "eez", "5677"))
+    assert off["gold_on"] is False
+    assert off["wrote_poe_ports"] is False
+    assert len(db.poe_ports.docs) == n_ports
+    after = asyncio.run(build_map_zone_fiche(db, 5677))
+    assert after["fiche_scope"] == "published"
+    assert [p["name"] for p in after["ports"]] == ["Marseille"]
+    v1_ports = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
+    assert [d["name"] for d in v1_ports] == ["Marseille"]
+    assert all(not str(d["_id"]).startswith("gold:") for d in v1_ports)
+    vis_after = asyncio.run(visible_eez_mrgids(db))
+    assert 5677 in vis_after
+    still = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    assert still["gold_on"] is False
+    assert still["gold_ready"] is True
+
+
+def test_gold_ready_none_and_zero_ports():
+    from app.services.review_choices import empty_choices, gold_ready
+
+    none_fiche = {
+        "kind": "none", "sources_td": [], "ports": [],
+        "unclos": {"code": "article_121"},
+    }
+    assert gold_ready(none_fiche, empty_choices()) is True
+    listed = {
+        "kind": "general_list",
+        "sources_td": [{"url": "https://gov.example/list.pdf"}],
+        "ports": [{"port_id": "5677:x", "name": "X"}],
+    }
+    assert gold_ready(listed, empty_choices()) is False
+    half = {"td": {"https://gov.example/list.pdf": "keep"}, "ports": {}, "bu": {}}
+    assert gold_ready(listed, half) is False
+    done = {
+        "td": {"https://gov.example/list.pdf": "keep"},
+        "ports": {"5677:x": "drop"},
+        "bu": {},
+    }
+    assert gold_ready(listed, done) is True
+
