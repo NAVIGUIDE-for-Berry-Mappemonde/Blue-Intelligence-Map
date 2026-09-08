@@ -1,11 +1,12 @@
-"""Dump mondial des capitaineries OSM (harbour_master) + overlay SHOM CATSCF=6.
+"""Dump mondial des capitaineries OSM (harbour_master) + overlay SHOM.
 
 Contrat :
   * objet = bureau de capitainerie, pas le plan d'eau, pas la marina
-  * identité OSM = osm_id (type/id) ; SHOM orphelin = shom:{fid}
+  * identité OSM = osm_id (type/id) ; SHOM orphelin = shom:{layer}:{fid}
   * pas de rattachement aux marinas
   * pas de purge (upsert)
   * job tuilé Overpass reprenable, puis overlay SHOM
+    (BUISGL FUNCTN=2 = harbour-master's office ; SMCFAC CATSCF=6 s'il existe)
   * téléphone / VHF lus d'abord dans les tags, jamais inventés
 """
 from __future__ import annotations
@@ -43,8 +44,13 @@ from app.services.marina_world import (
 
 SCHEMA = "capitainerie_world_v1"
 CURSOR_ID = "world_harbour_master"
-SHOM_CATSCF = "6"
+SHOM_CATSCF = "6"  # SMCFAC : rarement peuplé sur le WFS public
+SHOM_BUISGL_FUNCTN = "2"  # S-57 FUNCTN = harbour-master's office
 SHOM_MERGE_KM = 0.25
+SHOM_LAYERS: tuple[tuple[str, str], ...] = (
+    ("INFORMATIONS_PORTUAIRES_BDD_WFS:buisgl_point", "buisgl"),
+    ("INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point", "smcfac"),
+)
 OSM_SOURCE = "openstreetmap"
 SHOM_SOURCE = "shom"
 MERGED_SOURCE = "osm+shom"
@@ -275,18 +281,30 @@ def is_catscf_harbour_master(catscf: Any) -> bool:
     return str(catscf or "").strip() == SHOM_CATSCF
 
 
-def shom_feature_id(feat: dict, props: dict, lat: float, lon: float) -> str:
-    raw = feat.get("id") or props.get("gml_id") or props.get("id") or props.get("fid")
+def is_buisgl_harbour_master(functn: Any) -> bool:
+    """S-57 FUNCTN 2 = harbour-master's office (list-valued, e.g. '2,3')."""
+    parts = [
+        p.strip()
+        for p in str(functn or "").replace(";", ",").split(",")
+        if p.strip()
+    ]
+    return SHOM_BUISGL_FUNCTN in parts
+
+
+def shom_feature_id(
+    feat: dict, props: dict, lat: float, lon: float, layer: str = "smcfac",
+) -> str:
+    raw = (
+        feat.get("id") or props.get("inspireid") or props.get("gml_id")
+        or props.get("id") or props.get("fid")
+    )
     if raw not in (None, "", "null"):
-        return f"shom:{raw}"
-    return f"shom:{lat:.5f}:{lon:.5f}"
+        return f"shom:{layer}:{raw}"
+    return f"shom:{layer}:{lat:.5f}:{lon:.5f}"
 
 
-def capitainerie_from_shom(feat: dict) -> dict | None:
+def _shom_latlon(feat: dict) -> tuple[float, float] | None:
     geom = feat.get("geometry") or {}
-    props = feat.get("properties") or {}
-    if not is_catscf_harbour_master(props.get("catscf")):
-        return None
     coords = geom.get("coordinates")
     if geom.get("type") == "Point" and coords:
         x, y = coords[:2]
@@ -304,7 +322,33 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
         lon, lat = xf, yf
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return None
-    cat_label = SHOM_CATSCF_LABELS.get(SHOM_CATSCF, "Capitainerie")
+    return lat, lon
+
+
+def capitainerie_from_shom(feat: dict, *, layer: str = "smcfac") -> dict | None:
+    """Bureau SHOM : BUISGL FUNCTN=2, ou SMCFAC CATSCF=6 s'il existe."""
+    props = feat.get("properties") or {}
+    if layer == "buisgl":
+        if not is_buisgl_harbour_master(props.get("functn")):
+            return None
+        cat_label = "Capitainerie"
+        layer_tags = {
+            "shom:functn": str(props.get("functn") or "").strip(),
+            "shom:layer": "buisgl",
+        }
+    else:
+        if not is_catscf_harbour_master(props.get("catscf")):
+            return None
+        cat_label = SHOM_CATSCF_LABELS.get(SHOM_CATSCF, "Capitainerie")
+        layer_tags = {
+            "shom:catscf": SHOM_CATSCF,
+            "shom:category": cat_label,
+            "shom:layer": "smcfac",
+        }
+    coords = _shom_latlon(feat)
+    if coords is None:
+        return None
+    lat, lon = coords
     name = (
         str(props.get("objnam") or "").strip()
         or str(props.get("nobjnm") or "").strip()
@@ -312,7 +356,7 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
         or str(props.get("toponyme") or "").strip()
         or cat_label
     )
-    tags = {"shom:catscf": SHOM_CATSCF, "shom:category": cat_label}
+    tags = dict(layer_tags)
     for k, v in props.items():
         if v is None or isinstance(v, (dict, list)):
             continue
@@ -321,7 +365,7 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
             continue
         tags[f"shom:{k}"] = val[:120]
     phone, vhf = contact_from_tags(tags)
-    shom_id = shom_feature_id(feat, props, lat, lon)
+    shom_id = shom_feature_id(feat, props, lat, lon, layer=layer)
     return {
         "shom_id": shom_id,
         "osm_id": None,
@@ -578,68 +622,69 @@ async def fetch_tile_harbour_masters(
         raise
 
 
+async def shom_fetch_harbour_offices(
+    client: httpx.AsyncClient,
+    bbox: tuple[float, float, float, float],
+    logger=None,
+) -> list[dict]:
+    """WFS SHOM : BUISGL FUNCTN=2 (bureaux) + SMCFAC CATSCF=6. Filtre local (CQL en 403)."""
+    s, w, n, e = bbox
+    bbox_str = f"{w:.6f},{s:.6f},{e:.6f},{n:.6f},EPSG:4326"
+    out: list[dict] = []
+    for typename, layer in SHOM_LAYERS:
+        start = 0
+        page = 1000
+        got = 0
+        while True:
+            params = {
+                "service": "WFS",
+                "version": "2.0.0",
+                "request": "GetFeature",
+                "typenames": typename,
+                "bbox": bbox_str,
+                "outputFormat": "application/json",
+                "count": str(page),
+                "startIndex": str(start),
+            }
+            try:
+                r = await client.get(
+                    SHOM_WFS,
+                    params=params,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=60,
+                )
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                if logger:
+                    logger(f"SHOM {layer} {bbox_str}: {type(exc).__name__}: {str(exc)[:80]}")
+                break
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code != 200 or "json" not in ct:
+                if logger:
+                    logger(f"SHOM {typename}: HTTP {r.status_code}")
+                break
+            fc = r.json()
+            feats = fc.get("features") or []
+            for feat in feats:
+                cand = capitainerie_from_shom(feat, layer=layer)
+                if cand:
+                    out.append(cand)
+                    got += 1
+            if len(feats) < page:
+                break
+            start += page
+            if start > 20000:
+                break
+        if logger:
+            logger(f"SHOM {layer} {bbox_str}: {got} capitaineries")
+    return out
+
+
 async def shom_fetch_catscf6(
     client: httpx.AsyncClient,
     bbox: tuple[float, float, float, float],
     logger=None,
 ) -> list[dict]:
-    """WFS SHOM smcfac_point filtré CATSCF=6. CQL d'abord, sinon filtre local."""
-    s, w, n, e = bbox
-    bbox_str = f"{w:.6f},{s:.6f},{e:.6f},{n:.6f},EPSG:4326"
-    typename = "INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point"
-    out: list[dict] = []
-    start = 0
-    page = 1000
-    used_cql = True
-    while True:
-        params = {
-            "service": "WFS",
-            "version": "2.0.0",
-            "request": "GetFeature",
-            "typenames": typename,
-            "bbox": bbox_str,
-            "outputFormat": "application/json",
-            "count": str(page),
-            "startIndex": str(start),
-        }
-        if used_cql:
-            params["CQL_FILTER"] = "catscf='6'"
-        try:
-            r = await client.get(
-                SHOM_WFS,
-                params=params,
-                headers={"User-Agent": USER_AGENT},
-                timeout=60,
-            )
-        except (httpx.HTTPError, httpx.TimeoutException) as exc:
-            if logger:
-                logger(f"SHOM {bbox_str}: {type(exc).__name__}: {str(exc)[:80]}")
-            break
-        ct = (r.headers.get("content-type") or "").lower()
-        if r.status_code != 200 or "json" not in ct:
-            if used_cql:
-                used_cql = False
-                start = 0
-                if logger:
-                    logger(f"SHOM CQL refusé ({r.status_code}) — repli filtre local")
-                continue
-            if logger:
-                logger(f"SHOM {typename}: HTTP {r.status_code}")
-            break
-        fc = r.json()
-        feats = fc.get("features") or []
-        for feat in feats:
-            cand = capitainerie_from_shom(feat)
-            if cand:
-                out.append(cand)
-        if len(feats) < page:
-            break
-        start += page
-        if start > 20000:
-            break
-    if logger:
-        logger(f"SHOM CATSCF=6 {bbox_str}: {len(out)} capitaineries")
-    return out
+    return await shom_fetch_harbour_offices(client, bbox, logger=logger)
 
 
 async def _all_docs(coll) -> list[dict]:
@@ -803,7 +848,7 @@ async def build_world_capitaineries(
                 "fetched": 0, "inserted": 0, "merged": 0, "updated": 0, "unique": 0,
             }
             if not skip_shom and not state.cancel:
-                state.log("Overlay SHOM CATSCF=6 (capitainerie)")
+                state.log("Overlay SHOM BUISGL FUNCTN=2 + SMCFAC CATSCF=6")
                 shom_summary = await overlay_shom(
                     coll, client=http, logger=state.log,
                     fetch_shom=fetch_shom, bboxes=shom_bboxes,

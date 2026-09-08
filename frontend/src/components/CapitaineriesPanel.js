@@ -1,6 +1,7 @@
 import { Radio, ExternalLink, MapPin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
+import { phoneQueryMatches } from "../lib/phoneMatch";
 
 const LIST_CAP = 250;
 const COLOR = "#38bdf8";
@@ -53,20 +54,13 @@ export default function CapitaineriesPanel({ t, capitaineries, onFlyTo, onRefres
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return features;
-    const digits = q.replace(/\D/g, "");
-    const digitsAlt = digits.replace(/^0+/, "");
     return features.filter((f) => {
       const p = f.properties || {};
-      const phoneDigits = String(p.telephone || "").replace(/\D/g, "");
-      const phoneHit = digits.length >= 4 && (
-        phoneDigits.includes(digits)
-        || (digitsAlt.length >= 4 && phoneDigits.includes(digitsAlt))
-      );
       return (
         (p.name || "").toLowerCase().includes(q)
         || String(p.osm_id || "").toLowerCase().includes(q)
         || String(p.telephone || "").toLowerCase().includes(q)
-        || phoneHit
+        || phoneQueryMatches(query, p.telephone)
       );
     });
   }, [features, query]);

@@ -132,10 +132,31 @@ def test_shom_catscf_filter():
         "properties": {"catscf": "3", "objnam": "Marina"},
     }
     cand = cw.capitainerie_from_shom(feat_ok)
-    assert cand["shom_id"] == "shom:smc.1"
+    assert cand["shom_id"] == "shom:smcfac:smc.1"
     assert cand["source"] == "shom"
     assert cand["canal_vhf"] == "9"
     assert cw.capitainerie_from_shom(feat_marina) is None
+
+
+def test_shom_buisgl_functn_2():
+    feat = {
+        "id": "buis.9",
+        "geometry": {"type": "Point", "coordinates": [-1.16, 46.15]},
+        "properties": {"functn": "2,3", "inform": "Commercial harbour master's office"},
+    }
+    cand = cw.capitainerie_from_shom(feat, layer="buisgl")
+    assert cand is not None
+    assert cand["shom_id"] == "shom:buisgl:buis.9"
+    assert cand["tags"]["shom:layer"] == "buisgl"
+    customs = {
+        "id": "buis.3",
+        "geometry": {"type": "Point", "coordinates": [-1.16, 46.15]},
+        "properties": {"functn": "3"},
+    }
+    assert cw.capitainerie_from_shom(customs, layer="buisgl") is None
+    assert cw.is_buisgl_harbour_master("2")
+    assert cw.is_buisgl_harbour_master("2,28")
+    assert not cw.is_buisgl_harbour_master("33")
 
 
 def test_slim_geojson_exposes_phone_vhf_not_marina_fields():

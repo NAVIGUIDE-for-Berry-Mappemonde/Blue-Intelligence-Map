@@ -172,7 +172,7 @@ The header pill lets you switch between three modes. Each mode paints the app wi
 Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
 - **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
 - **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). A second Console action resolves Google `/place/` pages via TinyFish Search (signal only, no filter). Anchorages stay on the route corridor.
-- **Capitaineries — World dump**: tiled Overpass `office=harbour_master` / `seamark:building:function=harbour_master` worldwide, then SHOM WFS CATSCF=6 overlay. Phone and VHF from tags first, official websites for gaps. No marina linking.
+- **Capitaineries — World dump**: tiled Overpass `office=harbour_master` / `seamark:building:function=harbour_master` worldwide, then SHOM WFS `buisgl_point` FUNCTN=2 (harbour-master's office) plus SMCFAC CATSCF=6. Phone and VHF from tags first, then the office's official website. No marina linking.
 - **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
 - **KPIs, telemetry table, failed extractions** for the projects pipeline, with Force Extract (TinyFish) per URL or global.
 
@@ -233,7 +233,7 @@ La pastille de l'en-tête permet de basculer entre trois modes. Chaque mode habi
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
 - **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
 - **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Une seconde action Console résout les fiches Google `/place/` via TinyFish Search (signal seulement, pas de filtre). Les mouillages restent sur le corridor de la route.
-- **Capitaineries — Dump mondial** : tuiles Overpass `office=harbour_master` / `seamark:building:function=harbour_master`, puis overlay SHOM CATSCF=6. Téléphone et VHF depuis les tags, puis les sites officiels. Pas de rattachement marina.
+- **Capitaineries — Dump mondial** : tuiles Overpass `office=harbour_master` / `seamark:building:function=harbour_master`, puis overlay SHOM `buisgl_point` FUNCTN=2 (bureau de capitainerie) et SMCFAC CATSCF=6. Téléphone et VHF depuis les tags, puis le site officiel du bureau. Pas de rattachement marina.
 - **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
 - **KPIs, table de télémétrie, extractions échouées** pour le pipeline projets, avec Force Extract (TinyFish) par URL ou global.
 

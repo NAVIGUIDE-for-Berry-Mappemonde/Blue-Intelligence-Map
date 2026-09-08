@@ -1,5 +1,5 @@
-"""app.routers.capitaineries — dump OSM harbour_master + overlay SHOM CATSCF=6,
-enrichissement téléphone / VHF."""
+"""app.routers.capitaineries — dump OSM harbour_master + overlay SHOM
+(BUISGL FUNCTN=2, SMCFAC CATSCF=6), enrichissement téléphone / VHF."""
 import asyncio
 import os
 import time
@@ -196,6 +196,7 @@ async def capitaineries_count():
 class EnrichBatchBody(BaseModel):
     limit: int = 10
     include_enriched: bool = False
+    skip_tinyfish: bool = False
 
 
 _ENGINE_LABELS = {
@@ -359,6 +360,7 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
                         result = await _run_enrich_one(
                             m, min_credit,
                             lambda s: ENRICH_BATCH_STATE.log(f"  {s}"),
+                            skip_tinyfish=body.skip_tinyfish,
                         )
                         ENRICH_BATCH_STATE.results.append({
                             "id": m["_id"], "name": m.get("name"),
