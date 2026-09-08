@@ -145,18 +145,34 @@ class TestProvider:
         kimi = nvidia.chat_payload("moonshotai/kimi-k3", "sys", "user", 32)
         assert kimi["temperature"] == 1.0
         assert kimi["reasoning_effort"] == "low"
+        assert "top_p" not in kimi  # non exposé sur kimi-k3-infer
 
         pro = nvidia.chat_payload("deepseek-ai/deepseek-v4-pro-0813", "sys", "user", 32)
         assert pro["temperature"] == 0
+        assert "top_p" not in pro  # infer : ne pas toucher temp et top_p ensemble
         assert pro["reasoning_effort"] == "none"
-        assert pro["chat_template_kwargs"]["thinking"] is False
+        assert pro["chat_template_kwargs"] == {"thinking": False}
         assert pro["response_format"] == {"type": "json_object"}
 
         oss = nvidia.chat_payload("openai/gpt-oss-20b", "sys", "user", 32)
         assert oss["reasoning_effort"] == "low"
+        assert oss["temperature"] == 0.6
+        assert oss["top_p"] == 0.7
+        assert "chat_template_kwargs" not in oss
 
-        flash = nvidia.generation_extras("deepseek-ai/deepseek-v4-flash-0731")
+        flash = nvidia.chat_payload(
+            "deepseek-ai/deepseek-v4-flash-0731", "sys", "user", 32)
         assert flash["reasoning_effort"] == "none"
+        assert flash["chat_template_kwargs"]["thinking"] is False
+        assert flash["chat_template_kwargs"]["reasoning_effort"] == "none"
+
+        laguna = nvidia.chat_payload(
+            "poolside/laguna-xs-2.1", "sys", "user", 32)
+        assert laguna["temperature"] == 1.0
+        assert laguna["top_p"] == 0.95
+        assert "chat_template_kwargs" not in laguna
+        assert "reasoning_effort" not in laguna
+        assert "thinking" not in laguna
 
 
 class TestJudgeNvidia:

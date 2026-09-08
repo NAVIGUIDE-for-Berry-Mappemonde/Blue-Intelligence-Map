@@ -19,6 +19,17 @@ Chaînes de fallback (échec HTTP / timeout / JSON vide → suivant) :
   legal   Kimi → Pro → Muse
   json    Pro → Muse → gpt-oss-20b   # gatekeeper, projet, géocode
 
+Paramètres JSON — contrat hosted = fiche infer (docs.api.nvidia.com/nim/…-infer),
+pas le playground ni la carte locale (temp/top_k hors schéma hosted) :
+
+  Pro    effort none (défaut infer) ; kwargs {thinking:false} (prototype Build)
+  Flash  effort none (défaut infer = **high**) ; kwargs thinking=false
+  Muse   pas de json_object ; 0.95 / 1.0 ; effort low (défaut high)
+  gpt-oss effort low (défaut medium ; enum sans none) ; 0.6 / 0.7
+  Kimi   temp 1.0 ; pas de top_p (non exposé) ; effort low (défaut max)
+  Laguna 1 / 0.95 ; pas de thinking/effort sur l'API infer
+
+
 Clé : NVIDIA_API_KEY (env) ou settings["nvidia_api_key"] (UI).
 Provider : LLM_PROVIDER=nvidia|openrouter|auto (auto = NVIDIA si clé présente).
 """
@@ -188,15 +199,23 @@ def muse_generation_extras(model: str | None = None) -> dict:
 
 
 def sampling_params(model: str | None = None) -> dict:
-    """Échantillonnage des fiches NVIDIA infer (JSON reste déterministe sauf Muse/Kimi)."""
+    """Échantillonnage des fiches NVIDIA infer, pas le greedy générique."""
     m = (model or primary_model()).lower()
     if "muse" in m:
-        # docs.api.nvidia.com/.../meta-muse-glimmer-30b-infer :
-        # greedy (temperature 0) dégrade Muse ; couple recommandé 0.95 / 1.0.
+        # infer : greedy dégrade ; couple recommandé 0.95 / 1.0.
+        # (carte locale : 1.0 / 0.95 / top_k 64 — top_k absent du schéma hosted)
         return {"temperature": 0.95, "top_p": 1.0}
     if "kimi-k3" in m:
-        # Recommended for Kimi-K3: 1.0 ; top_p non exposé.
+        # kimi-k3-infer : « Recommended for Kimi-K3: 1.0 » ; top_p non exposé.
         return {"temperature": 1.0}
+    if "gpt-oss" in m:
+        # openai-gpt-oss-20b-infer : défauts 0.6 / 0.7.
+        return {"temperature": 0.6, "top_p": 0.7}
+    if "laguna" in m:
+        # poolside-laguna-xs-2-1-infer : défauts 1 / 0.95.
+        return {"temperature": 1.0, "top_p": 0.95}
+    # DeepSeek V4 infer : défaut 1 / 0.95. JSON PoE : temperature 0 seule
+    # (la fiche déconseille de toucher temperature et top_p ensemble).
     return {"temperature": 0}
 
 
@@ -204,21 +223,36 @@ def generation_extras(model: str | None = None) -> dict:
     """reasoning_effort / chat_template_kwargs selon la fiche infer."""
     m = (model or primary_model()).lower()
     if "muse" in m:
+        # Défaut infer = high ; CoT partage max_tokens. Enum hosted :
+        # none|minimal|low|medium|high|max. JSON PoE : low (pas greedy/none).
         return {
             "reasoning_effort": "low",
             "chat_template_kwargs": {"reasoning_strength": "low"},
         }
+    if "deepseek-v4-flash" in m:
+        # Défaut infer = high. Enum : none|high|max (pas de low). Le
+        # prototype Build envoie thinking=true + reasoning_effort=high :
+        # on inverse pour le JSON PoE.
+        return {
+            "reasoning_effort": "none",
+            "chat_template_kwargs": {
+                "thinking": False,
+                "reasoning_effort": "none",
+            },
+        }
     if "deepseek-v4" in m:
+        # Pro-0813 : défaut infer = none. Prototype Build :
+        # chat_template_kwargs.thinking=false seulement.
         return {
             "reasoning_effort": "none",
             "chat_template_kwargs": {"thinking": False},
         }
     if "gpt-oss" in m:
+        # Enum infer : low|medium|high (pas de none). Défaut medium.
         return {"reasoning_effort": "low"}
     if "kimi-k3" in m:
+        # Enum infer : low|high|max. Défaut max. Thinking toujours on.
         return {"reasoning_effort": "low"}
-    if "laguna" in m:
-        return {"chat_template_kwargs": {"thinking": False}}
     return {}
 
 
