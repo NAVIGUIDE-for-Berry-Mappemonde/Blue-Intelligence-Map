@@ -117,6 +117,40 @@ def test_merge_cached_drops_stale_visit_equal_to_new_manager():
     assert not amp_svc.urls_equivalent(merged.get("visit_url"), merged["manager_url"])
 
 
+def test_sanitize_drops_degenerate_arcgis_hole():
+    geom = {
+        "type": "Polygon",
+        "coordinates": [
+            [[3.324, 42.325], [3.322, 42.322], [3.318, 42.328], [3.324, 42.325]],
+            [[3.324, 42.322], [3.324, 42.322], [3.323, 42.322], [3.324, 42.322]],
+        ],
+    }
+    clean = amp_svc.sanitize_geometry(geom)
+    assert clean["type"] == "Polygon"
+    assert len(clean["coordinates"]) == 1
+    assert amp_svc._ring_ok(clean["coordinates"][0])
+    feat = _feat()
+    feat["geometry"] = geom
+    feat["properties"]["SITE_ID"] = "AIESP236"
+    doc = amp_svc.attrs_from_feature(feat)
+    assert doc["geometry"]["type"] == "Polygon"
+    assert len(doc["geometry"]["coordinates"]) == 1
+    assert doc["manager_url"] == "https://parc-marin.fr"
+
+
+def test_sanitize_falls_back_to_centroid_point():
+    geom = {
+        "type": "Polygon",
+        "coordinates": [[[3.0, 42.0], [3.0, 42.0], [3.0, 42.0], [3.0, 42.0]]],
+    }
+    assert amp_svc.sanitize_geometry(geom) is None
+    feat = _feat()
+    feat["geometry"] = geom
+    doc = amp_svc.attrs_from_feature(feat)
+    assert doc["geometry"]["type"] == "Point"
+    assert doc["lat"] is not None and doc["lon"] is not None
+
+
 def test_parse_bbox_and_span():
     box = amp_svc.parse_bbox("3,42,4,43")
     assert box == (3.0, 42.0, 4.0, 43.0)
