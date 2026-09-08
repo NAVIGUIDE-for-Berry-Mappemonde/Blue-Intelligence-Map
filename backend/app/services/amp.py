@@ -418,8 +418,22 @@ async def ensure_amp_indexes(db) -> None:
         await db.amp_sites.create_index("name")
         await db.amp_sites.create_index("lfp")
         await db.amp_sites.create_index([("geometry", "2dsphere")])
+        await db.amp_tiles.create_index("fetched_at")
     except Exception:
         pass
+
+
+def tile_key(bbox: tuple[float, float, float, float]) -> str:
+    minx, miny, maxx, maxy = bbox
+    return f"{minx:.3f},{miny:.3f},{maxx:.3f},{maxy:.3f}"
+
+
+def cache_covers_tile(cached: list[dict], tile_doc: dict | None,
+                      ttl_days: int, *, force: bool) -> bool:
+    """Un site isolé d'un upsert raté ne compte pas pour une tuile."""
+    if force or not cached or not tile_doc:
+        return False
+    return _is_fresh(tile_doc, ttl_days)
 
 
 def _is_fresh(doc: dict, ttl_days: int) -> bool:
@@ -469,9 +483,13 @@ async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
     max_features = int(max_features or catalog_default("amp.max_features", 400))
     ttl_days = int(ttl_days or catalog_default("amp.cache_ttl_days", 30))
     cached = await query_cache(db, bbox, limit=max_features)
-    fresh = bool(cached) and all(_is_fresh(d, ttl_days) for d in cached[:8])
+    tile = None
+    try:
+        tile = await db.amp_tiles.find_one({"_id": tile_key(bbox)})
+    except Exception:
+        tile = None
     meta = {"source": "cache", "truncated": False, "fetched": 0}
-    if cached and fresh and not force:
+    if cache_covers_tile(cached, tile, ttl_days, force=force):
         meta["truncated"] = len(cached) >= max_features
         return cached, meta
     try:
@@ -484,6 +502,18 @@ async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
             meta["fetched"] = await upsert_sites(db, remote)
             meta["source"] = "arcgis"
             cached = await query_cache(db, bbox, limit=max_features) or remote
+            try:
+                await db.amp_tiles.update_one(
+                    {"_id": tile_key(bbox)},
+                    {"$set": {
+                        "fetched_at": now_iso(),
+                        "count": len(cached),
+                        "bbox": list(bbox),
+                    }},
+                    upsert=True,
+                )
+            except Exception:
+                pass
         except Exception as exc:
             meta["error"] = str(exc)[:180]
             cached = remote or cached

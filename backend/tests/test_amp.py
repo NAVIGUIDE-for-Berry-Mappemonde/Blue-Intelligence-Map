@@ -151,6 +151,17 @@ def test_sanitize_falls_back_to_centroid_point():
     assert doc["lat"] is not None and doc["lon"] is not None
 
 
+def test_cache_covers_tile_rejects_orphan_sites():
+    sites = [{"site_id": "PS-1", "fetched_at": amp_svc.now_iso()}]
+    assert amp_svc.cache_covers_tile(sites, None, 30, force=False) is False
+    assert amp_svc.cache_covers_tile([], {"fetched_at": amp_svc.now_iso()}, 30, force=False) is False
+    assert amp_svc.cache_covers_tile(
+        sites, {"fetched_at": amp_svc.now_iso()}, 30, force=True) is False
+    assert amp_svc.cache_covers_tile(
+        sites, {"fetched_at": amp_svc.now_iso()}, 30, force=False) is True
+    assert amp_svc.tile_key((3.1234, 42.1, 3.5, 42.5)) == "3.123,42.100,3.500,42.500"
+
+
 def test_parse_bbox_and_span():
     box = amp_svc.parse_bbox("3,42,4,43")
     assert box == (3.0, 42.0, 4.0, 43.0)
