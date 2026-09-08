@@ -29,6 +29,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   const [filter, setFilter] = useState("");
   const [q, setQ] = useState("");
   const [preGold, setPreGold] = useState(true);
+  const [stableOnly, setStableOnly] = useState(kind === "eez");
   const [index, setIndex] = useState(0);
   const [fiche, setFiche] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -49,6 +50,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setFilter("");
     setQ("");
     setPreGold(true);
+    setStableOnly(kindFromMode(mode) === "eez");
     if (mode === "formalities") setRunId("published");
   }, [mode]);
 
@@ -92,7 +94,12 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         if (cancelled) return;
         const items = data.items || [];
         setRuns(items);
-        setRunId((prev) => (items.some((r) => r.id === prev) ? prev : "published"));
+        const rec = items.find((r) => r.recommended);
+        if (kind === "eez" && rec) {
+          setRunId(rec.id);
+        } else {
+          setRunId((prev) => (items.some((r) => r.id === prev) ? prev : "published"));
+        }
       } catch (e) {
         if (!cancelled) setRuns([{ id: "published", label: "published", count: 0 }]);
       }
@@ -106,7 +113,10 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     (async () => {
       try {
         const { data } = await api.get("/review/queue", {
-          params: { kind, run_id: effectiveRunId, offset, limit: PAGE, q, pre_gold: preGold },
+          params: {
+            kind, run_id: effectiveRunId, offset, limit: PAGE, q,
+            pre_gold: preGold, stable: kind === "eez" && stableOnly,
+          },
         });
         if (cancelled) return;
         const items = data.items || [];
@@ -125,14 +135,14 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, effectiveRunId, offset, q, preGold]);
+  }, [kind, effectiveRunId, offset, q, preGold, stableOnly]);
 
   useEffect(() => {
     setFiche(null);
     setComment("");
     setSavedAt(null);
     setGoldOn(false);
-  }, [kind, effectiveRunId, preGold]);
+  }, [kind, effectiveRunId, preGold, stableOnly]);
 
   useEffect(() => {
     commentRef.current = comment;
@@ -294,6 +304,21 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           >
             {t("reviewPreGold")}
           </button>
+          {kind === "eez" && (
+            <button
+              type="button"
+              data-testid="review-stable-filter"
+              aria-pressed={stableOnly}
+              onClick={() => { setStableOnly((v) => !v); setOffset(0); pendingIndexRef.current = 0; }}
+              className={`mt-2 w-full px-2.5 py-1.5 text-[11px] font-semibold border rounded-sm ${
+                stableOnly
+                  ? "border-accent/50 bg-accent/15 text-accent"
+                  : "border-line text-slate-400 hover:text-slate-200 hover:bg-raised"
+              }`}
+            >
+              {t("reviewStable")}
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto" data-testid="review-queue-list">
           {queue.length === 0 && (
@@ -316,7 +341,14 @@ export default function ReviewView({ t, mode, onMapDirty }) {
                   it.has_comment ? "bg-bio" : "bg-slate-600"
                 }`} title={it.has_comment ? t("reviewHasComment") : undefined} />
                 <div className="min-w-0">
-                  <p className="text-xs text-slate-100 truncate">{it.title}</p>
+                  <p className="text-xs text-slate-100 truncate">
+                    {it.title}
+                    {it.stable ? (
+                      <span className="ml-1 font-mono text-[9px] text-accent/80" data-testid="review-stable-badge">
+                        11
+                      </span>
+                    ) : null}
+                  </p>
                   {it.subtitle ? (
                     <p className="font-mono text-[10px] text-slate-500 truncate">{it.subtitle}</p>
                   ) : null}
@@ -347,6 +379,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
                 <option key={r.id} value={r.id}>
                   {r.id === "published" ? t("reviewPublished") : (r.label || r.id)}
                   {r.count != null ? ` (${r.count})` : ""}
+                  {r.recommended ? ` · ${t("reviewRecommended")}` : ""}
                 </option>
               ))}
             </select>

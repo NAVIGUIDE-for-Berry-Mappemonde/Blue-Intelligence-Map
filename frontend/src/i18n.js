@@ -361,6 +361,8 @@ export const DICT = {
     reviewUnionHint: "Union of the published map and production runs (test runs excluded).",
     reviewGold: "Gold",
     reviewPreGold: "Pre-Gold",
+    reviewStable: "Stable 11",
+    reviewRecommended: "latest 11",
   },
   fr: {
     subtitle: "Essaim OSINT Maritime",
@@ -721,6 +723,8 @@ export const DICT = {
     reviewUnionHint: "Union de la carte publiée et des runs de production (canaris exclus).",
     reviewGold: "Gold",
     reviewPreGold: "Pré-Gold",
+    reviewStable: "11 stables",
+    reviewRecommended: "dernier run 11",
   },
 };
 

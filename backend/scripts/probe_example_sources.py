@@ -18,6 +18,7 @@ sys.path.insert(0, str(BACKEND))
 from app.core.extract import extract_structured_ports  # noqa: E402
 from app.services import poe_pipeline as poe  # noqa: E402
 from app.services.poe_pipeline import _collect_texts  # noqa: E402
+from app.services.poe_stable import STABLE_REVIEW_MRGIDS  # noqa: E402
 
 EXAMPLE_ZONES = {
     5677: {
@@ -85,8 +86,7 @@ FR_PDF_NEEDLES = (
     "Liste-ports-de-plaisance-eligibles.pdf",
     "carte-PPF-maritimes.pdf",
 )
-TARGET_MRGIDS = (5677, 8429, 8433, 8447, 8455, 8312, 21803, 48944, 5696, 8490,
-                 5670)
+TARGET_MRGIDS = STABLE_REVIEW_MRGIDS
 SOV_ISO2 = {5677: "FR", 8429: "MX", 8433: "VE", 8447: "NZ", 8455: "NZ",
             8312: "FR", 21803: "NL", 48944: "FR", 5696: "GB", 8490: "EG",
             5670: "AL"}

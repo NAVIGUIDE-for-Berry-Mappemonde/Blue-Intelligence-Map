@@ -28,10 +28,11 @@ async def review_runs(kind: str):
 @router.get("/review/queue")
 async def review_queue_get(kind: str, run_id: str = PUBLISHED_RUN,
                            offset: int = 0, limit: int = 500, q: str = "",
-                           pre_gold: bool = False):
+                           pre_gold: bool = False, stable: bool = False):
     kind = _kind_or_400(kind)
     return await review_queue.list_queue(
-        db, kind, run_id, offset=offset, limit=limit, q=q, pre_gold=pre_gold)
+        db, kind, run_id, offset=offset, limit=limit, q=q,
+        pre_gold=pre_gold, stable=stable)
 
 
 @router.get("/review/fiche")

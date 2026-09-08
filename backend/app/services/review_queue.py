@@ -18,6 +18,13 @@ from app.services.poe_zone_fiche import (
 )
 from app.services.poe_zone_label import attach_zone_labels
 from app.services import review_gold
+from app.services.poe_stable import (
+    STABLE_REVIEW_MRGIDS,
+    STABLE_REVIEW_ORDER,
+    STABLE_REVIEW_SET,
+    is_stable_review_mrgid,
+    stable_review_stub,
+)
 
 _PROJECT_QUEUE_PROJ = {
     "_id": 1, "title": 1, "url": 1, "funders": 1, "funder": 1, "verdict": 1,
@@ -115,6 +122,10 @@ async def list_runs(db, kind: str) -> dict:
     else:
         published_count = await _count(db.marinas)
 
+    recommended = None
+    if kind == "eez":
+        recommended = await review_gold.recommended_eez_run_id(db)
+
     items = [{
         "id": PUBLISHED_RUN,
         "label": "published",
@@ -122,6 +133,7 @@ async def list_runs(db, kind: str) -> dict:
         "created_at": None,
         "count": published_count,
         "dataset": kind,
+        "recommended": False,
     }]
     if kind == "project":
         docs = await db.project_runs.find({}).to_list(100)
@@ -138,6 +150,7 @@ async def list_runs(db, kind: str) -> dict:
                 "created_at": d.get("created_at"),
                 "count": n,
                 "dataset": kind,
+                "recommended": False,
             })
     elif kind in ("eez", "poe"):
         docs = await db.poe_runs.find({}).to_list(100)
@@ -155,8 +168,10 @@ async def list_runs(db, kind: str) -> dict:
                 "created_at": d.get("created_at"),
                 "count": n,
                 "dataset": kind,
+                "recommended": bool(kind == "eez" and recommended and rid == recommended),
             })
-    return {"kind": kind, "count": len(items), "items": items}
+    return {"kind": kind, "count": len(items), "items": items,
+            "recommended_id": recommended if kind == "eez" else None}
 
 
 async def _label_zones(db, zones: list[dict]) -> list[dict]:
@@ -199,9 +214,69 @@ def _title_filter(field: str, q: str) -> dict:
     return {field: {"$regex": re.escape(needle), "$options": "i"}}
 
 
+def _as_mrgid(value) -> int | None:
+    try:
+        mid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return mid or None
+
+
+def _eez_sort_key(zone: dict) -> tuple:
+    mid = _as_mrgid(zone.get("mrgid")) or 0
+    name = (zone.get("label") or zone.get("name") or "").casefold()
+    if mid in STABLE_REVIEW_ORDER:
+        return (0, STABLE_REVIEW_ORDER[mid], name)
+    return (1, 0, name)
+
+
+def _eez_subtitle(zone: dict) -> str:
+    who = (zone.get("sovereign") or zone.get("iso2") or "").strip()
+    try:
+        n = int(zone.get("poe_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    bit = f"{n} port" if n == 1 else f"{n} ports"
+    if who:
+        return f"{who} · {bit}"
+    return bit
+
+
+async def _eez_queue_docs(db, rid: str, stable_only: bool) -> list[dict]:
+    if is_published(rid):
+        docs = await db.eez_zones.find({}, _EEZ_QUEUE_PROJ).to_list(2000)
+    else:
+        docs = await db.poe_run_zones.find(
+            {"run_id": rid}, _EEZ_QUEUE_PROJ).to_list(2000)
+    if not stable_only:
+        return docs
+
+    have: dict[int, dict] = {}
+    for z in docs:
+        mid = _as_mrgid(z.get("mrgid"))
+        if mid and mid in STABLE_REVIEW_SET:
+            have[mid] = z
+    missing = [m for m in STABLE_REVIEW_MRGIDS if m not in have]
+    if missing:
+        try:
+            extras = await db.eez_zones.find(
+                {"mrgid": {"$in": missing}}, _EEZ_QUEUE_PROJ).to_list(50)
+        except Exception:
+            extras = []
+        for z in extras:
+            mid = _as_mrgid(z.get("mrgid"))
+            if mid and mid not in have:
+                have[mid] = z
+    out: list[dict] = []
+    for mid in STABLE_REVIEW_MRGIDS:
+        out.append(have[mid] if mid in have else stable_review_stub(mid))
+    return out
+
+
 async def list_queue(db, kind: str, run_id: str | None = None,
                      offset: int = 0, limit: int = QUEUE_LIMIT_DEFAULT,
-                     q: str = "", pre_gold: bool = False) -> dict:
+                     q: str = "", pre_gold: bool = False,
+                     stable: bool = False) -> dict:
     if kind not in KINDS:
         raise ValueError("kind must be project|eez|poe|marina")
     rid = run_id or PUBLISHED_RUN
@@ -238,33 +313,30 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             ))
 
     elif kind == "eez":
-        if is_published(rid):
-            docs = await db.eez_zones.find({}, _EEZ_QUEUE_PROJ).to_list(2000)
-        else:
-            docs = await db.poe_run_zones.find(
-                {"run_id": rid}, _EEZ_QUEUE_PROJ).to_list(2000)
+        docs = await _eez_queue_docs(db, rid, bool(stable))
         docs = await _label_zones(db, docs)
-        docs.sort(key=lambda z: (z.get("label") or z.get("name") or "").casefold())
+        docs.sort(key=_eez_sort_key)
         if needle:
             docs = [z for z in docs if needle in (
                 f"{z.get('label') or ''} {z.get('name') or ''} {z.get('sovereign') or ''}"
             ).casefold()]
         for z in docs:
-            mid = z.get("mrgid")
+            mid = _as_mrgid(z.get("mrgid"))
             if mid is None:
                 continue
-            eid = str(int(mid))
-            pre = int(mid) in pre_eez
+            eid = str(mid)
+            pre = mid in pre_eez
             if pre_gold and not pre:
                 continue
             items.append(_queue_item(
                 eid,
                 z.get("label") or z.get("name") or eid,
-                z.get("sovereign") or z.get("iso2") or "",
+                _eez_subtitle(z),
                 flags,
                 {
-                    "mrgid": int(mid),
+                    "mrgid": mid,
                     "poe_count": z.get("poe_count") or 0,
+                    "stable": is_stable_review_mrgid(mid),
                     "pre_gold": pre,
                     "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
                 },
@@ -318,6 +390,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
         "offset": offset,
         "limit": limit,
         "pre_gold": bool(pre_gold),
+        "stable": bool(stable),
         "commented": commented,
         "items": items,
         "wrote_projects": False,
