@@ -162,14 +162,36 @@ def _db():
         poe_run_zones=[
             {**_HEX, "run_id": "poe-run-1", "sources": [
                 {"url": "https://run.gouv.fr/liste.pdf", "domain": "run.gouv.fr", "official": True},
-            ]},
+            ], "sources_official": True},
             {**_HEX, "run_id": "poe-run-2", "sources": [
                 {"url": "https://douane.gouv.fr/hexagone.pdf", "domain": "douane.gouv.fr",
                  "official": True},
-            ]},
+            ], "sources_official": True},
+            {
+                "mrgid": 8447, "name": "Niue", "iso2": "NU", "sov_iso2": "NZ",
+                "sovereign": "New Zealand", "pol_type": "200NM",
+                "status": "erreur", "poe_count": 0, "run_id": "poe-run-2",
+                "sources": [{"url": "http://www.paclii.org/nu/legis/niue_laws",
+                             "official": True}],
+                "sources_official": True,
+            },
+            {
+                "mrgid": 9999, "name": "Elsewhere", "iso2": "XX",
+                "sovereign": "Elsewhere", "pol_type": "200NM",
+                "status": "ia", "poe_count": 3, "run_id": "poe-run-2",
+                "sources": [{"url": "https://elsewhere.test/ports", "official": True}],
+                "sources_official": True,
+            },
             {**_HEX, "run_id": "canary-1", "sources": [
                 {"url": "https://canary.test/fr", "domain": "canary.test", "official": True},
-            ]},
+            ], "sources_official": True},
+            {
+                "mrgid": 8429, "name": "Mexico", "iso2": "MX", "sov_iso2": "MX",
+                "sovereign": "Mexico", "pol_type": "200NM",
+                "status": "ia", "poe_count": 12, "run_id": "canary-1",
+                "sources": [{"url": "https://canary.test/mx", "official": True}],
+                "sources_official": True,
+            },
         ],
         poe_run_ports=[{
             "_id": "runp1", "run_id": "poe-run-1", "dedup_key": "5677:sete",
@@ -304,6 +326,10 @@ def test_list_runs_includes_published_and_isolated():
     assert "poe-run-1" in poe_ids
     assert "poe-run-2" in poe_ids
     assert "canary-1" not in poe_ids
+    eez_runs = asyncio.run(review_queue.list_runs(db, "eez"))
+    assert eez_runs["recommended_id"] == "poe-run-2"
+    rec = [r for r in eez_runs["items"] if r.get("recommended")]
+    assert [r["id"] for r in rec] == ["poe-run-2"]
     marina = asyncio.run(review_queue.list_runs(db, "marina"))
     assert [r["id"] for r in marina["items"]] == ["published"]
 
@@ -324,11 +350,28 @@ def test_frontend_review_tab_exists():
     assert "PoeFiche" not in review
     assert "review-gold" in review
     assert "review-pregold-filter" in review
+    assert "review-stable-filter" in review
+    assert "content_run_id" in review
+    assert "runsReady" in review
+    assert 'kind === "eez" && (' in review
+    i18n = (root / "i18n.js").read_text(encoding="utf-8")
+    assert "reviewStable" in i18n
+    assert "reviewRecommended" in i18n
     assert "review-comment" in review
     assert "review-next" in review
     assert 'kind === "project"' in review
     assert "reviewHintFormalities" in review
     assert "/generate" not in review
+
+
+def test_stable_mrgids_match_probe_targets():
+    from app.services.poe_stable import STABLE_REVIEW_MRGIDS
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "probe_example_sources.py")
+    text = src.read_text(encoding="utf-8")
+    assert "TARGET_MRGIDS = STABLE_REVIEW_MRGIDS" in text
+    assert STABLE_REVIEW_MRGIDS == (
+        5677, 8429, 8433, 8447, 8455, 8312, 21803, 48944, 5696, 8490, 5670,
+    )
 
 
 def test_test_run_labels_and_ocean_fallback():
@@ -362,10 +405,25 @@ def test_pre_gold_filter_projects_and_marinas():
     assert [i["id"] for i in pre_m["items"]] == ["m1"]
 
 
-def test_pre_gold_eez_is_consensus_across_prod_runs():
-    from app.services.review_gold import reset_eez_pre_gold_cache
+def test_pre_gold_eez_is_productive_prod_run():
+    from app.services.review_gold import (
+        eez_extraction_is_productive,
+        pre_gold_eez_mrgids,
+        reset_eez_pre_gold_cache,
+    )
     reset_eez_pre_gold_cache()
     db = _db()
+    pre_ids = asyncio.run(pre_gold_eez_mrgids(db))
+    assert 5677 in pre_ids
+    assert 9999 in pre_ids
+    assert 48944 not in pre_ids
+    assert 8447 not in pre_ids
+    assert 8429 not in pre_ids
+    assert eez_extraction_is_productive({"poe_count": 0, "sources_official": True}) is False
+    assert eez_extraction_is_productive({"poe_count": 4, "sources_official": False}) is False
+    assert eez_extraction_is_productive({
+        "poe_count": 2, "sources": [{"kind": "official"}],
+    }) is True
     pre = asyncio.run(review_queue.list_queue(db, "eez", "published", pre_gold=True))
     ids = {i["id"] for i in pre["items"]}
     assert ids == {"5677"}
@@ -373,8 +431,100 @@ def test_pre_gold_eez_is_consensus_across_prod_runs():
     by = {i["id"]: i for i in all_z["items"]}
     assert by["5677"]["pre_gold"] is True
     assert by["5677"]["gold_on"] is True
+    assert by["5677"]["stable"] is True
+    assert by["5677"]["subtitle"].endswith("1 port")
     assert by["48944"]["pre_gold"] is False
     assert by["48944"]["gold_on"] is False
+
+
+def test_stable_eez_queue_is_the_eleven_in_order():
+    from app.services.poe_stable import STABLE_REVIEW_MRGIDS
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    reset_eez_pre_gold_cache()
+    db = _db()
+    stable = asyncio.run(review_queue.list_queue(
+        db, "eez", "published", stable=True))
+    assert stable["stable"] is True
+    assert [i["id"] for i in stable["items"]] == [str(m) for m in STABLE_REVIEW_MRGIDS]
+    assert all(i["stable"] for i in stable["items"])
+    by = {i["id"]: i for i in stable["items"]}
+    assert by["8447"]["title"] == "Niue"
+    assert by["8447"]["pre_gold"] is False
+    assert "0 port" in by["8447"]["subtitle"]
+    both = asyncio.run(review_queue.list_queue(
+        db, "eez", "published", pre_gold=True, stable=True))
+    assert [i["id"] for i in both["items"]] == ["5677"]
+    run = asyncio.run(review_queue.list_queue(
+        db, "eez", "poe-run-2", stable=True))
+    run_ids = [i["id"] for i in run["items"]]
+    assert run_ids == [str(m) for m in STABLE_REVIEW_MRGIDS]
+    assert "9999" not in run_ids
+    run_by = {i["id"]: i for i in run["items"]}
+    assert run_by["5677"]["poe_count"] == 1
+    assert run_by["8447"]["poe_count"] == 0
+    run_pre = asyncio.run(review_queue.list_queue(
+        db, "eez", "poe-run-2", pre_gold=True, stable=False))
+    assert {i["id"] for i in run_pre["items"]} == {"5677", "9999"}
+
+
+def test_stable_queue_overlays_best_fr_ports():
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    reset_eez_pre_gold_cache()
+    db = _db()
+    db.poe_runs.docs.extend([
+        {"_id": "serper-11", "label": "serper-11-tinyfish", "state": "done",
+         "created_at": "2026-09-08T00:30:00Z"},
+        {"_id": "catalog-fr", "label": "catalog-skip-fr", "state": "done",
+         "created_at": "2026-09-08T01:06:00Z"},
+    ])
+    db.poe_run_zones.docs.extend([
+        {**_HEX, "run_id": "serper-11", "poe_count": 0, "status": "erreur",
+         "sources_official": False, "sources": []},
+        {**_HEX, "run_id": "catalog-fr", "poe_count": 50, "sources_official": True,
+         "sources": [{"url": "https://douane.gouv.fr/liste.pdf", "official": True}]},
+    ])
+    db.poe_run_ports.docs.append({
+        "_id": "fr50", "run_id": "catalog-fr", "dedup_key": "5677:brest",
+        "name": "Brest", "mrgid": 5677, "zone_name": "France",
+        "lat": 48.4, "lon": -4.5,
+    })
+    q = asyncio.run(review_queue.list_queue(
+        db, "eez", "serper-11", stable=True))
+    fr = next(i for i in q["items"] if i["id"] == "5677")
+    assert fr["poe_count"] == 50
+    assert fr["source_run_id"] == "catalog-fr"
+    assert "50 ports" in fr["subtitle"]
+    fiche = asyncio.run(review_queue.get_fiche(
+        db, "eez", "serper-11", "5677", content_run_id="catalog-fr"))
+    assert [p["name"] for p in fiche["fiche"]["ports"]] == ["Brest"]
+    assert fiche["run_id"] == "serper-11"
+
+
+def test_recommended_run_prefers_broader_stable_coverage():
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    reset_eez_pre_gold_cache()
+    db = _db()
+    db.poe_runs.docs.append({
+        "_id": "poe-run-0", "label": "serper-11-tinyfish", "state": "done",
+        "created_at": "2026-09-07T10:00:00Z",
+    })
+    db.poe_run_zones.docs.extend([
+        {**_HEX, "run_id": "poe-run-0", "sources_official": True, "sources": [
+            {"url": "https://douane.gouv.fr/hexagone.pdf", "official": True},
+        ]},
+        {
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX", "poe_count": 8,
+            "run_id": "poe-run-0", "sources_official": True,
+            "sources": [{"url": "https://gob.mx/puertos", "official": True}],
+        },
+        {
+            "mrgid": 8455, "name": "New Zealand", "iso2": "NZ", "poe_count": 26,
+            "run_id": "poe-run-0", "sources_official": True,
+            "sources": [{"url": "https://mpi.govt.nz/places", "official": True}],
+        },
+    ])
+    runs = asyncio.run(review_queue.list_runs(db, "eez"))
+    assert runs["recommended_id"] == "poe-run-0"
 
 
 def test_gold_toggle_does_not_write_v1():

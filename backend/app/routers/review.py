@@ -28,18 +28,21 @@ async def review_runs(kind: str):
 @router.get("/review/queue")
 async def review_queue_get(kind: str, run_id: str = PUBLISHED_RUN,
                            offset: int = 0, limit: int = 500, q: str = "",
-                           pre_gold: bool = False):
+                           pre_gold: bool = False, stable: bool = False):
     kind = _kind_or_400(kind)
     return await review_queue.list_queue(
-        db, kind, run_id, offset=offset, limit=limit, q=q, pre_gold=pre_gold)
+        db, kind, run_id, offset=offset, limit=limit, q=q,
+        pre_gold=pre_gold, stable=stable)
 
 
 @router.get("/review/fiche")
-async def review_fiche_get(kind: str, id: str, run_id: str = PUBLISHED_RUN):
+async def review_fiche_get(kind: str, id: str, run_id: str = PUBLISHED_RUN,
+                           content_run_id: str | None = None):
     kind = _kind_or_400(kind)
     if not id:
         raise HTTPException(400, "id required")
-    out = await review_queue.get_fiche(db, kind, run_id, id)
+    out = await review_queue.get_fiche(
+        db, kind, run_id, id, content_run_id=content_run_id)
     if out is None:
         raise HTTPException(404, "fiche not found")
     return out

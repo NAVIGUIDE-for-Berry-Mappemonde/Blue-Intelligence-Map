@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 
 from app.core.geo import haversine_km, ocean_fallback_coords
+from app.services.poe_stable import STABLE_REVIEW_MRGIDS
 
 GOLD_KINDS = ("project", "eez", "marina")
 FALLBACK_SOURCES = frozenset({
@@ -133,11 +134,35 @@ def _mrgid_set(docs: list[dict]) -> set[int]:
     return out
 
 
-async def pre_gold_eez_mrgids(db) -> set[int]:
-    """mrgid vus dans au moins 2 origines (v1 + runs prod), hors tests.
+def eez_extraction_is_productive(doc: dict | None) -> bool:
+    """Au moins un port et une source officielle — v1 seul ne suffit pas."""
+    if not doc:
+        return False
+    try:
+        n = int(doc.get("poe_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return False
+    if doc.get("sources_official"):
+        return True
+    for src in doc.get("sources") or []:
+        if not isinstance(src, dict):
+            continue
+        if src.get("official"):
+            return True
+        if str(src.get("kind") or "").strip().lower() == "official":
+            return True
+    return False
 
-    Lecture des fiches zone seulement (~285 × N) — pas le scan des ports,
-    trop lent pour le timeout Axios du front.
+
+async def pre_gold_eez_mrgids(db) -> set[int]:
+    """mrgid extraits de façon productive sur un run Formalités de prod.
+
+    Productif = poe_count > 0 et au moins une source officielle.
+    La v1 et les canaris / smokes ne comptent pas : une ZEE seulement
+    présente sur la carte publiée (ex. Mayotte sans run) n'est pas pré-Gold.
+    Lecture des fiches zone seulement — pas le scan des ports.
     """
     global _eez_pre_gold_cache
     now = time.time()
@@ -149,44 +174,105 @@ async def pre_gold_eez_mrgids(db) -> set[int]:
         if _eez_pre_gold_cache and now - _eez_pre_gold_cache[0] < _EEZ_CACHE_TTL_S:
             return set(_eez_pre_gold_cache[1])
 
-        origins: list[set[int]] = []
-        try:
-            v1 = await db.eez_zones.find({}, {"mrgid": 1}).to_list(500)
-            v1_ids = _mrgid_set(v1)
-            if v1_ids:
-                origins.append(v1_ids)
-        except Exception:
-            pass
-
+        hits: set[int] = set()
         prod_runs = await production_poe_runs(db)
         rids = [_sid(r.get("_id")) for r in prod_runs if _sid(r.get("_id"))]
         if rids:
             try:
                 zones = await db.poe_run_zones.find(
-                    {"run_id": {"$in": rids}}, {"mrgid": 1, "run_id": 1},
-                ).to_list(4000)
+                    {"run_id": {"$in": rids}},
+                    {"mrgid": 1, "run_id": 1, "poe_count": 1,
+                     "sources": 1, "sources_official": 1},
+                ).to_list(8000)
             except Exception:
                 zones = []
-            by_run: dict[str, set[int]] = {rid: set() for rid in rids}
             for z in zones:
-                rid = _sid(z.get("run_id"))
-                if rid in by_run:
-                    by_run[rid] |= _mrgid_set([z])
-            for rid in rids:
-                if by_run[rid]:
-                    origins.append(by_run[rid])
-
-        hits: set[int] = set()
-        seen: dict[int, int] = {}
-        for origin in origins:
-            for mid in origin:
-                seen[mid] = seen.get(mid, 0) + 1
-        for mid, n in seen.items():
-            if n >= 2:
-                hits.add(mid)
+                if eez_extraction_is_productive(z):
+                    hits |= _mrgid_set([z])
 
         _eez_pre_gold_cache = (time.time(), frozenset(hits))
         return hits
+
+
+async def recommended_eez_run_id(db) -> str | None:
+    """Run prod qui couvre le plus des 11 de façon productive, puis le plus récent.
+
+    Un rerun France (1 zone) ne doit pas masquer le run des 11 (FR+NZ+EG…).
+    """
+    prod = await production_poe_runs(db)
+    by_id = {_sid(d.get("_id")): d for d in prod if _sid(d.get("_id"))}
+    if not by_id:
+        return None
+    try:
+        zones = await db.poe_run_zones.find(
+            {
+                "run_id": {"$in": list(by_id)},
+                "mrgid": {"$in": list(STABLE_REVIEW_MRGIDS)},
+            },
+            {"mrgid": 1, "run_id": 1, "poe_count": 1,
+             "sources": 1, "sources_official": 1},
+        ).to_list(400)
+    except Exception:
+        return None
+    scores: dict[str, int] = {}
+    for z in zones:
+        if not eez_extraction_is_productive(z):
+            continue
+        rid = _sid(z.get("run_id"))
+        if rid in by_id:
+            scores[rid] = scores.get(rid, 0) + 1
+    best: str | None = None
+    best_score = 0
+    best_at = ""
+    for rid, n in scores.items():
+        created = str((by_id.get(rid) or {}).get("created_at") or "")
+        if best is None or n > best_score or (n == best_score and created > best_at):
+            best = rid
+            best_score = n
+            best_at = created
+    return best
+
+
+async def best_productive_stable_zones(db) -> dict[int, dict]:
+    """Meilleure fiche productive de chaque polygone des 11 (max ports, puis run récent)."""
+    prod = await production_poe_runs(db)
+    by_id = {_sid(d.get("_id")): d for d in prod if _sid(d.get("_id"))}
+    if not by_id:
+        return {}
+    try:
+        zones = await db.poe_run_zones.find(
+            {
+                "run_id": {"$in": list(by_id)},
+                "mrgid": {"$in": list(STABLE_REVIEW_MRGIDS)},
+            },
+            {"mrgid": 1, "run_id": 1, "name": 1, "geoname": 1, "sovereign": 1,
+             "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1,
+             "status": 1, "sources": 1, "sources_official": 1},
+        ).to_list(400)
+    except Exception:
+        return {}
+    best: dict[int, dict] = {}
+    best_key: dict[int, tuple] = {}
+    for z in zones:
+        if not eez_extraction_is_productive(z):
+            continue
+        try:
+            mid = int(z.get("mrgid") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not mid:
+            continue
+        rid = _sid(z.get("run_id"))
+        try:
+            n = int(z.get("poe_count") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        created = str((by_id.get(rid) or {}).get("created_at") or "")
+        key = (n, created)
+        if mid not in best or key > best_key[mid]:
+            best[mid] = z
+            best_key[mid] = key
+    return best
 
 
 async def overrides_map(db, kind: str) -> dict[str, dict]:
