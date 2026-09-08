@@ -368,7 +368,6 @@ def capitainerie_from_shom(feat: dict, *, layer: str = "smcfac") -> dict | None:
     shom_id = shom_feature_id(feat, props, lat, lon, layer=layer)
     return {
         "shom_id": shom_id,
-        "osm_id": None,
         "name": name[:120],
         "lat": lat,
         "lon": lon,
@@ -526,7 +525,6 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
         "source": SHOM_SOURCE,
         "sources": [SHOM_SOURCE],
         "shom_id": shom_id,
-        "osm_id": None,
         "tags": cand.get("tags") or {},
         "website": None,
         "fetched_at": now_iso,
@@ -537,7 +535,10 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
-        await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
+        await coll.update_one(
+            {"_id": existing["_id"]},
+            {"$set": patch, "$unset": {"osm_id": ""}},
+        )
         return "updated"
     patch["_id"] = shom_id
     patch["enriched"] = False
@@ -575,6 +576,10 @@ async def reset_cursor(cursor_coll) -> None:
 
 async def ensure_indexes(coll) -> None:
     try:
+        # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
+        if hasattr(coll, "update_many"):
+            await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
+            await coll.update_many({"shom_id": None}, {"$unset": {"shom_id": ""}})
         await coll.create_index("osm_id", unique=True, sparse=True)
         await coll.create_index("shom_id", unique=True, sparse=True)
         await coll.create_index("name")

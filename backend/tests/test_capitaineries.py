@@ -51,6 +51,19 @@ class _FakeColl:
             return None
         if "$set" in upd:
             doc.update(upd["$set"])
+        if "$unset" in upd:
+            for k in upd["$unset"]:
+                doc.pop(k, None)
+        return None
+
+    async def update_many(self, q, upd):
+        for d in self.docs:
+            if self._match_one(d, q or {}):
+                if "$set" in upd:
+                    d.update(upd["$set"])
+                if "$unset" in upd:
+                    for k in upd["$unset"]:
+                        d.pop(k, None)
         return None
 
     async def replace_one(self, q, payload, upsert=False):
@@ -219,6 +232,8 @@ def test_shom_merges_nearby_osm_and_inserts_orphan():
     assert coll.docs[0]["shom_id"] == "shom:a"
     assert asyncio.run(cw.upsert_shom(coll, far, now, pts)) == "inserted"
     assert any(d.get("_id") == "shom:b" for d in coll.docs)
+    orphan = next(d for d in coll.docs if d.get("_id") == "shom:b")
+    assert "osm_id" not in orphan
     assert any(d.get("source") == "shom" for d in coll.docs)
 
 
