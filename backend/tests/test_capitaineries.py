@@ -252,6 +252,32 @@ def test_build_resumable_and_shom_overlay():
     assert calls["n"] == first_calls
 
 
+def test_all_docs_ignores_motor_subcollection():
+    """Motor expose .docs comme sous-collection : ne pas faire list(coll.docs)."""
+
+    class _Cursor:
+        def __init__(self, docs):
+            self._docs = docs
+
+        async def to_list(self, n):
+            return list(self._docs)
+
+    class _MotorLike:
+        def __init__(self, docs):
+            self._store = docs
+            self.docs = object()
+
+        def find(self, q=None, proj=None):
+            return _Cursor(self._store)
+
+    coll = _MotorLike([
+        {"_id": "node/1", "osm_id": "node/1", "lat": 46.15, "lon": -1.16, "name": "LR"},
+    ])
+    docs = asyncio.run(cw._all_docs(coll))
+    assert len(docs) == 1
+    assert docs[0]["osm_id"] == "node/1"
+
+
 def test_enrich_tags_skip_website():
     doc = {
         "_id": "node/1", "name": "Capitainerie", "lat": 46.15, "lon": -1.16,

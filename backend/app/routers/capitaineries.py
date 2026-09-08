@@ -140,8 +140,8 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                 state=BUILD_STATE,
                 resume=body.resume,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            BUILD_STATE.log(f"build crashed: {type(exc).__name__}: {exc}")
 
     asyncio.create_task(_runner())
     return {"started": True, "kind": "world_harbour_master", "resume": body.resume}

@@ -664,6 +664,8 @@ async def overlay_shom(
         d for d in await _all_docs(coll)
         if d.get("osm_id") and d.get("lat") is not None
     ]
+    if logger:
+        logger(f"Overlay SHOM : {len(osm_pts)} OSM en base pour fusion ≤ {int(SHOM_MERGE_KM * 1000)} m")
     inserted = merged = updated = fetched = 0
     seen: set[str] = set()
     for bbox in (bboxes or SHOM_BBOXES):
