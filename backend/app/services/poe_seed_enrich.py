@@ -650,7 +650,13 @@ def harvest_bu_catalog(fetched: dict, urls: list[str]) -> dict:
         blocks.append(f"[SOURCE: {u}]\n{text[:CATALOG_FETCH_CHARS].rstrip()}\n")
     raw = "\n\n".join(blocks)
     ports = extract_structured_ports(raw)
-    sufficient = catalog_is_sufficient(ports, raw)
+    named = [
+        p for p in ports
+        if p.get("extraction_engine") == "catalog"
+        and "tournure légale" not in (p.get("note") or "")
+        and (p.get("name") or "").strip()
+    ]
+    sufficient = catalog_is_sufficient(ports, raw) or len(named) >= 4
     productive = urls_with_catalog(blocks) if blocks else []
     if sufficient and not productive:
         productive = [

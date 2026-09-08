@@ -696,6 +696,9 @@ def looks_like_port_catalog(text: str) -> bool:
         return True
     if len(re.findall(r"place(?:s)? of first arrival", text, re.I)) >= 2:
         return True
+    if (re.search(r"approved ports", text, re.I)
+            and re.search(r"place(?:s)? of first arrival", text, re.I)):
+        return True
     if (re.search(r"simpson\s*bay", text, re.I)
             and re.search(r"great\s*bay", text, re.I)):
         return True
@@ -903,6 +906,12 @@ def _extract_mx_habilitados_table(text: str) -> list[dict]:
     return out
 
 
+_NZ_TABLE_SKIP = frozenset({
+    "port contact (website)", "mpi contact", "approved cargo",
+    "approved vessels", "choose from this list", "what you must do",
+})
+
+
 def _extract_nz_pofa_tables(text: str) -> list[dict]:
     """Registre MPI « places of first arrival – seaports » (tableau par port)."""
     out, seen = [], set()
@@ -910,11 +919,25 @@ def _extract_nz_pofa_tables(text: str) -> list[dict]:
     names += [m.group(1) for m in _NZ_POFA_PLAIN_RE.finditer(text or "")]
     skip = _PORT_OF_SKIP | {"approved vessels", "choose from this list",
                             "what you must do", "northland", "approved ports"}
+    blob = text or ""
+    if (re.search(r"approved ports", blob, re.I)
+            or re.search(r"place(?:s)? of first arrival", blob, re.I)):
+        for m in re.finditer(
+            r"(?m)^\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]*?)\s*\|?\s*$", blob):
+            a = " ".join(m.group(1).split()).strip(" |-")
+            b = " ".join(m.group(2).split()).strip(" |-")
+            if not a or a.startswith("---") or a.casefold() in _NZ_TABLE_SKIP:
+                raw = b
+            else:
+                raw = a
+            if raw and re.search(r"\b(port|marina|harbour|harbor|northport)\b", raw, re.I):
+                names.append(raw)
     for raw in names:
         name = " ".join((raw or "").split()).strip(" |-")
         fold = name.casefold()
         if (not name or fold in seen or fold in skip or len(name) < 3
-                or len(name) > 80 or fold in _GENERIC_PORT_NAMES):
+                or len(name) > 80 or fold in _GENERIC_PORT_NAMES
+                or fold.startswith("mpi ") or fold in _NZ_TABLE_SKIP):
             continue
         seen.add(fold)
         out.append({
