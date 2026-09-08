@@ -351,6 +351,7 @@ def test_frontend_review_tab_exists():
     assert "review-gold" in review
     assert "review-pregold-filter" in review
     assert "review-stable-filter" in review
+    assert "content_run_id" in review
     assert 'kind === "eez" && (' in review
     i18n = (root / "i18n.js").read_text(encoding="utf-8")
     assert "reviewStable" in i18n
@@ -463,6 +464,39 @@ def test_stable_eez_queue_is_the_eleven_in_order():
     run_pre = asyncio.run(review_queue.list_queue(
         db, "eez", "poe-run-2", pre_gold=True, stable=False))
     assert {i["id"] for i in run_pre["items"]} == {"5677", "9999"}
+
+
+def test_stable_queue_overlays_best_fr_ports():
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    reset_eez_pre_gold_cache()
+    db = _db()
+    db.poe_runs.docs.extend([
+        {"_id": "serper-11", "label": "serper-11-tinyfish", "state": "done",
+         "created_at": "2026-09-08T00:30:00Z"},
+        {"_id": "catalog-fr", "label": "catalog-skip-fr", "state": "done",
+         "created_at": "2026-09-08T01:06:00Z"},
+    ])
+    db.poe_run_zones.docs.extend([
+        {**_HEX, "run_id": "serper-11", "poe_count": 0, "status": "erreur",
+         "sources_official": False, "sources": []},
+        {**_HEX, "run_id": "catalog-fr", "poe_count": 50, "sources_official": True,
+         "sources": [{"url": "https://douane.gouv.fr/liste.pdf", "official": True}]},
+    ])
+    db.poe_run_ports.docs.append({
+        "_id": "fr50", "run_id": "catalog-fr", "dedup_key": "5677:brest",
+        "name": "Brest", "mrgid": 5677, "zone_name": "France",
+        "lat": 48.4, "lon": -4.5,
+    })
+    q = asyncio.run(review_queue.list_queue(
+        db, "eez", "serper-11", stable=True))
+    fr = next(i for i in q["items"] if i["id"] == "5677")
+    assert fr["poe_count"] == 50
+    assert fr["source_run_id"] == "catalog-fr"
+    assert "50 ports" in fr["subtitle"]
+    fiche = asyncio.run(review_queue.get_fiche(
+        db, "eez", "serper-11", "5677", content_run_id="catalog-fr"))
+    assert [p["name"] for p in fiche["fiche"]["ports"]] == ["Brest"]
+    assert fiche["run_id"] == "serper-11"
 
 
 def test_recommended_run_prefers_broader_stable_coverage():

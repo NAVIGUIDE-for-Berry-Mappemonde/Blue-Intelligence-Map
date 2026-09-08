@@ -37,6 +37,7 @@ _MARINA_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1}
 _EEZ_QUEUE_PROJ = {
     "_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
     "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1, "status": 1,
+    "run_id": 1, "sources": 1, "sources_official": 1,
 }
 
 KINDS = ("project", "eez", "poe", "marina")
@@ -256,6 +257,15 @@ async def _eez_queue_docs(db, rid: str, stable_only: bool) -> list[dict]:
         mid = _as_mrgid(z.get("mrgid"))
         if mid and mid in STABLE_REVIEW_SET:
             have[mid] = z
+    best = await review_gold.best_productive_stable_zones(db)
+    for mid, z in best.items():
+        cur = have.get(mid)
+        if cur is None or not review_gold.eez_extraction_is_productive(cur):
+            overlay = dict(z)
+            src = _sid(z.get("run_id"))
+            if src and src != rid:
+                overlay["_source_run_id"] = src
+            have[mid] = overlay
     missing = [m for m in STABLE_REVIEW_MRGIDS if m not in have]
     if missing:
         try:
@@ -328,18 +338,22 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             pre = mid in pre_eez
             if pre_gold and not pre:
                 continue
+            extra = {
+                "mrgid": mid,
+                "poe_count": z.get("poe_count") or 0,
+                "stable": is_stable_review_mrgid(mid),
+                "pre_gold": pre,
+                "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+            }
+            src_run = _sid(z.get("_source_run_id"))
+            if src_run:
+                extra["source_run_id"] = src_run
             items.append(_queue_item(
                 eid,
                 z.get("label") or z.get("name") or eid,
                 _eez_subtitle(z),
                 flags,
-                {
-                    "mrgid": mid,
-                    "poe_count": z.get("poe_count") or 0,
-                    "stable": is_stable_review_mrgid(mid),
-                    "pre_gold": pre,
-                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
-                },
+                extra,
             ))
 
     elif kind == "poe":
@@ -538,10 +552,12 @@ async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str)
     }
 
 
-async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict | None:
+async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
+                    content_run_id: str | None = None) -> dict | None:
     if kind not in KINDS:
         raise ValueError("kind must be project|eez|poe|marina")
     rid = run_id or PUBLISHED_RUN
+    content_rid = content_run_id or rid
     eid = _sid(entity_id)
     fiche = None
     doc = None
@@ -564,8 +580,10 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
             mid = int(eid)
         except (TypeError, ValueError):
             return None
+        union = is_published(rid)
+        fiche_run = rid if union else content_rid
         fiche = await build_zone_fiche(
-            db, mid, run_id=rid, union=is_published(rid))
+            db, mid, run_id=fiche_run, union=union)
         if fiche is None:
             return None
         fiche["kind"] = "eez"

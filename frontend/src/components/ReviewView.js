@@ -162,9 +162,15 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setLoading(true);
     (async () => {
       try {
-        const { data } = await api.get("/review/fiche", {
-          params: { kind, run_id: effectiveRunId, id: current.id },
-        });
+        const params = { kind, run_id: effectiveRunId, id: current.id };
+        if (
+          current.source_run_id
+          && current.source_run_id !== effectiveRunId
+          && effectiveRunId !== "published"
+        ) {
+          params.content_run_id = current.source_run_id;
+        }
+        const { data } = await api.get("/review/fiche", { params });
         if (cancelled) return;
         setFiche(data.fiche);
         setComment(data.comment || "");
@@ -178,7 +184,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, effectiveRunId, current?.id]);
+  }, [kind, effectiveRunId, current?.id, current?.source_run_id]);
 
   const go = useCallback(async (delta) => {
     if (!total) return;
