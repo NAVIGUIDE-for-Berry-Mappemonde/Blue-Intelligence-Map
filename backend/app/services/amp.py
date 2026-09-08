@@ -40,6 +40,15 @@ VISIT_STATUSES = (
 )
 
 _URL_RE = re.compile(r"https?://[^\s,;|<>\"']+", re.I)
+_VISIT_HINT = (
+    r"visite|visits?|visiter|plaisance|mouillage|anchor(?:ing)?|moorings?|"
+    r"permits?|permis|autorisation|r[eé]glement(?:ation)?s?|"
+    r"entr[eé]e|entrer|entry|formalit\w*|pleasure.?craft|yachts?|"
+    r"recreational|clearance|access|acceso|fondeo|amarr\w*|navegac\w*|"
+    r"div(?:e|ing)|plonge(?:e|r)?|rules?|normativa|visitors?|"
+    r"turismo|tourisme|nautism\w*|zoning|regulat\w*"
+)
+VISIT_HINT_RE = re.compile(rf"(?:^|[\W_])(?:{_VISIT_HINT})(?:$|[\W_])", re.I)
 
 SLIM_PROJECTION = {
     "_id": 1,
@@ -133,44 +142,162 @@ def extract_urls(blob: str | None) -> list[str]:
     return out
 
 
+def url_host(url: str | None) -> str | None:
+    nu = normalize_url(url)
+    if not nu:
+        return None
+    host = (urlparse(nu).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host or None
+
+
+def is_manager_suburl(url: str | None, manager_url: str | None) -> bool:
+    """Même hôte que le gestionnaire, chemin distinct — cas le plus fréquent."""
+    if urls_equivalent(url, manager_url):
+        return False
+    hu, hm = url_host(url), url_host(manager_url)
+    return bool(hu and hm and hu == hm)
+
+
+def split_protectedseas_website(raw: str | None) -> tuple[str | None, list[str]]:
+    """Champ Website PS : parfois ``Label|https://a; Autre|https://b``."""
+    urls = extract_urls(raw)
+    if not urls:
+        return normalize_url(raw), []
+    return normalize_url(urls[0]), urls[1:]
+
+
+def protectedseas_visit_blobs(doc: dict) -> list[str]:
+    """Textes PS où une sous-URL de visite est souvent déjà écrite."""
+    return [
+        doc.get("other_helpful_links") or "",
+        doc.get("ps_website_raw") or "",
+        doc.get("purpose") or "",
+    ]
+
+
+def rank_visit_candidate(
+    url: str | None,
+    manager_url: str | None,
+    *,
+    curated: bool = False,
+    title: str = "",
+    snippet: str = "",
+) -> int:
+    """Score > 0 = candidat. 0 = homepage, pub, ou hors sujet."""
+    if not normalize_url(url) or urls_equivalent(url, manager_url):
+        return 0
+    path = urlparse(normalize_url(url) or "").path or ""
+    blob = f"{url} {title} {snippet}"
+    hint_path = bool(VISIT_HINT_RE.search(path))
+    hint_blob = bool(VISIT_HINT_RE.search(blob))
+    same = is_manager_suburl(url, manager_url)
+    score = 0
+    if hint_path:
+        score += 4
+    if hint_blob:
+        score += 2
+    if same and (hint_path or hint_blob or curated):
+        score += 3
+    if curated and same:
+        score += 3
+    if curated and not same and (hint_path or hint_blob):
+        score += 2
+    if curated and not same and not hint_path and not hint_blob:
+        # Lien extra PS hors hôte, sans mot-clé : brochure / dive-map souvent utile.
+        score += 2
+    return score
+
+
 def pick_visit_url(
     manager_url: str | None,
     other_helpful_links: str | None = None,
     discovered: str | None = None,
+    extra_blobs: list[str] | None = None,
 ) -> tuple[str | None, str]:
     """Choisit une URL de visite distincte du gestionnaire.
 
+    Privilegie une sous-URL du même hôte déjà présente dans ProtectedSeas.
     Retourne ``(url, status)``. ``status`` ∈ VISIT_STATUSES.
     """
-    candidates: list[str] = []
     if discovered:
-        candidates.append(discovered)
-    candidates.extend(extract_urls(other_helpful_links))
-    had_candidate = False
-    for raw in candidates:
+        if urls_equivalent(discovered, manager_url):
+            return None, "rejected_same_as_manager"
+        if normalize_url(discovered):
+            return discovered.strip(), "found"
+
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    had_manager_copy = False
+    had_distinct = False
+
+    def _consider(raw: str, *, curated: bool, count_manager_copy: bool) -> None:
+        nonlocal had_manager_copy, had_distinct
         if not normalize_url(raw):
-            continue
-        had_candidate = True
+            return
         if urls_equivalent(raw, manager_url):
-            continue
-        return raw.strip(), "found"
-    if had_candidate:
+            if count_manager_copy:
+                had_manager_copy = True
+            return
+        had_distinct = True
+        key = normalize_url(raw)
+        if not key or key in seen:
+            return
+        score = rank_visit_candidate(raw, manager_url, curated=curated)
+        if score <= 0:
+            return
+        seen.add(key)
+        ranked.append((score, raw.strip()))
+
+    for raw in extract_urls(other_helpful_links):
+        _consider(raw, curated=True, count_manager_copy=True)
+    for blob in extra_blobs or []:
+        for raw in extract_urls(blob):
+            # Sous-URL du Website PS = curée ; le 2e label (OFB, etc.) reste strict.
+            _consider(
+                raw,
+                curated=is_manager_suburl(raw, manager_url),
+                count_manager_copy=False,
+            )
+
+    if ranked:
+        ranked.sort(key=lambda item: (-item[0], -len(urlparse(item[1]).path or "")))
+        return ranked[0][1], "found"
+    if had_manager_copy and not had_distinct:
         return None, "rejected_same_as_manager"
-    return None, "none" if not manager_url and not other_helpful_links else "not_found"
+    blobs = [other_helpful_links or "", *(extra_blobs or [])]
+    return None, "none" if not manager_url and not any(blobs) else "not_found"
 
 
 def apply_visit_choice(doc: dict, *, discovered: str | None = None,
                        source: str | None = None) -> dict:
     """Écrit visit_url / status. N'écrase jamais visit_url avec manager_url."""
+    raw_web = doc.get("ps_website_raw") or ""
+    if not raw_web and "|" in str(doc.get("manager_url") or ""):
+        raw_web = doc.get("manager_url") or ""
+        doc["ps_website_raw"] = raw_web
+    if raw_web:
+        parsed, _ = split_protectedseas_website(raw_web)
+        if parsed:
+            doc["manager_url"] = parsed
     manager = doc.get("manager_url")
+    extras = [b for b in protectedseas_visit_blobs(doc) if b]
     url, status = pick_visit_url(
-        manager, doc.get("other_helpful_links"), discovered=discovered)
+        manager,
+        doc.get("other_helpful_links"),
+        discovered=discovered,
+        extra_blobs=extras,
+    )
     if url and urls_equivalent(url, manager):
         url, status = None, "rejected_same_as_manager"
     if url:
         doc["visit_url"] = url
         doc["visit_url_status"] = "found"
-        doc["visit_url_source"] = source or doc.get("visit_url_source") or "other_helpful_links"
+        helpful = extract_urls(doc.get("other_helpful_links"))
+        default_src = "other_helpful_links" if any(
+            urls_equivalent(url, h) for h in helpful) else "protectedseas"
+        doc["visit_url_source"] = source or doc.get("visit_url_source") or default_src
         doc["enriched_at"] = now_iso()
     else:
         if not doc.get("visit_url") or urls_equivalent(doc.get("visit_url"), manager):
@@ -267,7 +394,8 @@ def _centroid(geom: dict | None) -> tuple[float | None, float | None]:
 def attrs_from_feature(feat: dict) -> dict:
     props = feat.get("properties") or {}
     site_id = str(props.get("SITE_ID") or props.get("site_id") or "").strip()
-    manager = normalize_url(props.get("url"))
+    website_raw = props.get("url") or ""
+    manager, _ps_extras = split_protectedseas_website(website_raw)
     raw_geom = feat.get("geometry")
     lat, lon = _centroid(raw_geom)
     geom = sanitize_geometry(raw_geom) or _point_geom(lat, lon)
@@ -287,6 +415,7 @@ def attrs_from_feature(feat: dict) -> dict:
         "wdpa_id": props.get("wdpa_id") or "",
         "year_est": props.get("year_est"),
         "manager_url": manager,
+        "ps_website_raw": website_raw,
         "other_helpful_links": props.get("other_helpful_links") or "",
         "geometry": geom,
         "lat": lat,

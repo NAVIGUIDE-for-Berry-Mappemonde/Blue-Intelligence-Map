@@ -53,6 +53,53 @@ def test_pick_visit_rejects_manager_homepage():
     assert status == "rejected_same_as_manager"
 
 
+def test_split_protectedseas_website_reads_labeled_urls():
+    raw = (
+        "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls; "
+        "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
+    )
+    manager, extras = amp_svc.split_protectedseas_website(raw)
+    assert manager == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert extras
+    assert any("afbiodiversite.fr" in u for u in extras)
+
+
+def test_pick_visit_prefers_same_host_suburl_from_website_blob():
+    url, status = amp_svc.pick_visit_url(
+        "https://parcsnaturals.gencat.cat",
+        extra_blobs=[
+            "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici/"
+        ],
+    )
+    assert status == "found"
+    assert url.endswith("/cap-creus/inici") or "cap-creus/inici" in url
+    assert amp_svc.is_manager_suburl(url, "https://parcsnaturals.gencat.cat")
+    assert not amp_svc.urls_equivalent(url, "https://parcsnaturals.gencat.cat")
+
+
+def test_pick_visit_ignores_offhost_ofb_label_without_hints():
+    url, status = amp_svc.pick_visit_url(
+        "https://reserves-naturelles.org/cerbere-banyuls",
+        extra_blobs=[
+            "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls; "
+            "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
+        ],
+    )
+    assert url is None
+    assert status == "not_found"
+
+
+def test_attrs_parses_dirty_website_and_keeps_suburl_visit():
+    feat = _feat(
+        url="MPA Website|https://www.parc-marin.fr",
+        other_helpful_links="https://parc-marin.fr/reglementation-plaisance",
+    )
+    doc = amp_svc.attrs_from_feature(feat)
+    assert doc["manager_url"] == "https://parc-marin.fr"
+    assert doc["visit_url"] == "https://parc-marin.fr/reglementation-plaisance"
+    assert amp_svc.is_manager_suburl(doc["visit_url"], doc["manager_url"])
+
+
 def test_pick_visit_keeps_distinct_procedure_page():
     url, status = amp_svc.pick_visit_url(
         "https://parc-marin.fr",

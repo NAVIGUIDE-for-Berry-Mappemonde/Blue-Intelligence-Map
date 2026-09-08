@@ -12,20 +12,12 @@ from __future__ import annotations
 import re
 import time
 from typing import Awaitable, Callable
-from urllib.parse import urlparse
-
 from app.core.extract import serp_filter
 from app.core.tinyfish import AMP_VISIT_PURPOSE, FETCH_URL_CAP, tf_api_key, tf_fetch, tf_search
 from app.db import get_settings
 from app.services import amp as amp_svc
 
-VISIT_HINT_RE = re.compile(
-    r"visite|visit|plaisance|mouillage|anchor|mooring|permit|permis|"
-    r"autorisation|reglement|réglement|reglementation|entry|entree|entrée|"
-    r"entrer|formalit|pleasure.?craft|yacht|recreational|clearance|"
-    r"access|acceso|acceso|fondeo|amarr|navegac",
-    re.I,
-)
+VISIT_HINT_RE = amp_svc.VISIT_HINT_RE
 BAD_URL_RE = re.compile(
     r"facebook\.|twitter\.|instagram\.|tiktok\.|linkedin\.|"
     r"tripadvisor\.|booking\.|airbnb\.|youtube\.|"
@@ -40,10 +32,7 @@ SearchFn = Callable[..., Awaitable[list[dict]]]
 
 
 def manager_host(url: str | None) -> str | None:
-    host = (urlparse(url or "").hostname or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
-    return host or None
+    return amp_svc.url_host(url)
 
 
 def score_visit_candidate(
@@ -52,27 +41,13 @@ def score_visit_candidate(
     *,
     title: str = "",
     snippet: str = "",
+    curated: bool = False,
 ) -> int:
     """Score > 0 = candidat plausible. 0 = rejeter (homepage, pub, hors sujet)."""
-    if not amp_svc.normalize_url(url):
-        return 0
-    if amp_svc.urls_equivalent(url, manager_url):
-        return 0
     if BAD_URL_RE.search(url or ""):
         return 0
-    blob = f"{url} {title} {snippet}"
-    score = 0
-    if VISIT_HINT_RE.search(urlparse(url or "").path or ""):
-        score += 4
-    if VISIT_HINT_RE.search(blob):
-        score += 2
-    if score == 0:
-        return 0
-    mh = manager_host(manager_url)
-    uh = manager_host(url)
-    if mh and uh and mh == uh:
-        score += 2
-    return score
+    return amp_svc.rank_visit_candidate(
+        url, manager_url, curated=curated, title=title, snippet=snippet)
 
 
 def pick_visit_from_urls(
@@ -111,8 +86,15 @@ def urls_from_fetch_record(rec: dict | None) -> list[str]:
 def search_query(doc: dict) -> tuple[str, str | None]:
     name = (doc.get("name") or "").strip()
     country = (doc.get("country") or "").strip()
-    q = f'"{name}" {country} visit permit anchoring mooring plaisance réglementation'.strip()
-    return q, manager_host(doc.get("manager_url"))
+    host = manager_host(doc.get("manager_url"))
+    if host:
+        q = (
+            f"site:{host} (visite OR visit OR plaisance OR mouillage OR permit "
+            f"OR réglementation OR anchoring) \"{name}\""
+        ).strip()
+    else:
+        q = f'"{name}" {country} visit permit anchoring mooring plaisance réglementation'.strip()
+    return q, host
 
 
 def _needs_visit(doc: dict) -> bool:
