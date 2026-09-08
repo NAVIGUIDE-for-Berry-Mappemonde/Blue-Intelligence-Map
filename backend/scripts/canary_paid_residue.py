@@ -41,9 +41,14 @@ async def main() -> None:
     names = list(NZ_FIVE) if args.iso == "NZ" else []
 
     from motor.motor_asyncio import AsyncIOMotorClient
+    from pymongo import ReadPreference
     from app.db import get_settings
 
+    # Canari lecture : les secondaires suffisent si le primary Atlas est down.
+    pref = (ReadPreference.PRIMARY if args.write
+            else ReadPreference.SECONDARY_PREFERRED)
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    db = db.with_options(read_preference=pref)
     ports_before = await db.poe_ports.count_documents({})
     zone = await db.eez_zones.find_one(
         {"mrgid": mrgid},
