@@ -30,6 +30,13 @@ async def main() -> None:
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
     state = TaskState(max_logs=4000)
     state.start()
+    _orig_log = state.log
+
+    def _log(msg: str) -> None:
+        print(msg, flush=True)
+        _orig_log(msg)
+
+    state.log = _log
     try:
         summary = await mine_paid_sources(
             db, state,

@@ -1147,7 +1147,22 @@ async def mine_paid_sources(db, state, *, fetch_cap: int = DEFAULT_MINE_FETCH_CA
     state.progress = 0
     fetched = {}
     if key and urls:
-        fetched = await tf_fetch(urls, key, log=log)
+        batches = (len(urls) + 9) // 10
+        for i in range(0, len(urls), 10):
+            if state.cancel:
+                log("mine: annulation pendant Fetch")
+                break
+            batch = urls[i:i + 10]
+            log(f"mine Fetch {i // 10 + 1}/{batches} ({len(batch)} URL)")
+            try:
+                part = await asyncio.wait_for(tf_fetch(batch, key, log=log), timeout=180)
+            except TimeoutError:
+                log(f"mine Fetch timeout lot {i // 10 + 1}")
+                part = {}
+            fetched.update(part or {})
+            ok = sum(1 for r in (part or {}).values() if str(r.get("text") or "").strip())
+            log(f"mine Fetch lot {i // 10 + 1}: {ok}/{len(batch)} textes")
+            state.progress = min(state.total, i + len(batch))
     elif urls:
         log("mine: pas de clé TinyFish — Fetch sauté")
     state.progress = min(state.total, len(urls) or 1)
