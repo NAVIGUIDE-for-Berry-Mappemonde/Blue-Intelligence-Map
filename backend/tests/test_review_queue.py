@@ -352,6 +352,7 @@ def test_frontend_review_tab_exists():
     assert "review-pregold-filter" in review
     assert "review-stable-filter" in review
     assert "content_run_id" in review
+    assert "runsReady" in review
     assert 'kind === "eez" && (' in review
     i18n = (root / "i18n.js").read_text(encoding="utf-8")
     assert "reviewStable" in i18n

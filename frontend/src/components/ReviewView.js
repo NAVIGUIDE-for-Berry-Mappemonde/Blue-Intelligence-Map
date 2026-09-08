@@ -34,6 +34,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   const [fiche, setFiche] = useState(null);
   const [loading, setLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(true);
+  const [runsReady, setRunsReady] = useState(kind !== "eez");
   const [comment, setComment] = useState("");
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -51,6 +52,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setQ("");
     setPreGold(true);
     setStableOnly(kindFromMode(mode) === "eez");
+    setRunsReady(kindFromMode(mode) !== "eez");
     if (mode === "formalities") setRunId("published");
   }, [mode]);
 
@@ -88,6 +90,8 @@ export default function ReviewView({ t, mode, onMapDirty }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (kind === "eez") setRunsReady(false);
+    else setRunsReady(true);
     (async () => {
       try {
         const { data } = await api.get("/review/runs", { params: { kind } });
@@ -102,12 +106,15 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         }
       } catch (e) {
         if (!cancelled) setRuns([{ id: "published", label: "published", count: 0 }]);
+      } finally {
+        if (!cancelled) setRunsReady(true);
       }
     })();
     return () => { cancelled = true; };
   }, [kind]);
 
   useEffect(() => {
+    if (kind === "eez" && !runsReady) return undefined;
     let cancelled = false;
     setQueueLoading(true);
     (async () => {
@@ -135,7 +142,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [kind, effectiveRunId, offset, q, preGold, stableOnly]);
+  }, [kind, effectiveRunId, offset, q, preGold, stableOnly, runsReady]);
 
   useEffect(() => {
     setFiche(null);
