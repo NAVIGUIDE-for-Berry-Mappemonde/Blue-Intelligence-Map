@@ -133,12 +133,30 @@ class TestProvider:
         assert nvidia.LEGAL_MODEL in nvidia.models_for("legal")
         assert nvidia.LEGAL_MODEL in nvidia.models_for("extract")
 
-    def test_muse_payload_lowers_reasoning(self):
-        extras = nvidia.muse_generation_extras("meta/muse-glimmer-30b")
+    def test_payload_follows_infer_docs(self):
+        extras = nvidia.generation_extras("meta/muse-glimmer-30b")
         assert extras["reasoning_effort"] == "low"
         assert extras["chat_template_kwargs"]["reasoning_strength"] == "low"
-        assert nvidia.muse_generation_extras("moonshotai/kimi-k3") == {}
-        assert nvidia.muse_generation_extras("deepseek-ai/deepseek-v4-flash-0731") == {}
+        muse = nvidia.chat_payload("meta/muse-glimmer-30b", "sys", "user", 32)
+        assert muse["temperature"] == 0.95
+        assert muse["top_p"] == 1.0
+        assert "response_format" not in muse
+
+        kimi = nvidia.chat_payload("moonshotai/kimi-k3", "sys", "user", 32)
+        assert kimi["temperature"] == 1.0
+        assert kimi["reasoning_effort"] == "low"
+
+        pro = nvidia.chat_payload("deepseek-ai/deepseek-v4-pro-0813", "sys", "user", 32)
+        assert pro["temperature"] == 0
+        assert pro["reasoning_effort"] == "none"
+        assert pro["chat_template_kwargs"]["thinking"] is False
+        assert pro["response_format"] == {"type": "json_object"}
+
+        oss = nvidia.chat_payload("openai/gpt-oss-20b", "sys", "user", 32)
+        assert oss["reasoning_effort"] == "low"
+
+        flash = nvidia.generation_extras("deepseek-ai/deepseek-v4-flash-0731")
+        assert flash["reasoning_effort"] == "none"
 
 
 class TestJudgeNvidia:

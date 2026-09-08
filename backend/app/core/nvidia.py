@@ -183,20 +183,40 @@ def engine_label(model: str | None = None) -> str:
 
 
 def muse_generation_extras(model: str | None = None) -> dict:
-    """Muse raisonne par défaut (effort high) et épuise max_tokens sans JSON.
-
-    NVIDIA : reasoning_effort + chat_template_kwargs.reasoning_strength.
-    """
+    """Paramètres NIM documentés (fiches infer) pour JSON PoE."""
     return generation_extras(model)
 
 
+def sampling_params(model: str | None = None) -> dict:
+    """Échantillonnage des fiches NVIDIA infer (JSON reste déterministe sauf Muse/Kimi)."""
+    m = (model or primary_model()).lower()
+    if "muse" in m:
+        # docs.api.nvidia.com/.../meta-muse-glimmer-30b-infer :
+        # greedy (temperature 0) dégrade Muse ; couple recommandé 0.95 / 1.0.
+        return {"temperature": 0.95, "top_p": 1.0}
+    if "kimi-k3" in m:
+        # Recommended for Kimi-K3: 1.0 ; top_p non exposé.
+        return {"temperature": 1.0}
+    return {"temperature": 0}
+
+
 def generation_extras(model: str | None = None) -> dict:
+    """reasoning_effort / chat_template_kwargs selon la fiche infer."""
     m = (model or primary_model()).lower()
     if "muse" in m:
         return {
             "reasoning_effort": "low",
             "chat_template_kwargs": {"reasoning_strength": "low"},
         }
+    if "deepseek-v4" in m:
+        return {
+            "reasoning_effort": "none",
+            "chat_template_kwargs": {"thinking": False},
+        }
+    if "gpt-oss" in m:
+        return {"reasoning_effort": "low"}
+    if "kimi-k3" in m:
+        return {"reasoning_effort": "low"}
     if "laguna" in m:
         return {"chat_template_kwargs": {"thinking": False}}
     return {}
@@ -322,9 +342,9 @@ def chat_payload(model: str, system: str, user: str, max_tokens: int,
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "temperature": 0,
         "max_tokens": max_tokens,
         "stream": False,
+        **sampling_params(used),
         **generation_extras(used),
     }
     if use_json:
