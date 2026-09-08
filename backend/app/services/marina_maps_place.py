@@ -8,9 +8,10 @@ expose un lien /place/ — ou « Impossible de trouver » / can't find.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import time
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
 from urllib.parse import unquote, urlparse
 
 from app.services.marina_world import osm_website_from_tags
@@ -54,6 +55,18 @@ SearchFn = Callable[[dict], Awaitable[list[dict]]]
 FetchFn = Callable[[dict], Awaitable[dict]]
 FetchManyFn = Callable[[list[dict]], Awaitable[dict[Any, dict]]]
 FETCH_BATCH = 10
+CURSOR_BATCH = 50
+# Champs utiles au Fetch / tag OSM — pas le GeoJSON complet.
+_PLACE_PROJ = {
+    "_id": 1,
+    "name": 1,
+    "lat": 1,
+    "lon": 1,
+    "website": 1,
+    "tags": 1,
+    "maps_place_url": 1,
+    "maps_place_status": 1,
+}
 
 
 def is_google_place_url(url: str | None) -> bool:
@@ -341,13 +354,12 @@ async def resolve_google_place(
 
 
 async def revalidate_stored_places(coll) -> dict:
-    cur = coll.find({"maps_place_url": {"$regex": "/maps/place/"}})
-    if hasattr(cur, "to_list"):
-        docs = await cur.to_list(200_000)
-    else:
-        docs = [d async for d in cur]
     kept = cleared = 0
-    for marina in docs:
+    checked = 0
+    async for marina in _iter_todo(
+        coll, {"maps_place_url": {"$regex": "/maps/place/"}}, 200_000,
+    ):
+        checked += 1
         if stored_place_still_valid(marina):
             kept += 1
             continue
@@ -357,7 +369,7 @@ async def revalidate_stored_places(coll) -> dict:
             "maps_place_source": None,
         }})
         cleared += 1
-    return {"kept": kept, "cleared": cleared, "checked": len(docs)}
+    return {"kept": kept, "cleared": cleared, "checked": checked}
 
 
 def stored_place_still_valid(marina: dict) -> bool:
@@ -405,6 +417,42 @@ async def _apply_result(coll, state, marina: dict, patch: dict, counters: dict) 
     state.progress += 1
 
 
+async def _count_todo(coll, q: dict, fetch_n: int, state) -> int:
+    if not hasattr(coll, "count_documents"):
+        return 0
+    try:
+        n = int(await coll.count_documents(q, maxTimeMS=8_000))
+    except TypeError:
+        n = int(await coll.count_documents(q))
+    except Exception as exc:
+        state.log(f"Comptage Mongo: {type(exc).__name__} — total à l'avancement")
+        return 0
+    if fetch_n < 200_000:
+        n = min(n, fetch_n)
+    return n
+
+
+async def _iter_todo(coll, q: dict, fetch_n: int) -> AsyncIterator[dict]:
+    """Curseur Motor par lots. Jamais to_list() sur toute la collection."""
+    try:
+        cur = coll.find(q, _PLACE_PROJ)
+    except TypeError:
+        cur = coll.find(q)
+    if hasattr(cur, "batch_size"):
+        try:
+            cur = cur.batch_size(CURSOR_BATCH)
+        except Exception:
+            pass
+    if hasattr(cur, "limit") and fetch_n < 200_000:
+        cur = cur.limit(fetch_n)
+    n = 0
+    async for doc in cur:
+        yield doc
+        n += 1
+        if n >= fetch_n:
+            break
+
+
 async def resolve_maps_places(
     *,
     marinas_coll,
@@ -428,7 +476,9 @@ async def resolve_maps_places(
     state.logs = []
     state.summary = None
     state.progress = 0
+    state.total = 0
     state.cancel = False
+    state.log("Job /place/ démarré — curseur Mongo par lots (sans to_list)")
 
     q: dict[str, Any] = {"name": {"$nin": ["", None]}}
     if not force:
@@ -438,33 +488,27 @@ async def resolve_maps_places(
         ]
 
     fetch_n = int(limit) if limit and int(limit) > 0 else 200_000
-    cur = marinas_coll.find(q)
-    if hasattr(cur, "sort"):
-        cur = cur.sort("name", 1)
-    if hasattr(cur, "limit"):
-        cur = cur.limit(fetch_n)
-    if hasattr(cur, "to_list"):
-        docs = await cur.to_list(fetch_n)
-    else:
-        docs = [d async for d in cur]
-        docs = docs[:fetch_n]
-
-    state.total = len(docs)
     sequential = search_fn is not None or fetch_fn is not None
-    mode = "séquentiel" if sequential else f"Fetch lots de {max(1, int(batch_size or FETCH_BATCH))}"
+    size = max(1, min(FETCH_BATCH, int(batch_size or FETCH_BATCH)))
+    mode = "séquentiel" if sequential else f"Fetch lots de {size}"
+    state.total = await _count_todo(marinas_coll, q, fetch_n, state)
     state.log(
-        f"Fiches Google : {len(docs)} marina(s) nommée(s) "
+        f"Fiches Google : {state.total or '?'} marina(s) nommée(s) "
         f"(force={force}, skip_search={skip_search}, {mode})"
     )
 
     counters = {"found": 0, "none": 0, "errors": 0, "osm_tag": 0}
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    selected = 0
     try:
         if sequential:
-            for marina in docs:
+            async for marina in _iter_todo(marinas_coll, q, fetch_n):
                 if getattr(state, "cancel", False):
                     state.log("Stop demandé")
                     break
+                selected += 1
+                if state.total < selected:
+                    state.total = selected
                 try:
                     patch = await resolve_google_place(
                         marina, search_fn=search_fn, fetch_fn=fetch_fn, now_iso=now,
@@ -478,9 +522,52 @@ async def resolve_maps_places(
                     state.progress += 1
         else:
             pending: list[dict] = []
-            for marina in docs:
+            fetch_many = fetch_many_fn or default_fetch_many
+            lot = 0
+
+            async def flush_pending() -> None:
+                nonlocal pending, lot
+                if not pending:
+                    return
                 if getattr(state, "cancel", False):
+                    pending = []
+                    return
+                lot += 1
+                chunk = pending
+                pending = []
+                if lot == 1 or lot % 5 == 0:
+                    state.log(
+                        f"Lot Fetch {lot} ({len(chunk)} URL) — "
+                        f"{state.progress}/{state.total or '?'}"
+                    )
+                try:
+                    recs = await fetch_many(chunk)
+                except Exception as exc:
+                    state.log(f"Lot Fetch {lot}: {type(exc).__name__}: {str(exc)[:80]}")
+                    recs = {}
+                for marina in chunk:
+                    try:
+                        rec = recs.get(marina["_id"]) or {}
+                        patch = _patch_from_hits(
+                            marina, place_hits_from_fetch(rec),
+                            source="tinyfish_fetch", now_iso=now,
+                        )
+                        await _apply_result(marinas_coll, state, marina, patch, counters)
+                    except Exception as exc:
+                        counters["errors"] += 1
+                        state.log(
+                            f"✗ {marina.get('name')}: {type(exc).__name__}: {str(exc)[:80]}"
+                        )
+                        state.progress += 1
+                await asyncio.sleep(0)
+
+            async for marina in _iter_todo(marinas_coll, q, fetch_n):
+                if getattr(state, "cancel", False):
+                    state.log("Stop demandé")
                     break
+                selected += 1
+                if state.total < selected:
+                    state.total = selected
                 tagged = place_url_from_doc({**marina, "maps_place_url": None})
                 if tagged:
                     patch = {
@@ -493,34 +580,12 @@ async def resolve_maps_places(
                     counters["osm_tag"] += 1
                     continue
                 pending.append(marina)
-
-            fetch_many = fetch_many_fn or default_fetch_many
-            size = max(1, min(FETCH_BATCH, int(batch_size or FETCH_BATCH)))
-            for i in range(0, len(pending), size):
-                if getattr(state, "cancel", False):
-                    state.log("Stop demandé")
-                    break
-                chunk = pending[i:i + size]
-                try:
-                    recs = await fetch_many(chunk)
-                except Exception as exc:
-                    state.log(f"Lot Fetch {i // size + 1}: {type(exc).__name__}: {str(exc)[:80]}")
-                    recs = {}
-                for marina in chunk:
-                    try:
-                        rec = recs.get(marina["_id"]) or {}
-                        patch = _patch_from_hits(
-                            marina, place_hits_from_fetch(rec),
-                            source="tinyfish_fetch", now_iso=now,
-                        )
-                        await _apply_result(marinas_coll, state, marina, patch, counters)
-                    except Exception as exc:
-                        counters["errors"] += 1
-                        state.log(f"✗ {marina.get('name')}: {type(exc).__name__}: {str(exc)[:80]}")
-                        state.progress += 1
+                if len(pending) >= size:
+                    await flush_pending()
+            await flush_pending()
 
         summary = {
-            "selected": len(docs),
+            "selected": selected,
             "found": counters["found"],
             "none": counters["none"],
             "errors": counters["errors"],

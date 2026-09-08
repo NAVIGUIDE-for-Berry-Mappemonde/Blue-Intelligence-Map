@@ -226,6 +226,7 @@ def test_slim_feature_flags_place():
 class _Cursor:
     def __init__(self, docs):
         self.docs = list(docs)
+        self._iter = None
 
     def sort(self, *a, **k):
         return self
@@ -234,15 +235,28 @@ class _Cursor:
         self.docs = self.docs[:n]
         return self
 
+    def batch_size(self, n):
+        return self
+
+    def __aiter__(self):
+        self._iter = iter(self.docs)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
     async def to_list(self, n):
-        return self.docs[:n]
+        raise AssertionError("to_list must not load the whole marina cursor")
 
 
 class _Coll:
     def __init__(self, docs):
         self.docs = list(docs)
 
-    def find(self, q):
+    def find(self, q, projection=None):
         out = []
         for d in self.docs:
             name = d.get("name")
@@ -254,6 +268,9 @@ class _Coll:
                     continue
             out.append(d)
         return _Cursor(out)
+
+    async def count_documents(self, q, **kwargs):
+        return len(self.find(q).docs)
 
     async def update_one(self, q, upd):
         for d in self.docs:
@@ -302,6 +319,8 @@ def test_resolve_batched_fetch_skips_search():
     assert summary["found"] == 2
     assert summary["osm_tag"] == 1
     assert summary["none"] == 1
+    assert any("sans to_list" in line for line in state.logs)
+    assert any("Lot Fetch 1" in line for line in state.logs)
     by_id = {d["_id"]: d for d in coll.docs}
     assert by_id["way/741789648"]["maps_place_source"] == "tinyfish_fetch"
     assert by_id["way/9"]["maps_place_source"] == "osm_tag"
