@@ -32,6 +32,8 @@ AMP_OUT_FIELDS = (
     "category_name,wdpa_id,iucn_cat,purpose,lfp,other_helpful_links,"
     "gov_level,year_est"
 )
+ATTR_OUT_FIELDS = "SITE_ID,site_name,url,other_helpful_links,purpose"
+ATTR_REFRESH_BATCH = 80
 
 VISIT_STATUSES = (
     "none",
@@ -582,6 +584,98 @@ async def fetch_arcgis(bbox: tuple[float, float, float, float], *,
             continue
         docs.append(doc)
     return docs
+
+
+def _sql_site_ids(site_ids: list[str]) -> str:
+    parts = []
+    for sid in site_ids:
+        safe = str(sid).replace("'", "''")
+        if safe:
+            parts.append(f"'{safe}'")
+    return f"SITE_ID IN ({','.join(parts)})"
+
+
+async def fetch_arcgis_attrs(site_ids: list[str]) -> dict[str, dict]:
+    """Attributs ProtectedSeas sans géométrie — extras Website / Other Helpful Links."""
+    out: dict[str, dict] = {}
+    ids = [str(s).strip() for s in site_ids if str(s).strip()]
+    if not ids:
+        return out
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        for i in range(0, len(ids), ATTR_REFRESH_BATCH):
+            chunk = ids[i:i + ATTR_REFRESH_BATCH]
+            params = {
+                "where": _sql_site_ids(chunk),
+                "outFields": ATTR_OUT_FIELDS,
+                "returnGeometry": "false",
+                "f": "json",
+            }
+            r = await client.get(ARCGIS_AMP_URL, params=params)
+            r.raise_for_status()
+            data = r.json()
+            for feat in data.get("features") or []:
+                attrs = feat.get("attributes") or feat.get("properties") or {}
+                sid = str(attrs.get("SITE_ID") or attrs.get("site_id") or "").strip()
+                if sid:
+                    out[sid] = attrs
+    return out
+
+
+def apply_protectedseas_attrs(doc: dict, attrs: dict | None) -> dict:
+    """Réécrit manager_url / extras depuis une fiche ArcGIS (sans polygone)."""
+    if not attrs:
+        return doc
+    website_raw = attrs.get("url") or ""
+    helpful = attrs.get("other_helpful_links")
+    purpose = attrs.get("purpose")
+    if website_raw:
+        doc["ps_website_raw"] = website_raw
+        manager, _extras = split_protectedseas_website(website_raw)
+        if manager:
+            doc["manager_url"] = manager
+    if helpful is not None:
+        doc["other_helpful_links"] = helpful
+    if purpose:
+        doc["purpose"] = purpose
+    return doc
+
+
+async def refresh_protectedseas_attrs(
+    db, docs: list[dict], *, fetch_fn=None, log=None,
+) -> int:
+    """Recharge les extras ProtectedSeas du cache (comme les tags OSM Capitaineries)."""
+    ids = [str(d.get("site_id") or d.get("_id") or "").strip() for d in docs]
+    ids = [i for i in ids if i]
+    if not ids:
+        return 0
+    fetch = fetch_fn or fetch_arcgis_attrs
+    try:
+        remote = await fetch(ids)
+    except Exception as exc:
+        if log:
+            log(f"ProtectedSeas attributs : {type(exc).__name__}: {str(exc)[:80]}")
+        return 0
+    n = 0
+    for doc in docs:
+        sid = str(doc.get("site_id") or doc.get("_id") or "").strip()
+        attrs = remote.get(sid)
+        if not attrs:
+            continue
+        apply_protectedseas_attrs(doc, attrs)
+        n += 1
+        if db is not None and doc.get("_id") is not None:
+            await db.amp_sites.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "manager_url": doc.get("manager_url"),
+                    "ps_website_raw": doc.get("ps_website_raw"),
+                    "other_helpful_links": doc.get("other_helpful_links"),
+                    "purpose": doc.get("purpose"),
+                }},
+            )
+    if log:
+        log(f"ProtectedSeas attributs : {n}/{len(ids)} fiche(s) mises à jour")
+    return n
 
 
 async def ensure_amp_indexes(db) -> None:

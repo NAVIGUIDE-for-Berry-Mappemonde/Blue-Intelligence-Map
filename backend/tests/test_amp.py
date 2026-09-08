@@ -321,3 +321,58 @@ def test_amp_router_and_legacy_mpa_stay_apart():
     assert "/api/mpa" in mpa_paths
     gone = [r for r in projects_router.router.routes if getattr(r, "path", "") == "/api/mpa"]
     assert gone and all(getattr(r, "status_code", None) == 410 for r in gone)
+
+
+def test_apply_protectedseas_attrs_cleans_manager_and_keeps_extras():
+    doc = {
+        "_id": "PS-1",
+        "site_id": "PS-1",
+        "manager_url": "https://reserve website|https://www.reserves-naturelles.org/cerbere-banyuls",
+        "other_helpful_links": "",
+    }
+    amp_svc.apply_protectedseas_attrs(doc, {
+        "url": (
+            "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls; "
+            "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
+        ),
+        "other_helpful_links": "https://parc.fr/visite",
+        "purpose": "Protect seabed.",
+    })
+    assert doc["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert "afbiodiversite.fr" in doc["ps_website_raw"]
+    assert doc["other_helpful_links"] == "https://parc.fr/visite"
+    assert doc["purpose"].startswith("Protect")
+
+
+def test_refresh_protectedseas_attrs_writes_cache():
+    docs = [{
+        "_id": "PS-1", "site_id": "PS-1", "name": "Cerbère",
+        "manager_url": "https://reserve website|https://old.example",
+        "other_helpful_links": "",
+    }]
+
+    class _Coll:
+        def __init__(self):
+            self.docs = list(docs)
+
+        async def update_one(self, q, upd, upsert=False):
+            self.docs[0].update(upd.get("$set") or {})
+
+    class _DB:
+        def __init__(self):
+            self.amp_sites = _Coll()
+
+    async def fetch(ids):
+        assert ids == ["PS-1"]
+        return {"PS-1": {
+            "SITE_ID": "PS-1",
+            "url": "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls",
+            "other_helpful_links": "https://ofb.gouv.fr/visite-cerbere",
+        }}
+
+    db = _DB()
+    n = asyncio.run(amp_svc.refresh_protectedseas_attrs(db, docs, fetch_fn=fetch))
+    assert n == 1
+    assert docs[0]["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
+    assert db.amp_sites.docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
