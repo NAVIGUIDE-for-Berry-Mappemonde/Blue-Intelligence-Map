@@ -67,6 +67,17 @@ def test_score_rejects_manager_homepage():
         "https://parc-marin.fr/equipe", "https://parc-marin.fr") == 0
 
 
+def test_search_query_scopes_to_manager_host():
+    q, host = amp_visit.search_query({
+        "name": "Cap de Creus",
+        "country": "Spain",
+        "manager_url": "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici",
+    })
+    assert host == "parcsnaturals.gencat.cat"
+    assert q.startswith("site:parcsnaturals.gencat.cat")
+    assert "Cap de Creus" in q
+
+
 def test_score_prefers_same_domain_procedure_page():
     home = "https://parc-marin.fr"
     visite = amp_visit.score_visit_candidate(
