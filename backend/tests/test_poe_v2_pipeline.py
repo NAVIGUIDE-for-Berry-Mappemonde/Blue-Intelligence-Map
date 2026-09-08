@@ -1158,6 +1158,26 @@ class TestGeocodePolicy:
         assert docs[0]["lat"] is None
         assert docs[0]["geocode_arbitration"] == "not_geocodeable"
 
+    def test_large_name_only_catalog_defers_geocode(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [
+                {"name": f"Port {i}", "extraction_engine": "catalog"}
+                for i in range(1, 9)
+            ]
+
+        async def fake_dual(port, zone, log=None):
+            raise AssertionError("geocode_port_dual should be deferred")
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None))
+        assert len(docs) == 8
+        assert all(d["lat"] is None for d in docs)
+        assert {d["name"] for d in docs} == {f"Port {i}" for i in range(1, 9)}
+        assert docs[0]["geocode_arbitration"] == "geocode_deferred"
+
     def test_source_coords_skip_dual(self, monkeypatch):
         async def fake_extract(context, zone, log, rec=None, catalog_text=None,
                               settings=None):

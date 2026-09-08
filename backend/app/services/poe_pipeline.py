@@ -1951,8 +1951,8 @@ def _spatial_cand(lat, lon, source, geom, prepared, inland=None) -> dict:
 
 def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
     """Choisit un candidat : table/source, accord dual, départage Haiku, ZEE."""
-    if row.get("hint") == "not_geocodeable":
-        return None, "not_geocodeable"
+    if row.get("hint") in ("not_geocodeable", "geocode_deferred"):
+        return None, row["hint"]
     cands = row["cands"]
     geo = row["geo"]
     if not cands:
@@ -2044,6 +2044,18 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     except Exception:
         listing_ports = []
     official_source = any(s.get("official") for s in used_sources)
+    # Liste officielle sans GPS (PPF, MPI…) : Nominatim 1,1 s × N dépasse
+    # le timeout de zone (FR : 52 noms → TimeoutError, 0 port persisté).
+    defer_geocode = (
+        len(ports) >= 8
+        and all(
+            p.get("extraction_engine") == "catalog" and p.get("lat") is None
+            for p in ports
+        )
+    )
+    if defer_geocode:
+        log(f"catalogue sans coords ({len(ports)} noms) — géocodage différé, "
+            f"noms conservés")
 
     geom = None
     try:
@@ -2076,6 +2088,12 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             log(f"  ⚓ {p['name']} → géocode sauté (nom non toponyme)")
             rows.append({
                 "port": p, "norm": norm, "geo": empty_geo, "hint": "not_geocodeable",
+                "cands": [],
+            })
+            continue
+        if defer_geocode:
+            rows.append({
+                "port": p, "norm": norm, "geo": empty_geo, "hint": "geocode_deferred",
                 "cands": [],
             })
             continue
