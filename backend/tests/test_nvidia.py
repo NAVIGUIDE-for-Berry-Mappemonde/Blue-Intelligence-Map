@@ -44,8 +44,21 @@ class TestParseAndLegal:
 
     def test_short_or_forum_is_not_legal(self):
         assert nvidia.looks_like_legal_text("Fort Bay is nice") is False
+        # Muse est déjà le lecteur principal : pas de second appel identique.
+        assert nvidia.second_extract_choice(
+            "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4) is None
+
+    def test_engine_label(self):
+        assert nvidia.engine_label() == "nvidia-muse"
+        assert nvidia.engine_label("meta/muse-glimmer-30b") == "nvidia-muse"
+        assert nvidia.engine_label("moonshotai/kimi-k3") == "nvidia-kimi"
+        assert nvidia.engine_label("poolside/laguna-xs-2.1") == "nvidia-laguna"
+
+    def test_second_extract_muse_if_primary_overridden(self, monkeypatch):
+        monkeypatch.setenv("NVIDIA_MODEL", "other/reader")
         model, engine = nvidia.second_extract_choice(
             "Fort Bay Harbour is the official port of entry for visiting yachts. " * 4)
+        assert model == nvidia.SECONDARY_MODEL
         assert engine == "nvidia-muse"
 
 
@@ -66,18 +79,22 @@ class TestProvider:
         monkeypatch.setenv("LLM_PROVIDER", "auto")
         assert nvidia.nvidia_enabled({"nvidia_api_key": "nvapi-ui"}) is True
 
+    def test_laguna_env_is_remapped_to_muse(self, monkeypatch):
+        monkeypatch.setenv("NVIDIA_MODEL", "poolside/laguna-xs-2.1")
+        monkeypatch.setenv("NVIDIA_MODEL_SECONDARY", "poolside/laguna-xs-2.1")
+        assert nvidia.primary_model() == nvidia.PRIMARY_MODEL
+        assert nvidia.secondary_model() == nvidia.PRIMARY_MODEL
+        assert nvidia.engine_label(nvidia.primary_model()) == "nvidia-muse"
+
 
 class TestJudgeNvidia:
-    def test_laguna_then_muse_on_listing(self, monkeypatch):
+    def test_muse_only_when_secondary_is_same(self, monkeypatch):
         models = []
 
         async def fake_complete(system, user, settings=None, *, model=None, **k):
             models.append(model)
-            if model == nvidia.SECONDARY_MODEL:
-                return {"is_poe": True, "confidence": 90, "kind": "pleasure",
-                        "reason": "muse"}
             return {"is_poe": True, "confidence": 40, "kind": "pleasure",
-                    "reason": "laguna"}
+                    "reason": "muse"}
 
         monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
         monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
@@ -85,12 +102,35 @@ class TestJudgeNvidia:
         out = _run(enr._judge_llm(
             {"name": "Nouméa", "seed_sources": ["listing"]},
             {"name": "NC"}, "extrait officiel", {}, lambda m: None))
-        assert models[0] == nvidia.PRIMARY_MODEL
-        assert nvidia.SECONDARY_MODEL in models
+        assert models == [nvidia.PRIMARY_MODEL]
+        assert nvidia.PRIMARY_MODEL == nvidia.SECONDARY_MODEL
         assert out["judge_engine"] == "nvidia-muse"
         assert out["judge_status"] == "accepted"
 
-    def test_cargo_stays_on_laguna(self, monkeypatch):
+    def test_escalates_only_if_secondary_differs(self, monkeypatch):
+        models = []
+
+        async def fake_complete(system, user, settings=None, *, model=None, **k):
+            models.append(model)
+            if model == "meta/muse-glimmer-30b":
+                return {"is_poe": True, "confidence": 90, "kind": "pleasure",
+                        "reason": "muse"}
+            return {"is_poe": True, "confidence": 40, "kind": "pleasure",
+                    "reason": "other"}
+
+        monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
+        monkeypatch.setattr(nvidia, "primary_model", lambda: "other/reader")
+        monkeypatch.setattr(nvidia, "secondary_model", lambda: "meta/muse-glimmer-30b")
+        monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
+
+        out = _run(enr._judge_llm(
+            {"name": "Nouméa", "seed_sources": ["listing"]},
+            {"name": "NC"}, "extrait officiel", {}, lambda m: None))
+        assert models == ["other/reader", "meta/muse-glimmer-30b"]
+        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_status"] == "accepted"
+
+    def test_cargo_stays_on_muse(self, monkeypatch):
         models = []
 
         async def fake_complete(system, user, settings=None, *, model=None, **k):
@@ -110,7 +150,7 @@ class TestJudgeNvidia:
             {"name": "XX"}, "terminal conteneur", {}, lambda m: None))
         assert models == [nvidia.PRIMARY_MODEL]
         assert out["judge_status"] == "rejected"
-        assert out["judge_engine"] == "nvidia-laguna"
+        assert out["judge_engine"] == "nvidia-muse"
 
 
 class TestExtractSecondReader:

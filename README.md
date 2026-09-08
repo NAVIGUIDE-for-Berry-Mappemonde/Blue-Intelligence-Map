@@ -95,10 +95,10 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `MONGO_URL` | ✅ | Chaîne de connexion MongoDB |
 | `DB_NAME` | ✅ | Nom de la base MongoDB |
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
-| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — juge / extracteur PoE (Laguna, Muse, Kimi) |
+| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — juge / extracteur PoE (Muse, Kimi) |
 | `LLM_PROVIDER` | optionnel | `auto` (défaut : NVIDIA si clé), `nvidia`, ou `openrouter` |
-| `NVIDIA_MODEL` | optionnel | Lecteur rapide (défaut `poolside/laguna-xs-2.1`) |
-| `NVIDIA_MODEL_SECONDARY` | optionnel | Second lecteur (défaut `meta/muse-glimmer-30b`) |
+| `NVIDIA_MODEL` | optionnel | Lecteur principal (défaut `meta/muse-glimmer-30b`) |
+| `NVIDIA_MODEL_SECONDARY` | optionnel | Recours juge si distinct du principal (défaut Muse ; Laguna hors service) |
 | `NVIDIA_MODEL_LEGAL` | optionnel | Décrets / gazettes (défaut `moonshotai/kimi-k3`) |
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — recherche web `:online` et fallback si NIM absent |
 | `OPENROUTER_MODEL` | optionnel | Modèle OpenRouter (défaut `openai/gpt-4o-mini`) |

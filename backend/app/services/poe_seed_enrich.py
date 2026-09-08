@@ -574,11 +574,13 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
             return None
 
     if nvidia.nvidia_enabled(settings):
-        result = await _nvidia(nvidia.primary_model(), "nvidia-laguna")
-        if should_escalate_sonnet(result, doc):
-            muse = await _nvidia(nvidia.secondary_model(), "nvidia-muse")
-            if muse:
-                result = muse
+        prim = nvidia.primary_model()
+        result = await _nvidia(prim, nvidia.engine_label(prim))
+        sec = nvidia.secondary_model()
+        if sec != prim and should_escalate_sonnet(result, doc):
+            extra = await _nvidia(sec, nvidia.engine_label(sec))
+            if extra:
+                result = extra
         if result is not None:
             return result
 

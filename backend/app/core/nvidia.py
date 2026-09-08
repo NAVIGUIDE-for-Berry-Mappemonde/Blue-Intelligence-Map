@@ -3,9 +3,9 @@
 Complétions JSON uniquement — jamais la recherche web (:online reste
 OpenRouter). Modèles par défaut, mesurés sur le juge / extracteur PoE :
 
-  - Laguna   poolside/laguna-xs-2.1     lecteur rapide
-  - Muse     meta/muse-glimmer-30b      second lecteur / recours juge
+  - Muse     meta/muse-glimmer-30b      lecteur principal (juge + extract)
   - Kimi     moonshotai/kimi-k3         textes juridiques (décret, gazette)
+  - Laguna   poolside/laguna-xs-2.1     hors service (ne plus appeler)
 
 Clé : NVIDIA_API_KEY (env) ou settings["nvidia_api_key"] (UI).
 Provider : LLM_PROVIDER=nvidia|openrouter|auto (auto = NVIDIA si clé présente).
@@ -20,7 +20,7 @@ import re
 import httpx
 
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-PRIMARY_MODEL = "poolside/laguna-xs-2.1"
+PRIMARY_MODEL = "meta/muse-glimmer-30b"
 SECONDARY_MODEL = "meta/muse-glimmer-30b"
 LEGAL_MODEL = "moonshotai/kimi-k3"
 
@@ -62,16 +62,35 @@ def nvidia_enabled(settings: dict | None = None) -> bool:
     return llm_provider(s) == "nvidia" and bool(get_nvidia_key(s))
 
 
+def _usable_nim(model: str) -> str:
+    """Laguna répond 503 : ne jamais l'appeler, même via NVIDIA_MODEL."""
+    if "laguna" in (model or "").lower():
+        return PRIMARY_MODEL
+    return model
+
+
 def primary_model() -> str:
-    return _env("NVIDIA_MODEL") or PRIMARY_MODEL
+    return _usable_nim(_env("NVIDIA_MODEL") or PRIMARY_MODEL)
 
 
 def secondary_model() -> str:
-    return _env("NVIDIA_MODEL_SECONDARY") or SECONDARY_MODEL
+    return _usable_nim(_env("NVIDIA_MODEL_SECONDARY") or SECONDARY_MODEL)
 
 
 def legal_model() -> str:
     return _env("NVIDIA_MODEL_LEGAL") or LEGAL_MODEL
+
+
+def engine_label(model: str | None = None) -> str:
+    """Étiquette persistée (judge_engine / extraction_engine)."""
+    m = (model or primary_model()).lower()
+    if "muse" in m:
+        return "nvidia-muse"
+    if "kimi" in m:
+        return "nvidia-kimi"
+    if "laguna" in m:
+        return "nvidia-laguna"
+    return "nvidia"
 
 
 def looks_like_legal_text(text: str | None) -> bool:
@@ -82,11 +101,14 @@ def looks_like_legal_text(text: str | None) -> bool:
     return bool(_LEGAL_RE.search(blob))
 
 
-def second_extract_choice(context: str | None) -> tuple[str, str]:
-    """Second lecteur d'extraction : Kimi sur décret, sinon Muse."""
+def second_extract_choice(context: str | None) -> tuple[str, str] | None:
+    """Second lecteur : Kimi sur décret ; sinon Muse seulement s'il n'est pas déjà le principal."""
     if looks_like_legal_text(context):
         return legal_model(), "nvidia-kimi"
-    return secondary_model(), "nvidia-muse"
+    sec = secondary_model()
+    if sec == primary_model():
+        return None
+    return sec, engine_label(sec)
 
 
 def parse_json_strict(txt: str | None):
@@ -184,9 +206,11 @@ async def complete_json_nvidia(system: str, prompt: str,
 async def extract_ports_nvidia(context: str, zone: dict,
                                settings: dict | None = None, log=None,
                                model: str | None = None,
-                               engine: str = "nvidia-laguna") -> list[dict]:
+                               engine: str | None = None) -> list[dict]:
     from app.core.llm import POE_EXTRACT_PROMPT, coerce_ports
 
+    used = model or primary_model()
+    tag = engine or engine_label(used)
     prompt = POE_EXTRACT_PROMPT.format(
         name=zone.get("name") or zone.get("geoname"),
         sovereign=zone.get("sovereign") or "",
@@ -194,10 +218,10 @@ async def extract_ports_nvidia(context: str, zone: dict,
     )
     data = await complete_json_nvidia(
         "Tu réponds uniquement en JSON strict.", prompt, settings,
-        model=model or primary_model(), max_tokens=2500, log=log)
+        model=used, max_tokens=2500, log=log)
     ports = coerce_ports(data, context=context)
     for p in ports:
-        p["extraction_engine"] = engine
+        p["extraction_engine"] = tag
     if log:
-        log(f"LLM {engine}: {len(ports)} port(s) extraits")
+        log(f"LLM {tag}: {len(ports)} port(s) extraits")
     return ports
