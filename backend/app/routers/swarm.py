@@ -55,7 +55,7 @@ async def stats(mode: str = "projects"):
 
     Bug-fix 2026-08-24 — `projects_mapped` used to always return
     `db.projects.count_documents({})` (4463), regardless of the active mode.
-    The Audit view now passes `?mode=marinas|formalities|projects` so the
+    The Audit view now passes `?mode=marinas|formalities|projects|amp` so the
     counter reflects the actual dataset the user is looking at. Extractions
     and success_rate are read from a mode-scoped `dataset` field in the
     telemetry collection when present; legacy rows without that field are
@@ -73,6 +73,9 @@ async def stats(mode: str = "projects"):
         # ITEMS MAPPED = nombre de ports d'entrée extraits.
         items = await db.poe_ports.count_documents({})
         tele_filter = {"dataset": "formalities"}
+    elif m == "amp":
+        items = await db.amp_sites.count_documents({})
+        tele_filter = {"dataset": "amp"}
     else:  # projects (default)
         items = await db.projects.count_documents({})
         # Legacy rows have no `dataset` field — count them as projects.
@@ -98,6 +101,8 @@ def _dataset_filter(mode: str) -> dict:
         return {"dataset": "capitaineries"}
     if m == "formalities":
         return {"dataset": "formalities"}
+    if m == "amp":
+        return {"dataset": "amp"}
     return {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}
 
 

@@ -59,7 +59,7 @@ export default function FormalitiesPanel({ t, zones, zonesLoading, selectedZone,
       className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface min-h-0"
       data-testid="formalities-panel"
     >
-      {/* En-tête + recherche — structure uniforme des 3 modes */}
+      {/* En-tête + recherche — structure uniforme des 4 modes */}
       <div className="p-4 border-b border-line shrink-0">
         <div className="flex items-center gap-2 mb-3">
           <ScrollText size={18} className="text-amberx" />

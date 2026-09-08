@@ -16,6 +16,28 @@ export const ZONE_COLORS = {
   non_generee: "#64748b", ia: "#fbbf24", ia_sans_source: "#fbbf24", erreur: "#ff4a4a",
 };
 
+/** Niveau de protection pêche ProtectedSeas (LFP 0–5). */
+export const LFP_COLORS = {
+  0: "#64748b",
+  1: "#86efac",
+  2: "#4ade80",
+  3: "#38bdf8",
+  4: "#f59e0b",
+  5: "#ef4444",
+};
+
+export const ampStyle = (lfp) => {
+  const n = Number(lfp);
+  const color = LFP_COLORS[n] || LFP_COLORS[0];
+  return {
+    color,
+    weight: 1.4,
+    opacity: 0.9,
+    fillColor: color,
+    fillOpacity: n >= 4 ? 0.28 : n >= 3 ? 0.18 : 0.12,
+  };
+};
+
 export const zoneStyle = (status) => {
   const s = status || "non_generee";
   return {

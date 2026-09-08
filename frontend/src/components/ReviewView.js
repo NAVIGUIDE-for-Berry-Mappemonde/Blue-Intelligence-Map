@@ -5,6 +5,7 @@ import ZoneFiche from "./ZoneFiche";
 import ProjectFiche from "./review/ProjectFiche";
 import MarinaFiche from "./review/MarinaFiche";
 import CapitainerieFiche from "./review/CapitainerieFiche";
+import AmpFiche from "./review/AmpFiche";
 
 const PAGE = 500;
 
@@ -12,6 +13,7 @@ function kindFromMode(mode) {
   if (mode === "marinas") return "marina";
   if (mode === "capitaineries") return "capitainerie";
   if (mode === "formalities") return "eez";
+  if (mode === "amp") return "amp";
   return "project";
 }
 
@@ -19,6 +21,7 @@ function kindLabelKey(kind) {
   if (kind === "eez") return "reviewKindEez";
   if (kind === "marina") return "reviewKindMarina";
   if (kind === "capitainerie") return "reviewKindCapitainerie";
+  if (kind === "amp") return "reviewKindAmp";
   return "reviewKindProject";
 }
 
@@ -284,6 +287,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     if (kind === "eez") return <ZoneFiche t={t} fiche={fiche} variant="page" />;
     if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
     if (kind === "capitainerie") return <CapitainerieFiche t={t} fiche={fiche} />;
+    if (kind === "amp") return <AmpFiche t={t} fiche={fiche} />;
     return <MarinaFiche t={t} fiche={fiche} />;
   };
 
@@ -305,6 +309,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
+          {kind !== "amp" && (
           <button
             type="button"
             data-testid="review-pregold-filter"
@@ -318,6 +323,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           >
             {t("reviewPreGold")}
           </button>
+          )}
           {kind === "eez" && (
             <button
               type="button"
@@ -461,7 +467,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {saving ? t("reviewSaving") : t("reviewSave")}
             </button>
-            {kind !== "capitainerie" && (
+            {kind !== "capitainerie" && kind !== "amp" && (
             <button
               type="button"
               data-testid="review-gold"

@@ -1,7 +1,7 @@
 """API de l'onglet Review — file de fiches + commentaire + interrupteur Gold.
 
 Lecture des runs / v1. Écrit `review_comments` et `review_gold`.
-N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas`.
+N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas` / `amp_sites`.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api")
 
 def _kind_or_400(kind: str) -> str:
     if kind not in review_queue.KINDS:
-        raise HTTPException(400, "kind must be project|eez|poe|marina|capitainerie")
+        raise HTTPException(400, "kind must be project|eez|poe|marina|capitainerie|amp")
     return kind
 
 

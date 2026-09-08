@@ -9,7 +9,7 @@ import api, { BACKEND_URL } from "../api";
 //   - Marine filtering (coast distance, marine score)
 //   - Map (min zoom, max markers)
 //   - API keys (LLM + TinyFish)
-// The panel typography adopts the active mode's accent (cyan / red / amber).
+// The panel typography adopts the active mode's accent (cyan / red / amber / green).
 
 function Field({ label, children }) {
   return (
@@ -28,6 +28,7 @@ const EXPORT_URLS = {
   marinas:     "/api/export/marinas.geojson",
   capitaineries: "/api/export/capitaineries.geojson",
   formalities: "/api/export/poe.geojson",
+  amp:         "/api/export/amp.geojson",
 };
 
 // 2026-08-24 bug-fix — import endpoint per mode. Formalities (PoE) data is
@@ -88,6 +89,10 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     const currentMode = mode || "projects";
     if (currentMode === "formalities") {
       alert("Import non supporté pour le mode Formalités — les Ports d'Entrée se régénèrent via le pipeline (vue Audit).");
+      return;
+    }
+    if (currentMode === "amp") {
+      alert("Import non supporté pour le mode AMP — les polygones se rechargent depuis ProtectedSeas (bbox carte).");
       return;
     }
     setImporting(true);
