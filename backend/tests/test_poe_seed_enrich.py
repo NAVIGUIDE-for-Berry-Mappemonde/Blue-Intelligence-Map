@@ -97,6 +97,81 @@ class TestParseAndVerdict:
         mixed = enr.parse_judge({
             "is_poe": True, "confidence": 80, "kind": "mixed"})
         assert mixed["judge_status"] == "accepted"
+
+
+class TestPaidSources:
+    def test_paid_fetch_urls_prefers_mpi_list(self):
+        doc = {
+            "judge_sources": [
+                "https://www.orc.govt.nz/media/agenda.pdf",
+                "https://www.mpi.govt.nz/resources-and-forms/registers-and-lists/places-of-first-arrival-seaports",
+                "https://www.customs.govt.nz/business/import/commercial-vessels",
+            ]
+        }
+        urls = enr.paid_fetch_urls(doc, cap=2)
+        assert urls[0].startswith("https://www.mpi.govt.nz/")
+        assert len(urls) == 2
+
+    def test_reuse_paid_sources_never_searches(self, monkeypatch):
+        searched = []
+
+        async def boom_search(*a, **k):
+            searched.append(1)
+            raise AssertionError("Search must not run")
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": "terminal conteneur cargo only"} for u in urls}
+
+        async def fake_llm(doc, zone, context, settings, log):
+            assert "terminal conteneur" in context
+            return {**enr.parse_judge({"is_poe": False, "confidence": 90, "kind": "cargo"}),
+                    "judge_engine": "nvidia-muse"}
+
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "_search_hits", boom_search)
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "_judge_llm", fake_llm)
+
+        out = _run(enr.judge_one(
+            {"name": "CentrePort", "judge_sources": [
+                "https://www.treasury.govt.nz/x.pdf"]},
+            {"name": "New Zealand", "iso2": "NZ", "mrgid": 8455},
+            {}, lambda m: None, use_agent=False, persist_memory=False,
+            reuse_paid_sources=True))
+        assert searched == []
+        assert out["judge_status"] == "rejected"
+        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_sources"] == [
+            "https://www.treasury.govt.nz/x.pdf"]
+
+    def test_catalog_hit_skips_fetch_and_search(self, monkeypatch):
+        called = []
+
+        async def boom(*a, **k):
+            called.append(1)
+            raise AssertionError("network")
+
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "tf_fetch", boom)
+        monkeypatch.setattr(enr, "_search_hits", boom)
+        cache = {"sufficient": True, "urls": ["https://mpi.example/list"],
+                 "ports": [{"name": "Port of Tauranga", "extraction_engine": "catalog"}]}
+        out = _run(enr.judge_one(
+            {"name": "Port of Tauranga", "judge_sources": ["https://mpi.example/list"]},
+            {"name": "New Zealand", "iso2": "NZ", "mrgid": 8455,
+             "catalog_bu": cache["ports"], "sources_bu": cache["urls"]},
+            {}, lambda m: None, catalog_cache=cache,
+            reuse_paid_sources=True, use_agent=False))
+        assert called == []
+        assert out["judge_status"] == "catalog"
+        assert out["judge_engine"] == "catalog-bu"
+
+
+class TestParseJudgeKinds:
+    def test_parse_judge_mixed_and_marina(self):
+        mixed = enr.parse_judge({
+            "is_poe": True, "confidence": 80, "kind": "mixed"})
         assert mixed["judge_kind"] == "mixed"
         marina = enr.parse_judge({
             "is_poe": True, "kind": "pleasure",

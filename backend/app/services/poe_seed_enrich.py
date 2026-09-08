@@ -2,8 +2,8 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge Laguna → Muse (listing / inconclusive) si NVIDIA, sinon
-Haiku → Sonnet → OpenRouter.
+juge Muse si NVIDIA, sinon Haiku → Sonnet → OpenRouter.
+reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
 
@@ -712,6 +712,27 @@ def iter_judge_urls(doc: dict):
             yield u
 
 
+def paid_fetch_urls(doc: dict, cap: int = 4) -> list[str]:
+    """Priorise les URL type liste déjà payées (MPI, douane, gazette)."""
+    urls = list(dict.fromkeys(iter_judge_urls(doc)))
+
+    def _score(u: str) -> float:
+        low = (u or "").lower()
+        bonus = 0.0
+        if "places-of-first-arrival" in low or "first-arrival" in low:
+            bonus += 20
+        if "mpi.govt.nz" in low or "douane.gov." in low or "customs.govt.nz" in low:
+            bonus += 8
+        if "gazette.govt.nz/notice/" in low:
+            bonus += 6
+        if low.endswith(".pdf"):
+            bonus -= 2
+        return mine_url_score(u) + bonus
+
+    urls.sort(key=_score, reverse=True)
+    return urls[: max(1, cap)] if urls else []
+
+
 def mine_token_hits(url: str) -> int:
     blob = unquote((url or "").lower())
     path = unquote((urlparse(url or "").path or "") + "?" + (urlparse(url or "").query or "")).lower()
@@ -858,7 +879,8 @@ async def persist_bu_catalog(db, zone: dict, cache: dict) -> None:
 
 async def judge_one(doc: dict, zone: dict, settings: dict, log,
                     use_agent: bool = True, db=None, catalog_cache: dict | None = None,
-                    persist_memory: bool = True) -> dict:
+                    persist_memory: bool = True, reuse_paid_sources: bool = False,
+                    prefetched: dict | None = None) -> dict:
     name = doc.get("name") or ""
     cache = catalog_cache if catalog_cache is not None else catalog_cache_from_zone(zone)
     cached_hit = seed_on_catalog(doc, cache.get("ports")) if cache.get("sufficient") else None
@@ -872,23 +894,32 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
     exc = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exc)
     key = tf_api_key(settings) or (os.environ.get("TINYFISH_API_KEY") or "")
-    hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
-    urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
     texts = []
     blocked_official = []
     fetched = {}
-    if key and urls:
-        fetched = await tf_fetch(urls, key, log=log)
-        for u in urls:
-            rec = fetched.get(u) or {}
-            if rec.get("blocked") or rec.get("error") == "bot_blocked":
-                blocked_official.append(u)
-                continue
-            if rec.get("error"):
-                continue
-            chunk = (rec.get("text") or "")[:4000]
-            if chunk:
-                texts.append(f"URL {u}\n{chunk}")
+    if reuse_paid_sources:
+        urls = paid_fetch_urls(doc, cap=min(4, FETCH_URL_CAP))
+        hits = []
+        if prefetched:
+            fetched = {u: prefetched[u] for u in urls if u in prefetched}
+        missing = [u for u in urls if u not in fetched]
+        if key and missing:
+            fetched.update(await tf_fetch(missing, key, log=log) or {})
+    else:
+        hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
+        urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
+        if key and urls:
+            fetched = await tf_fetch(urls, key, log=log)
+    for u in urls:
+        rec = fetched.get(u) or {}
+        if rec.get("blocked") or rec.get("error") == "bot_blocked":
+            blocked_official.append(u)
+            continue
+        if rec.get("error"):
+            continue
+        chunk = (rec.get("text") or "")[:4000]
+        if chunk:
+            texts.append(f"URL {u}\n{chunk}")
     agent_used = False
     if use_agent and key and blocked_official:
         agent_used = True
