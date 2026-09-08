@@ -75,20 +75,35 @@ def needs_website_enrich(doc: dict) -> bool:
     return not (phone and vhf)
 
 
+GENERIC_OFFICE_NAMES = frozenset({
+    "capitainerie",
+    "harbour office",
+    "harbour office (unnamed)",
+    "harbour master's office",
+    "harbour master",
+    "harbourmaster",
+})
+
+
+def _has_distinct_name(doc: dict) -> bool:
+    name = str(doc.get("name") or "").strip().lower()
+    return bool(name) and name not in GENERIC_OFFICE_NAMES
+
+
 def allow_web_lookup(doc: dict) -> bool:
-    """Site officiel, ou au moins un nom pour une recherche ciblée. Pas de DDG générique."""
+    """Site officiel, ou un nom distinct. Pas de DDG sur « Capitainerie » générique."""
     if official_website(doc):
         return True
     if (doc.get("tags") or {}).get("website"):
         return True
-    return bool(str(doc.get("name") or "").strip())
+    return _has_distinct_name(doc)
 
 
 def rank_enrich_candidates(docs: list[dict]) -> list[dict]:
-    """Site officiel d'abord, puis nommées — évite les bureaux anonymes en tête."""
+    """Site officiel d'abord, puis nom distinct — pas les libellés génériques SHOM."""
     def key(d: dict):
         site = 1 if official_website(d) else 0
-        named = 1 if str(d.get("name") or "").strip() else 0
+        named = 1 if _has_distinct_name(d) else 0
         return (-site, -named, str(d.get("name") or "").lower())
     return sorted(docs, key=key)
 

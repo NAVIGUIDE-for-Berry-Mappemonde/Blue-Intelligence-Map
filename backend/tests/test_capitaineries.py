@@ -335,11 +335,23 @@ def test_rank_enrich_prefers_official_website():
     anon = {"_id": "a", "name": "", "lat": 1, "lon": 1}
     named = {"_id": "b", "name": "Bureau du port", "lat": 1, "lon": 1}
     site = {"_id": "c", "name": "Capitainerie", "website": "https://port.example/", "lat": 1, "lon": 1}
-    ordered = rank_enrich_candidates([anon, named, site])
-    assert [d["_id"] for d in ordered] == ["c", "b", "a"]
+    generic = {"_id": "d", "name": "Capitainerie", "lat": 1, "lon": 1}
+    ordered = rank_enrich_candidates([anon, named, site, generic])
+    assert [d["_id"] for d in ordered] == ["c", "b", "a", "d"]
     assert allow_web_lookup(site) is True
     assert allow_web_lookup(named) is True
     assert allow_web_lookup(anon) is False
+    assert allow_web_lookup(generic) is False
+
+
+def test_enrich_generic_shom_name_skips_web():
+    doc = {"_id": "shom:x", "name": "Capitainerie", "lat": 46.15, "lon": -1.16, "tags": {}}
+    assert allow_web_lookup(doc) is False
+    result = asyncio.run(enrich_capitainerie(
+        doc, openrouter_key="sk-or-fake", tinyfish_key="tf-fake",
+    ))
+    assert result["_tinyfish_attempted"] is False
+    assert result["enrichment_source"] is None
 
 
 def test_enrich_unnamed_without_site_skips_web():
