@@ -2,8 +2,9 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet.markercluster";
 
-import { FALLBACK_COLORS, TILE_URLS, zoneStyle } from "./map/constants";
+import { FALLBACK_COLORS, TILE_URLS, ampStyle, zoneStyle } from "./map/constants";
 import { zonePopupHtml } from "./map/zonePopup";
+import useAmpLayer, { popupHtml as ampPopupHtml } from "./map/useAmpLayer";
 import useAnchoragesLayer from "./map/useAnchoragesLayer";
 import useCapitaineriesLayer from "./map/useCapitaineriesLayer";
 import useFormalitiesLayers from "./map/useFormalitiesLayers";
@@ -16,7 +17,7 @@ import useRouteLayer from "./map/useRouteLayer";
  *
  * Initialise la carte, les panes et les clusters, puis délègue chaque couche
  * à son hook dédié (components/map/) : route officielle, projets, marinas,
- * mouillages, ZEE + Ports d'Entrée. Gère la bascule de mode et le flyTo.
+ * mouillages, ZEE + Ports d'Entrée, AMP. Gère la bascule de mode et le flyTo.
  */
 export default function MapView({
   mode = "projects",
@@ -33,6 +34,8 @@ export default function MapView({
   flyToMarina,
   flyToZone,
   flyToPoe,
+  flyToAmp,
+  onAmpSites,
   zoneFiche,
   funderFilter,
   searchQuery,
@@ -51,6 +54,8 @@ export default function MapView({
   const capitainerieMarkersById = useRef(new Map());
   const anchorClusterRef = useRef(null);
   const formalitiesClusterRef = useRef(null);
+  const ampLayerRef = useRef(null);
+  const ampLayersById = useRef(new Map());
   const marinaMarkersById = useRef(new Map());
   const tileRef = useRef(null);
   const zoomingRef = useRef(false);
@@ -111,6 +116,8 @@ export default function MapView({
     map.getPane("route").style.zIndex = 380;   // < markerPane (600) & tilePane (200 default)
     map.createPane("formalities-escales");
     map.getPane("formalities-escales").style.zIndex = 500;
+    map.createPane("amp");
+    map.getPane("amp").style.zIndex = 420;
 
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 50,
@@ -200,11 +207,27 @@ export default function MapView({
     eezLayerRef.current = eezLayer;
     const formalitiesGroup = L.layerGroup([eezLayer, poeCluster]);
     formalitiesClusterRef.current = formalitiesGroup;
+    const ampLayer = L.geoJSON(null, {
+      pane: "amp",
+      style: (feat) => ampStyle(feat?.properties?.lfp),
+      onEachFeature: (feat, lyr) => {
+        const id = feat.properties?.site_id || feat.properties?.id;
+        if (id) ampLayersById.current.set(id, lyr);
+        lyr.bindPopup(() => ampPopupHtml(feat.properties || {}, tRef.current), {
+          maxWidth: 340, minWidth: 240, maxHeight: 420, autoPan: true, autoPanPadding: [40, 40],
+          className: "bi-amp-popup",
+        });
+        lyr.on("mouseover", () => { try { lyr.setStyle({ weight: 2.4, opacity: 1 }); } catch (_) {} });
+        lyr.on("mouseout", () => { try { lyr.setStyle(ampStyle(feat?.properties?.lfp)); } catch (_) {} });
+      },
+    });
+    ampLayerRef.current = ampLayer;
     // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
     // if the user is starting in another mode.
     if (mode === "marinas") map.addLayer(marinaCluster);
     else if (mode === "capitaineries") map.addLayer(capitainerieCluster);
     else if (mode === "formalities") map.addLayer(formalitiesGroup);
+    else if (mode === "amp") map.addLayer(ampLayer);
     else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
@@ -247,7 +270,7 @@ export default function MapView({
     // Debug hook — expose the map + all clusters on window for headless
     // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster };
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster, amp: ampLayer };
     }
     // eslint-disable-next-line
   }, [minZoom]);
@@ -273,6 +296,9 @@ export default function MapView({
     mapObj, clusterRef, zoomingRef, pendingRef,
     projects, funderFilter, categoryFilter, searchQuery, maxMarkers, colorOf, tRef,
   });
+  useAmpLayer({
+    mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites: onAmpSites, flyToAmp,
+  });
 
   // ---------- Mode swap: attach the right cluster, hide the others ----------
   useEffect(() => {
@@ -282,6 +308,7 @@ export default function MapView({
     const cap = capitainerieClusterRef.current;
     const anch = anchorClusterRef.current;
     const formCluster = formalitiesClusterRef.current;
+    const amp = ampLayerRef.current;
     if (!map || !proj || !mar || !formCluster) return;
     // Detach everything first, then attach only the layer(s) for the current mode.
     if (map.hasLayer(proj)) map.removeLayer(proj);
@@ -289,6 +316,7 @@ export default function MapView({
     if (cap && map.hasLayer(cap)) map.removeLayer(cap);
     if (anch && map.hasLayer(anch)) map.removeLayer(anch);
     if (map.hasLayer(formCluster)) map.removeLayer(formCluster);
+    if (amp && map.hasLayer(amp)) map.removeLayer(amp);
     if (mode === "marinas") {
       map.addLayer(mar);
       if (anch && showAnchorages) map.addLayer(anch);
@@ -296,6 +324,8 @@ export default function MapView({
       if (cap) map.addLayer(cap);
     } else if (mode === "formalities") {
       map.addLayer(formCluster);
+    } else if (mode === "amp") {
+      if (amp) map.addLayer(amp);
     } else {
       map.addLayer(proj);
     }

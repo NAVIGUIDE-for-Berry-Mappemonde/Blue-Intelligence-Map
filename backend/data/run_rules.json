@@ -950,6 +950,65 @@
       "principle": "AUP Overpass : une tuile monde à la fois. 3 s = poli. Plancher 1,2 s = déjà utilisé par osm_seeds. Ce n'est pas une géographie métier.",
       "cdc": "wiki OSM API usage policy · marina_world",
       "code": ["app/services/marina_world.py"]
+    },
+    {
+      "id": "amp.visit_url_must_differ",
+      "mode": "amp",
+      "kind": "loi",
+      "value": true,
+      "unit": null,
+      "vary": false,
+      "principle": "L'URL de visite / d'entrée n'est jamais le champ Website / gestionnaire ProtectedSeas. Deux champs, deux pages.",
+      "cdc": "Mode AMP — contrat skipper",
+      "code": ["app/services/amp.py:pick_visit_url"]
+    },
+    {
+      "id": "amp.min_zoom",
+      "mode": "amp",
+      "kind": "budget",
+      "value": 5,
+      "unit": "zoom",
+      "interval": [4, 8],
+      "vary": true,
+      "principle": "ProtectedSeas est trop dense au niveau monde. Zoom 5 ≈ golfe / façade. En dessous on affiche l'invite, pas 20 000 polygones.",
+      "cdc": "Mode AMP",
+      "code": ["app/services/amp.py", "frontend/src/components/map/useAmpLayer.js"]
+    },
+    {
+      "id": "amp.bbox_max_deg",
+      "mode": "amp",
+      "kind": "budget",
+      "value": 8.0,
+      "unit": "deg",
+      "interval": [2.0, 20.0],
+      "vary": true,
+      "principle": "Façade côtière, pas un continent. Au-delà ArcGIS tronque et la carte devient illisible.",
+      "cdc": "Mode AMP",
+      "code": ["app/routers/amp.py"]
+    },
+    {
+      "id": "amp.cache_ttl_days",
+      "mode": "amp",
+      "kind": "budget",
+      "value": 30,
+      "unit": "days",
+      "interval": [7, 180],
+      "vary": true,
+      "principle": "Les limites AMP changent à l'échelle du mois, pas du jour. Un mois avant de re-télécharger ProtectedSeas.",
+      "cdc": "Mode AMP",
+      "code": ["app/services/amp.py"]
+    },
+    {
+      "id": "amp.max_features",
+      "mode": "amp",
+      "kind": "budget",
+      "value": 400,
+      "unit": "features",
+      "interval": [50, 2000],
+      "vary": true,
+      "principle": "Plafond d'une tuile carte. ArcGIS maxRecordCount = 2000 ; 400 garde le popup et le sidebar utilisables.",
+      "cdc": "Mode AMP",
+      "code": ["app/services/amp.py:fetch_arcgis"]
     }
   ]
 }

@@ -2,10 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---------- Tri-mode theme tokens (Phase 5) ----------
+/* ---------- Mode theme tokens ----------
  * Projects mode    → cyan accent + neutral surfaces
  * Marinas mode     → red accent + red-tinted surfaces
  * Formalities mode → amberx accent + amber-tinted surfaces
+ * AMP mode         → green accent + green-tinted surfaces
  *
  * Every UI element uses `accent`/`surface`/`raised`/`line` (via Tailwind
  * bindings in tailwind.config.js) so the whole app repaints on data-mode change.
@@ -56,6 +57,17 @@
   --raised-rgb: 20 36 52;
   --line-rgb: 36 64 90;
   --marker-fill: #38bdf8;
+  --marker-stroke: #0f172a;
+}
+[data-mode="amp"] {
+  --accent-rgb: 74 222 128;        /* #4ade80 — green-400 */
+  --accent-glow: rgba(74, 222, 128, 0.35);
+  --accent-tint: rgba(74, 222, 128, 0.05);
+  --accent-tint-strong: rgba(74, 222, 128, 0.10);
+  --surface-rgb: 15 24 18;         /* slate-900 tinted green */
+  --raised-rgb: 22 42 30;
+  --line-rgb: 36 74 52;
+  --marker-fill: #4ade80;
   --marker-stroke: #0f172a;
 }
 
@@ -258,6 +270,12 @@ html, body, #root {
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid rgba(251, 191, 36, 0.35);
   color: #fbbf24;
+  font-family: "JetBrains Mono", monospace;
+}
+.bi-amp-disclaimer {
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: #4ade80;
   font-family: "JetBrains Mono", monospace;
 }
 

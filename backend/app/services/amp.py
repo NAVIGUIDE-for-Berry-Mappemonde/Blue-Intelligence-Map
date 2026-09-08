@@ -1,0 +1,501 @@
+"""Mode AMP — Aires Marines Protégées (ProtectedSeas Navigator).
+
+Deux URL distinctes par site :
+
+* ``manager_url`` — champ ProtectedSeas ``url`` (alias Website), page
+  institutionnelle / gestionnaire.
+* ``visit_url`` — procédures de visite ou d'entrée (permis, mouillage,
+  formalités). **Jamais** une copie du site gestionnaire.
+
+La couche polygones est servie par bbox ; l'enrichissement visite est
+stocké dans ``amp_sites`` (pas l'ancienne ``mpa_cache``).
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from typing import Any, Iterable
+
+import httpx
+
+from app.core.run_rules import catalog_default
+
+ARCGIS_AMP_URL = (
+    "https://services9.arcgis.com/lm7wE8a9YA9rKfzy/arcgis/rest/services/"
+    "Navigator_AllSites_010925_attributes/FeatureServer/0/query"
+)
+
+AMP_OUT_FIELDS = (
+    "SITE_ID,site_name,url,country,state,managing_authority,designation,"
+    "category_name,wdpa_id,iucn_cat,purpose,lfp,other_helpful_links,"
+    "gov_level,year_est"
+)
+
+VISIT_STATUSES = (
+    "none",
+    "found",
+    "rejected_same_as_manager",
+    "not_found",
+)
+
+_URL_RE = re.compile(r"https?://[^\s,;|<>\"']+", re.I)
+
+SLIM_PROJECTION = {
+    "_id": 1,
+    "site_id": 1,
+    "name": 1,
+    "country": 1,
+    "state": 1,
+    "designation": 1,
+    "category_name": 1,
+    "iucn_cat": 1,
+    "purpose": 1,
+    "lfp": 1,
+    "managing_authority": 1,
+    "gov_level": 1,
+    "wdpa_id": 1,
+    "year_est": 1,
+    "manager_url": 1,
+    "other_helpful_links": 1,
+    "visit_url": 1,
+    "visit_url_status": 1,
+    "visit_url_source": 1,
+    "lat": 1,
+    "lon": 1,
+    "fetched_at": 1,
+    "enriched_at": 1,
+}
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_bbox(raw: str) -> tuple[float, float, float, float]:
+    parts = [p.strip() for p in (raw or "").split(",")]
+    if len(parts) != 4:
+        raise ValueError("bbox must be minx,miny,maxx,maxy")
+    minx, miny, maxx, maxy = (float(p) for p in parts)
+    if minx >= maxx or miny >= maxy:
+        raise ValueError("bbox min must be < max")
+    if abs(maxx - minx) > 180 or abs(maxy - miny) > 90:
+        raise ValueError("bbox too large")
+    return minx, miny, maxx, maxy
+
+
+def bbox_span_deg(bbox: tuple[float, float, float, float]) -> float:
+    return max(bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+
+def bbox_polygon(bbox: tuple[float, float, float, float]) -> dict:
+    minx, miny, maxx, maxy = bbox
+    ring = [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]
+    return {"type": "Polygon", "coordinates": [ring]}
+
+
+def normalize_url(url: str | None) -> str | None:
+    raw = (url or "").strip()
+    if not raw or raw.lower() in ("null", "none", "n/a", "-"):
+        return None
+    if not re.match(r"^https?://", raw, re.I):
+        raw = "https://" + raw
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return None
+    host = (parsed.netloc or "").lower()
+    if not host:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    path = (parsed.path or "").rstrip("/")
+    return f"{(parsed.scheme or 'https').lower()}://{host}{path}"
+
+
+def urls_equivalent(a: str | None, b: str | None) -> bool:
+    na, nb = normalize_url(a), normalize_url(b)
+    return bool(na and nb and na == nb)
+
+
+def extract_urls(blob: str | None) -> list[str]:
+    if not blob:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _URL_RE.findall(str(blob)):
+        cleaned = match.rstrip(").,;]")
+        norm = normalize_url(cleaned)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(cleaned.strip().rstrip(").,;]"))
+    return out
+
+
+def pick_visit_url(
+    manager_url: str | None,
+    other_helpful_links: str | None = None,
+    discovered: str | None = None,
+) -> tuple[str | None, str]:
+    """Choisit une URL de visite distincte du gestionnaire.
+
+    Retourne ``(url, status)``. ``status`` ∈ VISIT_STATUSES.
+    """
+    candidates: list[str] = []
+    if discovered:
+        candidates.append(discovered)
+    candidates.extend(extract_urls(other_helpful_links))
+    had_candidate = False
+    for raw in candidates:
+        if not normalize_url(raw):
+            continue
+        had_candidate = True
+        if urls_equivalent(raw, manager_url):
+            continue
+        return raw.strip(), "found"
+    if had_candidate:
+        return None, "rejected_same_as_manager"
+    return None, "none" if not manager_url and not other_helpful_links else "not_found"
+
+
+def apply_visit_choice(doc: dict, *, discovered: str | None = None,
+                       source: str | None = None) -> dict:
+    """Écrit visit_url / status. N'écrase jamais visit_url avec manager_url."""
+    manager = doc.get("manager_url")
+    url, status = pick_visit_url(
+        manager, doc.get("other_helpful_links"), discovered=discovered)
+    if url and urls_equivalent(url, manager):
+        url, status = None, "rejected_same_as_manager"
+    if url:
+        doc["visit_url"] = url
+        doc["visit_url_status"] = "found"
+        doc["visit_url_source"] = source or doc.get("visit_url_source") or "other_helpful_links"
+        doc["enriched_at"] = now_iso()
+    else:
+        if not doc.get("visit_url") or urls_equivalent(doc.get("visit_url"), manager):
+            doc["visit_url"] = None
+        doc["visit_url_status"] = status
+        if status != "found":
+            doc.setdefault("visit_url_source", None)
+    return doc
+
+
+def _as_lfp(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return n if 0 <= n <= 5 else 0
+
+
+def _centroid(geom: dict | None) -> tuple[float | None, float | None]:
+    if not geom:
+        return None, None
+    coords: list[list[float]] = []
+
+    def walk(node):
+        if not node:
+            return
+        if isinstance(node[0], (int, float)) and len(node) >= 2:
+            coords.append([float(node[0]), float(node[1])])
+            return
+        for child in node:
+            walk(child)
+
+    walk(geom.get("coordinates"))
+    if not coords:
+        return None, None
+    lon = sum(c[0] for c in coords) / len(coords)
+    lat = sum(c[1] for c in coords) / len(coords)
+    return lat, lon
+
+
+def attrs_from_feature(feat: dict) -> dict:
+    props = feat.get("properties") or {}
+    site_id = str(props.get("SITE_ID") or props.get("site_id") or "").strip()
+    manager = normalize_url(props.get("url"))
+    geom = feat.get("geometry")
+    lat, lon = _centroid(geom)
+    doc = {
+        "_id": site_id,
+        "site_id": site_id,
+        "name": (props.get("site_name") or "").strip() or site_id or "—",
+        "country": props.get("country") or "",
+        "state": props.get("state") or "",
+        "designation": props.get("designation") or "",
+        "category_name": props.get("category_name") or "",
+        "iucn_cat": props.get("iucn_cat") or "",
+        "purpose": props.get("purpose") or "",
+        "lfp": _as_lfp(props.get("lfp")),
+        "managing_authority": props.get("managing_authority") or "",
+        "gov_level": props.get("gov_level") or "",
+        "wdpa_id": props.get("wdpa_id") or "",
+        "year_est": props.get("year_est"),
+        "manager_url": manager,
+        "other_helpful_links": props.get("other_helpful_links") or "",
+        "geometry": geom,
+        "lat": lat,
+        "lon": lon,
+        "fetched_at": now_iso(),
+    }
+    apply_visit_choice(doc, source="other_helpful_links")
+    return doc
+
+
+def merge_cached(existing: dict | None, incoming: dict) -> dict:
+    """Garde l'URL de visite déjà validée ; ne la remplace pas par le gestionnaire."""
+    if not existing:
+        return incoming
+    out = dict(incoming)
+    prev = existing.get("visit_url")
+    prev_status = existing.get("visit_url_status")
+    if prev and not urls_equivalent(prev, incoming.get("manager_url")):
+        out["visit_url"] = prev
+        out["visit_url_status"] = prev_status or "found"
+        out["visit_url_source"] = existing.get("visit_url_source")
+        out["enriched_at"] = existing.get("enriched_at")
+    elif not out.get("visit_url"):
+        apply_visit_choice(out, source="other_helpful_links")
+    return out
+
+
+def public_properties(doc: dict, *, include_geometry_meta: bool = True) -> dict:
+    manager = doc.get("manager_url")
+    visit = doc.get("visit_url")
+    if urls_equivalent(visit, manager):
+        visit = None
+    props = {
+        "id": doc.get("site_id") or doc.get("_id"),
+        "site_id": doc.get("site_id") or doc.get("_id"),
+        "name": doc.get("name"),
+        "country": doc.get("country"),
+        "state": doc.get("state"),
+        "designation": doc.get("designation"),
+        "category_name": doc.get("category_name"),
+        "iucn_cat": doc.get("iucn_cat"),
+        "purpose": doc.get("purpose"),
+        "lfp": _as_lfp(doc.get("lfp")),
+        "managing_authority": doc.get("managing_authority"),
+        "gov_level": doc.get("gov_level"),
+        "wdpa_id": doc.get("wdpa_id"),
+        "year_est": doc.get("year_est"),
+        "manager_url": manager,
+        "visit_url": visit,
+        "visit_url_status": "none" if not visit else (doc.get("visit_url_status") or "found"),
+        "visit_url_source": doc.get("visit_url_source") if visit else None,
+        "lat": doc.get("lat"),
+        "lon": doc.get("lon"),
+    }
+    if include_geometry_meta:
+        props["fetched_at"] = doc.get("fetched_at")
+        props["enriched_at"] = doc.get("enriched_at")
+    return props
+
+
+def to_feature(doc: dict, *, geometry: bool = True) -> dict:
+    geom = doc.get("geometry") if geometry else None
+    if not geom and doc.get("lon") is not None and doc.get("lat") is not None:
+        geom = {"type": "Point", "coordinates": [doc["lon"], doc["lat"]]}
+    return {
+        "type": "Feature",
+        "id": doc.get("site_id") or doc.get("_id"),
+        "geometry": geom,
+        "properties": public_properties(doc),
+    }
+
+
+def to_feature_collection(docs: Iterable[dict], *, geometry: bool = True,
+                          extra: dict | None = None) -> dict:
+    fc = {
+        "type": "FeatureCollection",
+        "features": [to_feature(d, geometry=geometry) for d in docs if d.get("site_id") or d.get("_id")],
+    }
+    if extra:
+        fc.update(extra)
+    return fc
+
+
+def _offset_for_span(span: float) -> float:
+    if span >= 8:
+        return 0.05
+    if span >= 4:
+        return 0.02
+    if span >= 2:
+        return 0.008
+    if span >= 1:
+        return 0.003
+    return 0.0008
+
+
+async def fetch_arcgis(bbox: tuple[float, float, float, float], *,
+                       max_features: int = 400) -> list[dict]:
+    minx, miny, maxx, maxy = bbox
+    span = bbox_span_deg(bbox)
+    params = {
+        "geometry": f"{minx},{miny},{maxx},{maxy}",
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": 4326,
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": AMP_OUT_FIELDS,
+        "outSR": 4326,
+        "f": "geojson",
+        "returnGeometry": "true",
+        "maxAllowableOffset": _offset_for_span(span),
+        "resultRecordCount": min(int(max_features), 2000),
+    }
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        r = await client.get(ARCGIS_AMP_URL, params=params)
+        r.raise_for_status()
+        data = r.json()
+    feats = data.get("features") or []
+    docs = []
+    for feat in feats:
+        doc = attrs_from_feature(feat)
+        if not doc.get("site_id"):
+            continue
+        docs.append(doc)
+    return docs
+
+
+async def ensure_amp_indexes(db) -> None:
+    try:
+        await db.amp_sites.create_index("site_id", unique=True)
+        await db.amp_sites.create_index("name")
+        await db.amp_sites.create_index("lfp")
+        await db.amp_sites.create_index([("geometry", "2dsphere")])
+    except Exception:
+        pass
+
+
+def _is_fresh(doc: dict, ttl_days: int) -> bool:
+    raw = doc.get("fetched_at") or ""
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    age = datetime.now(timezone.utc) - ts.astimezone(timezone.utc)
+    return age.total_seconds() < ttl_days * 86400
+
+
+async def query_cache(db, bbox: tuple[float, float, float, float],
+                      limit: int = 400) -> list[dict]:
+    q = {"geometry": {"$geoIntersects": {"$geometry": bbox_polygon(bbox)}}}
+    try:
+        return await db.amp_sites.find(q).limit(int(limit)).to_list(int(limit))
+    except Exception:
+        return []
+
+
+async def upsert_sites(db, docs: list[dict]) -> int:
+    n = 0
+    for incoming in docs:
+        sid = incoming.get("site_id")
+        if not sid:
+            continue
+        existing = await db.amp_sites.find_one({"_id": sid})
+        merged = merge_cached(existing, incoming)
+        await db.amp_sites.update_one({"_id": sid}, {"$set": merged}, upsert=True)
+        n += 1
+    return n
+
+
+async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
+                        force: bool = False, max_features: int | None = None,
+                        ttl_days: int | None = None) -> tuple[list[dict], dict]:
+    max_features = int(max_features or catalog_default("amp.max_features", 400))
+    ttl_days = int(ttl_days or catalog_default("amp.cache_ttl_days", 30))
+    cached = await query_cache(db, bbox, limit=max_features)
+    fresh = bool(cached) and all(_is_fresh(d, ttl_days) for d in cached[:8])
+    meta = {"source": "cache", "truncated": False, "fetched": 0}
+    if cached and fresh and not force:
+        meta["truncated"] = len(cached) >= max_features
+        return cached, meta
+    try:
+        remote = await fetch_arcgis(bbox, max_features=max_features)
+    except Exception as exc:
+        meta["error"] = str(exc)[:180]
+        return cached, meta
+    if remote:
+        meta["fetched"] = await upsert_sites(db, remote)
+        meta["source"] = "arcgis"
+        cached = await query_cache(db, bbox, limit=max_features) or remote
+    meta["truncated"] = len(cached) >= max_features
+    return cached, meta
+
+
+async def resolve_visit_urls(db, *, limit: int = 500) -> dict:
+    """Applique l'heuristique other_helpful_links sur le cache (sans TinyFish)."""
+    docs = await db.amp_sites.find({
+        "$or": [
+            {"visit_url": {"$in": [None, ""]}},
+            {"visit_url_status": {"$in": ["none", "not_found", None]}},
+        ],
+    }).to_list(int(limit))
+    found = rejected = unchanged = 0
+    for doc in docs:
+        before = doc.get("visit_url")
+        apply_visit_choice(doc, source="other_helpful_links")
+        after = doc.get("visit_url")
+        if after and not urls_equivalent(after, doc.get("manager_url")):
+            found += 1
+        elif doc.get("visit_url_status") == "rejected_same_as_manager":
+            rejected += 1
+        else:
+            unchanged += 1
+        if after != before or doc.get("visit_url_status"):
+            await db.amp_sites.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "visit_url": doc.get("visit_url"),
+                    "visit_url_status": doc.get("visit_url_status"),
+                    "visit_url_source": doc.get("visit_url_source"),
+                    "enriched_at": doc.get("enriched_at"),
+                }},
+            )
+    return {
+        "scanned": len(docs),
+        "found": found,
+        "rejected_same_as_manager": rejected,
+        "unchanged": unchanged,
+    }
+
+
+async def set_visit_url(db, site_id: str, url: str | None) -> dict | None:
+    doc = await db.amp_sites.find_one({"_id": site_id})
+    if not doc:
+        doc = await db.amp_sites.find_one({"site_id": site_id})
+    if not doc:
+        return None
+    apply_visit_choice(doc, discovered=url, source="manual" if url else "other_helpful_links")
+    await db.amp_sites.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {
+            "visit_url": doc.get("visit_url"),
+            "visit_url_status": doc.get("visit_url_status"),
+            "visit_url_source": doc.get("visit_url_source"),
+            "enriched_at": doc.get("enriched_at"),
+        }},
+    )
+    return doc
+
+
+async def amp_stats(db) -> dict:
+    total = await db.amp_sites.count_documents({})
+    with_manager = await db.amp_sites.count_documents(
+        {"manager_url": {"$nin": [None, ""]}})
+    with_visit = await db.amp_sites.count_documents(
+        {"visit_url": {"$nin": [None, ""]}})
+    return {
+        "mode": "amp",
+        "total": total,
+        "with_manager_url": with_manager,
+        "with_visit_url": with_visit,
+        "visit_coverage": round(with_visit / total * 100, 1) if total else 0.0,
+        "items_mapped": total,
+    }
+
+
+def slim_export_feature(doc: dict) -> dict:
+    """Export léger : centroïde + les deux URL, pas le polygone."""
+    return to_feature(doc, geometry=False)

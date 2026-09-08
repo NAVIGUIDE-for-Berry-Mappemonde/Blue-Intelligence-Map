@@ -8,7 +8,7 @@ choisi.
 
 Catalogue machine : `backend/data/run_rules.json`.
 Moteur : `backend/app/core/run_rules.py`.
-API : `GET /api/run-rules?mode=projects|formalities|marinas`.
+API : `GET /api/run-rules?mode=projects|formalities|marinas|amp`.
 
 ---
 
