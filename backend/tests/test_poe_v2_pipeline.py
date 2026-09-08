@@ -422,6 +422,49 @@ class TestStructuredDiscovery:
         names = {p["name"] for p in ports}
         assert "Ensenada" in names and "Manzanillo" in names
 
+    def test_name_only_catalog_skip_keeps_ports(self, monkeypatch):
+        """PPF / kartelë / SIS : skip LLM mais garder les noms (pas 0 port)."""
+        called = []
+
+        async def boom(context, zone, settings=None, log=None):
+            called.append(1)
+            return []
+
+        monkeypatch.setattr(poe, "extract_ports", boom)
+        text = """
+        Liste des ports de plaisance éligibles
+        Haut de France
+        Calais
+        Port de plaisance de Calais
+        Calais
+        PAF
+        Haut de France
+        Dunkerque
+        Dunkerque Marina
+        Dunkerque
+        PAF
+        Normandie
+        Dieppe
+        Port de plaisance de Dieppe
+        Dieppe
+        Douane
+        Bretagne
+        Saint-Malo
+        Saint-Malo Plaisance
+        Saint Malo
+        PAF
+        """
+        async def _run():
+            return await poe.extract_ports_llm(
+                "slice trop court", {"name": "France"}, lambda m: None,
+                catalog_text=text)
+
+        ports = asyncio.run(_run())
+        assert called == []
+        names = " ".join(p["name"] for p in ports)
+        assert "Calais" in names and "Dunkerque Marina" in names
+        assert all(p.get("lat") is None for p in ports)
+
     def test_catalog_reads_full_text_not_llm_slice(self, monkeypatch):
         async def _no_llm(context, zone, log=None):
             return []
