@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core import claude  # noqa: E402
 from app.core.extract import (  # noqa: E402
-    catalog_is_sufficient, catalog_ports_with_coords, extract_structured_ports,
-    geocode_query_name, is_geocodeable_name,
+    catalog_is_sufficient, catalog_ports_to_keep, catalog_ports_with_coords,
+    extract_structured_ports, geocode_query_name, is_geocodeable_name,
 )
 from app.core.llm import coerce_ports, coords_appear_in_text  # noqa: E402
 
@@ -136,6 +136,23 @@ class TestCatalogSufficient:
         assert len(ports) >= 8
         assert catalog_ports_with_coords(ports) == []
         assert catalog_is_sufficient(ports, text) is False
+
+    def test_name_only_catalog_keep_does_not_drop_ports(self):
+        text = (
+            "1. Durrës - Porti detar Durrës 2. Lezhë - Porti detar Shëngjin "
+            "3. Vlorë - Porti detar Vlorë 4. Sarandë - Porti detar Sarandë. "
+            "Degët doganore mbikëqyrëse pranë porteve detare, anijet e peshkimit."
+        )
+        ports = extract_structured_ports(text)
+        assert catalog_is_sufficient(ports, text) is True
+        assert catalog_ports_with_coords(ports) == []
+        kept = catalog_ports_to_keep(ports)
+        assert {p["name"] for p in kept} == {
+            "Porti detar Durrës",
+            "Porti detar Shëngjin",
+            "Porti detar Vlorë",
+            "Porti detar Sarandë",
+        }
 
 
 class TestGeocodeableName:

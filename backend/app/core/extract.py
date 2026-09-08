@@ -1158,13 +1158,32 @@ def catalog_ports_with_coords(ports: list | None) -> list[dict]:
     ]
 
 
+def catalog_ports_to_keep(ports: list | None) -> list[dict]:
+    """Ports à retenir au skip LLM.
+
+    Une table SCT a des coords : on les garde. Une liste officielle sans GPS
+    (PPF FR, MPI NZ, SIS EG, kartelë AL, Customs SX) a déjà des noms : on les
+    garde pour le géocodeur. Renvoyer [] ici alors que le parseur a lu des
+    noms, c'est le bug « catalogue suffisant (0 coordonnés) — LLM sauté ».
+    """
+    coords = catalog_ports_with_coords(ports)
+    if coords:
+        return coords
+    return [
+        p for p in (ports or [])
+        if (p.get("name") or "").strip() and is_geocodeable_name(p.get("name") or "")
+    ]
+
+
 def catalog_is_sufficient(ports: list | None, text: str = "") -> bool:
-    """Skip LLM seulement si le parseur a lu une vraie table (noms + coords).
+    """Skip LLM si le parseur a déjà une liste officielle exploitable.
 
     - ≥ 3 ports avec lat/lon (catalogue type SCT) ;
-    - ou looks_like_port_catalog + ≥ 1 port coordonné.
-    Un décompte de fragments (« port de X », phrases) ne suffit plus :
-    Haiku doit lire ces pages. Au skip, ne renvoyer que les ports coordonnés.
+    - ou looks_like_port_catalog + ≥ 1 port coordonné ;
+    - ou looks_like_port_catalog + assez de noms (PPF / MPI / SIS / kartelë).
+    Les fragments « port de X » seuls ne suffisent pas (voir tests).
+    Au skip, `catalog_ports_to_keep` rend coords **ou** noms géocodables —
+    jamais une liste vide si le parseur a déjà des ports.
     """
     if not ports:
         return False

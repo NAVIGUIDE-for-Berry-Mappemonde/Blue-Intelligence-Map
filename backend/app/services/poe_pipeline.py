@@ -39,10 +39,10 @@ from urllib.parse import unquote, urlparse, urlunparse
 from app.core.dedup import deduplicate_list, find_duplicate_in_list, merge_docs, normalize_name, text_similarity
 from app.core.events import ZoneRecorder, emit
 from app.core.extract import (
-    audit_serp_filter, catalog_is_sufficient, catalog_ports_with_coords,
-    extract_cascade, extract_structured_ports, internal_followups,
-    is_geocodeable_name, looks_like_port_catalog, official_attachments,
-    serp_filter, should_follow_attachments,
+    audit_serp_filter, catalog_is_sufficient, catalog_ports_to_keep,
+    catalog_ports_with_coords, extract_cascade, extract_structured_ports,
+    internal_followups, is_geocodeable_name, looks_like_port_catalog,
+    official_attachments, serp_filter, should_follow_attachments,
 )
 from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception_flags
 from app.core.llm import extract_ports, grounded_search
@@ -1035,11 +1035,15 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
     raw_catalog = catalog_text if catalog_text is not None else context
     catalog = extract_structured_ports(raw_catalog)
     if catalog_is_sufficient(catalog, raw_catalog):
-        kept = catalog_ports_with_coords(catalog)
-        log(f"catalogue table suffisant ({len(kept)} port(s) coordonnés) — LLM sauté")
-        await emit(rec, "extraction_compare", llm_n=None, ner_n=None,
-                   catalog_n=len(kept), fallback="catalog", skipped_llm=True)
-        return kept
+        kept = catalog_ports_to_keep(catalog)
+        if kept:
+            n_coord = len(catalog_ports_with_coords(catalog))
+            log(f"catalogue table suffisant ({n_coord} port(s) coordonnés, "
+                f"{len(kept)} retenu(s)) — LLM sauté")
+            await emit(rec, "extraction_compare", llm_n=None, ner_n=None,
+                       catalog_n=len(kept), fallback="catalog", skipped_llm=True)
+            return kept
+        log("catalogue marqué suffisant mais 0 port retenu — LLM non sauté")
 
     _KNOWN_ENGINES = (
         "claude", "openrouter", "catalog", "ner",
@@ -1098,11 +1102,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         claude_names = []  # déjà la liste principale
     if llm_ports is None:
         log(f"LLM: échec ({type(llm_err).__name__}: {str(llm_err)[:100]})")
-        coord_catalog = catalog_ports_with_coords(catalog)
-        named = [c for c in (catalog or [])
-                 if c.get("lat") is None
-                 and is_geocodeable_name(c.get("name") or "")]
-        fallback = coord_catalog or named
+        fallback = catalog_ports_to_keep(catalog)
         if fallback:
             log(f"catalogue structuré: {len(fallback)} port(s) retenus (sans LLM)")
             await emit(rec, "extraction_compare", llm_n=None,
@@ -1184,14 +1184,19 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                 p["lon"] = c["lon"]
         have = {normalize_name(p["name"]) for p in llm_ports}
         extra = []
-        for c in catalog_ports_with_coords(catalog):
-            key = normalize_name(c["name"])
+        extra_src = (
+            catalog_ports_to_keep(catalog)
+            if looks_like_port_catalog(raw_catalog)
+            else catalog_ports_with_coords(catalog)
+        )
+        for c in extra_src:
+            key = normalize_name(c.get("name") or "")
             if not key or key in have:
                 continue
             extra.append({**c, "extraction_agreement": None})
             have.add(key)
         if extra:
-            log(f"catalogue table: {len(extra)} port(s) coordonnés ajoutés "
+            log(f"catalogue table: {len(extra)} port(s) ajoutés "
                 f"(en plus des {len(llm_ports)} du LLM)")
             await emit(rec, "catalog_extract", n=len(extra),
                        names=[c["name"] for c in extra[:20]])
@@ -1946,8 +1951,8 @@ def _spatial_cand(lat, lon, source, geom, prepared, inland=None) -> dict:
 
 def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
     """Choisit un candidat : table/source, accord dual, départage Haiku, ZEE."""
-    if row.get("hint") == "not_geocodeable":
-        return None, "not_geocodeable"
+    if row.get("hint") in ("not_geocodeable", "geocode_deferred"):
+        return None, row["hint"]
     cands = row["cands"]
     geo = row["geo"]
     if not cands:
@@ -2039,6 +2044,18 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     except Exception:
         listing_ports = []
     official_source = any(s.get("official") for s in used_sources)
+    # Liste officielle sans GPS (PPF, MPI…) : Nominatim 1,1 s × N dépasse
+    # le timeout de zone (FR : 52 noms → TimeoutError, 0 port persisté).
+    defer_geocode = (
+        len(ports) >= 8
+        and all(
+            p.get("extraction_engine") == "catalog" and p.get("lat") is None
+            for p in ports
+        )
+    )
+    if defer_geocode:
+        log(f"catalogue sans coords ({len(ports)} noms) — géocodage différé, "
+            f"noms conservés")
 
     geom = None
     try:
@@ -2071,6 +2088,12 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             log(f"  ⚓ {p['name']} → géocode sauté (nom non toponyme)")
             rows.append({
                 "port": p, "norm": norm, "geo": empty_geo, "hint": "not_geocodeable",
+                "cands": [],
+            })
+            continue
+        if defer_geocode:
+            rows.append({
+                "port": p, "norm": norm, "geo": empty_geo, "hint": "geocode_deferred",
                 "cands": [],
             })
             continue
