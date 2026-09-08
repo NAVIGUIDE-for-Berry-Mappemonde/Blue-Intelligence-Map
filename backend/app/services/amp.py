@@ -662,6 +662,11 @@ async def refresh_protectedseas_attrs(
         if not attrs:
             continue
         apply_protectedseas_attrs(doc, attrs)
+        if doc.get("visit_url") and urls_equivalent(doc.get("visit_url"), doc.get("manager_url")):
+            doc["visit_url"] = None
+            doc["visit_url_status"] = "not_found"
+            doc["visit_url_source"] = None
+            doc["visit_url_judge"] = None
         n += 1
         if db is not None and doc.get("_id") is not None:
             await db.amp_sites.update_one(
@@ -671,6 +676,10 @@ async def refresh_protectedseas_attrs(
                     "ps_website_raw": doc.get("ps_website_raw"),
                     "other_helpful_links": doc.get("other_helpful_links"),
                     "purpose": doc.get("purpose"),
+                    "visit_url": doc.get("visit_url"),
+                    "visit_url_status": doc.get("visit_url_status"),
+                    "visit_url_source": doc.get("visit_url_source"),
+                    "visit_url_judge": doc.get("visit_url_judge"),
                 }},
             )
     if log:

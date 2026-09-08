@@ -376,3 +376,35 @@ def test_refresh_protectedseas_attrs_writes_cache():
     assert docs[0]["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
     assert docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
     assert db.amp_sites.docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
+
+
+def test_refresh_clears_visit_url_that_becomes_the_manager():
+    docs = [{
+        "_id": "PS-2", "site_id": "PS-2",
+        "manager_url": "https://natura 2000|https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+        "visit_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+        "visit_url_status": "found",
+        "visit_url_source": "other_helpful_links",
+    }]
+
+    class _Coll:
+        def __init__(self):
+            self.docs = list(docs)
+
+        async def update_one(self, q, upd, upsert=False):
+            self.docs[0].update(upd.get("$set") or {})
+
+    class _DB:
+        def __init__(self):
+            self.amp_sites = _Coll()
+
+    async def fetch(ids):
+        return {"PS-2": {
+            "url": "Natura 2000|https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+        }}
+
+    asyncio.run(amp_svc.refresh_protectedseas_attrs(_DB(), docs, fetch_fn=fetch))
+    assert docs[0]["manager_url"] == "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx"
+    assert docs[0]["visit_url"] is None
+    assert docs[0]["visit_url_status"] == "not_found"
