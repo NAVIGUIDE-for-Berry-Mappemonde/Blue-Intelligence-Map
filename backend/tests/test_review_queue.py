@@ -249,7 +249,11 @@ def test_comment_persists_per_fiche_without_writing_v1():
     # hexagone.pdf n'existe pas : la fiche prend la liste plaisance curée (mrgid 5677).
     td = (fiche["fiche"].get("url_td") or {}).get("url") or ""
     assert "plaisance" in td.lower() and "dispositif.pdf" in td
-    assert [p["name"] for p in fiche["fiche"]["ports"]] == ["Marseille"]
+    assert [p["name"] for p in fiche["fiche"]["ports"]] == ["Marseille", "Sète"]
+    td_urls = [s["url"] for s in fiche["fiche"]["sources_td"]]
+    assert any("run.gouv.fr/liste.pdf" in u for u in td_urls)
+    assert not any("canary.test" in u for u in td_urls)
+    assert fiche["fiche"]["fiche_scope"] == "union"
     assert fiche["wrote_poe_ports"] is False
 
 
@@ -275,6 +279,9 @@ def test_run_fiche_uses_run_ports_not_v1():
     assert "plaisance" in td.lower() and "dispositif.pdf" in td
     pub = asyncio.run(build_zone_fiche(db, 5677, run_id="published"))
     assert [p["name"] for p in pub["ports"]] == ["Marseille"]
+    union = asyncio.run(build_zone_fiche(db, 5677, run_id="published", union=True))
+    assert [p["name"] for p in union["ports"]] == ["Marseille", "Sète"]
+    assert "Canary Port" not in [p["name"] for p in union["ports"]]
 
 
 def test_queue_pagination_does_not_drop_total():
@@ -319,6 +326,8 @@ def test_frontend_review_tab_exists():
     assert "review-pregold-filter" in review
     assert "review-comment" in review
     assert "review-next" in review
+    assert 'kind === "project"' in review
+    assert "reviewHintFormalities" in review
     assert "/generate" not in review
 
 

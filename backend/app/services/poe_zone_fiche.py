@@ -1,9 +1,12 @@
 """
 poe_zone_fiche — Fiche de revue d'un polygone VLIZ (lecture seule).
 
-Contrat UI : 1 URL Top-Down (page/PDF d'État listant les PoE) + liste des
-PoE + 1 URL Bottom-Up par port. N'écrit jamais poe_ports / eez_zones.
-Le WPI n'est pas une source. Noonsite et les forums n'entrent pas.
+Review (union) : toutes les URLs TD uniques, tous les ports (v1 + runs
+prod + graines), toutes les BU par port. La carte Formalités reste v1 :
+``url_td`` = la meilleure liste, un port = une BU.
+
+N'écrit jamais poe_ports / eez_zones. Le WPI n'est pas une source.
+Noonsite et les forums n'entrent pas.
 """
 from __future__ import annotations
 
@@ -16,9 +19,10 @@ from app.core.dedup import normalize_name
 from app.services.poe_pipeline import domain_of, list_url_bonus, zone_to_item
 from app.services.poe_zone_label import attach_zone_labels
 from app.services.poe_seeds import SEARCH_EXCLUDE_DOMAINS, url_is_excluded_search
+from app.services.review_gold import is_test_run
 from app.services.territory_ref import curated_td_urls
 
-# Revue : une URL TD (la liste officielle) + une URL BU par PoE.
+# Bannière / popup carte : une URL TD (liste/PDF d'abord). Review n'applique pas ce cap.
 FICHE_TD_URL_CAP = 1
 
 
@@ -95,7 +99,7 @@ def _url_rank(rec: dict) -> float:
 
 
 def _cap_sources(recs: list[dict], limit: int = FICHE_TD_URL_CAP) -> list[dict]:
-    """Un URL par domaine, les pages liste/PDF d'abord — comme une fiche projets."""
+    """Un URL par domaine, les pages liste/PDF d'abord — bannière carte."""
     by_dom: dict[str, dict] = {}
     for rec in recs or []:
         dom = (rec.get("domain") or domain_of(rec.get("url") or "") or rec.get("url") or "").lower()
@@ -104,6 +108,19 @@ def _cap_sources(recs: list[dict], limit: int = FICHE_TD_URL_CAP) -> list[dict]:
             by_dom[dom] = rec
     ranked = sorted(by_dom.values(), key=_url_rank, reverse=True)
     return ranked[:limit]
+
+
+def _rank_sources(recs: list[dict]) -> list[dict]:
+    """Toutes les URLs uniques, liste/PDF en tête. Pas de cap, pas de 1-par-domaine."""
+    by_url: dict[str, dict] = {}
+    for rec in recs or []:
+        url = rec.get("url")
+        if not url:
+            continue
+        prev = by_url.get(url)
+        if prev is None or _url_rank(rec) > _url_rank(prev):
+            by_url[url] = rec
+    return sorted(by_url.values(), key=_url_rank, reverse=True)
 
 
 def _best_one(recs: list[dict]) -> dict | None:
@@ -122,31 +139,38 @@ def _list_like_from_docs(docs: list[dict] | None) -> list[dict]:
     return out
 
 
-def bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
-    """Meilleure URL d'État trouvée en cherchant CE port (juge / sources_bu)."""
-    by: dict[str, dict] = {}
+def bus_by_port_name(docs: list[dict] | None) -> dict[str, list[dict]]:
+    """Toutes les URLs d'État d'un port (juge / sources_bu), liste/PDF en tête."""
+    buckets: dict[str, dict[str, dict]] = {}
     for doc in docs or []:
         key = normalize_name(doc.get("name") or "")
         if not key:
             continue
-        recs: list[dict] = []
+        bucket = buckets.setdefault(key, {})
         for raw in list(doc.get("judge_sources") or []) + list(doc.get("sources_bu") or []):
             rec = _as_source(raw, "bu")
-            if rec:
-                recs.append(rec)
-        best = _best_one(recs)
-        if not best:
-            continue
-        prev = by.get(key)
-        if prev is None or _url_rank(best) > _url_rank(prev):
-            by[key] = best
-    return by
+            if rec is None:
+                continue
+            prev = bucket.get(rec["url"])
+            if prev is None or _url_rank(rec) > _url_rank(prev):
+                bucket[rec["url"]] = rec
+    return {key: _rank_sources(list(recs.values())) for key, recs in buckets.items() if recs}
 
 
-def _port_row(doc: dict, url_bu: dict | None = None) -> dict | None:
+def bu_by_port_name(docs: list[dict] | None) -> dict[str, dict]:
+    """Meilleure URL d'État trouvée en cherchant CE port (juge / sources_bu)."""
+    return {key: recs[0] for key, recs in bus_by_port_name(docs).items() if recs}
+
+
+def _port_row(doc: dict, url_bu: dict | None = None,
+              urls_bu: list[dict] | None = None) -> dict | None:
     name = (doc.get("name") or "").strip()
     if not name:
         return None
+    bu_list = [rec for rec in (urls_bu or []) if rec and rec.get("url")]
+    if not bu_list and url_bu and url_bu.get("url"):
+        bu_list = [url_bu]
+    best = url_bu if url_bu and url_bu.get("url") else (bu_list[0] if bu_list else None)
     row = {
         "id": str(doc.get("_id") or doc.get("id") or name),
         "name": name,
@@ -156,12 +180,10 @@ def _port_row(doc: dict, url_bu: dict | None = None) -> dict | None:
         "confidence": doc.get("confidence"),
         "spatial_kind": doc.get("spatial_kind"),
         "validated": bool(doc.get("validated")),
-        "url_bu": url_bu,
+        "url_bu": best,
+        "urls_bu": bu_list,
     }
-    if url_bu and url_bu.get("url"):
-        row["source_urls"] = [url_bu["url"]]
-    else:
-        row["source_urls"] = []
+    row["source_urls"] = [rec["url"] for rec in bu_list]
     return row
 
 
@@ -180,8 +202,9 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
                         run_zones: list[dict] | None = None) -> dict:
     """Construit la fiche de revue. 0 écriture Atlas.
 
-    Contrat UI : 1 URL TD (page/PDF d'État listant les PoE) + la liste des
-    PoE + 1 URL BU par port (page ouverte en cherchant ce nom).
+    ``sources_td`` : toutes les URLs d'État uniques (liste/PDF en tête).
+    ``url_td`` : la meilleure (bannière carte / popup).
+    Chaque port porte ``urls_bu`` (toutes) et ``url_bu`` (la première).
     """
     td_raw = [zone.get("sources"), zone.get("sources_td")]
     for rz in run_zones or []:
@@ -190,22 +213,24 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
     td_raw.append(curated_td_urls(zone.get("mrgid")))
     td_raw.append(_list_like_from_docs(list(seeds or []) + list(run_ports or [])))
     td_map = _collect(td_raw, "td")
-    bu_by_name = bu_by_port_name(list(seeds or []) + list(run_ports or []))
+    bu_lists = bus_by_port_name(list(seeds or []) + list(run_ports or []) + list(ports or []))
 
     rows = []
     bu_seen: dict[str, dict] = {}
     for doc in ports or []:
         key = normalize_name(doc.get("name") or "")
-        url_bu = bu_by_name.get(key)
-        row = _port_row(doc, url_bu)
+        urls_bu = list(bu_lists.get(key) or [])
+        url_bu = urls_bu[0] if urls_bu else None
+        row = _port_row(doc, url_bu, urls_bu)
         if not row:
             continue
         rows.append(row)
-        if url_bu and url_bu.get("url"):
-            bu_seen.setdefault(url_bu["url"], url_bu)
+        for rec in urls_bu:
+            if rec.get("url"):
+                bu_seen.setdefault(rec["url"], rec)
     rows.sort(key=lambda p: (p.get("name") or "").lower())
 
-    td_list = list(td_map.values())
+    td_list = _rank_sources(list(td_map.values()))
     td_total = len(td_list)
     url_td = _best_one(td_list)
     if url_td:
@@ -213,11 +238,21 @@ def assemble_zone_fiche(zone: dict, ports: list[dict], *,
         if td_url in bu_seen:
             url_td = {**url_td, "from_arm": "both"}
             for row in rows:
-                bu = row.get("url_bu") or {}
-                if bu.get("url") == td_url:
-                    row["url_bu"] = {**bu, "from_arm": "both"}
+                marked = []
+                for bu in row.get("urls_bu") or []:
+                    rec = {**bu, "from_arm": "both"} if bu.get("url") == td_url else bu
+                    marked.append(rec)
+                    if rec.get("url"):
+                        bu_seen[rec["url"]] = rec
+                row["urls_bu"] = marked
+                if (row.get("url_bu") or {}).get("url") == td_url:
+                    row["url_bu"] = {**row["url_bu"], "from_arm": "both"}
                     bu_seen[td_url] = row["url_bu"]
-        sources_td = [url_td]
+        sources_td = td_list
+        for i, rec in enumerate(sources_td):
+            if rec.get("url") == url_td.get("url"):
+                sources_td[i] = url_td
+                break
     else:
         sources_td = []
 
@@ -291,11 +326,71 @@ async def _find_run_mrgid(coll, run_id: str, mrgid: int) -> list[dict]:
         return []
 
 
-async def build_zone_fiche(db, mrgid: int, run_id: str | None = None) -> dict | None:
+async def _runs_by_id(db) -> dict[str, dict]:
+    coll = getattr(db, "poe_runs", None)
+    if coll is None:
+        return {}
+    try:
+        docs = await coll.find({}).to_list(5000)
+    except Exception:
+        return {}
+    return {str(d.get("_id")): d for d in docs or []}
+
+
+def _keep_prod_run(doc: dict, runs_by_id: dict[str, dict]) -> bool:
+    rid = str(doc.get("run_id") or "")
+    if not rid:
+        return True
+    meta = runs_by_id.get(rid) or {"_id": rid, "label": rid}
+    return not is_test_run(meta)
+
+
+def _filter_prod_runs(docs: list[dict], runs_by_id: dict[str, dict]) -> list[dict]:
+    return [d for d in docs or [] if _keep_prod_run(d, runs_by_id)]
+
+
+def _port_rank(doc: dict) -> tuple:
+    has_geo = doc.get("lat") is not None and doc.get("lon") is not None
+    return (
+        1 if doc.get("validated") else 0,
+        1 if has_geo else 0,
+        int(doc.get("confidence") or 0),
+    )
+
+
+def _merge_union_ports(v1: list[dict], run_ports: list[dict],
+                       seeds: list[dict]) -> list[dict]:
+    """v1 gagne à nom égal ; runs puis graines pour les noms absents."""
+    by: dict[str, dict] = {}
+    locked: set[str] = set()
+    for doc in v1 or []:
+        key = normalize_name(doc.get("name") or "")
+        if not key:
+            continue
+        by[key] = doc
+        locked.add(key)
+    for doc in run_ports or []:
+        key = normalize_name(doc.get("name") or "")
+        if not key or key in locked:
+            continue
+        prev = by.get(key)
+        if prev is None or _port_rank(doc) > _port_rank(prev):
+            by[key] = doc
+    for doc in seeds or []:
+        key = normalize_name(doc.get("name") or "")
+        if not key or key in by:
+            continue
+        by[key] = doc
+    return list(by.values())
+
+
+async def build_zone_fiche(db, mrgid: int, run_id: str | None = None,
+                           *, union: bool = False) -> dict | None:
     """Charge Atlas en lecture seule et assemble la fiche.
 
-    ``run_id=None`` / ``published`` : ports v1 + toutes les URLs de runs comme
-    sources auxiliaires. Un ``run_id`` précis : ports et sources de CE run.
+    ``run_id=None`` / ``published`` : ports v1. ``union=True`` (Review) :
+    v1 + ``poe_run_ports`` du polygone + graines, runs test exclus.
+    Un ``run_id`` précis : ports et sources de CE run (debug).
     """
     mid = int(mrgid)
     zone = await db.eez_zones.find_one({"mrgid": mid}, {"geometry": 0})
@@ -304,14 +399,25 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None) -> dict | 
         if not zone:
             return None
         ports = await db.poe_ports.find({"mrgid": mid}).to_list(2000)
-        # Graines pour les URLs BU ; zones de run seulement pour l'URL TD.
-        # On ne charge pas poe_run_ports (tous les mondiaux) — trop lourd.
-        run_ports = []
-        run_zones = await _find_mrgid(getattr(db, "poe_run_zones", None), mid)
+        runs_by_id = await _runs_by_id(db)
+        run_zones = _filter_prod_runs(
+            await _find_mrgid(getattr(db, "poe_run_zones", None), mid),
+            runs_by_id,
+        )
+        if union:
+            run_ports = _filter_prod_runs(
+                await _find_mrgid(getattr(db, "poe_run_ports", None), mid),
+                runs_by_id,
+            )
+            ports = _merge_union_ports(ports, run_ports, seeds)
+        else:
+            run_ports = []
+        scope = "union" if union else "published"
     else:
         ports = await _find_run_mrgid(getattr(db, "poe_run_ports", None), run_id, mid)
         run_zones = await _find_run_mrgid(getattr(db, "poe_run_zones", None), run_id, mid)
         run_ports = ports
+        scope = "run"
         if not zone:
             zone = run_zones[0] if run_zones else None
         elif run_zones:
@@ -327,5 +433,7 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None) -> dict | 
         if not zone:
             return None
     zone = await _label_zone(db, zone)
-    return assemble_zone_fiche(
+    fiche = assemble_zone_fiche(
         zone, ports, seeds=seeds, run_ports=run_ports, run_zones=run_zones)
+    fiche["fiche_scope"] = scope
+    return fiche

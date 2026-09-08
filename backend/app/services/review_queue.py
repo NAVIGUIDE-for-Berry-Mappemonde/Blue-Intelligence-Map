@@ -491,7 +491,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
             mid = int(eid)
         except (TypeError, ValueError):
             return None
-        fiche = await build_zone_fiche(db, mid, run_id=rid)
+        fiche = await build_zone_fiche(
+            db, mid, run_id=rid, union=is_published(rid))
         if fiche is None:
             return None
         fiche["kind"] = "eez"
