@@ -2,13 +2,15 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge Laguna → Muse (listing / inconclusive) si NVIDIA, sinon
-Haiku → Sonnet → OpenRouter.
+juge Muse si NVIDIA, sinon Haiku → Sonnet → OpenRouter.
+reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
 
-N'écrit jamais dans poe_ports : seulement poe_run_ports.
+N'écrit jamais dans poe_ports : seulement poe_run_ports / poe_seed_ports.
 Reprise : saute les ports déjà géocodés / déjà jugés.
+Double lecture : parseur catalogue → sources_bu + remember_seed_urls ;
+juge oui/non seulement le résidu (nom absent de la liste).
 """
 from __future__ import annotations
 
@@ -16,11 +18,15 @@ import asyncio
 import os
 from collections import Counter, defaultdict
 from functools import lru_cache
+from urllib.parse import unquote, urlparse
 
 from shapely.geometry import shape
 from shapely.prepared import prep
 
-from app.core.extract import geocode_query_name, is_geocodeable_name
+from app.core.extract import (
+    catalog_is_sufficient, extract_structured_ports, geocode_query_name,
+    is_geocodeable_name,
+)
 from app.core.geo import (
     INLAND_FAR_SCORE_KM,
     classify_poe_point, geocode_port_dual, inland_exception_flags,
@@ -33,17 +39,20 @@ from app.core.tinyfish import (
     tf_search_pages,
 )
 from app.services.poe_pipeline import (
-    build_whitelist, load_exceptions, now_iso, search_polygon_name, url_allowed,
+    OFFICIAL_TOKENS, build_whitelist, domain_of, list_url_bonus,
+    load_exceptions, now_iso, remember_seed_urls, search_polygon_name,
+    url_allowed, urls_with_catalog,
 )
 from app.services.poe_seeds import (
     SEARCH_EXCLUDE_DOMAINS, listing_is_poe, seed_search_query,
-    url_is_excluded_search, verdict_for_seed,
+    url_is_excluded_search, verdict_for_seed, _match_seed,
 )
 
 JUDGE_SYSTEM = (
     "Tu es un juge Ports d'Entrée pour la plaisance. Réponds uniquement en JSON strict : "
-    '{"is_poe": true, "confidence": 0, "reason": "", "official_name": null, '
+    '{"is_poe": true, "confidence": 80, "reason": "", "official_name": null, '
     '"kind": "pleasure"} '
+    "confidence = entier 0-100 (pas une fraction 0-1). "
     'kind = pleasure | mixed | cargo | other | unknown. '
     "is_poe=true seulement si une source officielle désigne CE lieu comme "
     "port d'entrée / clearance / puerto habilitado / designated port "
@@ -89,10 +98,39 @@ def normalize_judge_kind(raw) -> str:
     return _KIND_CANON.get(key, "unknown")
 
 
+def _judge_confidence(raw) -> int:
+    """0-100. Muse/Kimi/Laguna renvoient souvent 0.9 au lieu de 90."""
+    if raw is None or raw == "":
+        return 0
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 0
+    if 0 < val <= 1:
+        val *= 100
+    return max(0, min(100, int(round(val))))
+
+
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
 VERIFY_ORDER = ("name_only", "unverified", "probable")
 DEFAULT_ENRICH_LIMIT = 200
 WHITELIST_DOMAIN_CAP = 15
+CATALOG_FETCH_CHARS = 20000
+MINE_TASK_ID = "seed-mine"
+DEFAULT_MINE_FETCH_CAP = 200
+# Jetons de chemin : liste de ports, pas une annexe / gazette quelconque.
+_MINE_PATH_TOKENS = (
+    "port-of-entry", "ports-of-entry", "ports-entree", "portos-de-entrada",
+    "puertos-habilit", "habilitados", "designated-port", "designated_ports",
+    "puertos-y-terminales", "first-arrival", "places-of-first",
+    "location-codes-for-ports", "customs-offices-list",
+    "border-control-post", "ports-de-plaisance", "points-de-passage",
+    "puertos-de-entrada", "list-of-ports", "liste-des-ports",
+    "ports-habilit", "pleasure-craft", "small-craft",
+    "appendix-b", "puertosymarinamercante", "marina-mercante",
+    "ports-using-the-goods", "designated-land-sea",
+    "puertos-habilitados", "authorized-ports", "authorised-ports",
+)
 
 
 def parse_judge(data: dict | None) -> dict:
@@ -108,13 +146,10 @@ def parse_judge(data: dict | None) -> dict:
     # Filet déterministe : cargo-only n'est jamais un PoE plaisance.
     if kind == "cargo" and status == "accepted":
         status = "rejected"
-    try:
-        conf = int(data.get("confidence") or 0)
-    except (TypeError, ValueError):
-        conf = 0
+    conf = _judge_confidence(data.get("confidence"))
     return {
         "judge_status": status,
-        "judge_confidence": max(0, min(100, conf)),
+        "judge_confidence": conf,
         "judge_reason": str(data.get("reason") or "")[:240],
         "official_name": data.get("official_name"),
         "judge_kind": kind,
@@ -130,6 +165,11 @@ def apply_judge_verdict(seed: dict, judge: dict) -> str:
     has_listing = listing_is_poe(seed)
     has_coords = bool(seed.get("has_coords") or (
         seed.get("lat") is not None and seed.get("lon") is not None))
+    if status == "catalog":
+        # Faisceau D : nommé par la liste. Pas un oui plaisance (P vient après).
+        if current == "name_only" and has_coords:
+            return "unverified"
+        return current
     if status == "accepted" and has_listing and has_coords:
         return "confirmed"
     if status == "accepted":
@@ -352,7 +392,7 @@ async def _zone_cache(db, mrgids: set[int]) -> dict[int, dict]:
     docs = await db.eez_zones.find(
         {"mrgid": {"$in": list(mrgids)}},
         {"mrgid": 1, "name": 1, "geoname": 1, "iso2": 1, "sov_iso2": 1,
-         "sovereign": 1, "geometry": 1},
+         "sovereign": 1, "geometry": 1, "sources_bu": 1, "catalog_bu": 1},
     ).to_list(500)
     out = {}
     for z in docs:
@@ -366,7 +406,9 @@ async def _zone_cache(db, mrgids: set[int]) -> dict[int, dict]:
                 prepared = prep(geom)
         except Exception:
             geom = prepared = None
-        out[int(mid)] = {**z, "_geom": geom, "_prep": prepared}
+        rec = {**z, "_geom": geom, "_prep": prepared}
+        rec["_bu_catalog"] = catalog_cache_from_zone(rec)
+        out[int(mid)] = rec
     return out
 
 
@@ -521,7 +563,7 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
     async def _nvidia(model: str, engine: str) -> dict | None:
         try:
             parsed = await nvidia.complete_json_nvidia(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=400, log=log)
+                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=800, log=log)
             out = parse_judge(parsed)
             out["judge_engine"] = engine
             return out
@@ -543,11 +585,13 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
             return None
 
     if nvidia.nvidia_enabled(settings):
-        result = await _nvidia(nvidia.primary_model(), "nvidia-laguna")
-        if should_escalate_sonnet(result, doc):
-            muse = await _nvidia(nvidia.secondary_model(), "nvidia-muse")
-            if muse:
-                result = muse
+        prim = nvidia.primary_model()
+        result = await _nvidia(prim, nvidia.engine_label(prim))
+        sec = nvidia.secondary_model()
+        if sec != prim and should_escalate_sonnet(result, doc):
+            extra = await _nvidia(sec, nvidia.engine_label(sec))
+            if extra:
+                result = extra
         if result is not None:
             return result
 
@@ -606,29 +650,276 @@ async def _search_hits(doc: dict, zone: dict, whitelist: list[str], key: str, lo
     return drop_excluded_hits(hits)
 
 
+def harvest_bu_catalog(fetched: dict, urls: list[str]) -> dict:
+    """Parseur catalogue sur les pages d'État déjà fetchées. 0 crawl."""
+    blocks = []
+    for u in urls or []:
+        rec = (fetched or {}).get(u) or {}
+        if rec.get("blocked") or rec.get("error"):
+            continue
+        text = rec.get("text") or ""
+        if not str(text).strip():
+            continue
+        blocks.append(f"[SOURCE: {u}]\n{text[:CATALOG_FETCH_CHARS].rstrip()}\n")
+    raw = "\n\n".join(blocks)
+    ports = extract_structured_ports(raw)
+    named = [
+        p for p in ports
+        if p.get("extraction_engine") == "catalog"
+        and "tournure légale" not in (p.get("note") or "")
+        and (p.get("name") or "").strip()
+    ]
+    sufficient = catalog_is_sufficient(ports, raw) or len(named) >= 4
+    productive = urls_with_catalog(blocks) if blocks else []
+    if sufficient and not productive:
+        productive = [
+            u for u in (urls or [])
+            if ((fetched or {}).get(u) or {}).get("text")
+        ]
+    return {
+        "ports": ports,
+        "urls": productive,
+        "sufficient": sufficient,
+        "raw": raw,
+    }
+
+
+def seed_on_catalog(doc: dict, ports: list[dict] | None) -> dict | None:
+    """True si le nom de la graine est déjà sur la liste officielle (dedup)."""
+    if not ports:
+        return None
+    return _match_seed(
+        {"name": doc.get("name"), "mrgid": doc.get("mrgid")},
+        list(ports),
+    )
+
+
+def _named_on_zone_catalog(doc: dict, zone: dict | None) -> bool:
+    if not zone:
+        return False
+    cache = zone.get("_bu_catalog") or catalog_cache_from_zone(zone)
+    if not cache.get("sufficient"):
+        return False
+    return seed_on_catalog(doc, cache.get("ports")) is not None
+
+
+def iter_judge_urls(doc: dict):
+    for raw in doc.get("judge_sources") or []:
+        if isinstance(raw, dict):
+            raw = raw.get("url") or ""
+        u = str(raw or "").strip()
+        if u.startswith("http"):
+            yield u
+
+
+def paid_fetch_urls(doc: dict, cap: int = 4) -> list[str]:
+    """Priorise les URL type liste déjà payées (MPI, douane, gazette)."""
+    urls = list(dict.fromkeys(iter_judge_urls(doc)))
+
+    def _score(u: str) -> float:
+        low = (u or "").lower()
+        bonus = 0.0
+        if "places-of-first-arrival" in low or "first-arrival" in low:
+            bonus += 20
+        if "mpi.govt.nz" in low or "douane.gov." in low or "customs.govt.nz" in low:
+            bonus += 8
+        if "gazette.govt.nz/notice/" in low:
+            bonus += 6
+        if low.endswith(".pdf"):
+            bonus -= 2
+        return mine_url_score(u) + bonus
+
+    urls.sort(key=_score, reverse=True)
+    return urls[: max(1, cap)] if urls else []
+
+
+def mine_token_hits(url: str) -> int:
+    blob = unquote((url or "").lower())
+    path = unquote((urlparse(url or "").path or "") + "?" + (urlparse(url or "").query or "")).lower()
+    return sum(1 for tok in _MINE_PATH_TOKENS if tok in path or tok in blob)
+
+
+def mine_url_score(url: str, n: int = 1) -> float:
+    return mine_token_hits(url) * 1.0 + min(max(int(n or 0), 0), 20) * 0.15 + list_url_bonus(url)
+
+
+def is_mine_candidate(url: str, n: int = 1) -> bool:
+    """URL officielle déjà payée qui ressemble à une liste — pas Search."""
+    if not (url or "").startswith("http"):
+        return False
+    if url_is_excluded_search(url):
+        return False
+    if not OFFICIAL_TOKENS.search(domain_of(url) or url):
+        return False
+    hits = mine_token_hits(url)
+    bonus = list_url_bonus(url)
+    if hits >= 1:
+        return True
+    if n >= 10 and bonus >= 0:
+        return True
+    if n >= 5 and bonus >= 0.3:
+        return True
+    return False
+
+
+def collect_paid_source_urls(docs: list[dict]) -> list[dict]:
+    """Déduplique les judge_sources déjà payés (URL → n, mrgids)."""
+    by: dict[str, dict] = {}
+    for doc in docs or []:
+        mid = doc.get("mrgid")
+        try:
+            mid = int(mid) if mid is not None else None
+        except (TypeError, ValueError):
+            mid = None
+        for u in iter_judge_urls(doc):
+            rec = by.setdefault(u, {"url": u, "n": 0, "mrgids": set()})
+            rec["n"] += 1
+            if mid is not None:
+                rec["mrgids"].add(mid)
+    out = []
+    for rec in by.values():
+        rec["score"] = mine_url_score(rec["url"], rec["n"])
+        rec["mrgids"] = sorted(rec["mrgids"])
+        out.append(rec)
+    out.sort(key=lambda r: (r["score"], r["n"]), reverse=True)
+    return out
+
+
+def select_mine_urls(items: list[dict], cap: int = DEFAULT_MINE_FETCH_CAP) -> list[dict]:
+    picked = [it for it in items if is_mine_candidate(it.get("url") or "", it.get("n") or 0)]
+    if cap and cap > 0:
+        picked = picked[:cap]
+    return picked
+
+
+def merge_catalog_cache(cache: dict, harvest: dict) -> dict:
+    """Fusionne une moisson dans le cache ZEE (même lot, 0 re-fetch)."""
+    if not harvest or not harvest.get("sufficient"):
+        return cache
+    cache["sufficient"] = True
+    seen = {(p.get("name") or "").casefold() for p in (cache.get("ports") or [])}
+    ports = list(cache.get("ports") or [])
+    for p in harvest.get("ports") or []:
+        key = (p.get("name") or "").casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ports.append({
+            "name": p.get("name"), "lat": p.get("lat"), "lon": p.get("lon"),
+            "city": p.get("city"), "note": p.get("note"),
+            "extraction_engine": p.get("extraction_engine") or "catalog",
+        })
+    cache["ports"] = ports
+    cache["urls"] = list(dict.fromkeys(
+        [*(cache.get("urls") or []), *(harvest.get("urls") or [])]))
+    return cache
+
+
+def catalog_cache_from_zone(zone: dict | None) -> dict:
+    zone = zone or {}
+    urls = []
+    for u in zone.get("sources_bu") or []:
+        if isinstance(u, str) and u.startswith("http"):
+            urls.append(u)
+        elif isinstance(u, dict) and str(u.get("url") or "").startswith("http"):
+            urls.append(u["url"])
+    ports = list(zone.get("catalog_bu") or [])
+    if urls and ports:
+        return {"ports": ports, "urls": urls, "sufficient": True}
+    return {"ports": ports, "urls": urls, "sufficient": bool(ports and urls)}
+
+
+def _attach_bu(out: dict, harvest: dict | None, *, named: bool = False,
+               official=None) -> dict:
+    if harvest:
+        if harvest.get("urls"):
+            out["sources_bu"] = harvest["urls"]
+        if harvest.get("ports") is not None:
+            out["catalog_bu_n"] = len(harvest["ports"])
+    out["catalog_named"] = bool(named)
+    if official:
+        out["official_name"] = official
+    return out
+
+
+def catalog_named_verdict(doc: dict, hit: dict, harvest: dict) -> dict:
+    """Nom déjà sur la liste : pas de juge oui/non (faisceau D)."""
+    out = {
+        "judge_status": "catalog",
+        "judge_engine": "catalog-bu",
+        "judge_kind": "unknown",
+        "judge_confidence": 100,
+        "judge_reason": (
+            "Nom présent sur la liste officielle (faisceau D). "
+            "Juge oui/non sauté — plaisance (P) plus tard."
+        )[:240],
+        "judge_at": now_iso(),
+    }
+    return _attach_bu(out, harvest, named=True, official=(hit or {}).get("name"))
+
+
+async def persist_bu_catalog(db, zone: dict, cache: dict) -> None:
+    """Écrit sources_bu + catalog_bu sur la fiche ZEE. Pas poe_ports."""
+    if db is None or not zone or zone.get("mrgid") is None:
+        return
+    if not cache.get("sufficient") or not (cache.get("urls") or cache.get("ports")):
+        return
+    try:
+        await db.eez_zones.update_one(
+            {"mrgid": int(zone["mrgid"])},
+            {"$addToSet": {"sources_bu": {"$each": list(cache.get("urls") or [])}},
+             "$set": {
+                 "catalog_bu": list(cache.get("ports") or []),
+                 "catalog_bu_at": now_iso(),
+             }},
+        )
+    except Exception:
+        return
+
+
 async def judge_one(doc: dict, zone: dict, settings: dict, log,
-                    use_agent: bool = True) -> dict:
+                    use_agent: bool = True, db=None, catalog_cache: dict | None = None,
+                    persist_memory: bool = True, reuse_paid_sources: bool = False,
+                    prefetched: dict | None = None) -> dict:
     name = doc.get("name") or ""
+    cache = catalog_cache if catalog_cache is not None else catalog_cache_from_zone(zone)
+    cached_hit = seed_on_catalog(doc, cache.get("ports")) if cache.get("sufficient") else None
+    if cached_hit:
+        log(f"catalogue BU: {name} déjà sur la liste — juge sauté")
+        out = catalog_named_verdict(doc, cached_hit, cache)
+        out["judge_sources"] = list(cache.get("urls") or [])
+        out["judge_agent"] = False
+        return out
+
     exc = load_exceptions()
     whitelist = build_whitelist(zone.get("iso2"), zone.get("sov_iso2"), exc)
     key = tf_api_key(settings) or (os.environ.get("TINYFISH_API_KEY") or "")
-    hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
-    urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
     texts = []
     blocked_official = []
     fetched = {}
-    if key and urls:
-        fetched = await tf_fetch(urls, key, log=log)
-        for u in urls:
-            rec = fetched.get(u) or {}
-            if rec.get("blocked") or rec.get("error") == "bot_blocked":
-                blocked_official.append(u)
-                continue
-            if rec.get("error"):
-                continue
-            chunk = (rec.get("text") or "")[:4000]
-            if chunk:
-                texts.append(f"URL {u}\n{chunk}")
+    if reuse_paid_sources:
+        urls = paid_fetch_urls(doc, cap=min(4, FETCH_URL_CAP))
+        hits = []
+        if prefetched:
+            fetched = {u: prefetched[u] for u in urls if u in prefetched}
+        missing = [u for u in urls if u not in fetched]
+        if key and missing:
+            fetched.update(await tf_fetch(missing, key, log=log) or {})
+    else:
+        hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
+        urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
+        if key and urls:
+            fetched = await tf_fetch(urls, key, log=log)
+    for u in urls:
+        rec = fetched.get(u) or {}
+        if rec.get("blocked") or rec.get("error") == "bot_blocked":
+            blocked_official.append(u)
+            continue
+        if rec.get("error"):
+            continue
+        chunk = (rec.get("text") or "")[:4000]
+        if chunk:
+            texts.append(f"URL {u}\n{chunk}")
     agent_used = False
     if use_agent and key and blocked_official:
         agent_used = True
@@ -650,6 +941,28 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
                     judged["judge_agent_url"] = blocked_official[0]
                     judged["judge_at"] = now_iso()
                     return judged
+    harvest = harvest_bu_catalog(fetched, urls)
+    if harvest["sufficient"]:
+        merge_catalog_cache(cache, harvest)
+        zone["sources_bu"] = list(cache.get("urls") or [])
+        zone["catalog_bu"] = list(cache.get("ports") or [])
+        remembered = remember_seed_urls(
+            zone, harvest["urls"], persist=persist_memory)
+        if remembered:
+            log(f"sources_bu mémorisées ({zone.get('iso2')}): {remembered}")
+        log(f"catalogue BU: {len(harvest['ports'])} port(s) · "
+            f"{len(harvest['urls'])} url(s)")
+        await persist_bu_catalog(db, zone, cache)
+        hit = seed_on_catalog(doc, harvest["ports"])
+        if hit:
+            log(f"catalogue BU: {name} sur la liste — juge sauté")
+            out = catalog_named_verdict(doc, hit, harvest)
+            out["judge_sources"] = urls
+            out["judge_agent"] = agent_used
+            if blocked_official:
+                out["judge_agent_url"] = blocked_official[0]
+            return out
+        log(f"catalogue BU: {name} hors liste — juge du résidu")
     if not texts:
         snippets = [
             f"{h.get('title') or ''} — {h.get('snippet') or ''}"
@@ -665,13 +978,15 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
         out["judge_sources"] = urls
         out["judge_agent"] = agent_used
         out["judge_at"] = now_iso()
-        return out
+        return _attach_bu(out, harvest if harvest.get("sufficient") else None)
     judged = await _judge_llm(doc, zone, context, settings, log)
     judged["judge_sources"] = urls
     judged["judge_agent"] = agent_used
     if blocked_official:
         judged["judge_agent_url"] = blocked_official[0]
     judged["judge_at"] = now_iso()
+    if harvest.get("sufficient"):
+        _attach_bu(judged, harvest, named=False)
     return judged
 
 
@@ -680,7 +995,10 @@ async def execute_enrich(db, state, *, run_id: str = "",
                          do_geocode: bool = True, do_verify: bool = True,
                          verdicts: list[str] | None = None,
                          limit: int = 0, concurrency: int = 2,
-                         use_agent: bool = True) -> dict:
+                         use_agent: bool = True,
+                         persist_memory: bool = True,
+                         only_mrgids=None,
+                         residue_only: bool = False) -> dict:
     """Géocode puis juge. Reprise. Pas de poe_ports.
 
     source=seeds lit/écrit poe_seed_ports. source=run utilise poe_run_ports.
@@ -707,9 +1025,21 @@ async def execute_enrich(db, state, *, run_id: str = "",
         if not ports:
             raise ValueError(f"run {run_id} sans ports — lancer POST /api/poe/seeds/verify")
         task_id = run_id
+    if only_mrgids:
+        wanted_m = {int(x) for x in only_mrgids}
+        ports = [p for p in ports
+                 if p.get("mrgid") is not None and int(p["mrgid"]) in wanted_m]
     attach_geocode_context(ports)
     geo_todo = [p for p in ports if do_geocode and _needs_geocode(p)]
     judge_pool = [p for p in ports if do_verify and _needs_judge(p, wanted)]
+    mrgids = {int(p["mrgid"]) for p in geo_todo + judge_pool if p.get("mrgid") is not None}
+    zones = await _zone_cache(db, mrgids)
+    if residue_only:
+        judge_pool = [
+            p for p in judge_pool
+            if not _named_on_zone_catalog(
+                p, zones.get(int(p["mrgid"])) if p.get("mrgid") is not None else None)
+        ]
     if limit and limit > 0:
         geo_todo = geo_todo[:limit]
         if geo_todo:
@@ -720,8 +1050,6 @@ async def execute_enrich(db, state, *, run_id: str = "",
     else:
         # Run complet : géocoder d'abord, ne pas juger deux fois la même graine.
         judge_pool = [p for p in judge_pool if not _needs_geocode(p)]
-    mrgids = {int(p["mrgid"]) for p in geo_todo + judge_pool if p.get("mrgid") is not None}
-    zones = await _zone_cache(db, mrgids)
     state.total = len(geo_todo) + len(judge_pool)
     state.progress = 0
     log = state.log
@@ -768,9 +1096,11 @@ async def execute_enrich(db, state, *, run_id: str = "",
                 counts["judge_no_zone"] += 1
                 return
             try:
+                cache = zone.setdefault("_bu_catalog", catalog_cache_from_zone(zone))
                 judged = await judge_one(
                     doc, zone, settings, lambda m: log(f"[{doc.get('name')}] {m}"),
-                    use_agent=use_agent)
+                    use_agent=use_agent, db=db, catalog_cache=cache,
+                    persist_memory=persist_memory)
             except Exception as e:
                 counts["judge_error"] += 1
                 log(f"juge FAIL {doc.get('name')}: {type(e).__name__}: {e}")
@@ -818,4 +1148,340 @@ async def execute_enrich(db, state, *, run_id: str = "",
         upsert=from_seeds)
     state.summary = summary
     log(f"enrich terminé: {summary['counts']}")
+    return summary
+
+
+async def mine_paid_sources(db, state, *, fetch_cap: int = DEFAULT_MINE_FETCH_CAP,
+                            persist_memory: bool = True,
+                            mark_named: bool = True,
+                            judge_residue: bool = True,
+                            residue_limit: int = 0,
+                            include_runs: bool = True,
+                            concurrency: int = 2,
+                            use_agent: bool = True) -> dict:
+    """Re-lit les judge_sources déjà payés (Fetch, 0 Search).
+
+    Si une page est un catalogue : sources_bu + catalog_bu sur la ZEE,
+    remember_seed_urls, judge_status=catalog pour les noms déjà sur la liste.
+    Le juge oui/non ne tourne que sur le résidu de CES ZEE.
+    N'écrit jamais poe_ports.
+    """
+    from app.db import get_settings
+
+    settings = {}
+    try:
+        settings = await get_settings()
+    except Exception:
+        pass
+    log = state.log
+    seeds = await db.poe_seed_ports.find({}).to_list(20000)
+    if not seeds:
+        raise ValueError("poe_seed_ports vide — lancer POST /api/poe/seeds/build")
+    docs = list(seeds)
+    if include_runs:
+        try:
+            extra = await db.poe_run_ports.find(
+                {"judge_sources.0": {"$exists": True}},
+                {"judge_sources": 1, "mrgid": 1},
+            ).to_list(20000)
+            docs.extend(extra or [])
+        except Exception:
+            pass
+    collected = collect_paid_source_urls(docs)
+    selected = select_mine_urls(collected, cap=fetch_cap)
+    key = tf_api_key(settings) or (os.environ.get("TINYFISH_API_KEY") or "")
+    urls = [it["url"] for it in selected]
+    url_mrgids = {it["url"]: set(it["mrgids"]) for it in selected}
+    log(f"mine: {len(collected)} URL payées · {len(urls)} à Fetch (0 Search)")
+    state.total = max(1, len(urls) + (1 if mark_named or judge_residue else 0))
+    state.progress = 0
+    fetched = {}
+    if key and urls:
+        batches = (len(urls) + 9) // 10
+        for i in range(0, len(urls), 10):
+            if state.cancel:
+                log("mine: annulation pendant Fetch")
+                break
+            batch = urls[i:i + 10]
+            log(f"mine Fetch {i // 10 + 1}/{batches} ({len(batch)} URL)")
+            try:
+                part = await asyncio.wait_for(tf_fetch(batch, key, log=log), timeout=180)
+            except TimeoutError:
+                log(f"mine Fetch timeout lot {i // 10 + 1}")
+                part = {}
+            fetched.update(part or {})
+            ok = sum(1 for r in (part or {}).values() if str(r.get("text") or "").strip())
+            log(f"mine Fetch lot {i // 10 + 1}: {ok}/{len(batch)} textes")
+            state.progress = min(state.total, i + len(batch))
+    elif urls:
+        log("mine: pas de clé TinyFish — Fetch sauté")
+    state.progress = min(state.total, len(urls) or 1)
+
+    caches: dict[int, dict] = {}
+    catalog_urls = []
+    for u in urls:
+        rec = fetched.get(u) or {}
+        harvest = harvest_bu_catalog({u: rec}, [u])
+        if not harvest.get("sufficient"):
+            continue
+        catalog_urls.append(u)
+        for mid in url_mrgids.get(u) or []:
+            cache = caches.setdefault(mid, {"ports": [], "urls": [], "sufficient": False})
+            merge_catalog_cache(cache, harvest)
+
+    zones = await _zone_cache(db, set(caches)) if caches else {}
+    remembered = []
+    for mid, cache in caches.items():
+        zone = zones.get(mid) or {"mrgid": mid}
+        zone["sources_bu"] = list(cache.get("urls") or [])
+        zone["catalog_bu"] = list(cache.get("ports") or [])
+        zone["_bu_catalog"] = cache
+        zones[mid] = zone
+        added = remember_seed_urls(zone, cache.get("urls") or [], persist=persist_memory)
+        remembered.extend(added)
+        await persist_bu_catalog(db, zone, cache)
+        log(f"mine ZEE {mid}: {len(cache.get('ports') or [])} ports · "
+            f"{len(cache.get('urls') or [])} url(s)")
+
+    counts = Counter()
+    counts["urls_paid"] = len(collected)
+    counts["urls_fetched"] = len(urls)
+    counts["urls_catalog"] = len(catalog_urls)
+    counts["eez_catalog"] = len(caches)
+    counts["remembered"] = len(remembered)
+
+    if mark_named and caches:
+        for doc in seeds:
+            if state.cancel:
+                break
+            mid = doc.get("mrgid")
+            try:
+                mid = int(mid) if mid is not None else None
+            except (TypeError, ValueError):
+                continue
+            cache = caches.get(mid)
+            if not cache:
+                continue
+            hit = seed_on_catalog(doc, cache.get("ports"))
+            if not hit:
+                continue
+            current = doc.get("judge_status")
+            if current and current not in ("inconclusive",):
+                counts["named_kept"] += 1
+                continue
+            judged = catalog_named_verdict(doc, hit, cache)
+            judged["judge_sources"] = list(
+                dict.fromkeys([*(cache.get("urls") or []), *iter_judge_urls(doc)]))
+            judged["verify_verdict"] = apply_judge_verdict(doc, judged)
+            await db.poe_seed_ports.update_one({"_id": doc["_id"]}, {"$set": judged})
+            counts["named_catalog"] += 1
+
+    residue = None
+    if judge_residue and caches and not state.cancel:
+        log(f"mine: juge du résidu sur {len(caches)} ZEE catalogue")
+        residue = await execute_enrich(
+            db, state, source="seeds", do_geocode=False, do_verify=True,
+            verdicts=list(VERIFY_ORDER), limit=residue_limit,
+            concurrency=concurrency, use_agent=use_agent,
+            persist_memory=persist_memory,
+            only_mrgids=set(caches), residue_only=True)
+        counts["residue_todo"] = residue.get("judge_todo") or 0
+        for k, v in (residue.get("counts") or {}).items():
+            counts[k] += v
+
+    summary = {
+        "run_id": MINE_TASK_ID,
+        "urls_paid": len(collected),
+        "urls_selected": urls,
+        "urls_catalog": catalog_urls,
+        "eez_catalog": sorted(caches),
+        "counts": dict(counts),
+        "residue": ({k: residue[k] for k in ("judge_todo", "counts", "run_id")}
+                    if residue else None),
+        "cancelled": bool(state.cancel),
+        "wrote_poe_ports": False,
+        "search": False,
+        "finished_at": now_iso(),
+    }
+    await db.poe_runs.update_one(
+        {"_id": MINE_TASK_ID},
+        {"$set": {"mine": summary, "mined_at": now_iso()}},
+        upsert=True)
+    state.summary = summary
+    state.progress = state.total
+    log(f"mine terminé: {summary['counts']}")
+    return summary
+
+
+REMEMBERED_TASK_ID = "seed-remembered"
+
+
+async def apply_remembered_catalogs(db, state, *, persist_memory: bool = False,
+                                    mark_named: bool = True,
+                                    judge_residue: bool = True,
+                                    residue_limit: int = 25,
+                                    concurrency: int = 2,
+                                    use_agent: bool = False) -> dict:
+    """Fetch les seed_urls déjà mémorisées (0 Search) sur les ZEE 200 NM
+    encore sans catalogue, puis juge le résidu probable/unverified.
+
+    Pas de régime conjoint. N'écrit jamais poe_ports. Pas de seeds/build.
+    """
+    from app.db import get_settings
+
+    settings = {}
+    try:
+        settings = await get_settings()
+    except Exception:
+        pass
+    log = state.log
+    exc = load_exceptions()
+    seed_map = {
+        str(cc).upper(): [u for u in (urls or []) if str(u).startswith("http")]
+        for cc, urls in (exc.get("seed_urls") or {}).items()
+        if urls
+    }
+    seeds = await db.poe_seed_ports.find(
+        {},
+        {"name": 1, "mrgid": 1, "judge_status": 1, "judge_sources": 1,
+         "verify_verdict": 1, "has_coords": 1, "lat": 1, "lon": 1},
+    ).to_list(20000)
+    if not seeds:
+        raise ValueError("poe_seed_ports vide — lancer POST /api/poe/seeds/build")
+    zones = await db.eez_zones.find(
+        {},
+        {"mrgid": 1, "name": 1, "geoname": 1, "iso2": 1, "sov_iso2": 1,
+         "pol_type": 1, "catalog_bu": 1, "sources_bu": 1},
+    ).to_list(500)
+    targets = []
+    for z in zones:
+        cc = (z.get("iso2") or "").upper()
+        if cc not in seed_map:
+            continue
+        pol = (z.get("pol_type") or "").lower()
+        if "joint" in pol:
+            continue
+        if catalog_cache_from_zone(z).get("sufficient"):
+            continue
+        if z.get("mrgid") is None:
+            continue
+        targets.append(z)
+    url_mrgids: dict[str, set[int]] = defaultdict(set)
+    for z in targets:
+        mid = int(z["mrgid"])
+        for u in seed_map[(z.get("iso2") or "").upper()]:
+            url_mrgids[u].add(mid)
+    urls = list(url_mrgids)
+    key = tf_api_key(settings) or (os.environ.get("TINYFISH_API_KEY") or "")
+    log(f"remembered: {len(targets)} ZEE · {len(urls)} URL (0 Search)")
+    state.total = max(1, len(urls) + 1)
+    state.progress = 0
+    fetched = {}
+    if key and urls:
+        batches = (len(urls) + 9) // 10
+        for i in range(0, len(urls), 10):
+            if state.cancel:
+                break
+            batch = urls[i:i + 10]
+            log(f"remembered Fetch {i // 10 + 1}/{batches}")
+            try:
+                part = await asyncio.wait_for(tf_fetch(batch, key, log=log), timeout=180)
+            except TimeoutError:
+                log(f"remembered Fetch timeout lot {i // 10 + 1}")
+                part = {}
+            fetched.update(part or {})
+            state.progress = min(state.total, i + len(batch))
+    elif urls:
+        log("remembered: pas de clé TinyFish — Fetch sauté")
+
+    caches: dict[int, dict] = {}
+    catalog_urls = []
+    for u in urls:
+        harvest = harvest_bu_catalog({u: fetched.get(u) or {}}, [u])
+        if not harvest.get("sufficient"):
+            continue
+        catalog_urls.append(u)
+        for mid in url_mrgids.get(u) or []:
+            cache = caches.setdefault(mid, {"ports": [], "urls": [], "sufficient": False})
+            merge_catalog_cache(cache, harvest)
+
+    zone_by = {int(z["mrgid"]): z for z in zones if z.get("mrgid") is not None}
+    remembered = []
+    for mid, cache in caches.items():
+        zone = zone_by.get(mid) or {"mrgid": mid}
+        zone["sources_bu"] = list(cache.get("urls") or [])
+        zone["catalog_bu"] = list(cache.get("ports") or [])
+        zone["_bu_catalog"] = cache
+        zone_by[mid] = zone
+        added = remember_seed_urls(zone, cache.get("urls") or [], persist=persist_memory)
+        remembered.extend(added)
+        await persist_bu_catalog(db, zone, cache)
+        log(f"remembered ZEE {mid}: {len(cache.get('ports') or [])} ports · "
+            f"{len(cache.get('urls') or [])} url(s)")
+
+    counts = Counter()
+    counts["eez_targets"] = len(targets)
+    counts["urls_fetched"] = len(urls)
+    counts["urls_catalog"] = len(catalog_urls)
+    counts["eez_catalog"] = len(caches)
+    counts["remembered"] = len(remembered)
+
+    if mark_named and caches:
+        for doc in seeds:
+            if state.cancel:
+                break
+            mid = doc.get("mrgid")
+            try:
+                mid = int(mid) if mid is not None else None
+            except (TypeError, ValueError):
+                continue
+            cache = caches.get(mid)
+            if not cache:
+                continue
+            hit = seed_on_catalog(doc, cache.get("ports"))
+            if not hit:
+                continue
+            current = doc.get("judge_status")
+            if current and current not in ("inconclusive",):
+                counts["named_kept"] += 1
+                continue
+            judged = catalog_named_verdict(doc, hit, cache)
+            judged["judge_sources"] = list(
+                dict.fromkeys([*(cache.get("urls") or []), *iter_judge_urls(doc)]))
+            judged["verify_verdict"] = apply_judge_verdict(doc, judged)
+            await db.poe_seed_ports.update_one({"_id": doc["_id"]}, {"$set": judged})
+            counts["named_catalog"] += 1
+
+    residue = None
+    if judge_residue and caches and not state.cancel:
+        log(f"remembered: juge du résidu probable/unverified sur {len(caches)} ZEE")
+        residue = await execute_enrich(
+            db, state, source="seeds", do_geocode=False, do_verify=True,
+            verdicts=["probable", "unverified"], limit=residue_limit,
+            concurrency=concurrency, use_agent=use_agent,
+            persist_memory=persist_memory,
+            only_mrgids=set(caches), residue_only=True)
+        counts["residue_todo"] = residue.get("judge_todo") or 0
+        for k, v in (residue.get("counts") or {}).items():
+            counts[k] += v
+
+    summary = {
+        "run_id": REMEMBERED_TASK_ID,
+        "eez_catalog": sorted(caches),
+        "urls_catalog": catalog_urls,
+        "counts": dict(counts),
+        "residue": ({k: residue[k] for k in ("judge_todo", "counts", "run_id")}
+                    if residue else None),
+        "cancelled": bool(state.cancel),
+        "wrote_poe_ports": False,
+        "search": False,
+        "finished_at": now_iso(),
+    }
+    await db.poe_runs.update_one(
+        {"_id": REMEMBERED_TASK_ID},
+        {"$set": {"remembered": summary, "remembered_at": now_iso()}},
+        upsert=True)
+    state.summary = summary
+    state.progress = state.total
+    log(f"remembered terminé: {summary['counts']}")
     return summary

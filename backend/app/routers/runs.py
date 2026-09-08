@@ -31,6 +31,9 @@ POST /api/poe/seeds/verify             classe les graines + run versionné (pas 
 POST /api/poe/seeds/enrich             géocode + juge (lots, pas poe_ports)
 GET  /api/poe/seeds/enrich/status
 POST /api/poe/seeds/enrich/cancel
+POST /api/poe/seeds/mine-sources       Fetch des judge_sources déjà payés (0 Search)
+GET  /api/poe/seeds/mine-sources/status
+POST /api/poe/seeds/mine-sources/cancel
 GET  /api/poe/seeds/osm                Taginfo + cache OSM (pas d'Overpass)
 POST /api/poe/seeds/osm/refresh        recharge Overpass → osm_port_seeds
 GET  /api/poe/runs/code-fingerprint
@@ -127,6 +130,16 @@ class SeedEnrichBody(BaseModel):
     do_verify: bool = True
     verdicts: list[str] = Field(default_factory=lambda: ["name_only"])
     limit: int = 200
+    concurrency: int = 2
+    use_agent: bool = True
+
+
+class SeedMineBody(BaseModel):
+    fetch_cap: int = 200
+    judge_residue: bool = True
+    residue_limit: int = 0
+    persist_memory: bool = True
+    include_runs: bool = True
     concurrency: int = 2
     use_agent: bool = True
 
@@ -548,6 +561,82 @@ async def poe_seeds_enrich_cancel(run_id: str = "seed-enrich"):
     st.cancel = True
     st.log("Annulation enrich demandée — les graines restantes ne démarreront pas")
     return {"cancelling": True, "run_id": run_id}
+
+
+@router.post("/poe/seeds/mine-sources", status_code=202)
+async def poe_seeds_mine_sources(body: SeedMineBody | None = None):
+    """Fetch les judge_sources déjà payés. 0 Search. Pas de poe_ports."""
+    from app.services.poe_seed_enrich import MINE_TASK_ID, mine_paid_sources
+
+    body = body or SeedMineBody()
+    n = await _db.poe_seed_ports.count_documents({})
+    if not n:
+        raise HTTPException(404, "poe_seed_ports vide — lancer POST /api/poe/seeds/build")
+    if len(_active_ids()) >= MAX_PARALLEL_RUNS:
+        raise HTTPException(409, f"déjà {MAX_PARALLEL_RUNS} runs actifs")
+    if MINE_TASK_ID in RUN_STATES and RUN_STATES[MINE_TASK_ID].running:
+        raise HTTPException(409, f"Mine {MINE_TASK_ID} already running")
+    state = TaskState(max_logs=2000)
+    state.start()
+    RUN_STATES[MINE_TASK_ID] = state
+
+    async def _runner():
+        try:
+            state.summary = await mine_paid_sources(
+                _db, state,
+                fetch_cap=max(1, min(800, int(body.fetch_cap or 200))),
+                persist_memory=bool(body.persist_memory),
+                mark_named=True,
+                judge_residue=bool(body.judge_residue),
+                residue_limit=max(0, int(body.residue_limit or 0)),
+                include_runs=bool(body.include_runs),
+                concurrency=max(1, min(2, int(body.concurrency or 2))),
+                use_agent=bool(body.use_agent))
+        except Exception as e:
+            state.error = f"{type(e).__name__}: {e}"
+            state.log(f"FATAL: {state.error}")
+            await _db.poe_runs.update_one({"_id": MINE_TASK_ID}, {"$set": {
+                "mine_error": state.error,
+                "mine_finished_at": poe.now_iso()}}, upsert=True)
+        finally:
+            state.finish()
+
+    asyncio.create_task(_runner())
+    return {
+        "status": "started",
+        "run_id": MINE_TASK_ID,
+        "fetch_cap": body.fetch_cap,
+        "judge_residue": body.judge_residue,
+        "residue_limit": body.residue_limit,
+        "search": False,
+        "wrote_poe_ports": False,
+    }
+
+
+@router.get("/poe/seeds/mine-sources/status")
+async def poe_seeds_mine_status():
+    from app.services.poe_seed_enrich import MINE_TASK_ID
+
+    doc = await _db.poe_runs.find_one({"_id": MINE_TASK_ID})
+    out = {"run_id": MINE_TASK_ID, "mine": (doc or {}).get("mine"),
+           "mined_at": (doc or {}).get("mined_at"),
+           "wrote_poe_ports": False, "search": False}
+    st = RUN_STATES.get(MINE_TASK_ID)
+    if st is not None:
+        out["live"] = st.status()
+    return out
+
+
+@router.post("/poe/seeds/mine-sources/cancel")
+async def poe_seeds_mine_cancel():
+    from app.services.poe_seed_enrich import MINE_TASK_ID
+
+    st = RUN_STATES.get(MINE_TASK_ID)
+    if st is None or not st.running:
+        raise HTTPException(409, f"Mine {MINE_TASK_ID} is not running")
+    st.cancel = True
+    st.log("Annulation mine demandée")
+    return {"cancelling": True, "run_id": MINE_TASK_ID}
 
 
 @router.get("/poe/listing-control/review")

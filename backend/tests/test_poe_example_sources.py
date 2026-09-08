@@ -519,6 +519,39 @@ def test_nz_pofa_tables_yield_seaports_not_arrival():
     assert catalog_is_sufficient(ports, text)
 
 
+def test_nz_pofa_tinyfish_table_rows():
+    from app.core.extract import catalog_is_sufficient, extract_structured_ports
+    from app.services.poe_seed_enrich import harvest_bu_catalog
+    text = """
+    Places of first arrival – seaports
+    ## Approved ports
+    ## Northland
+    | Port contact (website) | Bay of Islands Marina |
+    | Northport | |
+    ## Auckland
+    | Port of Auckland Limited | |
+    | Chelsea Port, Birkenhead | |
+    ## Tauranga
+    | Port of Tauranga | |
+    ## Napier
+    | Napier Port | |
+    ## Dunedin (Port Chalmers)
+    | Port Chalmers | |
+    ## Invercargill (Bluff and Tiwai Point)
+    | South Port, Bluff | |
+    """
+    ports = extract_structured_ports(text)
+    names = {p["name"] for p in ports}
+    assert "Port of Tauranga" in names
+    assert "Northport" in names
+    assert "Bay of Islands Marina" in names
+    assert catalog_is_sufficient(ports, text)
+    h = harvest_bu_catalog(
+        {"https://www.mpi.govt.nz/pofa": {"text": text, "blocked": False}},
+        ["https://www.mpi.govt.nz/pofa"])
+    assert h["sufficient"] is True
+
+
 def test_nc_clearance_bureau_and_sx_generic_marina():
     from app.core.extract import extract_structured_ports
     nc = extract_structured_ports(

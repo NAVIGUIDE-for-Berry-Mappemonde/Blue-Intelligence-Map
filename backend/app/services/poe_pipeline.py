@@ -1060,7 +1060,10 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         try:
             from app.core import nvidia
             if nvidia.nvidia_enabled(settings):
-                model, engine = nvidia.second_extract_choice(context)
+                choice = nvidia.second_extract_choice(context)
+                if not choice:
+                    return None
+                model, engine = choice
                 ports = await nvidia.extract_ports_nvidia(
                     context, zone, settings=settings, log=log,
                     model=model, engine=engine)

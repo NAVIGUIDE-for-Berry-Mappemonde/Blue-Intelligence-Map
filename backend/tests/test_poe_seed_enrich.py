@@ -85,6 +85,9 @@ class TestParseAndVerdict:
         assert enr.parse_judge({"is_poe": None})["judge_status"] == "inconclusive"
         assert enr.parse_judge({})["judge_status"] == "inconclusive"
         assert enr.parse_judge({"is_poe": True})["judge_kind"] == "unknown"
+        assert enr.parse_judge({"is_poe": True, "confidence": 0.9})["judge_confidence"] == 90
+        assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
+        assert enr.parse_judge({"is_poe": True, "confidence": 80})["judge_confidence"] == 80
 
     def test_parse_judge_pleasure_or_mixed_accepted(self):
         pleasure = enr.parse_judge({
@@ -94,6 +97,81 @@ class TestParseAndVerdict:
         mixed = enr.parse_judge({
             "is_poe": True, "confidence": 80, "kind": "mixed"})
         assert mixed["judge_status"] == "accepted"
+
+
+class TestPaidSources:
+    def test_paid_fetch_urls_prefers_mpi_list(self):
+        doc = {
+            "judge_sources": [
+                "https://www.orc.govt.nz/media/agenda.pdf",
+                "https://www.mpi.govt.nz/resources-and-forms/registers-and-lists/places-of-first-arrival-seaports",
+                "https://www.customs.govt.nz/business/import/commercial-vessels",
+            ]
+        }
+        urls = enr.paid_fetch_urls(doc, cap=2)
+        assert urls[0].startswith("https://www.mpi.govt.nz/")
+        assert len(urls) == 2
+
+    def test_reuse_paid_sources_never_searches(self, monkeypatch):
+        searched = []
+
+        async def boom_search(*a, **k):
+            searched.append(1)
+            raise AssertionError("Search must not run")
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": "terminal conteneur cargo only"} for u in urls}
+
+        async def fake_llm(doc, zone, context, settings, log):
+            assert "terminal conteneur" in context
+            return {**enr.parse_judge({"is_poe": False, "confidence": 90, "kind": "cargo"}),
+                    "judge_engine": "nvidia-muse"}
+
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "_search_hits", boom_search)
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "_judge_llm", fake_llm)
+
+        out = _run(enr.judge_one(
+            {"name": "CentrePort", "judge_sources": [
+                "https://www.treasury.govt.nz/x.pdf"]},
+            {"name": "New Zealand", "iso2": "NZ", "mrgid": 8455},
+            {}, lambda m: None, use_agent=False, persist_memory=False,
+            reuse_paid_sources=True))
+        assert searched == []
+        assert out["judge_status"] == "rejected"
+        assert out["judge_engine"] == "nvidia-muse"
+        assert out["judge_sources"] == [
+            "https://www.treasury.govt.nz/x.pdf"]
+
+    def test_catalog_hit_skips_fetch_and_search(self, monkeypatch):
+        called = []
+
+        async def boom(*a, **k):
+            called.append(1)
+            raise AssertionError("network")
+
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "tf_fetch", boom)
+        monkeypatch.setattr(enr, "_search_hits", boom)
+        cache = {"sufficient": True, "urls": ["https://mpi.example/list"],
+                 "ports": [{"name": "Port of Tauranga", "extraction_engine": "catalog"}]}
+        out = _run(enr.judge_one(
+            {"name": "Port of Tauranga", "judge_sources": ["https://mpi.example/list"]},
+            {"name": "New Zealand", "iso2": "NZ", "mrgid": 8455,
+             "catalog_bu": cache["ports"], "sources_bu": cache["urls"]},
+            {}, lambda m: None, catalog_cache=cache,
+            reuse_paid_sources=True, use_agent=False))
+        assert called == []
+        assert out["judge_status"] == "catalog"
+        assert out["judge_engine"] == "catalog-bu"
+
+
+class TestParseJudgeKinds:
+    def test_parse_judge_mixed_and_marina(self):
+        mixed = enr.parse_judge({
+            "is_poe": True, "confidence": 80, "kind": "mixed"})
         assert mixed["judge_kind"] == "mixed"
         marina = enr.parse_judge({
             "is_poe": True, "kind": "pleasure",
@@ -132,6 +210,17 @@ class TestParseAndVerdict:
         judge = enr.parse_judge({"is_poe": True, "kind": "cargo"})
         assert judge["judge_status"] == "rejected"
         assert enr.apply_judge_verdict(seed, judge) == "unverified"
+
+    def test_catalog_named_does_not_confirm(self):
+        named = {"verify_verdict": "unverified", "seed_sources": ["listing"],
+                 "has_coords": True}
+        assert enr.apply_judge_verdict(named, {"judge_status": "catalog"}) == "unverified"
+        name_only = {"verify_verdict": "name_only", "has_coords": True}
+        assert enr.apply_judge_verdict(name_only, {"judge_status": "catalog"}) == "unverified"
+        no_gps = {"verify_verdict": "name_only"}
+        assert enr.apply_judge_verdict(no_gps, {"judge_status": "catalog"}) == "name_only"
+        probable = {"verify_verdict": "probable", "has_coords": True}
+        assert enr.apply_judge_verdict(probable, {"judge_status": "catalog"}) == "probable"
 
 
 class TestJudgeLlmEscalate:
@@ -514,3 +603,426 @@ class TestPickGeocode:
         assert out["geocode_rejected_lat"] == 43.216
         assert out["geocode_rejected_lon"] == 5.537
         assert out["geocode_rejected_source"] == "nominatim"
+
+
+_MX_SCT = """
+### **Puertos habilitados**
+#### 4.- Ensenada
+**Entidad federativa:**Baja California
+**Latitud:**31.8522146
+**Longitud:**-116.625788
+#### 5.- Guaymas
+**Entidad federativa:**Sonora
+**Latitud:**27.9
+**Longitud:**-110.9
+#### 34.- Manzanillo
+**Entidad federativa:**Colima
+**Latitud:**19.057546
+**Longitud:**-104.313762
+"""
+_MX_URL = "https://www.gob.mx/sct/puertos-habilitados"
+_ALOFI = (
+    "No plant material may be imported into Niue except through "
+    "the port of Alofi, the Hanan International Airport, or the Post Office."
+)
+
+
+def _mx_zone():
+    return {"mrgid": 8429, "name": "Mexico", "iso2": "MX", "sov_iso2": "MX"}
+
+
+def _patch_judge_net(monkeypatch, fetch_text=_MX_SCT, hits=None):
+    searches = []
+
+    async def fake_search(*a, **k):
+        searches.append(1)
+        return hits or [{"url": _MX_URL, "title": "SCT", "snippet": "puertos"}]
+
+    async def fake_fetch(urls, key, **k):
+        return {u: {"text": fetch_text, "blocked": False} for u in urls}
+
+    monkeypatch.setattr(enr, "load_exceptions", lambda: {})
+    monkeypatch.setattr(enr, "build_whitelist", lambda *a, **k: ["gob.mx"])
+    monkeypatch.setattr(enr, "url_allowed", lambda u, wl: "gob.mx" in u)
+    monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+    monkeypatch.setattr(enr, "tf_search_pages", fake_search)
+    monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+    return searches
+
+
+class TestBuCatalog:
+    def test_harvest_detects_sct_and_rejects_alofi_phrase(self):
+        found = enr.harvest_bu_catalog(
+            {_MX_URL: {"text": _MX_SCT, "blocked": False}}, [_MX_URL])
+        names = {p.get("name") for p in found["ports"]}
+        assert found["sufficient"] is True
+        assert {"Ensenada", "Guaymas", "Manzanillo"} <= names
+        assert _MX_URL in found["urls"]
+        stripped = enr.harvest_bu_catalog(
+            {_MX_URL: {"text": _MX_SCT.strip(), "blocked": False}}, [_MX_URL])
+        assert stripped["sufficient"] is True
+        assert {"Ensenada", "Guaymas", "Manzanillo"} <= {
+            p.get("name") for p in stripped["ports"]}
+        lone = enr.harvest_bu_catalog(
+            {"https://gov.nu/act": {"text": _ALOFI, "blocked": False}},
+            ["https://gov.nu/act"])
+        assert lone["sufficient"] is False
+        assert any(p.get("name") == "Alofi" for p in lone["ports"])
+
+    def test_named_on_list_skips_llm_and_remembers(self, monkeypatch):
+        searches = _patch_judge_net(monkeypatch)
+        llm_calls = []
+        remembered = []
+
+        async def boom(*a, **k):
+            llm_calls.append(1)
+            raise AssertionError("juge oui/non interdit si le nom est sur la liste")
+
+        def fake_remember(zone, urls, persist=True, **k):
+            remembered.append({"iso2": zone.get("iso2"), "urls": list(urls),
+                               "persist": persist})
+            return list(urls)
+
+        monkeypatch.setattr(enr, "_judge_llm", boom)
+        monkeypatch.setattr(enr, "remember_seed_urls", fake_remember)
+
+        out = _run(enr.judge_one(
+            {"name": "Ensenada", "mrgid": 8429, "seed_sources": ["listing"]},
+            _mx_zone(), {}, lambda m: None, persist_memory=False))
+        assert searches == [1]
+        assert llm_calls == []
+        assert out["judge_status"] == "catalog"
+        assert out["judge_engine"] == "catalog-bu"
+        assert out["catalog_named"] is True
+        assert out["official_name"] == "Ensenada"
+        assert remembered and remembered[0]["iso2"] == "MX"
+        assert _MX_URL in remembered[0]["urls"]
+        assert remembered[0]["persist"] is False
+
+    def test_residue_calls_llm_and_attaches_sources_bu(self, monkeypatch):
+        _patch_judge_net(monkeypatch)
+        llm_calls = []
+
+        async def fake_llm(*a, **k):
+            llm_calls.append(1)
+            return {**enr.parse_judge({"is_poe": None, "reason": "hors liste"}),
+                    "judge_engine": "claude-haiku"}
+
+        monkeypatch.setattr(enr, "_judge_llm", fake_llm)
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+
+        out = _run(enr.judge_one(
+            {"name": "Puerto Fantasma", "mrgid": 8429, "seed_sources": ["v1"]},
+            _mx_zone(), {}, lambda m: None, persist_memory=False))
+        assert llm_calls == [1]
+        assert out["judge_status"] == "inconclusive"
+        assert out["catalog_named"] is False
+        assert out["sources_bu"] == [_MX_URL]
+        assert out["catalog_bu_n"] >= 3
+
+    def test_second_seed_same_zone_skips_search(self, monkeypatch):
+        searches = _patch_judge_net(monkeypatch)
+        cache = {}
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+
+        async def boom(*a, **k):
+            raise AssertionError("2e graine déjà sur la liste : pas de LLM")
+
+        monkeypatch.setattr(enr, "_judge_llm", boom)
+        zone = _mx_zone()
+        first = _run(enr.judge_one(
+            {"name": "Ensenada", "mrgid": 8429},
+            zone, {}, lambda m: None, catalog_cache=cache, persist_memory=False))
+        assert first["judge_status"] == "catalog"
+        assert searches == [1]
+        assert cache.get("sufficient") is True
+        second = _run(enr.judge_one(
+            {"name": "Guaymas", "mrgid": 8429},
+            zone, {}, lambda m: None, catalog_cache=cache, persist_memory=False))
+        assert second["judge_status"] == "catalog"
+        assert second["judge_engine"] == "catalog-bu"
+        assert searches == [1]
+
+    def test_persist_writes_eez_zones_not_poe_ports(self):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        cache = {
+            "sufficient": True,
+            "urls": [_MX_URL],
+            "ports": [{"name": "Ensenada", "lat": 31.8522146, "lon": -116.625788}],
+        }
+        _run(enr.persist_bu_catalog(db, {"mrgid": 1, "iso2": "MX"}, cache))
+        assert db.poe_ports.updates == []
+        assert db.eez_zones.updates
+        q, upd, _upsert = db.eez_zones.updates[0]
+        assert q == {"mrgid": 1}
+        assert upd["$addToSet"]["sources_bu"]["$each"] == [_MX_URL]
+        assert upd["$set"]["catalog_bu"][0]["name"] == "Ensenada"
+        assert "catalog_bu_at" in upd["$set"]
+
+    def test_execute_enrich_shares_cache_and_counts_catalog(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429, "lat": 31.85,
+             "lon": -116.62, "has_coords": True, "verify_verdict": "unverified",
+             "seed_sources": ["listing"]},
+            {"_id": "g1", "name": "Guaymas", "mrgid": 8429, "lat": 27.9,
+             "lon": -110.9, "has_coords": True, "verify_verdict": "unverified",
+             "seed_sources": ["v1"]},
+        ])
+        db.eez_zones = _FakeColl([{
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX", "sov_iso2": "MX",
+        }])
+        searches = _patch_judge_net(monkeypatch)
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [_MX_URL])
+
+        async def boom(*a, **k):
+            raise AssertionError("noms SCT : pas de juge oui/non")
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "_judge_llm", boom)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.execute_enrich(
+            db, state, source="seeds", limit=0, do_geocode=False,
+            verdicts=["unverified"], use_agent=False, concurrency=1,
+            persist_memory=False))
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert summary["counts"].get("judge_catalog") == 2
+        assert searches == [1]
+        assert db.eez_zones.updates
+        assert "sources_bu" in db.eez_zones.updates[0][1]["$addToSet"]
+        verdicts = [
+            u[1]["$set"].get("judge_status")
+            for u in db.poe_seed_ports.updates
+            if u[1].get("$set", {}).get("judge_status")
+        ]
+        assert verdicts == ["catalog", "catalog"]
+
+
+class TestMinePaidSources:
+    def test_select_list_url_drops_noonsite_and_embassy(self):
+        items = enr.collect_paid_source_urls([
+            {"name": "A", "mrgid": 8429, "judge_sources": [
+                "https://www.noonsite.com/country/mx/ensenada",
+                "https://www.gob.mx/sct/puertos-habilitados",
+                "https://www.mfa.government.bg/en/embassyinfo/india",
+            ]},
+            {"name": "B", "mrgid": 8429, "judge_sources": [
+                "https://www.gob.mx/sct/puertos-habilitados",
+            ]},
+        ])
+        picked = enr.select_mine_urls(items, cap=10)
+        urls = [it["url"] for it in picked]
+        assert urls == [_MX_URL] or any("habilitados" in u for u in urls)
+        assert not any("noonsite" in u for u in urls)
+        assert not any("embassyinfo" in u for u in urls)
+        assert enr.select_mine_urls(items, cap=1)[0]["url"] == _MX_URL
+
+    def test_mine_fetch_without_search_marks_named(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "unverified", "has_coords": True,
+             "judge_sources": [_MX_URL]},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429,
+             "verify_verdict": "unverified", "has_coords": True,
+             "judge_sources": [_MX_URL]},
+            {"_id": "m1", "name": "Manzanillo", "mrgid": 8429,
+             "verify_verdict": "probable", "judge_status": "accepted",
+             "has_coords": True, "judge_sources": [_MX_URL]},
+        ])
+        db.eez_zones = _FakeColl([{
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX", "sov_iso2": "MX",
+        }])
+        db.poe_run_ports = _FakeColl([])
+
+        async def boom_search(*a, **k):
+            raise AssertionError("mine = 0 Search")
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [_MX_URL])
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.mine_paid_sources(
+            db, state, fetch_cap=20, persist_memory=False,
+            mark_named=True, judge_residue=False, include_runs=False))
+        assert summary["search"] is False
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert 8429 in summary["eez_catalog"]
+        assert _MX_URL in summary["urls_catalog"]
+        assert summary["counts"]["named_catalog"] == 1
+        assert summary["counts"]["named_kept"] == 1
+        assert db.eez_zones.updates
+        named = [
+            u[1]["$set"]
+            for u in db.poe_seed_ports.updates
+            if u[1].get("$set", {}).get("judge_status") == "catalog"
+        ]
+        assert named and named[0].get("official_name") == "Ensenada"
+
+    def test_mine_residue_restricted_to_catalog_eez(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "unverified",
+             "judge_sources": [_MX_URL]},
+        ])
+        db.eez_zones = _FakeColl([
+            {"mrgid": 8429, "name": "Mexico", "iso2": "MX"},
+        ])
+        db.poe_run_ports = _FakeColl([])
+        seen = {}
+
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        async def fake_enrich(*a, **k):
+            seen.update(k)
+            return {"judge_todo": 1, "counts": {"judge_inconclusive": 1},
+                    "run_id": "seed-enrich"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+        monkeypatch.setattr(enr, "execute_enrich", fake_enrich)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.mine_paid_sources(
+            db, state, persist_memory=False, mark_named=False,
+            judge_residue=True, include_runs=False))
+        assert seen.get("residue_only") is True
+        assert seen.get("do_geocode") is False
+        assert 8429 in set(seen.get("only_mrgids") or [])
+
+    def test_execute_enrich_residue_skips_named(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429, "lat": 31.85,
+             "lon": -116.62, "has_coords": True, "verify_verdict": "unverified"},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429, "lat": 1,
+             "lon": 1, "has_coords": True, "verify_verdict": "unverified"},
+        ])
+        db.eez_zones = _FakeColl([{
+            "mrgid": 8429, "name": "Mexico", "iso2": "MX",
+            "sources_bu": [_MX_URL],
+            "catalog_bu": [
+                {"name": "Ensenada", "lat": 31.85, "lon": -116.62},
+                {"name": "Guaymas", "lat": 27.9, "lon": -110.9},
+                {"name": "Manzanillo", "lat": 19.05, "lon": -104.31},
+            ],
+        }])
+        judged = []
+
+        async def fake_judge(doc, *a, **k):
+            judged.append(doc["name"])
+            return {**enr.parse_judge({"is_poe": None, "reason": "hors liste"}),
+                    "judge_engine": "claude-haiku", "judge_at": "t"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "judge_one", fake_judge)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        _run(enr.execute_enrich(
+            db, state, source="seeds", limit=0, do_geocode=False,
+            verdicts=["unverified"], use_agent=False, concurrency=1,
+            persist_memory=False, only_mrgids={8429}, residue_only=True))
+        assert judged == ["Puerto Fantasma"]
+
+
+class TestRememberedCatalogs:
+    def test_fetch_seed_urls_skips_joint_and_existing(self, monkeypatch):
+        db = _FakeDB()
+        db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
+        db.poe_seed_ports = _FakeColl([
+            {"_id": "e1", "name": "Ensenada", "mrgid": 8429,
+             "verify_verdict": "probable"},
+            {"_id": "f1", "name": "Puerto Fantasma", "mrgid": 8429,
+             "verify_verdict": "probable"},
+        ])
+        db.eez_zones = _FakeColl([
+            {"mrgid": 8429, "name": "Mexico", "iso2": "MX", "pol_type": "200NM"},
+            {"mrgid": 48966, "name": "France", "iso2": "FR",
+             "pol_type": "Joint regime"},
+            {"mrgid": 8367, "name": "Morocco", "iso2": "MA", "pol_type": "200NM",
+             "sources_bu": [_MX_URL],
+             "catalog_bu": [
+                 {"name": "Agadir", "lat": 30.4, "lon": -9.6},
+                 {"name": "Tanger", "lat": 35.8, "lon": -5.8},
+                 {"name": "Casablanca", "lat": 33.6, "lon": -7.6},
+             ]},
+        ])
+        fetched_urls = []
+
+        async def boom_search(*a, **k):
+            raise AssertionError("remembered = 0 Search")
+
+        async def fake_fetch(urls, key, **k):
+            fetched_urls.extend(urls)
+            return {u: {"text": _MX_SCT, "blocked": False} for u in urls}
+
+        seen = {}
+
+        async def fake_enrich(*a, **k):
+            seen.update(k)
+            return {"judge_todo": 1, "counts": {"judge_inconclusive": 1},
+                    "run_id": "seed-enrich"}
+
+        async def fake_settings():
+            return {}
+
+        monkeypatch.setattr(enr, "load_exceptions", lambda: {"seed_urls": {
+            "MX": [_MX_URL],
+            "FR": ["https://www.douane.gouv.fr/liste-ports-de-plaisance-eligibles.pdf"],
+            "MA": ["https://www.douane.gov.ma/already"],
+        }})
+        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])
+        monkeypatch.setattr(enr, "execute_enrich", fake_enrich)
+        import app.db as app_db
+        monkeypatch.setattr(app_db, "get_settings", fake_settings)
+
+        state = TaskState()
+        summary = _run(enr.apply_remembered_catalogs(
+            db, state, persist_memory=False, mark_named=True,
+            judge_residue=True, residue_limit=25))
+        assert summary["search"] is False
+        assert summary["wrote_poe_ports"] is False
+        assert db.poe_ports.updates == []
+        assert fetched_urls == [_MX_URL]
+        assert 8429 in summary["eez_catalog"]
+        assert 48966 not in summary["eez_catalog"]
+        assert 8367 not in summary["eez_catalog"]
+        assert seen.get("residue_only") is True
+        assert seen.get("source") == "seeds"
+        assert seen.get("verdicts") == ["probable", "unverified"]
+        assert 8429 in set(seen.get("only_mrgids") or [])

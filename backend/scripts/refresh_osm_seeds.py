@@ -2,7 +2,7 @@
 """Recharge osm_port_seeds depuis Overpass, puis mesure l'union (v1+runs+OSM+listing).
 
 Hérite MONGO_URL / DB_NAME du process uvicorn s'ils pointent vers Atlas
-(le .env local est souvent mongodb://localhost).
+(install.sh aligne aussi backend/.env : localhost → Atlas si le secret est là).
 N'écrit jamais dans poe_ports.
 """
 from __future__ import annotations
