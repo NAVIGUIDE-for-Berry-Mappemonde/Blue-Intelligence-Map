@@ -1,6 +1,7 @@
 import { Radio, ExternalLink, MapPin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api";
+import { formatCapitainerieSource } from "../lib/capitainerieSource";
 import { phoneQueryMatches } from "../lib/phoneMatch";
 
 const LIST_CAP = 250;
@@ -123,7 +124,7 @@ export default function CapitaineriesPanel({ t, capitaineries, onFlyTo, onRefres
           const [lon, lat] = f.geometry?.coordinates || [0, 0];
           return (
             <button
-              key={p.id || p.osm_id || p.shom_id}
+              key={p.id || p.osm_id || p.shom_id || p.noaa_id}
               data-testid={`capitainerie-row-${p.id}`}
               onClick={() => onFlyTo && onFlyTo(p.id, lat, lon)}
               className="w-full text-left px-4 py-3 border-b border-line hover:bg-raised transition-colors group"
@@ -142,7 +143,7 @@ export default function CapitaineriesPanel({ t, capitaineries, onFlyTo, onRefres
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-accent/15 text-accent border-accent/40">
-                      {p.source === "shom" ? t("marinasSourceSHOM") : t("marinasSourceOSM")}
+                      {formatCapitainerieSource(p.source, t)}
                     </span>
                     {p.website && (
                       <ExternalLink size={11} className="text-slate-500 ml-auto shrink-0" />

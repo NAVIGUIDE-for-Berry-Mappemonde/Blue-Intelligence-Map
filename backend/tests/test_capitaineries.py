@@ -11,11 +11,13 @@ from app.core.tasks import BuildState
 from app.services import capitainerie_world as cw
 from app.services.capitainerie_enrich import (
     allow_web_lookup,
+    contact_search_query,
     enrich_capitainerie,
     merge_contact_payload,
     needs_website_enrich,
     rank_enrich_candidates,
 )
+from app.services import capitainerie_enrich as ce
 
 
 class _FakeColl:
@@ -187,6 +189,7 @@ def test_slim_geojson_exposes_phone_vhf_not_marina_fields():
     assert "nearest_waypoint" not in p
     assert "ODbL" in fc["attribution"]
     assert "SHOM" in fc["attribution"]
+    assert "NOAA" in fc["attribution"]
 
 
 def test_upsert_preserves_phone():
@@ -271,6 +274,7 @@ def test_build_resumable_and_shom_overlay():
         tiles=(tile_a, tile_b), throttle_s=0,
         fetch_tile=fetch, fetch_shom=fetch_shom,
         shom_bboxes=((46.0, -2.0, 47.0, 0.0),),
+        skip_noaa=True,
     ))
     assert summary1["inserted"] == 2
     assert summary1["shom"]["merged"] == 1
@@ -285,6 +289,7 @@ def test_build_resumable_and_shom_overlay():
         tiles=(tile_a, tile_b), throttle_s=0,
         fetch_tile=fetch, fetch_shom=fetch_shom,
         shom_bboxes=((46.0, -2.0, 47.0, 0.0),),
+        skip_noaa=True,
     ))
     assert summary2["tiles_skipped"] == 2
     assert calls["n"] == first_calls
@@ -340,13 +345,29 @@ def test_rank_enrich_prefers_official_website():
     assert [d["_id"] for d in ordered] == ["c", "b", "a", "d"]
     assert allow_web_lookup(site) is True
     assert allow_web_lookup(named) is True
-    assert allow_web_lookup(anon) is False
-    assert allow_web_lookup(generic) is False
+    assert allow_web_lookup(anon) is True
+    assert allow_web_lookup(generic) is True
+    assert allow_web_lookup({"name": "Capitainerie"}) is False
 
 
-def test_enrich_generic_shom_name_skips_web():
+def test_contact_search_query_uses_gps_for_generic_name():
+    q = contact_search_query({"name": "Capitainerie", "lat": 46.1592, "lon": -1.1517})
+    assert "46.1592" in q
+    assert "-1.1517" in q
+    assert "capitainerie" in q.lower()
+    named = contact_search_query({
+        "name": "Capitainerie des Minimes", "lat": 46.15, "lon": -1.16,
+    })
+    assert "Minimes" in named
+
+
+def test_enrich_generic_with_gps_skips_paid_without_pages(monkeypatch):
+    async def no_urls(*a, **k):
+        return []
+
+    monkeypatch.setattr(ce, "discover_contact_urls", no_urls)
     doc = {"_id": "shom:x", "name": "Capitainerie", "lat": 46.15, "lon": -1.16, "tags": {}}
-    assert allow_web_lookup(doc) is False
+    assert allow_web_lookup(doc) is True
     result = asyncio.run(enrich_capitainerie(
         doc, openrouter_key="sk-or-fake", tinyfish_key="tf-fake",
     ))
@@ -354,11 +375,237 @@ def test_enrich_generic_shom_name_skips_web():
     assert result["enrichment_source"] is None
 
 
-def test_enrich_unnamed_without_site_skips_web():
-    doc = {"_id": "node/9", "name": "", "lat": 46.15, "lon": -1.16, "tags": {}}
+def test_enrich_unnamed_without_coords_skips_web():
+    doc = {"_id": "node/9", "name": "", "tags": {}}
     result = asyncio.run(enrich_capitainerie(
         doc, openrouter_key="sk-or-fake", tinyfish_key="tf-fake",
     ))
     assert result["_tinyfish_attempted"] is False
     assert result["enrichment_source"] is None
     assert result["enriched"] is False
+
+
+def test_clean_phone_prefers_tel_link_and_skips_fax():
+    phone, _ = cw.contact_from_text(
+        "Fax 05 46 00 00 01 — accueil tel:+33-5-46-41-44-20"
+    )
+    assert phone and phone.startswith("+33")
+    fax_only, _ = cw.contact_from_text("Fax 05 46 00 00 01")
+    assert fax_only is None
+
+
+def test_clean_vhf_accepts_us_and_uk_channels():
+    _, vhf = cw.contact_from_text("Harbour master VHF 09 / 68 / 80")
+    assert vhf == "9/68/80"
+    _, dropped = cw.contact_from_text("channel 99")
+    assert dropped is None
+
+
+def test_noaa_buisgl_area_centroid():
+    feat = {
+        "id": 77,
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [-76.48, 38.97], [-76.47, 38.97],
+                [-76.47, 38.98], [-76.48, 38.97],
+            ]],
+        },
+        "properties": {
+            "FUNCTN": "2,3", "OBJNAM": "Harbor Master",
+            "OBJECTID": 77, "INFORM": "VHF 16 / 09 tel 410-263-7973",
+        },
+    }
+    cand = cw.capitainerie_from_noaa(
+        feat, service="enc_harbour", layer_id=143, kind="area",
+    )
+    assert cand is not None
+    assert cand["noaa_id"] == "noaa:enc_harbour:area:143:77"
+    assert cand["source"] == "noaa"
+    assert "Harbor Master" in cand["name"]
+    assert cand["canal_vhf"] == "16/9"
+    assert cand["telephone"]
+    covered = {
+        "id": 8,
+        "geometry": {"type": "Point", "coordinates": [-76.48, 38.97]},
+        "properties": {"FUNCTN": "2", "OBJECTID": 8, "INFORM": "Covered slips"},
+    }
+    covered_cand = cw.capitainerie_from_noaa(
+        covered, service="enc_harbour", layer_id=22, kind="point",
+    )
+    assert covered_cand["name"] == "Harbour master's office"
+    customs = {
+        "id": 1,
+        "geometry": {"type": "Point", "coordinates": [-76.48, 38.97]},
+        "properties": {"FUNCTN": "3", "OBJECTID": 1},
+    }
+    assert cw.capitainerie_from_noaa(
+        customs, service="enc_harbour", layer_id=22, kind="point",
+    ) is None
+
+
+def test_noaa_merges_nearby_and_inserts_orphan():
+    osm = {
+        "_id": "node/1", "osm_id": "node/1", "name": "Annapolis HM",
+        "lat": 38.9780, "lon": -76.4900, "source": "openstreetmap",
+        "sources": ["openstreetmap"], "tags": {},
+    }
+    coll = _FakeColl([osm])
+    near = {
+        "noaa_id": "noaa:enc_harbour:area:143:1", "name": "Harbor Master",
+        "lat": 38.9781, "lon": -76.4901, "tags": {"noaa:functn": "2"},
+        "telephone": "410-263-7973", "canal_vhf": "9", "sources": ["noaa"],
+    }
+    far = {
+        "noaa_id": "noaa:enc_harbour:area:143:2", "name": "Baltimore HM",
+        "lat": 39.28, "lon": -76.58, "tags": {"noaa:functn": "2"},
+        "telephone": None, "canal_vhf": "16", "sources": ["noaa"],
+    }
+    now = "2026-09-08T00:00:00Z"
+    pts = list(coll.docs)
+    assert asyncio.run(cw.upsert_noaa(coll, near, now, pts)) == "merged"
+    assert "noaa" in coll.docs[0]["source"]
+    assert coll.docs[0]["telephone"] == "410-263-7973"
+    assert asyncio.run(cw.upsert_noaa(coll, far, now, pts)) == "inserted"
+    orphan = next(d for d in coll.docs if d.get("_id") == "noaa:enc_harbour:area:143:2")
+    assert "osm_id" not in orphan
+    assert orphan["source"] == "noaa"
+
+
+def test_build_noaa_overlay(monkeypatch):
+    coll = _FakeColl([{
+        "_id": "node/11", "osm_id": "node/11", "name": "La Rochelle",
+        "lat": 46.15, "lon": -1.16, "source": "openstreetmap",
+        "sources": ["openstreetmap"], "tags": {},
+    }])
+    cursor = _FakeColl([{"_id": cw.CURSOR_ID, "done_tiles": ["t"]}])
+
+    async def fetch(_client, tile):
+        return []
+
+    async def fetch_shom(_client, bbox):
+        return []
+
+    async def fetch_noaa(_client):
+        return [{
+            "noaa_id": "noaa:enc_harbour:area:143:9",
+            "name": "Harbor Master Annapolis",
+            "lat": 38.9784, "lon": -76.4845,
+            "tags": {"noaa:functn": "2"},
+            "telephone": None, "canal_vhf": "9", "sources": ["noaa"],
+        }]
+
+    state = BuildState()
+    summary = asyncio.run(cw.build_world_capitaineries(
+        coll=coll, cursor_coll=cursor, state=state, resume=True,
+        tiles=(), throttle_s=0,
+        fetch_tile=fetch, fetch_shom=fetch_shom, fetch_noaa=fetch_noaa,
+        skip_shom=True,
+    ))
+    assert summary["noaa"]["inserted"] == 1
+    assert any(d.get("noaa_id") == "noaa:enc_harbour:area:143:9" for d in coll.docs)
+
+
+def test_enrich_regex_from_fetch_skips_llm(monkeypatch):
+    async def urls(*a, **k):
+        return ["https://port.example/capitainerie"]
+
+    async def pages(u, tinyfish_key=None, logger=None):
+        return [{
+            "url": u[0], "title": "Port",
+            "text": "Capitainerie tél. 05 46 41 44 20 — VHF 9 / 16",
+        }]
+
+    async def must_not_muse(*a, **k):
+        raise AssertionError("Muse should not run when regex is complete")
+
+    async def must_not_or(*a, **k):
+        raise AssertionError("OpenRouter should not run when regex is complete")
+
+    monkeypatch.setattr(ce, "discover_contact_urls", urls)
+    monkeypatch.setattr(ce, "fetch_contact_pages", pages)
+    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", must_not_muse)
+    monkeypatch.setattr(ce, "enrich_via_openrouter", must_not_or)
+    doc = {
+        "_id": "node/1", "name": "Capitainerie des Minimes",
+        "lat": 46.15, "lon": -1.16, "tags": {},
+    }
+    result = asyncio.run(enrich_capitainerie(
+        doc, tinyfish_key="tf", openrouter_key="or",
+        settings={"nvidia_api_key": "nv"},
+    ))
+    assert result["enrichment_source"] == "fetch"
+    assert result["telephone"]
+    assert result["canal_vhf"] == "9/16"
+    assert result["_tinyfish_attempted"] is False
+
+
+def test_enrich_muse_before_openrouter(monkeypatch):
+    order = []
+
+    async def urls(*a, **k):
+        return ["https://port.example/hm"]
+
+    async def pages(u, tinyfish_key=None, logger=None):
+        return [{"url": u[0], "title": "HM", "text": "The harbour office is open daily."}]
+
+    async def muse(*a, **k):
+        order.append("muse")
+        return {"telephone": "+33 5 46 00 00 00", "canal_vhf": "9"}
+
+    async def openrouter(*a, **k):
+        order.append("openrouter")
+        return {"telephone": "should-not-win", "canal_vhf": "16"}
+
+    monkeypatch.setattr(ce, "discover_contact_urls", urls)
+    monkeypatch.setattr(ce, "fetch_contact_pages", pages)
+    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", muse)
+    monkeypatch.setattr(ce, "enrich_via_openrouter", openrouter)
+    doc = {
+        "_id": "node/1", "name": "Bureau du port",
+        "lat": 46.15, "lon": -1.16, "tags": {},
+        "website": "https://port.example/hm",
+    }
+    result = asyncio.run(enrich_capitainerie(
+        doc, tinyfish_key="tf", openrouter_key="or",
+        settings={"nvidia_api_key": "nv"},
+    ))
+    assert order == ["muse"]
+    assert result["enrichment_source"] == "nvidia-muse"
+    assert result["telephone"].startswith("+33")
+    assert result["canal_vhf"] == "9"
+
+
+def test_enrich_openrouter_after_empty_muse(monkeypatch):
+    order = []
+
+    async def urls(*a, **k):
+        return ["https://port.example/hm"]
+
+    async def pages(u, tinyfish_key=None, logger=None):
+        return [{"url": u[0], "title": "HM", "text": "Call the harbour master on channel sixteen."}]
+
+    async def muse(*a, **k):
+        order.append("muse")
+        return None
+
+    async def openrouter(*a, **k):
+        order.append("openrouter")
+        return {"telephone": None, "canal_vhf": "16"}
+
+    monkeypatch.setattr(ce, "discover_contact_urls", urls)
+    monkeypatch.setattr(ce, "fetch_contact_pages", pages)
+    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", muse)
+    monkeypatch.setattr(ce, "enrich_via_openrouter", openrouter)
+    doc = {
+        "_id": "node/1", "name": "Bureau du port",
+        "lat": 46.15, "lon": -1.16, "tags": {},
+        "website": "https://port.example/hm",
+    }
+    result = asyncio.run(enrich_capitainerie(
+        doc, tinyfish_key="tf", openrouter_key="or",
+    ))
+    assert order == ["muse", "openrouter"]
+    assert result["enrichment_source"] == "openrouter"
+    assert result["canal_vhf"] == "16"
+

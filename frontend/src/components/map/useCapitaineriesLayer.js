@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { formatCapitainerieSource } from "../../lib/capitainerieSource";
 
 const esc = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -10,7 +11,7 @@ const esc = (value) => String(value ?? "")
 const COLOR = "#38bdf8";
 
 /**
- * Couche Capitaineries : OSM harbour_master + SHOM CATSCF=6.
+ * Couche Capitaineries : OSM harbour_master + SHOM + NOAA ENC.
  * Popup : téléphone et VHF — pas de rattachement marina.
  */
 export default function useCapitaineriesLayer({
@@ -52,11 +53,7 @@ export default function useCapitaineriesLayer({
             || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
               `${p.name || ""} ${lat},${lon}`.trim(),
             )}`;
-          const src = p.source === "shom"
-            ? t("marinasSourceSHOM")
-            : p.source === "osm+shom"
-              ? `${t("marinasSourceOSM")} + ${t("marinasSourceSHOM")}`
-              : t("marinasSourceOSM");
+          const src = formatCapitainerieSource(p.source, t);
           const phoneRow = p.telephone
             ? `<div style="font-size:12px;margin-top:6px;"><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;">${esc(t("marinasPhone"))}</span>
                 <a href="tel:${esc(p.telephone)}" style="color:#38bdf8;text-decoration:none;">${esc(p.telephone)}</a></div>`
