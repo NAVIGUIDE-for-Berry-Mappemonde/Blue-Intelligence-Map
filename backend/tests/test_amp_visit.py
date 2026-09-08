@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,9 @@ class _FakeColl:
         for k, v in q.items():
             if isinstance(v, dict) and "$in" in v:
                 if doc.get(k) not in v["$in"]:
+                    return False
+            elif isinstance(v, dict) and "$regex" in v:
+                if not re.search(v["$regex"], str(doc.get(k) or "")):
                     return False
             elif doc.get(k) != v:
                 return False
@@ -345,6 +349,41 @@ def test_discover_search_uses_injected_judge():
     assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-cerbere-banyuls"
     assert db.amp_sites.docs[0]["visit_url_judge"] == "nvidia-muse"
     assert out["from_search"] == 1
+
+
+def test_discover_fetch_dedupes_shared_manager_url():
+    docs = [
+        {
+            "_id": "J1", "site_id": "J1", "name": "Zone J1",
+            "manager_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+            "visit_url": None, "visit_url_status": "none",
+        },
+        {
+            "_id": "J2", "site_id": "J2", "name": "Zone J2",
+            "manager_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+            "visit_url": None, "visit_url_status": "none",
+        },
+    ]
+    db = _FakeDB(docs)
+    state = TaskState()
+    seen = []
+
+    async def fetch_many(urls):
+        seen.append(list(urls))
+        return {
+            u: {"links": ["https://natura2000.eea.europa.eu/Natura2000/visite"], "text": ""}
+            for u in urls
+        }
+
+    asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=True,
+        fetch_many_fn=fetch_many, tf_key="test",
+        refresh_attrs=False, use_llm_judge=False,
+    ))
+    assert seen == [["https://natura2000.eea.europa.eu/Natura2000/SDF.aspx"]]
+    assert all(d.get("visit_url") for d in db.amp_sites.docs)
 
 
 def test_discover_judge_can_reject_every_hit():

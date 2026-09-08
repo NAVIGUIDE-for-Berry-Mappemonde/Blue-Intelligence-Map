@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import defaultdict
 from typing import Awaitable, Callable
 from app.core.extract import serp_filter
 from app.core.tinyfish import AMP_VISIT_PURPOSE, FETCH_URL_CAP, tf_api_key, tf_fetch, tf_search
@@ -366,8 +367,19 @@ async def discover_visit_urls(
     remaining: list[dict] = []
     try:
         if refresh_attrs and docs:
+            refresh_docs = list(docs)
+            seen_ids = {d.get("_id") for d in refresh_docs}
+            try:
+                dirty = await db.amp_sites.find(
+                    {"manager_url": {"$regex": r"\|"}}).to_list(2000)
+            except Exception:
+                dirty = []
+            for extra in dirty:
+                if extra.get("_id") not in seen_ids:
+                    refresh_docs.append(extra)
+                    seen_ids.add(extra.get("_id"))
             counters["attrs_refreshed"] = await amp_svc.refresh_protectedseas_attrs(
-                db, docs, fetch_fn=attrs_fetch_fn, log=state.log)
+                db, refresh_docs, fetch_fn=attrs_fetch_fn, log=state.log)
 
         settings = {}
         if use_llm_judge or tf_key is None:
@@ -394,7 +406,7 @@ async def discover_visit_urls(
                 if doc.get("visit_url_status") == "rejected_same_as_manager":
                     counters["rejected_same_as_manager"] += 1
                 remaining.append(doc)
-                if after != before or doc.get("manager_url"):
+                if after != before or doc.get("ps_website_raw"):
                     await _write_visit(db, doc)
             state.progress += 1
 
@@ -411,34 +423,46 @@ async def discover_visit_urls(
                     q, key=key, include_domains=include_domains, log=state.log))
 
             after_fetch: list[dict] = []
-            for i in range(0, len(remaining), FETCH_BATCH):
+            by_manager: dict[str, list[dict]] = defaultdict(list)
+            for doc in remaining:
+                url = doc.get("manager_url") or ""
+                if url:
+                    by_manager[url].append(doc)
+                else:
+                    after_fetch.append(doc)
+            unique_urls = list(by_manager)
+            state.log(
+                f"TinyFish Fetch : {len(unique_urls)} URL gestionnaire(s) "
+                f"pour {len(remaining)} site(s)")
+            for i in range(0, len(unique_urls), FETCH_BATCH):
                 if getattr(state, "cancel", False):
                     state.log("Stop demandé")
                     break
-                chunk = remaining[i:i + FETCH_BATCH]
-                urls = [d.get("manager_url") for d in chunk if d.get("manager_url")]
+                batch_urls = unique_urls[i:i + FETCH_BATCH]
                 try:
-                    recs = await fetch_many(urls) if urls else {}
+                    recs = await fetch_many(batch_urls)
                 except Exception as exc:
                     state.log(f"Lot Fetch : {type(exc).__name__}: {str(exc)[:80]}")
                     recs = {}
-                for doc in chunk:
-                    rec = recs.get(doc.get("manager_url") or "") or {}
-                    picked = pick_visit_from_urls(
-                        doc.get("manager_url"), urls_from_fetch_record(rec),
-                        name=doc.get("name") or "")
-                    verdict = await _commit_discovered(
-                        db, doc, picked, "tinyfish_fetch")
-                    if verdict == "found":
-                        counters["from_fetch"] += 1
-                        state.log(f"✓ {doc.get('name')} ← tinyfish_fetch")
-                    elif verdict == "rejected":
-                        counters["rejected_same_as_manager"] += 1
-                        after_fetch.append(doc)
-                    else:
-                        after_fetch.append(doc)
+                for url in batch_urls:
+                    rec = recs.get(url) or {}
+                    links = urls_from_fetch_record(rec)
+                    for doc in by_manager[url]:
+                        picked = pick_visit_from_urls(
+                            doc.get("manager_url"), links,
+                            name=doc.get("name") or "")
+                        verdict = await _commit_discovered(
+                            db, doc, picked, "tinyfish_fetch")
+                        if verdict == "found":
+                            counters["from_fetch"] += 1
+                            state.log(f"✓ {doc.get('name')} ← tinyfish_fetch")
+                        else:
+                            if verdict == "rejected":
+                                counters["rejected_same_as_manager"] += 1
+                            after_fetch.append(doc)
 
             if not skip_search:
+                state.log(f"TinyFish Search + juge : {len(after_fetch)} site(s)")
                 for doc in after_fetch:
                     if getattr(state, "cancel", False):
                         state.log("Stop demandé")
