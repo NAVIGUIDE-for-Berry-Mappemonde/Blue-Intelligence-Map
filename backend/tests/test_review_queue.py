@@ -197,6 +197,13 @@ def _db():
         }],
         review_comments=[],
         review_gold=[],
+        amp_sites=[{
+            "_id": "PS-1", "site_id": "PS-1", "name": "Parc marin du cap",
+            "country": "France", "lfp": 3,
+            "manager_url": "https://parc-marin.fr",
+            "visit_url": "https://parc-marin.fr/visite",
+            "visit_url_status": "found",
+        }],
     )
 
 
@@ -233,13 +240,16 @@ def test_comment_persists_per_fiche_without_writing_v1():
     n_ports = len(db.poe_ports.docs)
     n_projects = len(db.projects.docs)
     n_marinas = len(db.marinas.docs)
+    n_amp = len(db.amp_sites.docs)
     saved = asyncio.run(review_queue.save_comment(
         db, "eez", "published", "5677", "TD OK, Mayotte à part"))
     assert saved["wrote_poe_ports"] is False
+    assert saved["wrote_amp_sites"] is False
     assert saved["comment"] == "TD OK, Mayotte à part"
     assert len(db.poe_ports.docs) == n_ports
     assert len(db.projects.docs) == n_projects
     assert len(db.marinas.docs) == n_marinas
+    assert len(db.amp_sites.docs) == n_amp
     q = asyncio.run(review_queue.list_queue(db, "eez", "published"))
     by = {i["id"]: i for i in q["items"]}
     assert by["5677"]["has_comment"] is True
@@ -264,6 +274,17 @@ def test_poe_and_marina_and_project_fiches():
     proj = asyncio.run(review_queue.get_fiche(db, "project", "published", "p1"))
     assert proj["fiche"]["title"] == "Hope Spot Azores"
     assert proj["fiche"]["url"] == "https://example.org/hope"
+    amp = asyncio.run(review_queue.get_fiche(db, "amp", "published", "PS-1"))
+    assert amp["fiche"]["name"] == "Parc marin du cap"
+    assert amp["fiche"]["manager_url"] == "https://parc-marin.fr"
+    assert amp["fiche"]["visit_url"] == "https://parc-marin.fr/visite"
+    assert amp["fiche"]["manager_url"] != amp["fiche"]["visit_url"]
+    assert amp["wrote_amp_sites"] is False
+    q = asyncio.run(review_queue.list_queue(db, "amp", "published"))
+    assert q["kind"] == "amp"
+    assert q["wrote_amp_sites"] is False
+    assert [i["id"] for i in q["items"]] == ["PS-1"]
+    assert q["items"][0]["manager_url"] != q["items"][0]["visit_url"]
 
 
 def test_run_fiche_uses_run_ports_not_v1():
@@ -299,6 +320,9 @@ def test_list_runs_includes_published_and_isolated():
     assert "canary-1" not in poe_ids
     marina = asyncio.run(review_queue.list_runs(db, "marina"))
     assert [r["id"] for r in marina["items"]] == ["published"]
+    amp = asyncio.run(review_queue.list_runs(db, "amp"))
+    assert [r["id"] for r in amp["items"]] == ["published"]
+    assert amp["items"][0]["count"] == 1
 
 
 def test_frontend_review_tab_exists():
@@ -309,8 +333,11 @@ def test_frontend_review_tab_exists():
     assert "view-toggle-map" in header
     assert "view-toggle-audit" in header
     assert "view-toggle-review" in header
+    assert "mode-toggle-amp" in header
     assert 'setView("review")' in header
     assert "ReviewView" in app
+    assert "AmpFiche" in review
+    assert "kind !== \"amp\"" in review
     assert "review-kind-switch" not in review
     assert "review-kind-${k.id}" not in review
     assert "reviewKindPoe" not in review

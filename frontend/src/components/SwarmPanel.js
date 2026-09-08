@@ -2,7 +2,7 @@ import { Compass, Flag, Search } from "lucide-react";
 import ProjectList from "./ProjectList";
 
 /**
- * Bandeau latéral du mode Projets — structure uniforme des 3 modes :
+ * Bandeau latéral du mode Projets — structure uniforme des 4 modes :
  * en-tête (icône + titre + compteur) → recherche → filtres → liste → action.
  * La légende cliquable fait office de filtre par catégorie (le menu déroulant
  * redondant a été retiré).

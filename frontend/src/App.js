@@ -5,17 +5,18 @@ import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
 import MarinasPanel from "./components/MarinasPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
+import AmpPanel from "./components/AmpPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import ReviewView from "./components/ReviewView";
 import SettingsPanel from "./components/SettingsPanel";
 import ReportModal from "./components/ReportModal";
 
-// Read the persisted mode on boot. Default = "projects". (Phase 4A — 3 modes)
+// Read the persisted mode on boot. Default = "projects". (4 modes)
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects" || v === "formalities") return v;
+    if (v === "marinas" || v === "projects" || v === "formalities" || v === "amp") return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -25,7 +26,7 @@ const readInitialMode = () => {
 export default function App() {
   const [lang, setLang] = useState("en");
   const [view, setView] = useState("map");
-  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas'
+  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'formalities' | 'amp'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
   const [projects, setProjects] = useState({ type: "FeatureCollection", features: [] });
@@ -57,6 +58,8 @@ export default function App() {
   const [zoneFiche, setZoneFiche] = useState(null);
   const [ficheLoading, setFicheLoading] = useState(false);
   const [flyToPoe, setFlyToPoe] = useState(null);
+  const [ampSites, setAmpSites] = useState({ type: "FeatureCollection", features: [] });
+  const [flyToAmp, setFlyToAmp] = useState(null);
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
   // creates a fresh `t` → MapView props change → the formalities marker
@@ -304,6 +307,11 @@ export default function App() {
     setFlyToPoe({ ...port, ts: Date.now() });
   }, []);
 
+  const handleFlyToAmp = useCallback((id, lat, lon) => {
+    if (lat == null || lon == null) return;
+    setFlyToAmp({ id, lat, lon, ts: Date.now() });
+  }, []);
+
   useEffect(() => {
     if (!selectedZone) {
       setZoneFiche(null);
@@ -358,6 +366,13 @@ export default function App() {
             onFlyToPort={handleFlyToPoe}
           />
         )}
+        {view !== "review" && mode === "amp" && (
+          <AmpPanel
+            t={t}
+            sites={ampSites}
+            onFlyTo={handleFlyToAmp}
+          />
+        )}
         <main className="flex-1 relative min-w-0">
           {view === "map" ? (
             <MapView
@@ -372,6 +387,8 @@ export default function App() {
               flyToMarina={flyToMarina}
               flyToZone={flyToZone}
               flyToPoe={flyToPoe}
+              flyToAmp={flyToAmp}
+              onAmpSites={setAmpSites}
               zoneFiche={zoneFiche}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}

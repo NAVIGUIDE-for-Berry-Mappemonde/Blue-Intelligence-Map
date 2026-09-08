@@ -1,4 +1,4 @@
-import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, ScrollText, Settings, Shield, Sun, Waves } from "lucide-react";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
@@ -27,7 +27,7 @@ export default function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* Tri-mode switch (Phase 4A → 5, all three buttons follow the active theme) */}
+        {/* Four-mode switch — projects / marinas / formalities / amp */}
         <div
           className="flex border border-line rounded-sm overflow-hidden"
           title={t("modeSwitchTitle")}
@@ -58,13 +58,24 @@ export default function Header({
           <button
             data-testid="mode-toggle-formalities"
             onClick={() => setMode("formalities")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
               mode === "formalities"
                 ? "bg-amberx/15 text-amberx"
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
             <ScrollText size={13} /> {t("modeFormalities")}
+          </button>
+          <button
+            data-testid="mode-toggle-amp"
+            onClick={() => setMode("amp")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+              mode === "amp"
+                ? "bg-[#4ade80]/15 text-[#4ade80]"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <Shield size={13} /> {t("modeAmp")}
           </button>
         </div>
         <div className="flex border border-line rounded-sm overflow-hidden">

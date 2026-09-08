@@ -1,3 +1,4 @@
+import AmpCard from "./audit/AmpCard";
 import FormalitiesCard from "./audit/FormalitiesCard";
 import MarinasCard from "./audit/MarinasCard";
 import ProjectsCard from "./audit/ProjectsCard";
@@ -5,7 +6,7 @@ import ProjectsCard from "./audit/ProjectsCard";
 /**
  * BatchHub — bloc contextuel de la vue Audit.
  *
- * Affiche UNIQUEMENT la carte du mode actif (projects / marinas / formalities),
+ * Affiche UNIQUEMENT la carte du mode actif (projects / marinas / formalities / amp),
  * chacune vivant dans son propre fichier sous components/audit/. Le polling de
  * chaque carte ne tourne que lorsqu'elle est montée (= mode actif).
  */
@@ -22,6 +23,9 @@ export default function BatchHub({ t, mode, status, refresh, settings, onSetting
   }
   if (mode === "formalities") {
     return <FormalitiesCard t={t} onPoeRefresh={onPoeRefresh} />;
+  }
+  if (mode === "amp") {
+    return <AmpCard t={t} />;
   }
   return (
     <ProjectsCard

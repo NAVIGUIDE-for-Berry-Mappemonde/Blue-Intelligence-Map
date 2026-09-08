@@ -2,7 +2,7 @@
 File de revue humaine — une fiche à la fois, commentaire persisté.
 
 Ne lit que les collections de run / v1. N'écrit JAMAIS dans `projects`,
-`poe_ports`, `eez_zones` ni `marinas`. Seule `review_comments` est mutée.
+`poe_ports`, `eez_zones`, `marinas` ni `amp_sites`. Seule `review_comments` est mutée.
 """
 from __future__ import annotations
 
@@ -32,7 +32,11 @@ _EEZ_QUEUE_PROJ = {
     "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1, "status": 1,
 }
 
-KINDS = ("project", "eez", "poe", "marina")
+KINDS = ("project", "eez", "poe", "marina", "amp")
+_AMP_QUEUE_PROJ = {
+    "_id": 1, "site_id": 1, "name": 1, "country": 1, "lfp": 1,
+    "manager_url": 1, "visit_url": 1,
+}
 QUEUE_LIMIT_MAX = 2000
 QUEUE_LIMIT_DEFAULT = 500
 
@@ -104,7 +108,7 @@ async def _count(coll, q: dict | None = None) -> int:
 async def list_runs(db, kind: str) -> dict:
     """Runs disponibles pour un type de fiche, plus la carte publiée (v1)."""
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|amp")
     published_count = 0
     if kind == "project":
         published_count = await _count(db.projects)
@@ -112,6 +116,8 @@ async def list_runs(db, kind: str) -> dict:
         published_count = await _count(db.eez_zones)
     elif kind == "poe":
         published_count = await _count(db.poe_ports)
+    elif kind == "amp":
+        published_count = await _count(db.amp_sites)
     else:
         published_count = await _count(db.marinas)
 
@@ -203,7 +209,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                      offset: int = 0, limit: int = QUEUE_LIMIT_DEFAULT,
                      q: str = "", pre_gold: bool = False) -> dict:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|amp")
     rid = run_id or PUBLISHED_RUN
     offset, limit = _clamp_page(offset, limit)
     flags = await _comment_flags(db, kind, rid)
@@ -287,6 +293,27 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 {"mrgid": d.get("mrgid"), "pre_gold": False, "gold_on": False},
             ))
 
+    elif kind == "amp":
+        filt = _title_filter("name", q)
+        docs = await (db.amp_sites.find(filt, _AMP_QUEUE_PROJ)
+                      .sort("name", 1).to_list(20000))
+        for d in docs:
+            eid = _sid(d.get("site_id") or d.get("_id"))
+            if not eid:
+                continue
+            items.append(_queue_item(
+                eid, d.get("name") or "",
+                d.get("country") or "",
+                flags,
+                {
+                    "lfp": d.get("lfp"),
+                    "manager_url": d.get("manager_url"),
+                    "visit_url": d.get("visit_url"),
+                    "pre_gold": False,
+                    "gold_on": False,
+                },
+            ))
+
     else:
         filt = _title_filter("name", q)
         docs = await (db.marinas.find(filt, _MARINA_QUEUE_PROJ)
@@ -323,6 +350,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_amp_sites": False,
     }
 
 
@@ -437,7 +465,7 @@ async def get_comment(db, kind: str, run_id: str, entity_id: str) -> dict:
 
 async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str) -> dict:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|amp")
     rid = run_id or PUBLISHED_RUN
     eid = _sid(entity_id)
     cid = comment_key(kind, rid, eid)
@@ -462,12 +490,24 @@ async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str)
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_amp_sites": False,
+    }
+
+
+def _amp_fiche(doc: dict) -> dict:
+    from app.services.amp import public_properties
+    props = public_properties(doc)
+    return {
+        "kind": "amp",
+        "id": props.get("site_id"),
+        **props,
+        "wrote_amp_sites": False,
     }
 
 
 async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict | None:
     if kind not in KINDS:
-        raise ValueError("kind must be project|eez|poe|marina")
+        raise ValueError("kind must be project|eez|poe|marina|amp")
     rid = run_id or PUBLISHED_RUN
     eid = _sid(entity_id)
     fiche = None
@@ -510,6 +550,14 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
             return None
         fiche = await _poe_fiche(db, doc, rid)
 
+    elif kind == "amp":
+        doc = await db.amp_sites.find_one({"_id": eid})
+        if not doc:
+            doc = await db.amp_sites.find_one({"site_id": eid})
+        if not doc:
+            return None
+        fiche = _amp_fiche(doc)
+
     else:
         doc = await db.marinas.find_one({"_id": eid})
         if not doc:
@@ -536,4 +584,5 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str) -> dict |
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_amp_sites": False,
     }

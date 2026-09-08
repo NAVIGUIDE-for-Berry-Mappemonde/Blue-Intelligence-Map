@@ -4,13 +4,14 @@
 
 Application publiée sur **[blueintelligence.online](https://blueintelligence.online)** — un projet [Berry-Mappemonde](https://berrymappemonde.org).
 
-## Les trois modes
+## Les quatre modes
 
 | Mode | Couleur | Contenu |
 |------|---------|---------|
 | **Projets** | cyan | ~4 500 projets de conservation marine découverts et extraits automatiquement depuis les portails des grandes fondations (swarm d'agents web + LLM) |
 | **Marinas** | rouge | Annuaire mondial `leisure=marina` (OpenStreetMap), identité `osm_id`, lien Google Maps déterministe. Point plus gros si une fiche `/maps/place/` a été trouvée (TinyFish Search / tag OSM) — on n'en filtre aucune. Les mouillages restent sur le corridor de la route. Hors Formalités / PoE. |
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
+| **AMP** | vert | Polygones ProtectedSeas Navigator + **deux URL séparées** : site du gestionnaire (`manager_url`) et procédures de visite / d'entrée (`visit_url`). L'URL de visite n'est jamais une copie du Website ProtectedSeas. |
 
 S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs) et des exports/imports GeoJSON contextuels.
 

@@ -48,6 +48,7 @@ def test_cdc_numbers_are_catalogued():
         "formalities.listing_coverage_publish", "formalities.zone_timeout_s",
         "marinas.corridor_radius_nm", "marinas.waypoint_radius_nm",
         "marinas.overpass_throttle_s",
+        "amp.visit_url_must_differ", "amp.min_zoom", "amp.bbox_max_deg",
         "shared.dedup_dist_km", "shared.no_snap",
     ):
         assert rid in ids
@@ -110,6 +111,9 @@ def test_snapshot_hash_stable():
     a = snapshot_for_run(mode="marinas")
     b = snapshot_for_run(mode="marinas")
     assert a["hash"] == b["hash"]
+    amp = snapshot_for_run(mode="amp")
+    assert amp["chosen"]["amp.visit_url_must_differ"]["value"] is True
+    assert amp["chosen"]["amp.visit_url_must_differ"]["source"] == "loi"
     assert a["hash"] == rules_hash(a["chosen"])
     assert a["counts"]["total"] == len(a["chosen"])
 
