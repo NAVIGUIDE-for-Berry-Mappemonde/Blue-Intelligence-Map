@@ -43,7 +43,7 @@ blue-intelligence/
 
 Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par **[NVIDIA NIM](https://build.nvidia.com)** si `NVIDIA_API_KEY` est présente, sinon par **[OpenRouter](https://openrouter.ai)**. La recherche web groundée (`:online`) reste OpenRouter :
 
-- **Complétions** : `NVIDIA_API_KEY` (hosted NIM — Flash → Muse → gpt-oss / Kimi) si présente ; sinon OpenRouter ;
+- **Complétions** : `NVIDIA_API_KEY` (hosted NIM — Pro → Muse → gpt-oss / Kimi) si présente ; sinon OpenRouter ;
 - **Recherche web** : `OPENROUTER_API_KEY` uniquement (`:online`) — NIM n'a pas de plugin web ;
 - **Modèle OpenRouter** : `OPENROUTER_MODEL` (défaut `openai/gpt-4o-mini`) ;
 - **Sans clé**, l'application reste fonctionnelle en mode dégradé : heuristiques par mots-clés + modèles ML locaux (TF-IDF, spaCy NER) sans aucun appel réseau IA.
@@ -97,9 +97,9 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `MONGO_URL` | ✅ | Chaîne de connexion MongoDB |
 | `DB_NAME` | ✅ | Nom de la base MongoDB |
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
-| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — juge / extracteur PoE (Flash → Muse → Kimi) |
+| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — juge / extracteur PoE (Pro → Muse → Kimi) |
 | `LLM_PROVIDER` | optionnel | `auto` (défaut : NVIDIA si clé), `nvidia`, ou `openrouter` |
-| `NVIDIA_MODEL` | optionnel | Tête de chaîne (défaut `deepseek-ai/deepseek-v4-flash-0731`) |
+| `NVIDIA_MODEL` | optionnel | Tête de chaîne (défaut `deepseek-ai/deepseek-v4-pro-0813`) |
 | `NVIDIA_MODEL_SECONDARY` | optionnel | Recours juge / second extracteur (défaut `meta/muse-glimmer-30b`) |
 | `NVIDIA_MODEL_LEGAL` | optionnel | Décrets / gazettes (défaut `moonshotai/kimi-k3`) |
 | `OPENROUTER_API_KEY` | recommandé | Clé OpenRouter — recherche web `:online` et fallback si NIM absent |

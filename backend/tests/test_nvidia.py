@@ -105,7 +105,7 @@ class TestProvider:
         monkeypatch.setenv("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash")
         monkeypatch.setenv("NVIDIA_MODEL_SECONDARY", "meta/muse-glimmer-30b")
         monkeypatch.setenv("NVIDIA_MODEL_LEGAL", "poolside/laguna-xs-2-1")
-        assert nvidia.primary_model() == nvidia.PRIMARY_MODEL
+        assert nvidia.primary_model() == nvidia.FLASH_MODEL
         assert nvidia.secondary_model() == "meta/muse-glimmer-30b"
         assert nvidia.legal_model() == "poolside/laguna-xs-2.1"
 
@@ -129,7 +129,9 @@ class TestProvider:
         chain = nvidia.models_for("judge")
         assert chain[0] == nvidia.PRIMARY_MODEL
         assert chain[1] == nvidia.SECONDARY_MODEL
-        assert nvidia.LEGAL_MODEL in chain
+        assert nvidia.FLASH_MODEL in chain
+        assert nvidia.LEGAL_MODEL in nvidia.models_for("legal")
+        assert nvidia.LEGAL_MODEL in nvidia.models_for("extract")
 
     def test_muse_payload_lowers_reasoning(self):
         extras = nvidia.muse_generation_extras("meta/muse-glimmer-30b")

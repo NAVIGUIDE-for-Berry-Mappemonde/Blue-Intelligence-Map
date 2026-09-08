@@ -14,10 +14,10 @@ json_object les fait pendre — on omet response_format.
 
 Chaînes de fallback (échec HTTP / timeout / JSON vide → suivant) :
 
-  judge   Flash → Muse → gpt-oss-20b → Kimi
-  extract Flash → Muse → Kimi
-  legal   Kimi → Flash → Muse
-  json    Flash → Muse → gpt-oss-20b   # gatekeeper, projet, géocode
+  judge   Pro → Muse → gpt-oss-20b → Flash
+  extract Pro → Muse → Kimi
+  legal   Kimi → Pro → Muse
+  json    Pro → Muse → gpt-oss-20b   # gatekeeper, projet, géocode
 
 Clé : NVIDIA_API_KEY (env) ou settings["nvidia_api_key"] (UI).
 Provider : LLM_PROVIDER=nvidia|openrouter|auto (auto = NVIDIA si clé présente).
@@ -32,7 +32,9 @@ import re
 import httpx
 
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-PRIMARY_MODEL = "deepseek-ai/deepseek-v4-flash-0731"
+FLASH_MODEL = "deepseek-ai/deepseek-v4-flash-0731"
+PRO_MODEL = "deepseek-ai/deepseek-v4-pro-0813"
+PRIMARY_MODEL = PRO_MODEL
 SECONDARY_MODEL = "meta/muse-glimmer-30b"
 LEGAL_MODEL = "moonshotai/kimi-k3"
 GPT_OSS_MODEL = "openai/gpt-oss-20b"
@@ -47,17 +49,19 @@ _NO_JSON_OBJECT = (
 
 # IDs docs / aliases EOL → successeur hosted encore servi.
 _ALIASES = {
-    "deepseek-ai/deepseek-v4-flash": PRIMARY_MODEL,
-    "deepseek-ai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-pro-0813",
+    "deepseek-ai/deepseek-v4-flash": FLASH_MODEL,
+    "deepseek-ai/deepseek-v4-pro": PRO_MODEL,
     "poolside/laguna-xs-2-1": "poolside/laguna-xs-2.1",
 }
 
-# Rôles → ordre mesuré (voir scripts/probe_nvidia_models.py).
+# Rôles → ordre mesuré (canari PoE 2026-09-08, sans json_object sur Muse).
+# Pro 4/4 ~9 s ; Muse 4/4 ~19 s ; gpt-oss 4/4 ~43 s ; Flash 4/4 mais lent
+# sous charge ; Kimi pour les décrets ; Laguna 503 capacité ; Gemma hang.
 CHAINS = {
-    "judge": (PRIMARY_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, LEGAL_MODEL),
-    "extract": (PRIMARY_MODEL, SECONDARY_MODEL, LEGAL_MODEL),
-    "legal": (LEGAL_MODEL, PRIMARY_MODEL, SECONDARY_MODEL),
-    "json": (PRIMARY_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
+    "judge": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, FLASH_MODEL),
+    "extract": (PRO_MODEL, SECONDARY_MODEL, LEGAL_MODEL),
+    "legal": (LEGAL_MODEL, PRO_MODEL, SECONDARY_MODEL),
+    "json": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
 }
 
 _THINKING_RE = re.compile(r"^\s*here's a thinking process", re.I)
@@ -345,13 +349,9 @@ async def _complete_one(key: str, payload: dict, *,
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(NVIDIA_URL, headers=headers, json=used)
         except httpx.TimeoutException as e:
-            last_err = f"nvidia timeout: {type(e).__name__}"
-            if delay is None:
-                break
-            if log:
-                log(f"nvidia {used['model']}: {type(e).__name__}, retry in {delay:.0f}s")
-            await asyncio.sleep(delay)
-            continue
+            # Pas 3×120 s : le modèle suivant de la chaîne doit partir
+            # (Gemma 4 pend même sans json_object).
+            raise RuntimeError(f"nvidia timeout: {type(e).__name__}")
         if r.status_code == 400 and used.get("response_format"):
             used = {k: v for k, v in used.items() if k != "response_format"}
             last_err = f"nvidia HTTP 400: {(r.text or '')[:160]}"
