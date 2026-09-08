@@ -159,9 +159,9 @@ def _message_text(msg: dict | None) -> str:
 def _retry_wait(response: httpx.Response, fallback: float) -> float:
     raw = (response.headers.get("Retry-After") or "").strip()
     if raw.isdigit():
-        return min(60.0, max(1.0, float(raw)))
+        return min(90.0, max(fallback, float(raw)))
     try:
-        return min(60.0, max(1.0, float(raw)))
+        return min(90.0, max(fallback, float(raw)))
     except (TypeError, ValueError):
         return fallback
 
@@ -171,7 +171,7 @@ async def complete_json_nvidia(system: str, prompt: str,
                                model: str | None = None,
                                max_tokens: int = 800,
                                log=None) -> dict:
-    """Complétion JSON strict. Backoff exponentiel sur 429 / 5xx."""
+    """Complétion JSON strict. Backoff sur 429 / 5xx / timeout / JSON vide."""
     key = get_nvidia_key(settings)
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing")
@@ -193,11 +193,21 @@ async def complete_json_nvidia(system: str, prompt: str,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    delays = (2.0, 4.0, 8.0, 16.0)
+    delays = (5.0, 12.0, 25.0, 45.0)
     last_err = "nvidia exhausted retries"
-    for attempt, delay in enumerate((*delays, None)):
-        async with httpx.AsyncClient(timeout=90) as client:
-            r = await client.post(NVIDIA_URL, headers=headers, json=payload)
+    timeout = httpx.Timeout(120.0, connect=20.0)
+    for delay in (*delays, None):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(NVIDIA_URL, headers=headers, json=payload)
+        except httpx.TimeoutException as e:
+            last_err = f"nvidia timeout: {type(e).__name__}"
+            if delay is None:
+                break
+            if log:
+                log(f"nvidia {payload['model']}: {type(e).__name__}, retry in {delay:.0f}s")
+            await asyncio.sleep(delay)
+            continue
         if r.status_code in (429, 500, 502, 503) and delay is not None:
             wait = _retry_wait(r, delay)
             if log:
@@ -213,9 +223,14 @@ async def complete_json_nvidia(system: str, prompt: str,
         data = parse_json_strict(raw)
         if isinstance(data, dict):
             return data
+        last_err = "nvidia: no JSON in output"
+        if delay is None:
+            break
+        payload["max_tokens"] = min(int(payload.get("max_tokens") or max_tokens) * 2, 2500)
         if log:
-            log("nvidia: no strict JSON in output")
-        raise RuntimeError("nvidia: no JSON in output")
+            log(f"nvidia {payload['model']}: no strict JSON, retry tokens={payload['max_tokens']}")
+        await asyncio.sleep(2.0)
+        continue
     raise RuntimeError(last_err)
 
 
