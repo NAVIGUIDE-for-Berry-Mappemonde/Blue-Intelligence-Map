@@ -149,6 +149,22 @@ def test_empty_seeds_create_zero_ports():
     assert fiche["wrote_poe_ports"] is False
 
 
+def test_http_https_and_www_are_same_td():
+    zone = {
+        **_ZONE,
+        "sources": [
+            {"url": "http://www.douane.gouv.fr/ports-entree.pdf", "domain": "douane.gouv.fr"},
+            {"url": "https://douane.gouv.fr/ports-entree.pdf", "domain": "douane.gouv.fr"},
+            {"url": "https://douane.gouv.fr/accueil", "domain": "douane.gouv.fr"},
+        ],
+    }
+    fiche = assemble_zone_fiche(zone, [])
+    urls = [s["url"] for s in fiche["sources_td"]]
+    assert len(urls) == 2
+    assert urls[0].startswith("https://") and urls[0].endswith("ports-entree.pdf")
+    assert any(u.endswith("/accueil") for u in urls)
+
+
 def test_all_td_urls_kept_pdf_first():
     zone = {
         **_ZONE,

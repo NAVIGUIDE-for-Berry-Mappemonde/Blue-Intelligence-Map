@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from app.config import DATA_DIR
 from app.core.dedup import normalize_name
@@ -60,6 +60,29 @@ def _clean_url(raw) -> str:
     return text.split("#", 1)[0].rstrip("/")
 
 
+def _url_key(url: str) -> str:
+    """Même page : ignore schéma et www. Des chemins différents restent distincts."""
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower().lstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    path = unquote(parsed.path or "").rstrip("/").lower()
+    query = (parsed.query or "").lower()
+    return f"{host}{path}?{query}" if query else f"{host}{path}"
+
+
+def _prefer_rec(prev: dict | None, rec: dict) -> dict:
+    if prev is None:
+        return rec
+    if _url_rank(rec) > _url_rank(prev):
+        return rec
+    if _url_rank(rec) < _url_rank(prev):
+        return prev
+    if (rec.get("url") or "").startswith("https") and not (prev.get("url") or "").startswith("https"):
+        return rec
+    return prev
+
+
 def _as_source(raw, arm: str) -> dict | None:
     extra: dict = {}
     if isinstance(raw, str):
@@ -90,7 +113,8 @@ def _collect(raw_lists, arm: str) -> dict[str, dict]:
             rec = _as_source(raw, arm)
             if rec is None:
                 continue
-            out.setdefault(rec["url"], rec)
+            key = _url_key(rec["url"]) or rec["url"]
+            out[key] = _prefer_rec(out.get(key), rec)
     return out
 
 
@@ -117,9 +141,8 @@ def _rank_sources(recs: list[dict]) -> list[dict]:
         url = rec.get("url")
         if not url:
             continue
-        prev = by_url.get(url)
-        if prev is None or _url_rank(rec) > _url_rank(prev):
-            by_url[url] = rec
+        key = _url_key(url) or url
+        by_url[key] = _prefer_rec(by_url.get(key), rec)
     return sorted(by_url.values(), key=_url_rank, reverse=True)
 
 
@@ -151,9 +174,8 @@ def bus_by_port_name(docs: list[dict] | None) -> dict[str, list[dict]]:
             rec = _as_source(raw, "bu")
             if rec is None:
                 continue
-            prev = bucket.get(rec["url"])
-            if prev is None or _url_rank(rec) > _url_rank(prev):
-                bucket[rec["url"]] = rec
+            ukey = _url_key(rec["url"]) or rec["url"]
+            bucket[ukey] = _prefer_rec(bucket.get(ukey), rec)
     return {key: _rank_sources(list(recs.values())) for key, recs in buckets.items() if recs}
 
 
