@@ -5,5 +5,5 @@ import ConsoleShell from "./audit/ConsoleShell";
  * Une carte de lancement par mode, les mêmes onglets partout.
  */
 export default function BatchHub(props) {
-  return <ConsoleShell {...props} />;
+  return <ConsoleShell key={props.mode || "projects"} {...props} />;
 }
