@@ -1,10 +1,10 @@
-"""Enrichissement capitainerie : tags, Search/Fetch, regex, Muse, OpenRouter.
+"""Enrichissement capitainerie : tags, Search/Fetch, regex, NIM, OpenRouter.
 
 Chaîne (coût croissant) :
   1. tags OSM/SHOM/NOAA
   2. TinyFish Search (nom distinct ou « capitainerie » + GPS)
   3. TinyFish Fetch (ou readability) + parsing regex — stop si tél et VHF
-  4. NVIDIA Muse sur le texte de page
+  4. NVIDIA NIM chaîne `page` (Pro → Muse → gpt-oss) sur le texte de page
   5. OpenRouter sur le même texte
   6. Agent TinyFish (site officiel uniquement, dernier recours)
 
@@ -339,35 +339,42 @@ def contact_from_pages(pages: list[dict]) -> dict:
     return {"telephone": phone, "canal_vhf": vhf}
 
 
-async def enrich_via_nvidia_muse(
+async def enrich_via_nvidia(
     doc: dict,
     context: str,
     settings: dict | None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> Optional[dict]:
+    """Chaîne `page` : Pro → Muse → gpt-oss. `_engine` = modèle réellement servi."""
     from app.core import nvidia
     if not context or not nvidia.nvidia_enabled(settings):
         return None
     try:
         if logger:
-            logger("[muse] NVIDIA Muse on page text")
-        data = await nvidia.complete_json_nvidia(
+            logger("[nvidia] NIM page chain on harbour-master text")
+        data, used = await nvidia.complete_json_nvidia_tracked(
             CONTACT_SYSTEM, _contact_prompt(doc, context), settings,
-            model=nvidia.secondary_model(), role="page",
-            max_tokens=200, log=logger,
+            role="page", max_tokens=200, log=logger,
         )
         cleaned = _normalise_contact(data if isinstance(data, dict) else {})
         if any(cleaned.values()):
+            cleaned["_engine"] = nvidia.engine_label(used)
             if logger:
-                logger(f"[muse] filled={[k for k, v in cleaned.items() if v]}")
+                logger(f"[nvidia] {cleaned['_engine']} "
+                       f"filled={[k for k, v in cleaned.items() if v and k != '_engine']}")
             return cleaned
         if logger:
-            logger("[muse] empty payload")
+            logger("[nvidia] empty payload")
         return None
     except Exception as e:
         if logger:
-            logger(f"[muse] {type(e).__name__}: {str(e)[:120]}")
+            logger(f"[nvidia] {type(e).__name__}: {str(e)[:120]}")
         return None
+
+
+async def enrich_via_nvidia_muse(*args, **kwargs):
+    """Alias : le pin Muse a été retiré (chaîne `page`, Pro en tête)."""
+    return await enrich_via_nvidia(*args, **kwargs)
 
 
 async def enrich_via_openrouter(
@@ -548,10 +555,13 @@ async def enrich_capitainerie(
     context = _pages_blob(pages)
     if context:
         if logger:
-            logger("=== attempt 2: NVIDIA Muse ===")
-        muse = await enrich_via_nvidia_muse(working, context, settings, logger=logger)
-        working, src = _apply_incoming(working, muse, "nvidia-muse")
-        if muse and any(muse.values()):
+            logger("=== attempt 2: NVIDIA NIM (page) ===")
+        nv = await enrich_via_nvidia(working, context, settings, logger=logger)
+        engine = "nvidia"
+        if nv:
+            engine = nv.pop("_engine", None) or "nvidia"
+        working, src = _apply_incoming(working, nv, engine)
+        if nv and any(nv.values()):
             source = src
         if not needs_website_enrich(working):
             return _result(working, source, now, False)
@@ -569,7 +579,7 @@ async def enrich_capitainerie(
             if not needs_website_enrich(working):
                 return _result(working, source, now, False)
     elif logger:
-        logger("no page text — skip Muse / OpenRouter")
+        logger("no page text — skip NIM / OpenRouter")
 
     has_site = bool(official_website(working))
     if tinyfish_key and not skip_tinyfish and has_site:

@@ -77,7 +77,7 @@ Latences trial **non reproductibles** d’une heure à l’autre. Muse a fait Fo
 | Gatekeeper / fiche projet / géocode | `llm.ask_json` | rôle `json` | OpenRouter | Haiku |
 | AMP visit_url | `amp_visit.llm_judge_visit` | rôle `json` (engine = modèle **servi**) | OpenRouter | Haiku |
 | Marinas | `marina_enrich.enrich_marina` | rôle `page` | OpenRouter → TinyFish → OSM | **jamais** |
-| Capitaineries | `capitainerie_enrich` | Muse d’abord (`role=page`) | OpenRouter → TinyFish | **jamais** |
+| Capitaineries | `capitainerie_enrich` | rôle `page` (Pro → Muse → gpt-oss) | OpenRouter → TinyFish | **jamais** |
 | Texte libre | `llm.ask_text` | chaîne `text` (Muse en tête) | OpenRouter | jamais (adaptateur JSON) |
 | Recherche web | `llm.grounded_search` | **jamais** | `:online` | jamais |
 
@@ -127,7 +127,7 @@ Chaîne code : Pro → Muse → gpt-oss → Kimi.
 5. Llama — 200 sans JSON.  
 6. Kimi / Laguna — 429 / 503.
 
-Chaîne code `page` : Pro → Muse → gpt-oss. Capitaineries forcent Muse en tête (`preferred=secondary_model()`).
+Chaîne code `page` : Pro → Muse → gpt-oss. **Marinas et capitaineries** partagent cette chaîne. Le pin Muse (`secondary_model()`) sur les capitaineries était historique (Muse = NIM principal au moment du feature) ; le canari page l’a invalidé.
 
 ### JSON générique (gatekeeper, projet, géocode, AMP, tiebreak)
 
@@ -178,7 +178,7 @@ Canari après ces payloads : **aucun HTTP 400/422** sur effort / kwargs / sampli
 - Juge PoE : NIM d’abord, OR, Claude last (listing n’escalade plus vers Sonnet si OR a déjà tranché).  
 - AMP : NIM tracked (libellé = modèle servi) → OR → Claude.  
 - Marinas : `enrich_via_nvidia` en tête.  
-- Capitaineries : Muse `role=page`.  
+- Capitaineries : même chaîne `page` que les marinas (Pro en tête ; le pin Muse est retiré).  
 - Départage GPS : `llm.arbitrate_geocode` (NIM → OR → Claude).  
 - `ask_text` : chaîne `text`.  
 - Libellés gatekeeper/extracteur honnêtes.  
@@ -201,7 +201,7 @@ Canari après ces payloads : **aucun HTTP 400/422** sur effort / kwargs / sampli
 complétion JSON :  NIM(chaîne rôle) → OpenRouter → Claude (si clé+budget)
 extract PoE     :  NIM extract (+ 2ᵉ NIM) → OpenRouter → Claude → catalogue → NER
 juge PoE        :  NIM judge → OpenRouter → Haiku → Sonnet
-page marina     :  NIM page → OpenRouter → TinyFish (site OSM) → tags OSM
+page marina / capitainerie :  NIM page (Pro → Muse → gpt-oss) → OpenRouter → TinyFish
 web             :  OpenRouter :online uniquement
 ```
 

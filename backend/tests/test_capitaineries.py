@@ -524,7 +524,7 @@ def test_enrich_regex_from_fetch_skips_llm(monkeypatch):
 
     monkeypatch.setattr(ce, "discover_contact_urls", urls)
     monkeypatch.setattr(ce, "fetch_contact_pages", pages)
-    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", must_not_muse)
+    monkeypatch.setattr(ce, "enrich_via_nvidia", must_not_muse)
     monkeypatch.setattr(ce, "enrich_via_openrouter", must_not_or)
     doc = {
         "_id": "node/1", "name": "Capitainerie des Minimes",
@@ -540,7 +540,7 @@ def test_enrich_regex_from_fetch_skips_llm(monkeypatch):
     assert result["_tinyfish_attempted"] is False
 
 
-def test_enrich_muse_before_openrouter(monkeypatch):
+def test_enrich_nvidia_before_openrouter(monkeypatch):
     order = []
 
     async def urls(*a, **k):
@@ -549,9 +549,10 @@ def test_enrich_muse_before_openrouter(monkeypatch):
     async def pages(u, tinyfish_key=None, logger=None):
         return [{"url": u[0], "title": "HM", "text": "The harbour office is open daily."}]
 
-    async def muse(*a, **k):
-        order.append("muse")
-        return {"telephone": "+33 5 46 00 00 00", "canal_vhf": "9"}
+    async def nvidia(*a, **k):
+        order.append("nvidia")
+        return {"telephone": "+33 5 46 00 00 00", "canal_vhf": "9",
+                "_engine": "nvidia-deepseek"}
 
     async def openrouter(*a, **k):
         order.append("openrouter")
@@ -559,7 +560,7 @@ def test_enrich_muse_before_openrouter(monkeypatch):
 
     monkeypatch.setattr(ce, "discover_contact_urls", urls)
     monkeypatch.setattr(ce, "fetch_contact_pages", pages)
-    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", muse)
+    monkeypatch.setattr(ce, "enrich_via_nvidia", nvidia)
     monkeypatch.setattr(ce, "enrich_via_openrouter", openrouter)
     doc = {
         "_id": "node/1", "name": "Bureau du port",
@@ -570,13 +571,49 @@ def test_enrich_muse_before_openrouter(monkeypatch):
         doc, tinyfish_key="tf", openrouter_key="or",
         settings={"nvidia_api_key": "nv"},
     ))
-    assert order == ["muse"]
-    assert result["enrichment_source"] == "nvidia-muse"
+    assert order == ["nvidia"]
+    assert result["enrichment_source"] == "nvidia-deepseek"
     assert result["telephone"].startswith("+33")
+    assert result["canal_vhf"] == "9"
+    assert "_engine" not in result
+
+
+def test_enrich_nvidia_page_chain_not_muse_pin(monkeypatch):
+    from app.core import nvidia as nv
+
+    called = {}
+
+    async def urls(*a, **k):
+        return ["https://port.example/hm"]
+
+    async def pages(u, tinyfish_key=None, logger=None):
+        return [{"url": u[0], "title": "HM", "text": "The harbour office is open daily."}]
+
+    async def tracked(system, prompt, settings=None, *, model=None, role="json", **k):
+        called["model"] = model
+        called["role"] = role
+        return {"telephone": "05 46 41 44 20", "canal_vhf": "9"}, nv.PRIMARY_MODEL
+
+    monkeypatch.setattr(ce, "discover_contact_urls", urls)
+    monkeypatch.setattr(ce, "fetch_contact_pages", pages)
+    monkeypatch.setattr(nv, "nvidia_enabled", lambda s=None: True)
+    monkeypatch.setattr(nv, "complete_json_nvidia_tracked", tracked)
+    doc = {
+        "_id": "node/1", "name": "Bureau du port",
+        "lat": 46.15, "lon": -1.16, "tags": {},
+        "website": "https://port.example/hm",
+    }
+    result = asyncio.run(enrich_capitainerie(
+        doc, tinyfish_key=None, openrouter_key=None,
+        settings={"nvidia_api_key": "nv"},
+    ))
+    assert called["role"] == "page"
+    assert called["model"] is None
+    assert result["enrichment_source"] == "nvidia-deepseek"
     assert result["canal_vhf"] == "9"
 
 
-def test_enrich_openrouter_after_empty_muse(monkeypatch):
+def test_enrich_openrouter_after_empty_nvidia(monkeypatch):
     order = []
 
     async def urls(*a, **k):
@@ -585,8 +622,8 @@ def test_enrich_openrouter_after_empty_muse(monkeypatch):
     async def pages(u, tinyfish_key=None, logger=None):
         return [{"url": u[0], "title": "HM", "text": "Call the harbour master on channel sixteen."}]
 
-    async def muse(*a, **k):
-        order.append("muse")
+    async def nvidia(*a, **k):
+        order.append("nvidia")
         return None
 
     async def openrouter(*a, **k):
@@ -595,7 +632,7 @@ def test_enrich_openrouter_after_empty_muse(monkeypatch):
 
     monkeypatch.setattr(ce, "discover_contact_urls", urls)
     monkeypatch.setattr(ce, "fetch_contact_pages", pages)
-    monkeypatch.setattr(ce, "enrich_via_nvidia_muse", muse)
+    monkeypatch.setattr(ce, "enrich_via_nvidia", nvidia)
     monkeypatch.setattr(ce, "enrich_via_openrouter", openrouter)
     doc = {
         "_id": "node/1", "name": "Bureau du port",
@@ -605,7 +642,7 @@ def test_enrich_openrouter_after_empty_muse(monkeypatch):
     result = asyncio.run(enrich_capitainerie(
         doc, tinyfish_key="tf", openrouter_key="or",
     ))
-    assert order == ["muse", "openrouter"]
+    assert order == ["nvidia", "openrouter"]
     assert result["enrichment_source"] == "openrouter"
     assert result["canal_vhf"] == "16"
 
