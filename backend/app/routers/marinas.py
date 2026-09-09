@@ -500,6 +500,7 @@ class MapsPlaceBody(BaseModel):
 _MARINA_ENGINE_LABELS = {
     "tinyfish": "TinyFish",
     "openrouter": "OpenRouter",
+    "nvidia": "NVIDIA NIM",
     "fallback": "OSM Fallback",
 }
 
@@ -532,6 +533,7 @@ async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn,
             min_credit_usd=min_credit_usd,
             logger=log_fn,
             skip_tinyfish=skip_tf,
+            settings=settings,
         )
     except Exception as e:
         await _marina_telemetry(marina, "FAILED", (time.time() - t0) * 1000, "Enrichment", 0,

@@ -2,9 +2,12 @@
 Marina enrichment.
 
 Chain (cost-ordered):
-    1. OpenRouter (readability text of the marina's website + LLM in JSON mode)
-    2. TinyFish   (agent mission on the official OSM website tag — last paid resort)
-    3. Fallback   (whatever the OSM tags already say — never fabricated)
+    1. NVIDIA NIM page chain (Pro → gpt-oss → Muse) on marina website text
+    2. OpenRouter (same contract if NIM is off or empty)
+    3. TinyFish   (agent mission on the official OSM website tag — last paid resort)
+    4. Fallback   (whatever the OSM tags already say — never fabricated)
+
+Claude n'est pas appelé ici (contrat claude.py : pas les marinas).
 
 Credit guards:
     - OpenRouter: GET /v1/key before spending. Respect OPENROUTER_MIN_CREDITS
@@ -470,6 +473,77 @@ def _normalise_enrichment(payload: dict) -> dict:
     return out
 
 
+async def enrich_via_nvidia(
+    marina: dict,
+    settings: dict | None,
+    logger: Optional[Callable[[str], None]] = None,
+) -> Optional[dict]:
+    """Chaîne `page` : Pro → gpt-oss → Muse (même contrat JSON qu'OpenRouter)."""
+    from app.core import nvidia
+    if not nvidia.nvidia_enabled(settings):
+        return None
+    tags = marina.get("tags") or {}
+    url = tags.get("website") or tags.get("contact:website") or tags.get("url")
+    page_title = ""
+    text = ""
+    async with httpx.AsyncClient() as client:
+        if not url:
+            hits = await duckduckgo_html_search(f"marina {marina['name']} port", client)
+            url = hits[0]["url"] if hits else None
+            if url and logger:
+                logger(f"[nvidia] DDG picked {url}")
+        if url:
+            try:
+                page_title, text = await fetch_readable(url, client)
+                if logger:
+                    logger(f"[nvidia] readability got {len(text)} chars from {url}")
+            except Exception as e:
+                if logger:
+                    logger(f"[nvidia] readability failed: {type(e).__name__}: {str(e)[:80]}")
+    if not text:
+        return None
+    tags_str = json.dumps(
+        {k: v for k, v in tags.items() if isinstance(v, str)},
+        ensure_ascii=False,
+    )
+    prompt = (
+        "You are extracting factual marina information. Return STRICT JSON matching this schema:\n"
+        "{\"canal_vhf\": string|null, \"places_visiteurs\": integer|null, "
+        "\"tirant_eau_max_metres\": number|null, \"score_protection_meteo\": integer|null (1-5), "
+        "\"services_disponibles\": string[]|null, \"telephone_capitainerie\": string|null, "
+        "\"resume_avis\": string|null}\n\n"
+        f"Marina: {marina['name']}\n"
+        f"Coordinates: {marina['lat']}, {marina['lon']}\n"
+        f"OSM tags: {tags_str}\n\n"
+        f"Website source ({url or 'n/a'}) title: {page_title}\n"
+        "Website source content:\n"
+        f"{text}\n\n"
+        "RULES:\n"
+        "- Set a field to null if not present in the source text or tags. NEVER fabricate.\n"
+        "- services_disponibles must be short French labels: eau, électricité, carburant, "
+        "douches, wifi, capitainerie, grue, carénage, restaurant, pumpout, déchets.\n"
+        "- resume_avis in French, max 200 characters, only if the source text supports it.\n"
+        "- score_protection_meteo: only if the source text discusses shelter/weather — else null.\n"
+        "Return only the JSON object. No markdown. No commentary."
+    )
+    try:
+        data = await nvidia.complete_json_nvidia(
+            "Tu réponds uniquement en JSON strict.", prompt, settings,
+            role="page", max_tokens=600, log=logger)
+        cleaned = _normalise_enrichment(data if isinstance(data, dict) else {})
+        if any(cleaned.get(k) is not None for k in ENRICH_FIELDS):
+            if logger:
+                logger(f"[nvidia] filled={[k for k, v in cleaned.items() if v is not None]}")
+            return cleaned
+        if logger:
+            logger("[nvidia] empty payload")
+        return None
+    except Exception as e:
+        if logger:
+            logger(f"[nvidia] {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+
 # ------------------------------------------------------------------
 # Orchestrator
 # ------------------------------------------------------------------
@@ -480,23 +554,28 @@ async def enrich_marina(
     min_credit_usd: float = 0.5,
     logger: Optional[Callable[[str], None]] = None,
     skip_tinyfish: bool = False,
+    settings: Optional[dict] = None,
 ) -> dict:
     """
     Cost-ordered chain:
-        OpenRouter → TinyFish (site officiel OSM uniquement) → OSM-tag fallback.
-    Returns a dict with the 7 fields + enriched + enrichment_source + enriched_at + _tinyfish_attempted.
-    Never fabricates.
+        NVIDIA NIM → OpenRouter → TinyFish (site OSM) → OSM-tag fallback.
     """
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    # 1. OpenRouter
+    if logger:
+        logger("=== attempt 1: NVIDIA NIM ===")
+    nv_data = await enrich_via_nvidia(marina, settings, logger=logger)
+    if nv_data and any(nv_data.get(k) is not None for k in ENRICH_FIELDS):
+        return {**nv_data, "enriched": True, "enrichment_source": "nvidia",
+                "enriched_at": now, "_tinyfish_attempted": False}
     if openrouter_key:
         if logger:
-            logger("=== attempt 1: OpenRouter ===")
+            logger("=== attempt 2: OpenRouter ===")
         or_data = await enrich_via_openrouter(
             marina, openrouter_key, min_credit_usd=min_credit_usd, logger=logger
         )
         if or_data and any(or_data.get(k) is not None for k in ENRICH_FIELDS):
-            return {**or_data, "enriched": True, "enrichment_source": "openrouter", "enriched_at": now, "_tinyfish_attempted": False}
+            return {**or_data, "enriched": True, "enrichment_source": "openrouter",
+                    "enriched_at": now, "_tinyfish_attempted": False}
     elif logger:
         logger("OpenRouter: no key configured — skipping")
     # 2. TinyFish — DERNIER recours : uniquement si un site officiel est connu (tag OSM),
@@ -506,7 +585,7 @@ async def enrich_marina(
     tf_attempted = False
     if tinyfish_key and not skip_tinyfish and has_official_site:
         if logger:
-            logger("=== attempt 2: TinyFish (last resort — official site only) ===")
+            logger("=== attempt 3: TinyFish (last resort — official site only) ===")
         tf_attempted = True
         tf_data = await enrich_via_tinyfish(marina, tinyfish_key, logger=logger, total_budget_s=150.0)
         if tf_data and any(tf_data.get(k) is not None for k in ENRICH_FIELDS):
@@ -520,7 +599,7 @@ async def enrich_marina(
             logger("TinyFish: no key configured — skipping")
     # 3. Fallback
     if logger:
-        logger("=== attempt 3: OSM-tag fallback ===")
+        logger("=== attempt 4: OSM-tag fallback ===")
     fb = enrich_from_osm_tags(marina)
     has_any = any(v not in (None, [], "") for v in fb.values())
     return {**fb, "enriched": has_any, "enrichment_source": "fallback", "enriched_at": now, "_tinyfish_attempted": tf_attempted}

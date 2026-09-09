@@ -245,7 +245,8 @@ class TestJudgeLlmEscalate:
         monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
         monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
         monkeypatch.setattr(claude, "complete_json_claude", fake_complete)
-        monkeypatch.setattr(enr, "ask_json", boom)
+        monkeypatch.setattr(enr, "get_llm_key", lambda s=None: "")
+        monkeypatch.setattr(enr, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Nouméa", "seed_sources": ["listing"]},
@@ -267,7 +268,8 @@ class TestJudgeLlmEscalate:
         monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
         monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
         monkeypatch.setattr(claude, "complete_json_claude", fake_complete)
-        monkeypatch.setattr(enr, "ask_json", boom)
+        monkeypatch.setattr(enr, "get_llm_key", lambda s=None: "")
+        monkeypatch.setattr(enr, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Port Commerce", "seed_sources": ["v1"]},

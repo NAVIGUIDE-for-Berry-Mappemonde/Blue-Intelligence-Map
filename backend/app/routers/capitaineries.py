@@ -234,7 +234,10 @@ class EnrichBatchBody(BaseModel):
 _ENGINE_LABELS = {
     "tinyfish": "TinyFish Agent",
     "fetch": "TinyFish Fetch",
+    "nvidia": "NVIDIA NIM",
+    "nvidia-deepseek": "NVIDIA DeepSeek",
     "nvidia-muse": "NVIDIA Muse",
+    "nvidia-gpt-oss": "NVIDIA gpt-oss",
     "openrouter": "OpenRouter",
     "tags": "OSM/SHOM/NOAA tags",
 }
