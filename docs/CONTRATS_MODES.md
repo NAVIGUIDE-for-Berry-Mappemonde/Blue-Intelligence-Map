@@ -109,60 +109,63 @@ P et PoE n’appellent pas le même géocodeur alors que la question « un point
 
 ## Jumeaux réels (à faire converger)
 
-Certains jobs posent la même question (« où est la page ? », « quel texte a-t-on ? », « est-ce le bon objet ? ») mais ont été écrits chacun dans leur mode. Ils peuvent s’aligner sur les mêmes outils, sans devenir un seul gros pipeline.
+Un jumeau, dans ce document, n’est pas « deux modes qu’il faudrait fusionner ». C’est deux morceaux de code qui se posent **la même question** — où est la page, quel texte a-t-on, est-ce le bon objet — et qui, parce qu’ils ont été écrits à des semaines d’écart, ont chacun réinventé leurs outils. Les faire converger, c’est partager la brique technique. Ce n’est pas mélanger les contrats produit : une marina n’est toujours pas un port d’entrée, une aire marine protégée n’est toujours pas un projet de conservation.
 
-### 1. Lire une page web
+Chacun des six points ci-dessous est un projet de modification. Il raconte d’abord ce que le code fait aujourd’hui, ensuite pourquoi c’est un vrai problème (et pas seulement du code moche), ensuite ce qu’on changerait, et pourquoi ce changement est justifié — y compris ce qu’on refuse de coller ensemble.
 
-Quand Projets ou le PoE top-down veulent le texte d’une URL, ils passent par `extract_cascade` : d’abord un téléchargement simple, puis trafilatura ou Readability, puis le PDF (PyMuPDF, Tesseract si besoin), puis Playwright si la page est en JavaScript, puis un miroir Jina ou TinyFish Fetch, puis Wayback. Le PoE bottom-up, l’enrichissement capitainerie, la visite AMP et le signal Maps des marinas font presque la même chose — obtenir du texte — mais appellent TinyFish Fetch tout seuls. L’enrichissement marina, lui, se contente de `fetch_readable` (httpx + Readability). Les capitaineries ont déjà commencé à emprunter cette fonction aux marinas, en repli.
+### 1. Lire une URL : une seule porte d’entrée, pas cinq lecteurs
 
-Conséquence : un décret PDF trouvé par le bras bottom-up, ou un site de marina tout en JavaScript, casse plus facilement que la même page vue par le swarm ou par le top-down. L’objectif n’est pas trois lecteurs, c’est une seule porte : « voici une URL, donne-moi le texte ». Cette porte, c’est `extract_cascade`. TinyFish Fetch tout seul reste légitime seulement quand on a vraiment besoin du DOM rendu, comme la page Google Maps `/place/`.
+Dès qu’on a une adresse web, on a besoin du **texte** de la page (ou du PDF). C’est la même question partout. Pourtant le chemin n’est pas le même selon le mode.
 
-### 2. Chercher la page officielle d’un nom
+Le swarm Projets et le bras top-down des ports d’entrée passent par une cascade d’extraction (`extract_cascade`). On télécharge d’abord simplement. Si c’est du HTML, on en tire le texte. Si c’est un PDF, y compris un scan, on l’ouvre (et on le lit à l’OCR si besoin). Si la page n’est que du JavaScript, on ouvre un vrai navigateur. Si le site bloque, on essaie un miroir. Le bras bottom-up des ports d’entrée, l’enrichissement des capitaineries, la recherche de page de visite des AMP, et le job Google Maps des marinas, eux, appellent surtout TinyFish Fetch : un seul coup, le texte rendu, et c’est tout. L’enrichissement marina est encore plus mince : un téléchargement HTTP plus un extracteur de lisibilité, sans PDF ni navigateur.
 
-Le PoE bottom-up, les capitaineries, les AMP et, en dernier recours, l’enrichissement marina cherchent tous « la page officielle de *ce* nom ». Ils ne s’y prennent pas de la même façon. Le bottom-up n’utilise que TinyFish Search, filtré par une whitelist, sans filet si la clé manque. Les capitaineries font TinyFish Search, puis DuckDuckGo HTML si ça revient vide, et filtrent avec une liste de bouts d’URL maison au lieu de `serp_filter`. Les AMP font TinyFish Search, passent les hits dans `serp_filter`, puis un score, et n’ont pas de DuckDuckGo. L’enrichissement marina ne cherche même pas avec TinyFish : si OSM n’a pas de site, il tape DuckDuckGo. Le top-down PoE est un autre métier : il cherche une *liste d’État pour un polygone*, avec SearXNG, Serper, parfois TinyFish, et `:online` en dernier.
+Le problème se voit concrètement. Un décret d’État en PDF, ouvert par le top-down, est lu. Le même décret, ouvert par le bottom-up, peut revenir vide, parce que Fetch n’est pas une cascade PDF. Un site de marina tout en JavaScript passe au swarm (le navigateur local s’en occupe) et échoue à l’enrichissement marina. On paie donc plus cher d’un côté, ou on rate l’information de l’autre, pour une question identique : « donne-moi le texte de cette URL ».
 
-L’alignement utile, c’est donc pour les recherches *nommées* (bottom-up, capitaineries, AMP, marina sans site) : TinyFish Search, le filtre `serp_filter` déjà partagé par le top-down et les AMP, et DuckDuckGo seulement quand il n’y a pas de clé TinyFish. On n’installe pas SearXNG sur les marinas, les capitaineries ou les AMP : cet outil sert une liste réglementaire par ZEE, pas une fiche d’un lieu.
+Le changement proposé est donc une seule porte d’entrée pour lire une URL. Dès que TinyFish Fetch ne rend pas un texte utilisable — surtout un PDF ou un site JavaScript — le bottom-up, les marinas et les capitaineries rentreraient dans la même cascade que les Projets et le top-down. On ne supprime pas Fetch : il reste le bon outil quand on a besoin du DOM après JavaScript, typiquement la fiche Google Maps `/place/`, que la cascade n’a pas vocation à parser comme un décret. On n’allume pas non plus le navigateur local à chaque Fetch réussi : il ne sert que si le HTML simple et Fetch ont déjà échoué. Sinon le coût explose, et on n’a rien gagné.
 
-### 3. Remplir téléphone, VHF et services depuis un site
+### 2. Chercher « la page officielle de ce nom » : même outillage, questions métier distinctes
 
-`marina_enrich` et `capitainerie_enrich` sont déjà les plus proches. Les deux refusent d’inventer un champ, les deux passent par la chaîne NIM `page`, puis OpenRouter avec un garde-fou de crédit, puis un Agent TinyFish en dernier recours. Ils partagent déjà DuckDuckGo et `fetch_readable`.
+Quatre jobs cherchent la page officielle d’un **lieu déjà nommé** : un port, une capitainerie, une aire protégée, une marina sans site dans OpenStreetMap. C’est la même question humaine. Chacun a pourtant sa recette.
 
-Ils divergent sur l’ordre. Les capitaineries cherchent le web avant de lire, parce qu’elles n’ont souvent pas d’URL. Les marinas lisent d’abord le tag OSM, et ne cherchent sur DuckDuckGo que s’il n’y a pas de site. Les capitaineries extraient téléphone et VHF par regex *avant* d’appeler le LLM ; les marinas appellent le LLM d’abord et ne tombent sur les tags OSM qu’en repli. L’Agent marina peut partir d’une URL trouvée sur DuckDuckGo ; l’Agent capitainerie n’accepte qu’un site officiel.
+Le bottom-up n’a que TinyFish Search, filtré par une liste de domaines d’État. S’il n’y a pas de clé TinyFish, il n’y a pas de recherche du tout. Les capitaineries font TinyFish Search, puis DuckDuckGo si ça revient vide, et jettent Facebook ou Tripadvisor avec une petite liste maison, au lieu du filtre de résultats de recherche déjà partagé ailleurs. Les AMP font TinyFish Search, passent les résultats dans ce filtre commun (`serp_filter`), puis un score, mais n’ont pas de filet DuckDuckGo. L’enrichissement marina, s’il n’a pas de tag site, tape DuckDuckGo et ignore TinyFish Search.
 
-On peut viser le même enchaînement partout : partir des tags ; chercher seulement s’il n’y a pas d’URL ; lire la page (Fetch ou cascade) ; extraire par regex ce qui est trivial (un numéro, un canal) ; puis NIM `page`, OpenRouter, et l’Agent seulement si l’URL est officielle.
+Ce n’est pas la question du bras top-down des ports d’entrée. Celui-là ne cherche pas « la page de *ce* port ». Il cherche une **liste réglementaire pour tout un polygone de zone économique exclusive**. Il a donc besoin de SearXNG, de Serper, parfois d’un modèle avec accès web. Coller SearXNG sur une marina ou une AMP serait le mauvais outil : on n’y cherche pas un décret de ports d’entrée.
 
-### 4. Décider si c’est le bon objet ou la bonne page
+Le changement proposé n’aligne que les recherches **nommées**. On commencerait par TinyFish Search, on passerait les résultats dans le même filtre déjà utilisé par le top-down et les AMP pour écarter forums et sites d’annonces, et on garderait DuckDuckGo uniquement comme filet quand la clé TinyFish manque — exactement ce que les capitaineries font déjà, et que le bottom-up et les AMP n’ont pas. Les requêtes et les listes de domaines resteraient propres à chaque mode : un port d’entrée n’est pas une page de permis d’aire protégée. On changerait l’outillage, pas la question métier. On n’installerait pas SearXNG sur l’enrichissement marina, capitainerie ou AMP.
 
-Trois jobs disent oui ou non après avoir vu des résultats ou du texte, avec trois prompts et trois rôles NIM différents. Le gatekeeper Projets demande : est-ce un projet marin ? Le juge bottom-up demande : ce lieu est-il un port d’entrée plaisance, ou du cargo ? Le juge AMP demande : parmi *ces* URL déjà trouvées, laquelle est une page de visite — et il n’a pas le droit d’en inventer une. Cette dernière règle (choisir dans une liste fermée) est celle qu’il faut garder pour ne pas halluciner une `visit_url`.
+### 3. Enrichir une marina ou une capitainerie : le même ordre des étapes, pas le même formulaire
 
-On n’écrit pas un seul prompt pour les trois. On écrit un même adaptateur — un JSON du type « j’accepte ou je refuse, éventuellement cette URL, voici pourquoi » — et on laisse les trois schémas et les chaînes NIM (`judge`, `json`, gatekeeper) telles qu’elles sont.
+Les deux jobs d’enrichissement font le travail le plus proche du dépôt : extraire un téléphone, un canal VHF, parfois des services, **sans jamais inventer** un champ. Ils partagent déjà le même modèle NVIDIA pour lire une page, OpenRouter avec un contrôle de crédit, DuckDuckGo, et la petite fonction de lecture HTML. L’Agent TinyFish est le dernier recours des deux.
 
-### 5. Balayer le monde avec Overpass
+Ils ne font pourtant pas les étapes dans le même ordre, et ce n’est pas justifié par le métier. Les capitaineries cherchent le web tout de suite, parce qu’elles n’ont souvent pas d’adresse dans OpenStreetMap. Les marinas lisent d’abord le tag site, ce qui est plus économique quand le tag existe. Les capitaineries sortent un numéro de téléphone par une règle simple *avant* d’appeler un modèle de langage. Les marinas appellent le modèle d’abord et ne regardent les tags OpenStreetMap qu’à la fin. L’Agent marina peut partir d’une URL trouvée sur DuckDuckGo, donc parfois un Tripadvisor. L’Agent capitainerie n’accepte qu’un site officiel — et c’est cette seconde règle qui est la bonne : un Agent lancé sur une page d’avis invente ou copie n’importe quoi.
 
-Les dumps marinas, capitaineries et mouillages partagent déjà la grille mondiale et Overpass. Ce n’est pas là que ça diverge. Ce qu’il ne faut pas fusionner, c’est la règle d’identité : coller un point SHOM ou NOAA sur un OSM à 250 mètres, ce n’est pas la même chose que fusionner deux projets à moins de 500 mètres avec un nom proche. Le premier est un overlay de cartes ; le second est un doublon métier.
+On ne fusionnerait pas les deux schémas de données : une marina a des places visiteurs et un tirant d’eau, une capitainerie n’a besoin que du téléphone et du VHF. Ce qu’on partagerait, c’est **l’ordre** des étapes. On partirait des tags déjà là. On ne chercherait le web que s’il manque une URL. On lirait la page. On extrairait par une règle simple ce qui est trivial (un numéro, un canal). On n’appellerait NVIDIA puis OpenRouter que s’il reste un trou. On n’appellerait l’Agent que si l’URL est vraiment officielle. On éviterait ainsi de payer un modèle pour relire un téléphone déjà dans OpenStreetMap, et d’envoyer l’Agent sur un résultat de moteur.
 
-### 6. Poser un GPS dans le bon espace
+### 4. Dire oui ou non : un même branchement, trois prompts différents
 
-Projets et PoE utilisent Nominatim et GeoNames, mais pas la même fonction. Projets appelle `geocode()` l’un après l’autre, puis un LLM si besoin, puis vérifie qu’on est en mer ou dans un havre à moins de 15 km. Le PoE (top-down et bottom-up) appelle `geocode_port_dual` en parallèle, départage au LLM s’il y a désaccord, puis exige que le point tombe dans *ce* polygone de ZEE.
+Trois jobs disent « j’accepte » ou « je refuse » après avoir vu du texte ou des résultats de recherche. Chacun a son propre prompt et son propre rôle NVIDIA. Le gatekeeper des Projets demande si la page est un projet marin. Le juge bottom-up demande si *ce lieu* est un port d’entrée plaisance, ou du cargo. Le juge AMP demande, parmi une **liste d’URL déjà trouvées**, laquelle est une page de visite — et il n’a pas le droit d’en inventer une. Cette dernière contrainte est précieuse : c’est elle qui empêche d’halluciner une adresse de visite.
 
-Les deux géocodeurs peuvent devenir le même appel parallèle. Ce qui doit rester différent, c’est le test d’espace : « accessible en bateau » d’un côté, « dans ce polygone VLIZ » de l’autre.
+Le problème n’est pas que les questions métier soient différentes. Elles doivent le rester. Le problème, c’est que chaque mode a recâblé l’appel au modèle, les replis OpenRouter et Claude, et le format de la réponse. Quand on corrige un bug d’appel — un délai trop court, un JSON cassé, le filet Claude — on le corrige trois fois, ou une seule.
 
----
+Le changement proposé est un adaptateur commun, pas un juge unique. On enverrait un prompt, et on recevrait un objet du type « j’accepte ou je refuse, éventuellement cette URL parmi les candidates, voici pourquoi ». Les trois textes de prompt resteraient trois textes. On n’écrirait pas un juge « projet ou port ou aire protégée » : ce serait plus faible que chaque spécialiste, et ça mélangerait des objets que le produit refuse de confondre.
 
-## Ce qu’il ne faut pas unifier
+### 5. Deux points proches : ce n’est pas toujours « le même objet »
 
-- **MM Fetch Maps** : il faut un navigateur (TinyFish) sur une URL Google, pas `extract_cascade` sur un HTML d’État.
-- **Dumps OSM** : ce n’est pas de la recherche web ; Overpass est le bon outil.
-- **Cache tuile AMP** : ce n’est pas un merge d’entités.
-- **SearXNG sur l’enrich marina / capitainerie** : mauvais outil (pas une liste réglementaire par ZEE).
-- **Playwright sur chaque Fetch TinyFish** : coût ; le garder dans la cascade quand httpx / Fetch suffisent.
+Les dumps marinas, capitaineries et mouillages partagent déjà Overpass et la grille mondiale. Il n’y a pas de projet d’unification Overpass : c’est déjà le cas. Le piège serait d’y coller la déduplication des projets et des ports d’entrée (cinq cents mètres et un nom proche).
 
----
+Quand on fusionne deux projets à moins de cinq cents mètres, on dit : c’est **le même site d’action**, on enrichit une seule fiche. Quand on colle un point du SHOM ou de la NOAA sur un objet OpenStreetMap à deux cent cinquante mètres, on dit : deux cartes officielles parlent du **même bâtiment**, on superpose un calque. Ce n’est pas la même décision. Réutiliser la déduplication des projets pour les capitaineries collerait des bureaux trop loin, ou refuserait un calque légitime.
 
-## Ordre d’amélioration
+Ce point n’est donc pas un chantier d’unification. C’est un **garde-fou**. Même famille « identité » dans la taxonomie, deux règles, deux codes. On ne les mélange pas.
 
-1. **Lecture.** Brancher CE / ME / BU (PDF, JS) sur `extract_cascade` là où TinyFish Fetch ne rend pas un décret / un site JS.
-2. **Recherche nommée.** `tf_search` + `serp_filter` + DDG filet pour CE, AV, ME (et BU filet DDG si pas de clé).
-3. **Enrich ME/CE.** Un seul orchestrateur `page`.
-4. **Géocode P** → dual + prédicat havre.
-5. **Juge.** Adaptateur commun, prompts séparés.
+### 6. Géocoder un nom : un même appel aux deux annuaires, deux tests d’espace ensuite
+
+Les Projets et les ports d’entrée demandent tous les deux à Nominatim et à GeoNames où se trouve un nom. Les Projets les appellent l’un après l’autre, puis un modèle de langage si besoin, puis vérifient qu’on est en mer ou dans un havre à moins de quinze kilomètres. Les ports d’entrée les appellent en parallèle, départagent au modèle s’ils ne sont pas d’accord, puis exigent que le point tombe dans **ce** polygone de zone économique exclusive — pas « en France », *ce* polygone VLIZ.
+
+Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le même : c’est pour cela qu’un seul appel « demande aux deux, départage s’il le faut » est justifié. Ce qui ne doit pas fusionner, c’est le **test d’espace** ensuite. Un projet n’a pas à entrer dans un polygone VLIZ. Un port d’entrée n’a pas le droit d’être collé sur Mayotte alors qu’on fiche l’hexagone. On unifierait l’outil de géocodage, pas la géographie du produit.
+
+### Dans quel ordre, et pourquoi
+
+On commence par la **lecture**, parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée**, pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
+
+On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
+
