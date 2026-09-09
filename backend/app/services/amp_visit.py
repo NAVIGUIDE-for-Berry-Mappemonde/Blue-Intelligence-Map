@@ -4,7 +4,7 @@
 2. Heuristique extras / labels Website.
 3. TinyFish Fetch sur ``manager_url`` nettoyé.
 4. TinyFish Search (``site:`` puis web ouvert).
-5. Juge Muse (NVIDIA), filet OpenRouter : choisit parmi les hits, n'invente pas.
+5. Juge NVIDIA (chaîne ``json`` : Pro → gpt-oss → Muse), filet OpenRouter.
 
 ``visit_url`` n'est jamais la homepage gestionnaire.
 """

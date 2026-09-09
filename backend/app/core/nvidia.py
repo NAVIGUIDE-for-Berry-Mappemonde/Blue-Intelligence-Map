@@ -12,17 +12,15 @@ Beaucoup de fiches restent en ligne alors que le hosted trial répond 410 Gone
 Laguna, Gemma 4) sont live mais « Structured Output: Not supported » :
 json_object les fait pendre — on omet response_format.
 
-Chaînes de fallback (échec HTTP / timeout / JSON vide → suivant) :
+Fallbacks **à l'intérieur de NIM** (échec HTTP / timeout / JSON vide → suivant).
+Source unique : `CHAINS`. Hors NIM : OpenRouter, puis Claude (prix). Pas de web NIM.
 
-  judge   Pro → Muse → gpt-oss-20b → Flash
-  extract Pro → Muse → gpt-oss-20b → Kimi
+  judge   Pro → gpt-oss → Muse → Flash     # 4/4 ; Flash last (529)
+  extract Pro → gpt-oss → Muse             # Kimi seulement si décret (`legal`)
   legal   Kimi → Pro → Muse
-  json    Pro → Muse → gpt-oss-20b   # gatekeeper, projet, géocode, AMP
-  page    Pro → Muse → gpt-oss-20b   # marina / capitainerie (texte de page)
-  text    Muse → Pro → gpt-oss-20b   # ask_text, pas de json_object
-
-Après la chaîne NIM : OpenRouter (complétion), puis Claude **en dernier**.
-La recherche web (`:online`) reste OpenRouter — NIM n'a pas de plugin web.
+  json    Pro → gpt-oss → Muse             # gatekeeper, projet, géocode, AMP
+  page    Pro → gpt-oss → Muse             # marina + capitainerie (même chaîne)
+  text    Pro → gpt-oss → Muse             # ask_text, json_object=false
 
 Paramètres JSON — contrat hosted = fiche infer (docs.api.nvidia.com/nim/…-infer),
 pas le playground ni la carte locale (temp/top_k hors schéma hosted) :
@@ -70,16 +68,15 @@ _ALIASES = {
     "poolside/laguna-xs-2-1": "poolside/laguna-xs-2.1",
 }
 
-# Rôles → ordre mesuré (canari PoE 2026-09-08, sans json_object sur Muse).
-# Pro 4/4 ~9 s ; Muse 4/4 ~19 s ; gpt-oss 4/4 ~43 s ; Flash 4/4 mais lent
-# sous charge ; Kimi pour les décrets ; Laguna 503 capacité ; Gemma hang.
+# Ordre = canari 2026-09-09 (qualité puis latence, 529/429 en queue).
+# Muse n'est plus 2ᵉ par héritage : gpt-oss a été plus rapide à qualité égale.
 CHAINS = {
-    "judge": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, FLASH_MODEL),
-    "extract": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, LEGAL_MODEL),
+    "judge": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL, FLASH_MODEL),
+    "extract": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
     "legal": (LEGAL_MODEL, PRO_MODEL, SECONDARY_MODEL),
-    "json": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
-    "page": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
-    "text": (SECONDARY_MODEL, PRO_MODEL, GPT_OSS_MODEL),
+    "json": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
+    "page": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
+    "text": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
 }
 
 _THINKING_RE = re.compile(r"^\s*here's a thinking process", re.I)
@@ -160,22 +157,34 @@ def _dedupe(models: list[str]) -> tuple[str, ...]:
 
 
 def models_for(role: str, preferred: str | None = None) -> tuple[str, ...]:
-    """Chaîne ordonnée (judge, extract, legal, json, page, text)."""
+    """Ordre NIM du rôle. `CHAINS` est la source ; pas de pin Muse implicite.
+
+    Surcharges : `NVIDIA_MODEL_CHAIN_{ROLE}` (liste complète), sinon
+    `NVIDIA_MODEL` / `NVIDIA_MODEL_LEGAL` en tête seulement s'ils sont posés.
+    `preferred` : un appel ponctuel (2ᵉ lecteur extract, etc.).
+    """
     key = role if role in CHAINS else "json"
-    defaults = list(CHAINS[key])
     extra = _env(f"NVIDIA_MODEL_CHAIN_{key.upper()}")
     if extra:
-        defaults = [p.strip() for p in extra.split(",") if p.strip()] or defaults
+        defaults = [_usable_nim(p.strip()) for p in extra.split(",") if p.strip()]
+    else:
+        defaults = []
+        for m in CHAINS[key]:
+            if m == SECONDARY_MODEL:
+                defaults.append(secondary_model())
+            elif m == LEGAL_MODEL:
+                defaults.append(legal_model())
+            else:
+                defaults.append(_usable_nim(m))
+    if not defaults:
+        defaults = [_usable_nim(m) for m in CHAINS[key]]
     head: list[str] = []
     if preferred:
         head.append(preferred)
-    if key == "legal":
+    elif key == "legal" and _env("NVIDIA_MODEL_LEGAL"):
         head.append(legal_model())
-    elif key != "text":
-        # text : CHAINS commence par Muse (pas de json_object).
+    elif key != "legal" and _env("NVIDIA_MODEL"):
         head.append(primary_model())
-        if key in ("judge", "extract"):
-            head.append(secondary_model())
     return _dedupe([*head, *defaults])
 
 
@@ -502,7 +511,7 @@ async def complete_text_nvidia(system: str, prompt: str,
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing")
     chain = models_for(role, preferred=model) if fallback else (
-        (_usable_nim(model or secondary_model()),)
+        (_usable_nim(model or primary_model()),)
     )
     last_err = "nvidia exhausted chain"
     headers = {
@@ -548,8 +557,8 @@ async def extract_ports_nvidia(context: str, zone: dict,
                                fallback: bool | None = None) -> list[dict]:
     from app.core.llm import POE_EXTRACT_PROMPT, coerce_ports
 
-    # Le lecteur principal reste la chaîne extract (Flash…). Kimi n'est
-    # second lecteur que via second_extract_choice (décret / gazette).
+    # Lecteur principal : chaîne extract (Pro → gpt-oss → Muse).
+    # Kimi n'est second lecteur que via second_extract_choice (décret).
     role = "extract"
     do_fb = True if fallback is None and model is None else bool(fallback)
     prompt = POE_EXTRACT_PROMPT.format(

@@ -4,7 +4,7 @@ Chaîne (coût croissant) :
   1. tags OSM/SHOM/NOAA
   2. TinyFish Search (nom distinct ou « capitainerie » + GPS)
   3. TinyFish Fetch (ou readability) + parsing regex — stop si tél et VHF
-  4. NVIDIA NIM chaîne `page` (Pro → Muse → gpt-oss) sur le texte de page
+  4. NVIDIA NIM chaîne `page` (Pro → gpt-oss → Muse) sur le texte de page
   5. OpenRouter sur le même texte
   6. Agent TinyFish (site officiel uniquement, dernier recours)
 
@@ -345,7 +345,7 @@ async def enrich_via_nvidia(
     settings: dict | None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> Optional[dict]:
-    """Chaîne `page` : Pro → Muse → gpt-oss. `_engine` = modèle réellement servi."""
+    """Chaîne `page` : Pro → gpt-oss → Muse. `_engine` = modèle réellement servi."""
     from app.core import nvidia
     if not context or not nvidia.nvidia_enabled(settings):
         return None

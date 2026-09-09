@@ -43,8 +43,13 @@ class TestFingerprint:
         assert fp["nvidia_configured"] is True
         assert fp["nvidia_model"] == "deepseek-ai/deepseek-v4-pro-0813"
         assert fp["nvidia_judge_chain"][0] == "deepseek-ai/deepseek-v4-pro-0813"
+        assert fp["nvidia_judge_chain"][1] == "openai/gpt-oss-20b"
         assert "meta/muse-glimmer-30b" in fp["nvidia_judge_chain"]
-        assert fp["nvidia_page_chain"][0] == "deepseek-ai/deepseek-v4-pro-0813"
+        assert fp["nvidia_page_chain"] == [
+            "deepseek-ai/deepseek-v4-pro-0813",
+            "openai/gpt-oss-20b",
+            "meta/muse-glimmer-30b",
+        ]
         assert fp["features"]["nvidia_adapter"] is True
         assert fp["openrouter_configured"] is True
         assert fp["tinyfish_configured"] is True

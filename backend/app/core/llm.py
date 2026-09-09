@@ -458,7 +458,7 @@ async def extract_ports_openrouter(context: str, zone: dict,
 
 
 async def extract_ports(context: str, zone: dict, settings: dict | None = None, log=None) -> list[dict]:
-    """Lecteur principal. Le second lecteur (Muse / Kimi / Claude) est
+    """Lecteur principal. Le second lecteur (gpt-oss / Kimi) est
     orchestré dans poe_pipeline.extract_ports_llm."""
     s = settings
     if s is None:

@@ -2,7 +2,7 @@
 Marina enrichment.
 
 Chain (cost-ordered):
-    1. NVIDIA NIM (readability text of the marina website + JSON completion)
+    1. NVIDIA NIM page chain (Pro → gpt-oss → Muse) on marina website text
     2. OpenRouter (same contract if NIM is off or empty)
     3. TinyFish   (agent mission on the official OSM website tag — last paid resort)
     4. Fallback   (whatever the OSM tags already say — never fabricated)
@@ -478,7 +478,7 @@ async def enrich_via_nvidia(
     settings: dict | None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> Optional[dict]:
-    """Complétion JSON NIM sur le texte de page (même contrat qu'OpenRouter)."""
+    """Chaîne `page` : Pro → gpt-oss → Muse (même contrat JSON qu'OpenRouter)."""
     from app.core import nvidia
     if not nvidia.nvidia_enabled(settings):
         return None

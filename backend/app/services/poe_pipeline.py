@@ -1029,7 +1029,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
     Une vraie table (noms + coords) court-circuite le LLM ; les fragments
     « port de X » ne suffisent plus — les lecteurs JSON lisent ces pages.
-    Second lecteur : Muse (ou Kimi si décret) si NVIDIA est allumé.
+    Second lecteur : gpt-oss (ou Kimi si décret) si NVIDIA est allumé.
     Claude n'intervient qu'après échec des deux lecteurs NIM/OR.
     """
     raw_catalog = catalog_text if catalog_text is not None else context

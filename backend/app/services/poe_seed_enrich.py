@@ -2,7 +2,7 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge NVIDIA (Pro → Muse → gpt-oss → Flash) si clé NIM, sinon OpenRouter,
+juge NVIDIA (Pro → gpt-oss → Muse → Flash) si clé NIM, sinon OpenRouter,
 puis Claude Haiku → Sonnet en dernier.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
