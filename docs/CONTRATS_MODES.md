@@ -109,65 +109,43 @@ P et PoE n’appellent pas le même géocodeur alors que la question « un point
 
 ## Jumeaux réels (à faire converger)
 
-Fonctions qui posent la même question et qui, dans le code, ont divergé.
+Certains jobs posent la même question (« où est la page ? », « quel texte a-t-on ? », « est-ce le bon objet ? ») mais ont été écrits chacun dans leur mode. Ils peuvent s’aligner sur les mêmes outils, sans devenir un seul gros pipeline.
 
-### 1. Lecture web (famille 3) — le plus gros écart
+### 1. Lire une page web
 
-`extract_cascade` (P, TD) vs `tf_fetch` (BU, CE, AV, MM) vs `fetch_readable` (ME, repli CE).
+Quand Projets ou le PoE top-down veulent le texte d’une URL, ils passent par `extract_cascade` : d’abord un téléchargement simple, puis trafilatura ou Readability, puis le PDF (PyMuPDF, Tesseract si besoin), puis Playwright si la page est en JavaScript, puis un miroir Jina ou TinyFish Fetch, puis Wayback. Le PoE bottom-up, l’enrichissement capitainerie, la visite AMP et le signal Maps des marinas font presque la même chose — obtenir du texte — mais appellent TinyFish Fetch tout seuls. L’enrichissement marina, lui, se contente de `fetch_readable` (httpx + Readability). Les capitaineries ont déjà commencé à emprunter cette fonction aux marinas, en repli.
 
-- CE a déjà importé `fetch_readable` depuis `marina_enrich`.
-- BU, si Fetch est vide ou JS, n’a ni Playwright ni cascade : un décret PDF PoE BU est plus fragile qu’en TD.
-- ME n’a pas Playwright : un site de marina tout JS échoue plus tôt que le swarm.
+Conséquence : un décret PDF trouvé par le bras bottom-up, ou un site de marina tout en JavaScript, casse plus facilement que la même page vue par le swarm ou par le top-down. L’objectif n’est pas trois lecteurs, c’est une seule porte : « voici une URL, donne-moi le texte ». Cette porte, c’est `extract_cascade`. TinyFish Fetch tout seul reste légitime seulement quand on a vraiment besoin du DOM rendu, comme la page Google Maps `/place/`.
 
-**Cible.** Une porte unique « donne-moi le texte » (`extract_cascade`, Fetch en miroir N3 comme aujourd’hui dans la cascade). TinyFish Fetch **seul** seulement quand on a besoin du DOM rendu (Maps `/place/`).
+### 2. Chercher la page officielle d’un nom
 
-### 2. Recherche web ouverte (famille 1) — CE, AV, BU, et le DDG de ME
+Le PoE bottom-up, les capitaineries, les AMP et, en dernier recours, l’enrichissement marina cherchent tous « la page officielle de *ce* nom ». Ils ne s’y prennent pas de la même façon. Le bottom-up n’utilise que TinyFish Search, filtré par une whitelist, sans filet si la clé manque. Les capitaineries font TinyFish Search, puis DuckDuckGo HTML si ça revient vide, et filtrent avec une liste de bouts d’URL maison au lieu de `serp_filter`. Les AMP font TinyFish Search, passent les hits dans `serp_filter`, puis un score, et n’ont pas de DuckDuckGo. L’enrichissement marina ne cherche même pas avec TinyFish : si OSM n’a pas de site, il tape DuckDuckGo. Le top-down PoE est un autre métier : il cherche une *liste d’État pour un polygone*, avec SearXNG, Serper, parfois TinyFish, et `:online` en dernier.
 
-Tous cherchent « la page officielle de *ce* nom ».
+L’alignement utile, c’est donc pour les recherches *nommées* (bottom-up, capitaineries, AMP, marina sans site) : TinyFish Search, le filtre `serp_filter` déjà partagé par le top-down et les AMP, et DuckDuckGo seulement quand il n’y a pas de clé TinyFish. On n’installe pas SearXNG sur les marinas, les capitaineries ou les AMP : cet outil sert une liste réglementaire par ZEE, pas une fiche d’un lieu.
 
-| Job | Search payant | Filet gratuit | Filtre hits |
-| --- | --- | --- | --- |
-| BU | TinyFish Search | aucun | whitelist, pas `serp_filter` |
-| CE | TinyFish Search | DuckDuckGo HTML | snips maison |
-| AV | TinyFish Search | aucun | `serp_filter` + score |
-| ME | aucun | DuckDuckGo HTML | — |
-| TD | SearXNG + Serper ± TinyFish | `:online` | `serp_filter` + ML |
+### 3. Remplir téléphone, VHF et services depuis un site
 
-**Cible.** `tf_search` + `serp_filter` (déjà dans `extract.py`, déjà utilisé par TD et AV) + DDG comme filet **uniquement** si pas de clé TinyFish — le filet que CE a et que BU / AV n’ont pas.
+`marina_enrich` et `capitainerie_enrich` sont déjà les plus proches. Les deux refusent d’inventer un champ, les deux passent par la chaîne NIM `page`, puis OpenRouter avec un garde-fou de crédit, puis un Agent TinyFish en dernier recours. Ils partagent déjà DuckDuckGo et `fetch_readable`.
 
-**Ne pas** coller SearXNG sur CE / AV / ME : SearXNG chez TD sert une **liste d’État par polygone**, pas une fiche nommée.
+Ils divergent sur l’ordre. Les capitaineries cherchent le web avant de lire, parce qu’elles n’ont souvent pas d’URL. Les marinas lisent d’abord le tag OSM, et ne cherchent sur DuckDuckGo que s’il n’y a pas de site. Les capitaineries extraient téléphone et VHF par regex *avant* d’appeler le LLM ; les marinas appellent le LLM d’abord et ne tombent sur les tags OSM qu’en repli. L’Agent marina peut partir d’une URL trouvée sur DuckDuckGo ; l’Agent capitainerie n’accepte qu’un site officiel.
 
-### 3. Enrichissement page (familles 3+5) — `marina_enrich` et `capitainerie_enrich`
+On peut viser le même enchaînement partout : partir des tags ; chercher seulement s’il n’y a pas d’URL ; lire la page (Fetch ou cascade) ; extraire par regex ce qui est trivial (un numéro, un canal) ; puis NIM `page`, OpenRouter, et l’Agent seulement si l’URL est officielle.
 
-Déjà les plus proches : même chaîne NIM `page`, OpenRouter + crédit, Agent en dernier, « jamais inventé », DDG et `fetch_readable` partagés.
+### 4. Décider si c’est le bon objet ou la bonne page
 
-Écarts à refermer :
+Trois jobs disent oui ou non après avoir vu des résultats ou du texte, avec trois prompts et trois rôles NIM différents. Le gatekeeper Projets demande : est-ce un projet marin ? Le juge bottom-up demande : ce lieu est-il un port d’entrée plaisance, ou du cargo ? Le juge AMP demande : parmi *ces* URL déjà trouvées, laquelle est une page de visite — et il n’a pas le droit d’en inventer une. Cette dernière règle (choisir dans une liste fermée) est celle qu’il faut garder pour ne pas halluciner une `visit_url`.
 
-- CE cherche **avant** de lire (Search) ; ME lit le tag OSM d’abord, DDG seulement si pas de site.
-- CE : regex **avant** le LLM ; ME : LLM d’abord, tags OSM en repli.
-- ME : Agent peut partir d’une URL DDG ; CE : Agent seulement si site officiel.
+On n’écrit pas un seul prompt pour les trois. On écrit un même adaptateur — un JSON du type « j’accepte ou je refuse, éventuellement cette URL, voici pourquoi » — et on laisse les trois schémas et les chaînes NIM (`judge`, `json`, gatekeeper) telles qu’elles sont.
 
-**Cible.** Même squelette : `tags → (Search si pas d’URL) → Fetch/cascade → regex champs triviaux → NIM page → OpenRouter → Agent si URL officielle`.
+### 5. Balayer le monde avec Overpass
 
-### 4. Juge « est-ce la bonne page / le bon objet ? » (familles 2+4)
+Les dumps marinas, capitaineries et mouillages partagent déjà la grille mondiale et Overpass. Ce n’est pas là que ça diverge. Ce qu’il ne faut pas fusionner, c’est la règle d’identité : coller un point SHOM ou NOAA sur un OSM à 250 mètres, ce n’est pas la même chose que fusionner deux projets à moins de 500 mètres avec un nom proche. Le premier est un overlay de cartes ; le second est un doublon métier.
 
-BU `judge`, AV juge JSON, P gatekeeper : trois prompts, trois rôles NIM, même idée — accepter ou jeter **après** lecture ou SERP.
+### 6. Poser un GPS dans le bon espace
 
-- AV juge **parmi une liste fermée** d’URL (ne pas inventer) : bon modèle pour ne pas halluciner une `visit_url`.
-- BU juge un **lieu** (plaisance vs cargo).
-- P juge un **projet marin**.
+Projets et PoE utilisent Nominatim et GeoNames, mais pas la même fonction. Projets appelle `geocode()` l’un après l’autre, puis un LLM si besoin, puis vérifie qu’on est en mer ou dans un havre à moins de 15 km. Le PoE (top-down et bottom-up) appelle `geocode_port_dual` en parallèle, départage au LLM s’il y a désaccord, puis exige que le point tombe dans *ce* polygone de ZEE.
 
-**Cible.** Un contrat juge commun `{accept, url?, reason}` + chaînes NIM déjà dans `CHAINS`. Pas un seul prompt : trois schémas, **un** adaptateur.
-
-### 5. Dumps Overpass tuilés
-
-`marina_world`, `capitainerie_world`, `anchorage_build` partagent déjà `WORLD_TILES` / Overpass. Les fusions 0,25 km capitaineries ne doivent **pas** copier le `dedup` 500 m des projets : ce n’est pas le même grain (overlay SHOM vs deux projets au même GPS).
-
-### 6. Géocodeurs (famille 6)
-
-`geocode()` séquentiel (P) vs `geocode_port_dual` parallèle (TD/BU). Même Nominatim + GeoNames. P n’a pas le départage LLM ni le polygone.
-
-**Cible.** `geocode_port_dual` (ou un `geocode_pair`) partout, puis **prédicat d’espace** différent (`site_publishable` vs in-EEZ).
+Les deux géocodeurs peuvent devenir le même appel parallèle. Ce qui doit rester différent, c’est le test d’espace : « accessible en bateau » d’un côté, « dans ce polygone VLIZ » de l’autre.
 
 ---
 
