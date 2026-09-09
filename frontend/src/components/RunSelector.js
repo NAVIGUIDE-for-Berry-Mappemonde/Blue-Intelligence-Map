@@ -27,9 +27,21 @@ export default function RunSelector({ mode, mapRun, onSelect, t }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [runs, setRuns] = useState([]);
+  // Position fixe calculée depuis le bouton : le groupe d'onglets du Header
+  // est en overflow-hidden, un menu absolu y serait rogné.
+  const [pos, setPos] = useState({ top: 0, right: 0 });
   const boxRef = useRef(null);
+  const btnRef = useRef(null);
 
   useEffect(() => { setOpen(false); }, [mode]);
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    }
+    setOpen((o) => !o);
+  };
 
   useEffect(() => {
     if (!open) return undefined;
@@ -59,8 +71,9 @@ export default function RunSelector({ mode, mapRun, onSelect, t }) {
   return (
     <div ref={boxRef} className="relative flex">
       <button
+        ref={btnRef}
         data-testid="run-selector-btn"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         title={t("runSelectorTitle")}
         className={`flex items-center gap-1 px-1.5 py-1.5 text-xs font-semibold border-l border-line transition-colors ${
           mapRun || open
@@ -84,7 +97,8 @@ export default function RunSelector({ mode, mapRun, onSelect, t }) {
       {open && (
         <div
           data-testid="run-selector-list"
-          className="absolute right-0 top-full mt-1 w-80 max-h-96 overflow-y-auto border border-line bg-surface rounded-sm shadow-2xl z-[1400]"
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="w-80 max-h-96 overflow-y-auto border border-line bg-surface rounded-sm shadow-2xl z-[1400]"
         >
           <div className="px-3 py-2 border-b border-line font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500">
             {t("runSelectorTitle")} — {mode}
