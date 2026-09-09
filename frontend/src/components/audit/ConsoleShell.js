@@ -61,6 +61,11 @@ export default function ConsoleShell({
 
   useEffect(() => {
     let alive = true;
+    setCatalog(null);
+    setValues({});
+    setProfile("cdc_default");
+    setLastProfile("cdc_default");
+    setErrors({});
     (async () => {
       try {
         const data = await loadCatalog("cdc_default", { pure: true });
