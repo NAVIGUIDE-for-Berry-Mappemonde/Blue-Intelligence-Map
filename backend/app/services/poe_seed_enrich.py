@@ -25,8 +25,8 @@ from shapely.geometry import shape
 from shapely.prepared import prep
 
 from app.core.extract import (
-    catalog_is_sufficient, extract_structured_ports, geocode_query_name,
-    is_geocodeable_name,
+    catalog_is_sufficient, complete_with_cascade, extract_structured_ports,
+    geocode_query_name, is_geocodeable_name,
 )
 from app.core.geo import (
     INLAND_FAR_SCORE_KM,
@@ -926,7 +926,9 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
         hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
         urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
         if key and urls:
-            fetched = await tf_fetch(urls, key, log=log)
+            fetched = await tf_fetch(urls, key, log=log) or {}
+    # PDF / JS : Fetch vide → même cascade que le top-down. Maps : inchangé.
+    fetched = await complete_with_cascade(urls, fetched, log=log)
     for u in urls:
         rec = fetched.get(u) or {}
         if rec.get("blocked") or rec.get("error") == "bot_blocked":
@@ -1226,12 +1228,14 @@ async def mine_paid_sources(db, state, *, fetch_cap: int = DEFAULT_MINE_FETCH_CA
             except TimeoutError:
                 log(f"mine Fetch timeout lot {i // 10 + 1}")
                 part = {}
+            part = await complete_with_cascade(batch, part or {}, log=log)
             fetched.update(part or {})
             ok = sum(1 for r in (part or {}).values() if str(r.get("text") or "").strip())
             log(f"mine Fetch lot {i // 10 + 1}: {ok}/{len(batch)} textes")
             state.progress = min(state.total, i + len(batch))
     elif urls:
-        log("mine: pas de clé TinyFish — Fetch sauté")
+        log("mine: pas de clé TinyFish — cascade locale (PDF / HTML)")
+        fetched = await complete_with_cascade(urls, {}, log=log)
     state.progress = min(state.total, len(urls) or 1)
 
     caches: dict[int, dict] = {}
@@ -1406,10 +1410,12 @@ async def apply_remembered_catalogs(db, state, *, persist_memory: bool = False,
             except TimeoutError:
                 log(f"remembered Fetch timeout lot {i // 10 + 1}")
                 part = {}
+            part = await complete_with_cascade(batch, part or {}, log=log)
             fetched.update(part or {})
             state.progress = min(state.total, i + len(batch))
     elif urls:
-        log("remembered: pas de clé TinyFish — Fetch sauté")
+        log("remembered: pas de clé TinyFish — cascade locale")
+        fetched = await complete_with_cascade(urls, {}, log=log)
 
     caches: dict[int, dict] = {}
     catalog_urls = []

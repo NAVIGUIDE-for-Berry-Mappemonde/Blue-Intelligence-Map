@@ -2,7 +2,7 @@
 
 1. Refresh attributs ProtectedSeas (ArcGIS, sans géométrie) — extras gratuits.
 2. Heuristique extras / labels Website.
-3. TinyFish Fetch sur ``manager_url`` nettoyé.
+3. TinyFish Fetch sur ``manager_url`` ; cascade locale (PDF / JS) si Fetch est vide.
 4. TinyFish Search (``site:`` puis web ouvert).
 5. Juge NVIDIA (chaîne ``json`` : Pro → gpt-oss → Muse), filet OpenRouter.
 
@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from typing import Awaitable, Callable
 from app.core.extract import serp_filter
-from app.core.tinyfish import AMP_VISIT_PURPOSE, FETCH_URL_CAP, tf_api_key, tf_fetch, tf_search
+from app.core.tinyfish import AMP_VISIT_PURPOSE, FETCH_URL_CAP, tf_api_key, tf_search
 from app.db import get_settings
 from app.services import amp as amp_svc
 
@@ -314,7 +314,12 @@ async def pending_sites(db, limit: int) -> list[dict]:
 
 
 async def default_fetch_many(urls: list[str], *, key: str, log=None) -> dict[str, dict]:
-    return await tf_fetch(urls, key, links=True, purpose=AMP_VISIT_PURPOSE, log=log)
+    """Fetch TinyFish, puis cascade locale si pas de texte ni de liens."""
+    from app.core.extract import as_fetch_record, read_urls
+    pages = await read_urls(
+        urls, min_chars=80, prefer_fetch=True, fetch_purpose=AMP_VISIT_PURPOSE,
+        fetch_key=key, keep_if_links=True, log=log)
+    return {u: as_fetch_record(p, u) for u, p in pages.items()}
 
 
 async def default_search(query: str, *, key: str, include_domains=None, log=None) -> list[dict]:

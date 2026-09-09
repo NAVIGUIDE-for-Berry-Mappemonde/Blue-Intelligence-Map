@@ -3,7 +3,7 @@
 Chaîne (coût croissant) :
   1. tags OSM/SHOM/NOAA
   2. TinyFish Search (nom distinct ou « capitainerie » + GPS)
-  3. TinyFish Fetch (ou readability) + parsing regex — stop si tél et VHF
+  3. TinyFish Fetch, puis cascade locale (PDF / JS) si le texte manque — stop si tél et VHF
   4. NVIDIA NIM chaîne `page` (Pro → gpt-oss → Muse) sur le texte de page
   5. OpenRouter sur le même texte
   6. Agent TinyFish (site officiel uniquement, dernier recours)
@@ -27,7 +27,6 @@ from app.services.capitainerie_world import (
 )
 from app.services.marina_enrich import (
     duckduckgo_html_search,
-    fetch_readable,
     openrouter_check_credit,
 )
 from app.services.marina_world import official_website
@@ -289,42 +288,34 @@ async def fetch_contact_pages(
     tinyfish_key: Optional[str] = None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> list[dict]:
-    """TinyFish Fetch prioritaire ; readability si pages vides / bloquées."""
+    """Fetch d'abord si clé ; cascade (PDF / JS / HTML) dès que le texte manque."""
+    from app.core.extract import read_urls
+    if not urls:
+        return []
+    pages_by = await read_urls(
+        urls,
+        min_chars=80,
+        prefer_fetch=bool(tinyfish_key),
+        fetch_purpose=CAPITAINERIE_PURPOSE,
+        fetch_key=tinyfish_key or "",
+        log=logger,
+    )
     pages: list[dict] = []
-    if tinyfish_key and urls:
-        from app.core.tinyfish import tf_fetch
-        recs = await tf_fetch(urls, tinyfish_key, purpose=CAPITAINERIE_PURPOSE, log=logger)
-        for url in urls:
-            rec = recs.get(url) or next(
-                (v for k, v in recs.items() if k.rstrip("/") == url.rstrip("/")),
-                {},
-            )
-            if rec.get("blocked"):
-                if logger:
-                    logger(f"[fetch] blocked {url[:80]}")
-                continue
-            text = (rec.get("text") or "").strip()
-            if text:
-                pages.append({
-                    "url": rec.get("final_url") or url,
-                    "title": rec.get("title") or "",
-                    "text": text,
-                })
-        if logger:
-            logger(f"[fetch] TinyFish {len(pages)} page(s) utilisable(s)")
-    if pages:
-        return pages
-    async with httpx.AsyncClient() as client:
-        for url in urls[:3]:
-            try:
-                title, text = await fetch_readable(url, client)
-                if text:
-                    pages.append({"url": url, "title": title, "text": text})
-                    if logger:
-                        logger(f"[fetch] readability {len(text)} chars from {url[:80]}")
-            except Exception as e:
-                if logger:
-                    logger(f"[fetch] readability {type(e).__name__}: {str(e)[:80]}")
+    for url in urls:
+        rec = pages_by.get(url) or {}
+        if rec.get("blocked"):
+            if logger:
+                logger(f"[fetch] blocked {url[:80]}")
+            continue
+        text = (rec.get("text") or "").strip()
+        if text:
+            pages.append({
+                "url": rec.get("final_url") or url,
+                "title": rec.get("title") or "",
+                "text": text,
+            })
+            if logger:
+                logger(f"[fetch] {rec.get('level')} {len(text)} chars from {url[:80]}")
     return pages
 
 

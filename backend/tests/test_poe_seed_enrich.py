@@ -17,6 +17,18 @@ def _keep_unit_tests_off_nvidia(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
 
 
+@pytest.fixture(autouse=True)
+def _no_cascade_network(monkeypatch):
+    """complete_with_cascade ne doit pas ouvrir le réseau dans ces tests."""
+    async def _empty(url, *a, **k):
+        return {
+            "url": url, "text": "", "md5": None, "level": "failed",
+            "title": "", "html": None, "blocked": False, "links": [],
+            "is_pdf": False, "render_used": False, "error": "stub",
+        }
+    monkeypatch.setattr("app.core.extract.extract_cascade", _empty)
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -149,6 +161,36 @@ class TestPaidSources:
         assert out["judge_engine"] == "nvidia-muse"
         assert out["judge_sources"] == [
             "https://www.treasury.govt.nz/x.pdf"]
+
+    def test_empty_fetch_falls_back_to_cascade_text(self, monkeypatch):
+        async def fake_fetch(urls, key, **k):
+            return {u: {"text": "", "error": "empty"} for u in urls}
+
+        async def fake_cascade(url, *a, **k):
+            return {
+                "url": url, "text": "terminal conteneur cargo only " * 20,
+                "blocked": False, "level": "N1-pymupdf", "title": "",
+                "links": [], "html": None, "render_used": False,
+            }
+
+        async def fake_llm(doc, zone, context, settings, log):
+            assert "terminal conteneur" in context
+            return {**enr.parse_judge({"is_poe": False, "confidence": 90, "kind": "cargo"}),
+                    "judge_engine": "nvidia-muse"}
+
+        monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
+        monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
+        monkeypatch.setattr("app.core.extract.extract_cascade", fake_cascade)
+        monkeypatch.setattr(enr, "_judge_llm", fake_llm)
+
+        out = _run(enr.judge_one(
+            {"name": "CentrePort", "judge_sources": [
+                "https://www.treasury.govt.nz/x.pdf"]},
+            {"name": "New Zealand", "iso2": "NZ", "mrgid": 8455},
+            {}, lambda m: None, use_agent=False, persist_memory=False,
+            reuse_paid_sources=True))
+        assert out["judge_status"] == "rejected"
+        assert out["judge_engine"] == "nvidia-muse"
 
     def test_catalog_hit_skips_fetch_and_search(self, monkeypatch):
         called = []

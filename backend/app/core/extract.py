@@ -1,12 +1,23 @@
 """
-extract_core.py — Extraction hybride en cascade, 100 % locale et gratuite.
+extract_core.py — Lecture d'URL : une porte, une cascade.
+
+Porte d'entrée : ``read_url`` / ``read_urls``. Même question partout
+(« donne-moi le texte de cette URL »), y compris PDF et pages JavaScript.
 
   N1/N2 (gratuit, ms)    : httpx direct + DOUBLE PARSING comparé
                            trafilatura ∥ Readability/BS4 (le plus riche gagne,
                            la similarité entre les deux est un signal de qualité)
+                           PDF : magie %PDF- / Content-Type / Content-Disposition,
+                           puis PyMuPDF (+ OCR si scan).
   N3 (gratuit, local)    : rendu navigateur Playwright/Chromium (render_core)
                            pour les pages JavaScript et les challenges « soft ».
+                           Allumé seulement si le HTML simple ET Fetch ont échoué.
   Miroir                 : Jina ∥ TinyFish Fetch (si clé), puis Wayback.
+
+TinyFish Fetch n'est pas supprimé : c'est le bon outil quand on a besoin du
+DOM après JavaScript (fiche Google Maps /place/). La cascade ne parse pas
+une fiche Maps comme un décret. ``prefer_fetch=True`` (bottom-up, AMP,
+capitaineries) tente Fetch d'abord ; un texte utilisable évite Chromium.
 
 Fournit aussi : filtrage SERP par regex (agrégateurs, réseaux sociaux, pages
 interstitielles anti-bot), détection des pages de blocage (un challenge n'est
@@ -403,20 +414,167 @@ def _is_ssl_cert_error(exc: BaseException) -> bool:
     ))
 
 
-async def fetch_raw(url: str, timeout: int = 25):
+async def fetch_raw(url: str, timeout: int = 25) -> httpx.Response:
+    """GET direct. Retourne la Response httpx (octets, headers, URL finale)."""
     kwargs = dict(timeout=timeout, follow_redirects=True, headers=UA_BROWSER)
     try:
         async with httpx.AsyncClient(**kwargs) as client:
             r = await client.get(url)
             r.raise_for_status()
-            return r.content, (r.headers.get("content-type") or "").lower()
+            return r
     except httpx.RequestError as e:
         if not _is_ssl_cert_error(e):
             raise
     async with httpx.AsyncClient(**kwargs, verify=False) as client:
         r = await client.get(url)
         r.raise_for_status()
-        return r.content, (r.headers.get("content-type") or "").lower()
+        return r
+
+
+def is_maps_render_url(url: str | None) -> bool:
+    """Fiche ou recherche Google Maps : DOM JS, pas un décret. Fetch seulement."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return False
+    host = (urlparse(raw).hostname or "").lower()
+    if "google." not in host and not host.endswith("goo.gl"):
+        return False
+    path = (urlparse(raw).path or "").lower()
+    query = (urlparse(raw).query or "").lower()
+    if "/maps/place/" in path or "/maps/search/" in path or "/maps/dir/" in path:
+        return True
+    if "/maps" in path and ("api=1" in query or "query=" in query):
+        return True
+    return False
+
+
+def content_is_pdf(content: bytes | None, content_type: str = "",
+                    url: str = "", content_disposition: str = "") -> bool:
+    """PDF réel. Un HTML d'erreur servi sous une URL .pdf n'en est pas un."""
+    blob = content or b""
+    if blob[:5] == b"%PDF-":
+        return True
+    head = blob.lstrip()[:80].lower()
+    if head.startswith(b"<") or head.startswith(b"{") or head.startswith(b"<!doctype"):
+        return False
+    ctype = (content_type or "").lower()
+    if "application/pdf" in ctype or ctype.strip() == "application/pdf":
+        return True
+    cd = (content_disposition or "").lower()
+    if ".pdf" in cd and "filename" in cd:
+        return True
+    path = (urlparse(url or "").path or "").lower()
+    if path.endswith(".pdf") and blob[:5] == b"%PDF-":
+        return True
+    if path.endswith(".pdf") and not head:
+        return True
+    return False
+
+
+def text_usable(text: str | None, min_chars: int = 200, *,
+                html: str = "", title: str = "") -> bool:
+    """Texte assez long et ce n'est pas un challenge anti-bot."""
+    t = (text or "").strip()
+    if len(t) < int(min_chars or 0):
+        return False
+    return not looks_blocked(text or "", html=html, title=title)
+
+
+def fetch_record_usable(rec: dict | None, min_chars: int = 200, *,
+                         keep_if_links: bool = False) -> bool:
+    """Fetch a rendu quelque chose qu'on peut garder — pas la peine d'allumer Chromium."""
+    rec = rec or {}
+    if rec.get("blocked") or rec.get("error") == "bot_blocked":
+        return False
+    if text_usable(rec.get("text") or "", min_chars, title=rec.get("title") or ""):
+        return True
+    if keep_if_links:
+        links = rec.get("links") or []
+        if any(_link_href(x) for x in links):
+            return True
+    return False
+
+
+def _link_href(raw) -> str:
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return str(raw.get("url") or raw.get("href") or "").strip()
+    return ""
+
+
+def html_hrefs(html: str | None, url: str, limit: int = 50) -> list[str]:
+    """Tous les href http(s), internes compris — besoin AMP / depth-2."""
+    if not html:
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    out, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        href = urljoin(url, a["href"]).split("#")[0]
+        if not href.startswith("http") or href in seen:
+            continue
+        seen.add(href)
+        out.append(href)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def empty_page(url: str, *, level: str = "failed", error: str | None = None) -> dict:
+    return {
+        "url": url, "text": "", "md5": None, "level": level, "title": "",
+        "meta_desc": "", "image": None, "ext_links": [], "links": [],
+        "is_pdf": False, "html": None, "blocked": False, "render_used": False,
+        "parse": None, "fetch_compare": None, "final_url": url, "error": error,
+    }
+
+
+def page_from_fetch_record(url: str, rec: dict | None) -> dict:
+    rec = rec or {}
+    blocked = bool(rec.get("blocked") or rec.get("error") == "bot_blocked")
+    text = "" if blocked else (rec.get("text") or "")
+    links = [_link_href(x) for x in (rec.get("links") or [])]
+    links = [u for u in links if u.startswith("http")]
+    out = empty_page(url, level="blocked" if blocked else "N3-fetch",
+                      error=None if not rec.get("error") else rec.get("error"))
+    out["text"] = text
+    out["title"] = rec.get("title") or ""
+    out["blocked"] = blocked
+    out["links"] = links
+    out["final_url"] = rec.get("final_url") or url
+    if text:
+        out["md5"] = hashlib.md5(text.encode("utf-8")).hexdigest()
+        if not blocked:
+            out["level"] = rec.get("level") or "N3-fetch"
+    return out
+
+
+def as_fetch_record(page: dict | None, url: str = "") -> dict:
+    """Forme TinyFish Fetch, pour harvest_bu_catalog / AMP sans changer le contrat."""
+    page = page or {}
+    url = url or page.get("url") or ""
+    links = list(page.get("links") or [])
+    for item in page.get("ext_links") or []:
+        href = _link_href(item)
+        if href.startswith("http") and href not in links:
+            links.append(href)
+    text = page.get("text") or ""
+    blocked = bool(page.get("blocked"))
+    err = page.get("error")
+    if not text and not blocked and not err:
+        err = page.get("level") if page.get("level") in ("failed", "blocked") else None
+    return {
+        "text": "" if blocked else text,
+        "title": page.get("title") or "",
+        "blocked": blocked,
+        "links": links,
+        "level": page.get("level") or "",
+        "error": err,
+        "final_url": page.get("final_url") or url,
+        "html": page.get("html"),
+        "is_pdf": bool(page.get("is_pdf")),
+        "render_used": bool(page.get("render_used")),
+    }
 
 
 def _is_mirror_url(url: str) -> bool:
@@ -1541,10 +1699,14 @@ async def _wayback_mirror_text(url: str, log) -> str | None:
     return None
 
 
-async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
+async def fetch_mirror_text(url: str, log=None, skip_tinyfish: bool = False
+                            ) -> tuple[str, str] | None:
     """Miroir générique quand la page officielle est derrière un challenge.
     Jina ∥ TinyFish Fetch (si clé), Wayback ensuite. L'URL d'origine reste
     la source ; le miroir n'est qu'un lecteur.
+
+    skip_tinyfish : Fetch a déjà été tenté en amont (prefer_fetch) — on ne
+    le paie pas une seconde fois.
 
     Retourne (texte, level) — compare optionnelle en 3e élément si arbitrage."""
     log = log or (lambda m: None)
@@ -1552,7 +1714,8 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
         return None
 
     from app.core.tinyfish import tf_api_key
-    if allow_tinyfish_fetch.get() and tf_api_key():
+    use_tf = (not skip_tinyfish) and allow_tinyfish_fetch.get() and bool(tf_api_key())
+    if use_tf:
         jina_text, tf_pair = await asyncio.gather(
             _jina_mirror_text(url, log),
             _tinyfish_mirror_text(url, log),
@@ -1577,31 +1740,43 @@ async def fetch_mirror_text(url: str, log=None) -> tuple[str, str] | None:
 
 
 async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = True,
-                          log=None) -> dict:
+                          log=None, skip_fetch_mirror: bool = False) -> dict:
     """
-    Retourne {url, text, md5, level, title, meta_desc, image, ext_links,
-              is_pdf, html, blocked, render_used, parse}.
-    level ∈ N1-pymupdf | N1-trafilatura | N2-readability | N3-render | blocked | failed.
+    Moteur local de lecture. La porte publique est ``read_url``.
+
+    Retourne {url, text, md5, level, title, meta_desc, image, ext_links, links,
+              is_pdf, html, blocked, render_used, parse, final_url, error}.
+    level ∈ N1-pymupdf | N1-trafilatura | N2-readability | N3-render | blocked | failed
+            | N3-mirror-* .
     md5 = empreinte du texte extrait (stable) sinon du contenu brut.
     blocked = page interstitielle anti-bot détectée (contenu invalidé, jamais ingéré).
     parse = {n1_chars, n2_chars, similarity, agree} — double parsing comparé.
+    skip_fetch_mirror : Fetch déjà tenté — Jina / Wayback seulement.
     """
     log = log or (lambda m: None)
-    out = {"url": url, "text": "", "md5": None, "level": "failed", "title": "",
-           "meta_desc": "", "image": None, "ext_links": [], "is_pdf": False,
-           "html": None, "blocked": False, "render_used": False, "parse": None,
-           "fetch_compare": None}
+    out = empty_page(url)
+
+    if is_maps_render_url(url):
+        log("URL Google Maps — cascade locale sautée (DOM JS, Fetch seulement)")
+        out["error"] = "maps_render_url"
+        return out
 
     content = None
     ctype = ""
+    disposition = ""
+    resp = None
     try:
-        content, ctype = await fetch_raw(url)
+        resp = await fetch_raw(url)
+        content = resp.content
+        ctype = (resp.headers.get("content-type") or "").lower()
+        disposition = resp.headers.get("content-disposition") or ""
+        out["final_url"] = str(resp.url) or url
     except Exception as e:
         log(f"N1 fetch: échec ({type(e).__name__})")
 
     if content is not None:
         out["md5"] = hashlib.md5(content).hexdigest()
-        is_pdf = content[:5] == b"%PDF-" or "pdf" in ctype or url.lower().endswith(".pdf")
+        is_pdf = content_is_pdf(content, ctype, out["final_url"] or url, disposition)
         out["is_pdf"] = is_pdf
         if is_pdf:
             try:
@@ -1612,8 +1787,12 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
             except Exception as e:
                 log(f"N1 PyMuPDF: échec ({type(e).__name__})")
         else:
-            html = content.decode("utf-8", errors="replace")
+            try:
+                html = resp.text if resp is not None else content.decode("utf-8", errors="replace")
+            except Exception:
+                html = content.decode("utf-8", errors="replace")
             out["html"] = html
+            out["links"] = html_hrefs(html, out["final_url"] or url)
             try:
                 meta = await asyncio.to_thread(page_metadata, html, url)
                 out.update({k: meta[k] for k in ("title", "meta_desc", "image", "ext_links")})
@@ -1633,6 +1812,7 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
 
     # N3 — rendu navigateur local (gratuit) : pages JS et challenges « soft ».
     # Un challenge Akamai dur n'est jamais résolu par Chromium : on passe au miroir.
+    # Pas de Chromium sur un PDF, ni si le texte N1/N2 est déjà utilisable.
     hard = looks_hard_challenge(out.get("text") or "", out.get("html") or "", out.get("title") or "")
     needs_render = (not out["is_pdf"]) and (out["blocked"] or len(out["text"]) < min_chars)
     if needs_render and allow_render and hard:
@@ -1651,6 +1831,7 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
                 out["parse"] = {k: parsed[k] for k in ("n1_chars", "n2_chars", "similarity", "agree")}
                 out["level"] = "N3-render"
                 out["blocked"] = False
+                out["links"] = html_hrefs(rendered, out["final_url"] or url) or out["links"]
                 try:
                     meta = await asyncio.to_thread(page_metadata, rendered, url)
                     for k in ("meta_desc", "image", "ext_links"):
@@ -1663,7 +1844,7 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
 
     # Miroir générique : page officielle bloquée ou trop courte (challenge Akamai…).
     if (out["blocked"] or len(out["text"]) < min_chars) and not _is_mirror_url(url):
-        mirrored = await fetch_mirror_text(url, log=log)
+        mirrored = await fetch_mirror_text(url, log=log, skip_tinyfish=skip_fetch_mirror)
         if mirrored:
             text, level = mirrored[0], mirrored[1]
             out["text"] = text
@@ -1683,3 +1864,172 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
         if out["level"] == "failed":
             out["level"] = "N2-readability"
     return out
+
+
+async def complete_with_cascade(
+    urls: list[str],
+    fetched: dict | None,
+    *,
+    min_chars: int = 200,
+    allow_render: bool = True,
+    keep_if_links: bool = False,
+    log=None,
+    concurrency: int = 4,
+) -> dict[str, dict]:
+    """Complète les records Fetch vides / bloqués par la cascade locale.
+
+    Les URL Google Maps restent telles quelles (Fetch-only). Un Fetch déjà
+    utilisable n'allume pas Chromium. Retourne des records forme Fetch.
+    """
+    log = log or (lambda m: None)
+    out = dict(fetched or {})
+    need: list[str] = []
+    for u in urls or []:
+        if not isinstance(u, str) or not u.startswith("http"):
+            continue
+        if is_maps_render_url(u):
+            continue
+        if fetch_record_usable(out.get(u), min_chars, keep_if_links=keep_if_links):
+            continue
+        need.append(u)
+    if not need:
+        return out
+
+    skip_tf = True  # Fetch déjà tenté (même s'il a échoué)
+    sem = asyncio.Semaphore(max(1, int(concurrency or 1)))
+
+    async def _one(u: str):
+        async with sem:
+            try:
+                page = await extract_cascade(
+                    u, min_chars=min_chars, allow_render=allow_render,
+                    log=log, skip_fetch_mirror=skip_tf)
+            except Exception as e:
+                log(f"cascade {u[:80]}: {type(e).__name__}")
+                page = empty_page(u, error=type(e).__name__)
+            return u, page
+
+    done = await asyncio.gather(*[_one(u) for u in need])
+    for u, page in done:
+        if text_usable(page.get("text"), min_chars) and not page.get("blocked"):
+            out[u] = as_fetch_record(page, u)
+            log(f"cascade {u[:80]}: {len(page.get('text') or '')} chars via {page.get('level')}")
+        elif u not in out:
+            out[u] = as_fetch_record(page, u)
+        elif page.get("text") and not page.get("blocked"):
+            # Fetch était trop court / vide : on prend le meilleur texte.
+            prev = out.get(u) or {}
+            if len(page.get("text") or "") > len(prev.get("text") or ""):
+                out[u] = as_fetch_record(page, u)
+    return out
+
+
+async def read_urls(
+    urls: list[str] | None,
+    *,
+    min_chars: int = 200,
+    prefer_fetch: bool = False,
+    allow_render: bool = True,
+    fetch_purpose: str | None = None,
+    fetch_key: str | None = None,
+    keep_if_links: bool = False,
+    log=None,
+    concurrency: int = 4,
+) -> dict[str, dict]:
+    """Porte unique : texte (et liens) d'une liste d'URL.
+
+    prefer_fetch=True : TinyFish Fetch d'abord (lots de 10). Si le texte n'est
+    pas utilisable — PDF vide, page JS — on entre dans extract_cascade.
+    Chromium ne tourne que si HTML simple ET Fetch ont déjà échoué.
+
+    URL Google Maps : Fetch seulement, jamais la cascade.
+    prefer_fetch=False : cascade locale (Projets, top-down).
+    """
+    log = log or (lambda m: None)
+    clean, seen = [], set()
+    for u in urls or []:
+        if isinstance(u, str) and u.startswith("http") and u not in seen:
+            seen.add(u)
+            clean.append(u)
+    if not clean:
+        return {}
+
+    maps = [u for u in clean if is_maps_render_url(u)]
+    rest = [u for u in clean if u not in set(maps)]
+    out: dict[str, dict] = {}
+
+    from app.core.tinyfish import tf_api_key, tf_fetch
+    if not allow_tinyfish_fetch.get():
+        key = ""
+    elif fetch_key is not None:
+        key = (fetch_key or "").strip()
+    else:
+        key = tf_api_key()
+
+    async def _tf(batch: list[str]) -> dict:
+        if not key or not batch:
+            return {}
+        try:
+            return await tf_fetch(batch, key, links=True, purpose=fetch_purpose, log=log) or {}
+        except Exception as e:
+            log(f"read_urls Fetch: {type(e).__name__}")
+            return {}
+
+    if maps:
+        recs = await _tf(maps) if key else {}
+        for u in maps:
+            out[u] = page_from_fetch_record(u, recs.get(u) or {})
+            if not key:
+                out[u]["error"] = out[u].get("error") or "maps_fetch_only"
+
+    already_fetched = False
+    need_cascade: list[str] = []
+    if prefer_fetch and rest and key:
+        recs = await _tf(rest)
+        already_fetched = True
+        for u in rest:
+            rec = recs.get(u) or {}
+            if fetch_record_usable(rec, min_chars, keep_if_links=keep_if_links):
+                out[u] = page_from_fetch_record(u, rec)
+            else:
+                need_cascade.append(u)
+    else:
+        need_cascade = rest
+
+    sem = asyncio.Semaphore(max(1, int(concurrency or 1)))
+
+    async def _one(u: str):
+        async with sem:
+            try:
+                page = await extract_cascade(
+                    u, min_chars=min_chars, allow_render=allow_render,
+                    log=log, skip_fetch_mirror=already_fetched)
+            except Exception as e:
+                log(f"read_urls cascade {u[:80]}: {type(e).__name__}")
+                page = empty_page(u, error=type(e).__name__)
+            return u, page
+
+    if need_cascade:
+        done = await asyncio.gather(*[_one(u) for u in need_cascade])
+        for u, page in done:
+            out[u] = page
+    return out
+
+
+async def read_url(
+    url: str,
+    *,
+    min_chars: int = 200,
+    prefer_fetch: bool = False,
+    allow_render: bool = True,
+    fetch_purpose: str | None = None,
+    fetch_key: str | None = None,
+    keep_if_links: bool = False,
+    log=None,
+) -> dict:
+    """Porte unique pour une URL. Voir ``read_urls``."""
+    pages = await read_urls(
+        [url], min_chars=min_chars, prefer_fetch=prefer_fetch,
+        allow_render=allow_render, fetch_purpose=fetch_purpose,
+        fetch_key=fetch_key, keep_if_links=keep_if_links, log=log)
+    return pages.get(url) or empty_page(url)
