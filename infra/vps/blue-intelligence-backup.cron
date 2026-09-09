@@ -1,0 +1,2 @@
+# Sauvegarde quotidienne MongoDB Blue Intelligence — rotation 14 jours
+0 4 * * * ubuntu /bin/bash -c '. $HOME/.config/blue-intelligence/mongo.env && /usr/bin/mongodump --uri "$MONGO_URL_LOCAL" --db "$DB_NAME" --gzip --archive=$HOME/backups/mongodb/blue-$(date +\%F).archive.gz && find $HOME/backups/mongodb -name "blue-*.archive.gz" -mtime +14 -delete'

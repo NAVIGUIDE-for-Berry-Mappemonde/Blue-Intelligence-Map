@@ -1,0 +1,10 @@
+---
+description: Environnement de travail de l'utilisateur (machine locale macOS, niveau débutant, VPS OVH)
+alwaysApply: true
+---
+
+# Environnement utilisateur
+
+- La machine locale de l'utilisateur est un **Mac (macOS)** : toute commande ou instruction à exécuter côté utilisateur doit être donnée pour macOS (Terminal, `cat`, `pbcopy`, `ssh-copy-id`…), jamais pour Windows.
+- L'utilisateur est **débutant** : privilégier des instructions pas à pas, expliquer les commandes non triviales, éviter le jargon non défini.
+- Serveur de production : **VPS OVH Ubuntu** `vps-52ba6d62.vps.ovh.net` (135.125.226.16), 4 vCores / 8 Go RAM / 75 Go — nginx en frontal, domaine `blueintelligence.online` derrière Cloudflare.

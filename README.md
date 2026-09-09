@@ -36,6 +36,7 @@ blue-intelligence/
 ├── frontend/           React (CRA) + Leaflet + Tailwind
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
 ├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, contrats Review par mode, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
+├── infra/              SearXNG auto-hébergé (`searxng/`) + déploiement production VPS OVH (`vps/`)
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 
@@ -121,9 +122,12 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 
 ## Déploiement sur blueintelligence.online
 
-1. **Frontend** : `npm run build` → servir `frontend/build/` statiquement (Nginx, Netlify, Vercel…). Avec le reverse proxy ci-dessous, laisser `REACT_APP_BACKEND_URL` vide (mode même-origine).
-2. **Backend** : `uvicorn server:app --host 0.0.0.0 --port 8001` derrière un reverse proxy qui route `/api/*` vers le port 8001 (le backend n'expose que des routes `/api/*`).
-3. **MongoDB** : instance managée (Atlas) recommandée ; les index sont créés automatiquement au démarrage.
+Production auto-hébergée sur un VPS OVH (Ubuntu) derrière Cloudflare — procédure
+complète, scripts idempotents et runbook dans **`infra/vps/README.md`** :
+
+1. **Application** : uvicorn (`SERVE_FRONTEND=1`, port local 8001) sert l'UI buildée **et** l'API, derrière le nginx du VPS (TLS Let's Encrypt). Service systemd `blue-intelligence`.
+2. **MongoDB** : MongoDB Community 8.0 auto-hébergé sur le VPS (`127.0.0.1` uniquement, authentification activée) — fin du throttling Atlas M0. Les index sont créés automatiquement au démarrage. Sauvegardes quotidiennes `mongodump` (rotation 14 j).
+3. Un hébergement alternatif (build statique + reverse proxy `/api/*` + Atlas) reste possible : voir les variables d'environnement ci-dessus.
 
 ## API (aperçu)
 
