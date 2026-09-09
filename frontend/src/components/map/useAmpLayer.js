@@ -80,11 +80,14 @@ export default function useAmpLayer({
       }
       // 2026-09 — plus de plancher de zoom : en vue dézoomée le backend
       // répond avec les sites déjà en cache local (aucun appel ProtectedSeas),
-      // les polygones restent donc visibles au niveau monde.
+      // les polygones restent donc visibles au niveau monde. La bbox est
+      // bornée au monde réel (Leaflet peut déborder quand la carte se répète).
       const zoom = map.getZoom();
       const b = map.getBounds();
-      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
-        .map((n) => n.toFixed(4)).join(",");
+      const bbox = [
+        Math.max(-180, b.getWest()), Math.max(-85, b.getSouth()),
+        Math.min(180, b.getEast()), Math.min(85, b.getNorth()),
+      ].map((n) => n.toFixed(4)).join(",");
       const key = `${zoom}:${bbox}:${showReview ? 1 : 0}`;
       if (key === lastKeyRef.current) return;
       lastKeyRef.current = key;

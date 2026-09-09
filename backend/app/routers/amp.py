@@ -30,9 +30,9 @@ class DiscoverBody(BaseModel):
     rules: dict | None = None
 
 
-def _parse_bbox(raw: str):
+def _parse_bbox(raw: str, **caps):
     try:
-        return amp_svc.parse_bbox(raw)
+        return amp_svc.parse_bbox(raw, **caps)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -43,7 +43,9 @@ async def list_amp(bbox: str = "", force: bool = False, visible: bool = False,
     """Polygones AMP dans la bbox (minx,miny,maxx,maxy, WGS84)."""
     if not bbox:
         raise HTTPException(400, "bbox required (minx,miny,maxx,maxy)")
-    box = _parse_bbox(bbox)
+    # Caps monde entier : la vue dézoomée est servie depuis le cache local,
+    # seul le rafraîchissement ProtectedSeas garde la limite stricte.
+    box = _parse_bbox(bbox, max_w=360.0, max_h=180.0)
     max_span = float(catalog_default("amp.bbox_max_deg", 8))
     span = amp_svc.bbox_span_deg(box)
     if span > max_span:

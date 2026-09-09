@@ -95,14 +95,17 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def parse_bbox(raw: str) -> tuple[float, float, float, float]:
+def parse_bbox(raw: str, *, max_w: float = 180.0,
+               max_h: float = 90.0) -> tuple[float, float, float, float]:
+    """Caps par défaut adaptés au rafraîchissement ProtectedSeas ; la lecture
+    du cache (GET /amp) passe des caps monde entier (360×180)."""
     parts = [p.strip() for p in (raw or "").split(",")]
     if len(parts) != 4:
         raise ValueError("bbox must be minx,miny,maxx,maxy")
     minx, miny, maxx, maxy = (float(p) for p in parts)
     if minx >= maxx or miny >= maxy:
         raise ValueError("bbox min must be < max")
-    if abs(maxx - minx) > 180 or abs(maxy - miny) > 90:
+    if abs(maxx - minx) > max_w or abs(maxy - miny) > max_h:
         raise ValueError("bbox too large")
     return minx, miny, maxx, maxy
 
