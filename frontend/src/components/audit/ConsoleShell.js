@@ -4,6 +4,7 @@ import CardShell from "./CardShell";
 import RulesPanel from "./RulesPanel";
 import RunsPanel from "./RunsPanel";
 import JournalPanel from "./JournalPanel";
+import ApiKeysPanel from "./ApiKeysPanel";
 import AmpCard from "./AmpCard";
 import FormalitiesCard from "./FormalitiesCard";
 import MarinasCard from "./MarinasCard";
@@ -24,6 +25,7 @@ const TABS = [
   { id: "rules", key: "consoleTabRules" },
   { id: "runs", key: "consoleTabRuns" },
   { id: "journal", key: "consoleTabJournal" },
+  { id: "keys", key: "consoleTabKeys" },
 ];
 
 export default function ConsoleShell({
@@ -170,6 +172,9 @@ export default function ConsoleShell({
         </div>
         <div className={tab === "journal" ? "" : "hidden"}>
           <JournalPanel t={t} mode={mode} status={status} />
+        </div>
+        <div className={tab === "keys" ? "" : "hidden"}>
+          <ApiKeysPanel t={t} settings={settings} onSaved={onSettingsSaved} />
         </div>
       </CardShell>
     </div>

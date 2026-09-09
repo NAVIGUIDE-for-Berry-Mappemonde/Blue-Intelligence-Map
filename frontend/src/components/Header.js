@@ -6,6 +6,7 @@ export default function Header({
   status, t, basemap, setBasemap,
   mode, setMode,
   mapRun, onSelectMapRun,
+  isAdmin = false,
 }) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
@@ -99,27 +100,32 @@ export default function Header({
           >
             <MapIcon size={13} /> {t("map")}
           </button>
-          {/* " > " — sélecteur du run affiché sur la carte (par mode) */}
+          {/* "Runs ›" — sélecteur du run affiché sur la carte (par mode) */}
           <RunSelector
             mode={mode}
             mapRun={mapRun}
             t={t}
             onSelect={(run) => { onSelectMapRun(run); setView("map"); }}
           />
-          <button
-            data-testid="view-toggle-audit"
-            onClick={() => setView("audit")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "audit" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
-          >
-            <Radar size={13} /> {t("audit")}
-          </button>
-          <button
-            data-testid="view-toggle-review"
-            onClick={() => setView("review")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "review" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
-          >
-            <ClipboardCheck size={13} /> {t("review")}
-          </button>
+          {/* Console et Review : réservés à l'admin (?admin=<clé>) */}
+          {isAdmin && (
+            <button
+              data-testid="view-toggle-audit"
+              onClick={() => setView("audit")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "audit" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+            >
+              <Radar size={13} /> {t("audit")}
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              data-testid="view-toggle-review"
+              onClick={() => setView("review")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border-l border-line ${view === "review" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200 hover:bg-raised"}`}
+            >
+              <ClipboardCheck size={13} /> {t("review")}
+            </button>
+          )}
         </div>
         <div className="flex border border-line rounded-sm overflow-hidden font-mono text-xs">
           <button

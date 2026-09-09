@@ -85,6 +85,22 @@ Après bascule, vérifier le renouvellement du certificat : `sudo certbot renew
 bloque `/.well-known/acme-challenge/`, créer une exception ou utiliser un
 certificat Origin Cloudflare).
 
+## Accès admin (Console / Review)
+
+Les onglets Console et Review, ainsi que toutes les écritures de l'API
+(`POST/PUT/PATCH/DELETE /api/*`, sauf le signalement public de projets) sont
+protégés par une clé admin :
+
+- La clé vit dans `~/blue-intelligence-map/backend/.env` sur le VPS
+  (`ADMIN_KEY=...`). Sans cette variable (dev local), tout reste ouvert.
+- Pour débloquer l'interface : ouvrir une fois
+  `https://blueintelligence.online/?admin=<clé>`. La clé est mémorisée dans le
+  navigateur (localStorage) et envoyée ensuite via le header `X-Admin-Key`.
+- Pour verrouiller un navigateur : `https://blueintelligence.online/?admin=off`.
+- Régénérer la clé : `openssl rand -hex 24`, remplacer la valeur dans
+  `backend/.env`, puis `sudo systemctl restart blue-intelligence` (les anciens
+  navigateurs admin devront re-saisir la nouvelle clé).
+
 ## Sécurité / accès
 
 - MongoDB n'écoute que sur 127.0.0.1, authentification obligatoire — jamais
