@@ -53,7 +53,7 @@ C’est `docs/CAHIER_DES_CHARGES_REVIEW.md` §3.4 / §7.2 / §11. On ne le réé
 
 **Interdit.** Pays à la place du polygone. File ports séparée. Cacher des TD « pour n’en garder qu’une ». Noonsite / wiki / forum comme preuve. WPI comme preuve **positive** de plaisance (sauf mixte explicite). Goldiser un canari.
 
-**Écritures Review.** Commentaire ; `keep_td` / `blacklist_url` / `blacklist_domain` / `keep_port` / `drop_port` (grain `mrgid`, agrégat souverain) ; Gold = snapshot dans le **run certifié**. Map Formalités reste le run v1 tant que « Afficher la review » est décoché.
+**Écritures Review.** Commentaire ; `keep_td` / `blacklist_url` / `blacklist_domain` / `keep_port` / `drop_port` (grain `mrgid`, agrégat souverain) ; Gold = snapshot dans le **run certifié**. Map Formalités reste le **run unique** tant que « Afficher la review » est décoché.
 
 ---
 
@@ -96,9 +96,9 @@ Files d’entrée (CDC phase D) : `snapped`, `fallback`, `unlocated`, `hq_suspec
 
 **Actif si** : au moins une URL de **projet** gardée **et** au moins un site `site_ok` accepté (GPS de lieu d’action, pas snapped / fallback / HQ).
 
-**Le clic** : fige URLs + sites acceptés ; écrit la fiche dans le **run certifié** (`review_gold` kind `project`). Map Projets continue d’afficher les 4400+ en base. Le run certifié n’apparaît que si « Afficher la review » est coché. Sert ensuite à recalibrer le gatekeeper (CDC D2–D3) — **après** un Gold, pas avant.
+**Le clic** : fige URLs + sites acceptés ; écrit la fiche dans le **run certifié** (`review_gold` kind `project`). Map Projets continue d’afficher le **run unique**. Le run certifié n’apparaît que si « Afficher la review » est coché. Sert ensuite à recalibrer le gatekeeper (CDC D2–D3) — **après** un Gold, pas avant.
 
-**Ne fait pas** : goldiser 4 463 points d’un coup ; republier un `ocean_fallback` ; coller un polygone AMP comme preuve de projet ; retirer un projet de la carte par défaut.
+**Ne fait pas** : goldiser tout le run d’un coup ; republier un `ocean_fallback` ; coller un polygone AMP comme preuve de projet ; retirer un projet de la carte par défaut.
 
 ### 3.6 Ce que Review ne décide pas
 
@@ -269,10 +269,12 @@ Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline pro
 
 L’onglet **Map** a une couche **par défaut**, indépendante de la Review. Gold n’y touche pas.
 
+Le **run unique** correspondra au run de test que l’on va lancer sous peu.
+
 | Mode | Carte par défaut |
 |------|------------------|
-| **Projets** | les 4400+ projets en base |
-| **Formalités / PoE** | le run v1 |
+| **Projets** | le run unique |
+| **Formalités / PoE** | le run unique |
 | **Marinas** | le run unique |
 | **Capitaineries** | le run unique |
 | **AMP** | le run unique |
@@ -306,7 +308,7 @@ Pas de régime « publication exclusive Formalités ». Pas de « filtre skipper
 1. Cinq files, une par mode actif. **Zéro** onglet « Ports d’Entrée » à côté de « Polygones ».
 2. Commentaire persisté ; collections live **inchangées**.
 3. Formalités : déjà le CDC Review (toutes TD, Gold → run certifié).
-4. Projets : Gold d’un projet snapped **refusé** tant que le site n’est pas accepté ; Gold d’un projet `site_ok` → fiche dans le run certifié ; les 4400+ restent sur Map.
+4. Projets : Gold d’un projet snapped **refusé** tant que le site n’est pas accepté ; Gold d’un projet `site_ok` → fiche dans le run certifié ; le run unique reste sur Map.
 5. Marinas / Capitaineries / AMP : Gold → run certifié ; le run unique reste la carte par défaut.
 6. Capitaineries : plus de `gold_on: true` par défaut ; Gold après acceptation bâtiment.
 7. AMP : plusieurs candidats visite ; Gold refuse `visit_url == manager_url`.
