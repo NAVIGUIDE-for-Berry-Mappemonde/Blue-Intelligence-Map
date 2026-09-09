@@ -1,25 +1,30 @@
 """Enrichissement capitainerie : tags, Search/Fetch, regex, NIM, OpenRouter.
 
-Chaîne (coût croissant) :
+Chaîne (coût croissant, partagée avec les marinas via ``run_page_enrich``) :
   1. tags OSM/SHOM/NOAA
-  2. ``search_named`` (TinyFish Search, DuckDuckGo si pas de clé)
-  3. TinyFish Fetch, puis cascade locale (PDF / JS) si le texte manque — stop si tél et VHF
-  4. NVIDIA NIM chaîne `page` (Pro → gpt-oss → Muse) sur le texte de page
-  5. OpenRouter sur le même texte
+  2. URL officielle ; ``search_named`` seulement s'il n'y en a pas
+  3. Lecture de page (``read_url``) — stop si tél et VHF
+  4. Regex téléphone / canal VHF
+  5. NVIDIA NIM chaîne `page`, puis OpenRouter, s'il reste un trou
   6. Agent TinyFish (site officiel uniquement, dernier recours)
 
+Le schéma n'est pas celui des marinas : téléphone et VHF seulement.
 Jamais inventé. Un champ déjà rempli n'est pas écrasé.
 """
 from __future__ import annotations
 
 import json
-import time
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 import httpx
 
-from app.core.extract import serp_drop_reason
+from app.core.enrich import (
+    PageEnrichSpec,
+    fetch_pages,
+    run_page_enrich,
+    url_ok,
+)
 from app.core.search import search_named
 from app.services.capitainerie_world import (
     GENERIC_OFFICE_NAMES,
@@ -159,8 +164,8 @@ def contact_search_query(doc: dict) -> str:
 
 
 def _url_ok(url: str) -> bool:
-    """Même couperet SERP que le top-down / AMP (plus la petite liste maison)."""
-    return serp_drop_reason(url) is None
+    """Même couperet SERP que le top-down / AMP."""
+    return url_ok(url)
 
 
 def _url_rank(url: str, official: str | None) -> tuple:
@@ -184,43 +189,30 @@ def _url_rank(url: str, official: str | None) -> tuple:
     return (-official_hit, -gov)
 
 
-def _pages_blob(pages: list[dict], limit: int = 8000) -> str:
-    chunks = []
-    for page in pages:
-        url = page.get("url") or ""
-        title = page.get("title") or ""
-        text = page.get("text") or ""
-        if not text:
-            continue
-        chunks.append(f"URL {url}\nTitle: {title}\n{text}")
-    return "\n\n".join(chunks)[:limit]
-
-
 def _contact_prompt(doc: dict, context: str) -> str:
     tags = doc.get("tags") or {}
     tags_str = json.dumps(
         {k: v for k, v in tags.items() if isinstance(v, str)},
         ensure_ascii=False,
     )
+    known = {
+        k: doc.get(k) for k in ENRICH_FIELDS
+        if doc.get(k)
+    }
+    missing = [k for k in ENRICH_FIELDS if not doc.get(k)]
     return (
         "Extract harbour master / capitainerie contact. Return STRICT JSON:\n"
         "{\"telephone\": string|null, \"canal_vhf\": string|null}\n\n"
         f"Name: {doc.get('name')}\n"
         f"Coordinates: {doc.get('lat')}, {doc.get('lon')}\n"
-        f"OSM/SHOM/NOAA tags: {tags_str}\n\n"
+        f"OSM/SHOM/NOAA tags: {tags_str}\n"
+        f"Already known (do not replace): {json.dumps(known, ensure_ascii=False)}\n"
+        f"Fill only these missing fields: {missing}\n\n"
         f"SOURCE:\n{context}\n\n"
         "RULES: null if not in the source. NEVER fabricate. "
+        "Do not change Already known values. "
         "canal_vhf like '9' or '9/16' or '9/68'. telephone as printed. JSON only."
     )
-
-
-def _apply_incoming(working: dict, incoming: dict | None, source: str) -> tuple[dict, str]:
-    if not incoming or not any(incoming.values()):
-        return working, source
-    merged = merge_contact_payload(working, incoming)
-    working = dict(working)
-    working.update(merged)
-    return working, source
 
 
 async def discover_contact_urls(
@@ -228,37 +220,32 @@ async def discover_contact_urls(
     tinyfish_key: Optional[str] = None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> list[str]:
-    """URL officielle d'abord, puis ``search_named`` (TinyFish, DDG si pas de clé)."""
-    urls: list[str] = []
-    seen: set[str] = set()
+    """URL officielle d'abord ; ``search_named`` seulement s'il n'y en a pas."""
+    from app.core.enrich import collect_page_urls
 
-    def _add(url: str | None):
-        u = (url or "").strip()
-        if not _url_ok(u) or u in seen:
-            return
-        seen.add(u)
-        urls.append(u)
-
-    _add(official_website(doc))
-    _add((doc.get("tags") or {}).get("website"))
-    query = contact_search_query(doc)
-    hits = await search_named(
-        query,
-        key=tinyfish_key,
-        purpose=CAPITAINERIE_PURPOSE,
-        max_results=MAX_FETCH_URLS,
-        log=logger,
-    )
     official = official_website(doc)
-    ranked = sorted(
-        [h for h in hits if _url_ok((h or {}).get("url") or "")],
-        key=lambda h: _url_rank(h.get("url") or "", official),
+
+    async def _search() -> list[str]:
+        hits = await search_named(
+            contact_search_query(doc),
+            key=tinyfish_key,
+            purpose=CAPITAINERIE_PURPOSE,
+            max_results=MAX_FETCH_URLS,
+            log=logger,
+        )
+        ranked = sorted(
+            [h for h in hits if _url_ok((h or {}).get("url") or "")],
+            key=lambda h: _url_rank(h.get("url") or "", official),
+        )
+        return [h.get("url") for h in ranked if h.get("url")]
+
+    return await collect_page_urls(
+        official,
+        extra=[(doc.get("tags") or {}).get("website")],
+        search=_search,
+        max_urls=MAX_FETCH_URLS,
+        url_ok_fn=_url_ok,
     )
-    for hit in ranked:
-        _add(hit.get("url"))
-        if len(urls) >= MAX_FETCH_URLS:
-            break
-    return urls[:MAX_FETCH_URLS]
 
 
 async def fetch_contact_pages(
@@ -267,34 +254,12 @@ async def fetch_contact_pages(
     logger: Optional[Callable[[str], None]] = None,
 ) -> list[dict]:
     """Fetch d'abord si clé ; cascade (PDF / JS / HTML) dès que le texte manque."""
-    from app.core.extract import read_urls
-    if not urls:
-        return []
-    pages_by = await read_urls(
+    return await fetch_pages(
         urls,
-        min_chars=80,
-        prefer_fetch=bool(tinyfish_key),
-        fetch_purpose=CAPITAINERIE_PURPOSE,
-        fetch_key=tinyfish_key or "",
-        log=logger,
+        purpose=CAPITAINERIE_PURPOSE,
+        tinyfish_key=tinyfish_key,
+        logger=logger,
     )
-    pages: list[dict] = []
-    for url in urls:
-        rec = pages_by.get(url) or {}
-        if rec.get("blocked"):
-            if logger:
-                logger(f"[fetch] blocked {url[:80]}")
-            continue
-        text = (rec.get("text") or "").strip()
-        if text:
-            pages.append({
-                "url": rec.get("final_url") or url,
-                "title": rec.get("title") or "",
-                "text": text,
-            })
-            if logger:
-                logger(f"[fetch] {rec.get('level')} {len(text)} chars from {url[:80]}")
-    return pages
 
 
 def contact_from_pages(pages: list[dict]) -> dict:
@@ -410,7 +375,7 @@ async def enrich_via_tinyfish(
     from app.core.tinyfish import tf_get_run, tf_run_async
 
     url_hint = official_website(doc)
-    if not url_hint:
+    if not url_hint or not _url_ok(url_hint):
         if logger:
             logger("[tinyfish] no official website — skipping agent")
         return None
@@ -460,19 +425,26 @@ async def enrich_via_tinyfish(
     return None
 
 
-def _result(working: dict, source: str, now: str, tf_attempted: bool) -> dict:
-    merged = {
-        "telephone": working.get("telephone"),
-        "canal_vhf": working.get("canal_vhf"),
-    }
-    filled = any(merged.get(k) for k in ENRICH_FIELDS)
-    return {
-        **merged,
-        "enriched": bool(filled),
-        "enrichment_source": source if filled else None,
-        "enriched_at": now if filled else None,
-        "_tinyfish_attempted": tf_attempted,
-    }
+def _capitainerie_from_tags(doc: dict) -> dict:
+    return merge_contact_payload(doc, None)
+
+
+def _capitainerie_spec() -> PageEnrichSpec:
+    return PageEnrichSpec(
+        fields=ENRICH_FIELDS,
+        hole_fields=ENRICH_FIELDS,
+        from_tags=_capitainerie_from_tags,
+        official_url=official_website,
+        allow_web=allow_web_lookup,
+        discover_urls=discover_contact_urls,
+        fetch_pages=fetch_contact_pages,
+        from_pages=contact_from_pages,
+        nvidia=enrich_via_nvidia,
+        openrouter=enrich_via_openrouter,
+        agent=enrich_via_tinyfish,
+        merge=merge_contact_payload,
+        url_ok=_url_ok,
+    )
 
 
 async def enrich_capitainerie(
@@ -484,80 +456,13 @@ async def enrich_capitainerie(
     skip_tinyfish: bool = False,
     settings: Optional[dict] = None,
 ) -> dict:
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    from_tags = merge_contact_payload(doc, None)
-    working = dict(doc)
-    working.update(from_tags)
-    source = "tags"
-    tf_attempted = False
-
-    if not needs_website_enrich(working):
-        if logger:
-            logger("contact already complete from tags — skip website")
-        return _result(working, "tags", now, False)
-
-    if not allow_web_lookup(working):
-        if logger:
-            logger("no official site, no name, no GPS — skip web lookup")
-        filled = any(from_tags.get(k) for k in ENRICH_FIELDS)
-        return {
-            **from_tags,
-            "enriched": bool(filled),
-            "enrichment_source": "tags" if filled else None,
-            "enriched_at": now if filled else None,
-            "_tinyfish_attempted": False,
-        }
-
-    if logger:
-        logger("=== attempt 1: TinyFish Search + Fetch / regex ===")
-    urls = await discover_contact_urls(working, tinyfish_key=tinyfish_key, logger=logger)
-    pages = await fetch_contact_pages(urls, tinyfish_key=tinyfish_key, logger=logger) if urls else []
-    regex = contact_from_pages(pages)
-    working, src = _apply_incoming(working, regex, "fetch")
-    if any(regex.values()):
-        source = src
-        if logger:
-            logger(f"[regex] filled={[k for k, v in regex.items() if v]}")
-    if not needs_website_enrich(working):
-        return _result(working, source, now, False)
-
-    context = _pages_blob(pages)
-    if context:
-        if logger:
-            logger("=== attempt 2: NVIDIA NIM (page) ===")
-        nv = await enrich_via_nvidia(working, context, settings, logger=logger)
-        engine = "nvidia"
-        if nv:
-            engine = nv.pop("_engine", None) or "nvidia"
-        working, src = _apply_incoming(working, nv, engine)
-        if nv and any(nv.values()):
-            source = src
-        if not needs_website_enrich(working):
-            return _result(working, source, now, False)
-
-        if openrouter_key:
-            if logger:
-                logger("=== attempt 3: OpenRouter ===")
-            incoming = await enrich_via_openrouter(
-                working, openrouter_key, min_credit_usd=min_credit_usd,
-                logger=logger, context=context,
-            )
-            working, src = _apply_incoming(working, incoming, "openrouter")
-            if incoming and any(incoming.values()):
-                source = src
-            if not needs_website_enrich(working):
-                return _result(working, source, now, False)
-    elif logger:
-        logger("no page text — skip NIM / OpenRouter")
-
-    has_site = bool(official_website(working))
-    if tinyfish_key and not skip_tinyfish and has_site:
-        if logger:
-            logger("=== attempt 4: TinyFish agent (official site) ===")
-        tf_attempted = True
-        incoming = await enrich_via_tinyfish(working, tinyfish_key, logger=logger)
-        working, src = _apply_incoming(working, incoming, "tinyfish")
-        if incoming and any(incoming.values()):
-            source = src
-
-    return _result(working, source, now, tf_attempted)
+    return await run_page_enrich(
+        doc,
+        _capitainerie_spec(),
+        tinyfish_key=tinyfish_key,
+        openrouter_key=openrouter_key,
+        min_credit_usd=min_credit_usd,
+        logger=logger,
+        skip_tinyfish=skip_tinyfish,
+        settings=settings,
+    )
