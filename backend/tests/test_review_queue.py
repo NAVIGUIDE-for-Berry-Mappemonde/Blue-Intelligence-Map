@@ -410,6 +410,7 @@ def test_frontend_review_tab_exists():
     assert "runsReady" in review
     assert 'kind === "eez" && (' in review
     assert "review-run-select" not in review
+    assert "setQueue([])" in review
     assert "map-show-review" in (root / "components" / "MapView.js").read_text(encoding="utf-8")
     assert "onChoice={applyChoice}" in review
     formalities_layer = (root / "components" / "map" / "useFormalitiesLayers.js").read_text(encoding="utf-8")

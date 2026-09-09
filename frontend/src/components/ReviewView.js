@@ -57,6 +57,9 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setOffset(0);
     setFilter("");
     setQ("");
+    setQueue([]);
+    setTotal(0);
+    setFiche(null);
     setPreGold(true);
     setStableOnly(kindFromMode(mode) === "eez");
     setRunsReady(kindFromMode(mode) !== "eez");
