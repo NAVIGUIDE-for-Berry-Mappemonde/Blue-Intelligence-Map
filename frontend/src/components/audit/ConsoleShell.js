@@ -151,6 +151,9 @@ export default function ConsoleShell({
 
         <div className={tab === "launch" ? "" : "hidden"}>{launch}</div>
         <div className={tab === "rules" ? "" : "hidden"}>
+          {!catalog && (
+            <p className="font-mono text-[10px] text-slate-500" data-testid="rules-loading">…</p>
+          )}
           {catalog && (
             <RulesPanel
               t={t} lang={lang} mode={mode} catalog={catalog}

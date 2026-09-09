@@ -11,6 +11,7 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [sameOpen, setSameOpen] = useState(false);
+  const [ready, setReady] = useState(false);
   const spec = RUNS_API[mode] || RUNS_API.projects;
 
   const load = useCallback(async () => {
@@ -25,9 +26,12 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
   useEffect(() => {
     let alive = true;
     setItems([]);
+    setReady(false);
     (async () => {
       const rows = await load();
-      if (alive && rows) setItems(rows);
+      if (!alive) return;
+      if (rows) setItems(rows);
+      setReady(true);
     })();
     const i = setInterval(async () => {
       const rows = await load();
@@ -88,7 +92,7 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
               );
             })}
             {items.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-4 font-mono text-[10px] text-slate-500">{t("runsEmpty")}</td></tr>
+              <tr><td colSpan={5} className="px-3 py-4 font-mono text-[10px] text-slate-500">{ready ? t("runsEmpty") : "…"}</td></tr>
             )}
           </tbody>
         </table>
