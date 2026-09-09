@@ -50,7 +50,7 @@ function popupHtml(p, t) {
  * Popup : URL gestionnaire ≠ URL de visite.
  */
 export default function useAmpLayer({
-  mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites, flyToAmp,
+  mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites, flyToAmp, showReview = false,
 }) {
   const timerRef = useRef(null);
   const lastKeyRef = useRef("");
@@ -72,11 +72,13 @@ export default function useAmpLayer({
       const b = map.getBounds();
       const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
         .map((n) => n.toFixed(4)).join(",");
-      const key = `${zoom}:${bbox}`;
+      const key = `${zoom}:${bbox}:${showReview ? 1 : 0}`;
       if (key === lastKeyRef.current) return;
       lastKeyRef.current = key;
       try {
-        const { data } = await api.get("/amp", { params: { bbox } });
+        const { data } = await api.get("/amp", {
+          params: { bbox, ...(showReview ? { review: 1 } : {}) },
+        });
         layer.clearLayers();
         if (ampLayersById?.current) ampLayersById.current.clear();
         const feats = data?.features || [];
@@ -100,7 +102,7 @@ export default function useAmpLayer({
       map.off("zoomend", schedule);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef]);
+  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef, showReview]);
 
   useEffect(() => {
     if (!flyToAmp) return;

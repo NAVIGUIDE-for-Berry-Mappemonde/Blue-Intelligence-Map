@@ -266,11 +266,16 @@ async def poe_zones_geojson(visible: bool = False):
 
 
 @router.get("/poe/zones/{mrgid}")
-async def poe_zone_fiche(mrgid: int):
-    """Fiche carte d'une ZEE : snapshot Gold uniquement. Pas de v1."""
-    from app.services.poe_zone_fiche import build_map_zone_fiche
+async def poe_zone_fiche(mrgid: int, visible: bool = False, review: bool = False):
+    """Fiche carte d'une ZEE : run unique par défaut ; Gold si Afficher la review."""
+    from app.services.poe_zone_fiche import build_map_zone_fiche, build_zone_fiche
 
-    fiche = await build_map_zone_fiche(_db, mrgid)
+    if visible or review:
+        fiche = await build_map_zone_fiche(_db, mrgid)
+        if fiche is None:
+            raise HTTPException(404, f"ZEE {mrgid} inconnue")
+        return fiche
+    fiche = await build_zone_fiche(_db, mrgid, union=True)
     if fiche is None:
         raise HTTPException(404, f"ZEE {mrgid} inconnue")
     return fiche

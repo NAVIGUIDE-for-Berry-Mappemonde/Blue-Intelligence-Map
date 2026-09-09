@@ -1,7 +1,8 @@
 """API de l'onglet Review — file de fiches + commentaire + interrupteur Gold.
 
 Lecture des runs / v1. Écrit `review_comments`, `review_gold`, `review_choices`.
-N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas` / `amp_sites`.
+N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas` /
+`capitaineries` / `amp_sites`.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -70,6 +71,10 @@ class ChoiceBody(BaseModel):
     action: str
     url: str | None = None
     port_id: str | None = None
+    site_id: str | None = None
+    field: str | None = None
+    lat: float | None = None
+    lon: float | None = None
 
 
 @router.put("/review/comment")
@@ -83,19 +88,20 @@ async def review_comment_put(body: CommentBody):
 @router.put("/review/choice")
 async def review_choice_put(body: ChoiceBody):
     kind = _kind_or_400(body.kind)
-    if kind != "eez":
-        raise HTTPException(400, "choice is only for eez")
+    if kind not in ("eez", "project", "marina", "capitainerie", "amp"):
+        raise HTTPException(400, "choice is not for this kind")
     if not body.id:
         raise HTTPException(400, "id required")
     try:
         out = await save_choice(
             db, kind, body.id, body.target, body.action,
-            url=body.url, port_id=body.port_id)
+            url=body.url, port_id=body.port_id, site_id=body.site_id,
+            field=body.field, lat=body.lat, lon=body.lon)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     payload = await review_queue.get_fiche(db, kind, PUBLISHED_RUN, body.id)
     fiche = (payload or {}).get("fiche") if payload else None
-    out["gold_ready"] = gold_ready(fiche, out.get("choices"))
+    out["gold_ready"] = gold_ready(fiche, out.get("choices"), kind=kind)
     out["gold_on"] = bool(payload and payload.get("gold_on")) if payload else False
     return out
 
@@ -103,20 +109,15 @@ async def review_choice_put(body: ChoiceBody):
 @router.put("/review/gold")
 async def review_gold_put(body: GoldBody):
     if body.kind not in review_gold.GOLD_KINDS:
-        raise HTTPException(400, "kind must be project|eez|marina")
+        raise HTTPException(400, "kind must be project|eez|marina|capitainerie|amp")
     if not body.id:
         raise HTTPException(400, "id required")
-    fiche = None
-    comment = ""
-    choices = None
-    if body.kind == "eez":
-        payload = await review_queue.get_fiche(
-            db, "eez", body.run_id, body.id)
-        if payload is None:
-            raise HTTPException(404, "fiche not found")
-        fiche = payload.get("fiche")
-        comment = payload.get("comment") or ""
-        choices = payload.get("choices")
+    payload = await review_queue.get_fiche(db, body.kind, body.run_id, body.id)
+    if payload is None:
+        raise HTTPException(404, "fiche not found")
+    fiche = payload.get("fiche")
+    comment = payload.get("comment") or ""
+    choices = payload.get("choices")
     try:
         return await review_gold.toggle_gold(
             db, body.kind, body.id, run_id=body.run_id,

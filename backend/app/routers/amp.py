@@ -38,7 +38,8 @@ def _parse_bbox(raw: str):
 
 
 @router.get("/amp")
-async def list_amp(bbox: str = "", force: bool = False):
+async def list_amp(bbox: str = "", force: bool = False, visible: bool = False,
+                   review: bool = False):
     """Polygones AMP dans la bbox (minx,miny,maxx,maxy, WGS84)."""
     if not bbox:
         raise HTTPException(400, "bbox required (minx,miny,maxx,maxy)")
@@ -48,6 +49,11 @@ async def list_amp(bbox: str = "", force: bool = False):
         return amp_svc.to_feature_collection(
             [], extra={"hint": "zoom", "source": "span", "truncated": False})
     docs, meta = await amp_svc.sites_in_bbox(db, box, force=force)
+    if visible or review:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(
+            db, "amp", docs,
+            lambda d: d.get("site_id") or d.get("_id"))
     return amp_svc.to_feature_collection(docs, extra={
         "hint": None,
         "source": meta.get("source"),

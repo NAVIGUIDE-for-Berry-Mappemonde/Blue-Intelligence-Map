@@ -510,10 +510,12 @@ File listing-control dans Review. Comparateur *split screen* run A \| run B (rem
 - `docs/CAHIER_DES_CHARGES_PROJETS.md` v2.0 — v1 trésor, phase D revue / Gold.
 - `docs/REGLES_PARAMETRES.md` — les règles que la revue doit pouvoir **écrire**.
 - `docs/ARCHITECTURE.md`, `docs/PRD.md`.
+- `docs/CONTRATS_REVIEW_PAR_MODE.md` — même geste Review pour les cinq modes ; Gold = run certifié ; Map via **Afficher la review**.
 - PR #34 — premier onglet, API commentaire.
 
 En cas de conflit sur **le grain** (pays vs polygone), §3.3 prime.  
-En cas de conflit sur **une écriture carte**, §3.5 prime : pas de carte sans Gold, pas de Gold silencieux.  
+En cas de conflit sur **une écriture live**, §3.5 prime : pas de live sans Gold, pas de Gold silencieux.  
+En cas de conflit sur **ce que Map affiche**, `docs/CONTRATS_REVIEW_PAR_MODE.md` §8 prime : couche par défaut du run unique ; le run certifié seulement si **Afficher la review** est coché.  
 En cas de conflit sur **eez vs poe**, §3.2 prime : **une** fiche Formalités.
 
-*Fin du cahier des charges Review v1.1. Toute évolution de règle se fait d’abord ici, puis dans le code.*
+*Fin du cahier des charges Review v1.1. Toute évolution de règle Formalités se fait d’abord ici ; les autres modes dans `CONTRATS_REVIEW_PAR_MODE.md`, puis dans le code.*

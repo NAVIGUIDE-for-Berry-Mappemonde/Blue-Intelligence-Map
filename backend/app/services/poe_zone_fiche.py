@@ -4,7 +4,8 @@ poe_zone_fiche — Fiche de revue d'un polygone VLIZ (lecture seule).
 Review (union) : toutes les URLs TD uniques, tous les ports (v1 traité
 comme un run + runs prod + graines), toutes les BU par port.
 
-Carte Formalités : uniquement le snapshot Gold. La v1 n'est pas affichée.
+Carte Formalités : le run unique par défaut. Le snapshot Gold n'apparaît
+que si « Afficher la review » est coché (`visible` / `review`).
 
 N'écrit jamais poe_ports / eez_zones. Le WPI n'est pas une source.
 Noonsite et les forums n'entrent pas.
@@ -486,7 +487,7 @@ async def build_zone_fiche(db, mrgid: int, run_id: str | None = None,
 
 
 async def build_map_zone_fiche(db, mrgid: int) -> dict | None:
-    """Fiche carte : snapshot Gold uniquement. Pas de v1."""
+    """Fiche carte du run certifié : snapshot Gold. Pas de live."""
     from app.services.review_choices import snapshot_to_fiche
     from app.services.review_gold import eez_is_published, get_override
 

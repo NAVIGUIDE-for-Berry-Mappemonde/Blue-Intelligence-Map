@@ -14,7 +14,7 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 | **AMP** | vert | Polygones ProtectedSeas Navigator + **deux URL séparées** : site du gestionnaire (`manager_url`) et procédures de visite / d'entrée (`visit_url`). L'URL de visite n'est jamais une copie du Website ProtectedSeas. |
 
-S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs), un onglet **Review** (relecture puis Gold — voir `docs/CAHIER_DES_CHARGES_REVIEW.md`) et des exports/imports GeoJSON contextuels.
+S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs), un onglet **Review** (relecture puis Gold — voir `docs/CAHIER_DES_CHARGES_REVIEW.md` et `docs/CONTRATS_REVIEW_PAR_MODE.md`) et des exports/imports GeoJSON contextuels.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ blue-intelligence/
 │   └── models/         Modèles ML locaux entraînés (gatekeeper, classifieur SERP, NER)
 ├── frontend/           React (CRA) + Leaflet + Tailwind
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
-├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
+├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, contrats Review par mode, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 

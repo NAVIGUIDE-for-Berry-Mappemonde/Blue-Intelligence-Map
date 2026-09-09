@@ -12,21 +12,25 @@ export default function useFormalitiesLayers({
   mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
   poeMarkersById,
   mode, poeZones, poePorts, flyToZone, tRef,
+  showReview = false,
 }) {
   const eezSigRef = useRef("");
   const poeSigRef = useRef("");
 
-  // Polygones visibles seulement (pré-Gold + Gold enfoncé). Recharge si l'ensemble change.
+  // Couche par défaut = run unique (VLIZ). Overlay = run certifié si Afficher la review.
   useEffect(() => {
     if (mode !== "formalities") return;
     const layer = eezLayerRef.current;
     if (!layer) return;
     const ids = (poeZones || []).map((z) => z.mrgid).sort().join(",");
-    if (ids === eezSigRef.current && layer.getLayers && layer.getLayers().length) return;
-    eezSigRef.current = ids;
+    const sig = `${showReview ? 1 : 0}:${ids}`;
+    if (sig === eezSigRef.current) return;
+    eezSigRef.current = sig;
     (async () => {
       try {
-        const res = await api.get("/poe/zones/geojson", { params: { visible: 1 } });
+        const res = await api.get("/poe/zones/geojson", {
+          params: showReview ? { visible: 1 } : {},
+        });
         layer.clearLayers();
         if (eezLayersByMrgid?.current) eezLayersByMrgid.current.clear();
         if ((res.data?.features || []).length) layer.addData(res.data);
@@ -35,7 +39,7 @@ export default function useFormalitiesLayers({
       }
     })();
     // eslint-disable-next-line
-  }, [mode, poeZones]);
+  }, [mode, poeZones, showReview]);
 
   // Restyle polygons + refresh any open popup whenever zone statuses change.
   useEffect(() => {
