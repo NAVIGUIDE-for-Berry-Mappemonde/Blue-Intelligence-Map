@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.core import llm  # noqa: E402
 from app.core import nvidia  # noqa: E402
 from app.services import poe_pipeline as poe  # noqa: E402
 from app.services import poe_seed_enrich as enr  # noqa: E402
@@ -288,7 +289,7 @@ class TestJudgeNvidia:
 
         monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
         monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
-        monkeypatch.setattr(enr, "_json_openrouter", boom)
+        monkeypatch.setattr(llm, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Port Commerce", "seed_sources": ["v1"]},
@@ -404,12 +405,17 @@ class TestAskJsonCascade:
 
     def test_gatekeeper_label_is_nvidia(self, monkeypatch):
         from app.core import llm
+        from app.core.judge import YesNo
 
-        async def fake_tracked(*a, **k):
-            return {"marine": True, "score": 0.9, "reason": "reef"}, "nvidia-deepseek"
+        async def fake_yes(*a, **k):
+            return YesNo(
+                accepted=True, url=None, reason="reef",
+                engine="nvidia-deepseek",
+                raw={"marine": True, "score": 0.9, "reason": "reef"},
+            )
 
         monkeypatch.setattr(llm, "has_llm", lambda s=None: True)
-        monkeypatch.setattr(llm, "ask_json_tracked", fake_tracked)
+        monkeypatch.setattr("app.core.judge.ask_yes_no", fake_yes)
         import app.core.ml as ml
         monkeypatch.setattr(ml, "predict_relevance", lambda t: None)
 

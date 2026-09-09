@@ -100,6 +100,8 @@ class TestParseAndVerdict:
         assert enr.parse_judge({"is_poe": True, "confidence": 0.9})["judge_confidence"] == 90
         assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
         assert enr.parse_judge({"is_poe": True, "confidence": 80})["judge_confidence"] == 80
+        assert enr.parse_judge({"is_poe": "true", "kind": "pleasure"})["judge_status"] == "accepted"
+        assert enr.parse_judge({"is_poe": "false"})["judge_status"] == "rejected"
 
     def test_parse_judge_scales_unit_confidence(self):
         assert enr.parse_judge({"is_poe": True, "confidence": 1})["judge_confidence"] == 100
@@ -283,12 +285,12 @@ class TestJudgeLlmEscalate:
         async def boom(*a, **k):
             raise AssertionError("OpenRouter should not run after Sonnet decided")
 
-        from app.core import claude
+        from app.core import claude, llm
         monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
         monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
         monkeypatch.setattr(claude, "complete_json_claude", fake_complete)
-        monkeypatch.setattr(enr, "get_llm_key", lambda s=None: "")
-        monkeypatch.setattr(enr, "_json_openrouter", boom)
+        monkeypatch.setattr(llm, "get_llm_key", lambda s=None: "")
+        monkeypatch.setattr(llm, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Nouméa", "seed_sources": ["listing"]},
@@ -306,12 +308,12 @@ class TestJudgeLlmEscalate:
         async def boom(*a, **k):
             raise AssertionError("OpenRouter should not run after cargo reject")
 
-        from app.core import claude
+        from app.core import claude, llm
         monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
         monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
         monkeypatch.setattr(claude, "complete_json_claude", fake_complete)
-        monkeypatch.setattr(enr, "get_llm_key", lambda s=None: "")
-        monkeypatch.setattr(enr, "_json_openrouter", boom)
+        monkeypatch.setattr(llm, "get_llm_key", lambda s=None: "")
+        monkeypatch.setattr(llm, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Port Commerce", "seed_sources": ["v1"]},

@@ -4,7 +4,7 @@
 2. Heuristique extras / labels Website.
 3. TinyFish Fetch sur ``manager_url`` ; cascade locale (PDF / JS) si Fetch est vide.
 4. ``search_named`` (``site:`` puis web ouvert ; DuckDuckGo si pas de clé).
-5. Juge NVIDIA (chaîne ``json`` : Pro → gpt-oss → Muse), filet OpenRouter.
+5. Juge ``ask_yes_no`` (chaîne ``json`` : Pro → gpt-oss → Muse), filet OpenRouter / Claude.
 
 ``visit_url`` n'est jamais la homepage gestionnaire.
 """
@@ -137,21 +137,14 @@ def parse_visit_judge(
     manager_url: str | None,
 ) -> str | None:
     """Retient une URL déjà proposée. Refuse manager et URL hors liste."""
-    if not isinstance(data, dict) or data.get("accept") is not True:
-        return None
-    raw = str(data.get("url") or "").strip()
-    if not raw:
-        return None
-    allowed: dict[str, str] = {}
-    for cand in candidates:
-        url = cand.get("url") if isinstance(cand, dict) else cand
-        key = amp_svc.normalize_url(url)
-        if key:
-            allowed[key] = str(url).strip()
-    chosen = allowed.get(amp_svc.normalize_url(raw) or "")
-    if not chosen or amp_svc.urls_equivalent(chosen, manager_url):
-        return None
-    return chosen
+    from app.core.judge import parse_yes_no
+    yes = parse_yes_no(
+        data,
+        allowed_urls=candidates,
+        forbidden_urls=[manager_url] if manager_url else None,
+        url_key=amp_svc.normalize_url,
+    )
+    return yes.url if yes.accepted else None
 
 
 async def llm_judge_visit(
@@ -161,52 +154,27 @@ async def llm_judge_visit(
     settings: dict | None = None,
     log=None,
 ) -> str | None:
-    """NVIDIA (chaîne json) → OpenRouter → Claude en dernier."""
+    """NVIDIA (chaîne json) → OpenRouter → Claude. URL parmi les candidates."""
     if not candidates:
         return None
-    from app.core import nvidia
-    from app.core.llm import _call_openrouter, get_llm_key, parse_json_flexible
+    from app.core.judge import ask_yes_no
 
-    prompt = visit_judge_prompt(doc, candidates)
-    parsed = None
-    engine = None
-    if nvidia.nvidia_enabled(settings):
-        try:
-            parsed, used = await nvidia.complete_json_nvidia_tracked(
-                VISIT_JUDGE_SYSTEM, prompt, settings, max_tokens=400, log=log,
-                role="json")
-            engine = nvidia.engine_label(used)
-        except Exception as exc:
-            if log:
-                log(f"NVIDIA juge AMP: {type(exc).__name__}: {str(exc)[:80]}")
-            parsed = None
-    if parsed is None:
-        key = get_llm_key(settings)
-        if key:
-            try:
-                raw = await _call_openrouter(
-                    prompt, VISIT_JUDGE_SYSTEM, key, json_mode=True, max_tokens=400)
-                parsed = parse_json_flexible(raw)
-                engine = "openrouter"
-            except Exception as exc:
-                if log:
-                    log(f"OpenRouter juge AMP: {type(exc).__name__}: {str(exc)[:80]}")
-                parsed = None
-    if parsed is None:
-        from app.core import claude
-        if claude.claude_enabled(settings) and claude.budget_allows_call(settings):
-            try:
-                parsed = await claude.complete_json_claude(
-                    VISIT_JUDGE_SYSTEM, prompt, settings, max_tokens=400, log=log)
-                engine = "claude-haiku"
-            except Exception as exc:
-                if log:
-                    log(f"Claude juge AMP (dernier): {type(exc).__name__}: {str(exc)[:80]}")
-                parsed = None
-    chosen = parse_visit_judge(parsed, candidates, doc.get("manager_url"))
-    if chosen:
-        doc["visit_url_judge"] = engine
-    return chosen
+    yes = await ask_yes_no(
+        VISIT_JUDGE_SYSTEM,
+        visit_judge_prompt(doc, candidates),
+        settings=settings,
+        log=log,
+        role="json",
+        max_tokens=400,
+        allowed_urls=candidates,
+        forbidden_urls=[doc.get("manager_url")] if doc.get("manager_url") else None,
+        url_key=amp_svc.normalize_url,
+        on_empty="inconclusive",
+    )
+    if yes.accepted and yes.url:
+        doc["visit_url_judge"] = yes.engine
+        return yes.url
+    return None
 
 
 def search_candidates(

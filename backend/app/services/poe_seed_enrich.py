@@ -3,8 +3,8 @@ poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé via ``search_named`` (TinyFish, ``serp_filter``, DuckDuckGo si
 pas de clé), Fetch de tous les hits whitelistés (cap 10),
-juge NVIDIA (Pro → gpt-oss → Muse → Flash) si clé NIM, sinon OpenRouter,
-puis Claude Haiku → Sonnet en dernier.
+juge ``ask_yes_no`` (rôle ``judge`` : Pro → gpt-oss → Muse → Flash) si clé
+NIM, sinon OpenRouter, puis Claude Haiku → Sonnet en dernier.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
@@ -35,7 +35,7 @@ from app.core.geo import (
     select_geocode_candidate,
 )
 from app.services.poe_gps_registry import accepted_by_key
-from app.core.llm import _json_openrouter, get_llm_key
+from app.core.judge import as_bool, as_confidence
 from app.core.search import search_named
 from app.core.tinyfish import (
     FETCH_URL_CAP, SEARCH_PAGE_CAP, tf_api_key, tf_fetch, tf_poe_agent,
@@ -100,19 +100,6 @@ def normalize_judge_kind(raw) -> str:
     return _KIND_CANON.get(key, "unknown")
 
 
-def _judge_confidence(raw) -> int:
-    """0-100. Les NIM (DeepSeek / Kimi) renvoient souvent 0.9 au lieu de 90."""
-    if raw is None or raw == "":
-        return 0
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        return 0
-    if 0 < val <= 1:
-        val *= 100
-    return max(0, min(100, int(round(val))))
-
-
 DEFAULT_VERIFY_RUN = "20260906-071347-6a9509"
 VERIFY_ORDER = ("name_only", "unverified", "probable")
 DEFAULT_ENRICH_LIMIT = 200
@@ -137,7 +124,7 @@ _MINE_PATH_TOKENS = (
 
 def parse_judge(data: dict | None) -> dict:
     data = data if isinstance(data, dict) else {}
-    flag = data.get("is_poe")
+    flag = as_bool(data.get("is_poe"))
     kind = normalize_judge_kind(data.get("kind"))
     if flag is True:
         status = "accepted"
@@ -148,7 +135,7 @@ def parse_judge(data: dict | None) -> dict:
     # Filet déterministe : cargo-only n'est jamais un PoE plaisance.
     if kind == "cargo" and status == "accepted":
         status = "rejected"
-    conf = _judge_confidence(data.get("confidence"))
+    conf = as_confidence(data.get("confidence"))
     return {
         "judge_status": status,
         "judge_confidence": conf,
@@ -558,79 +545,25 @@ def _judge_prompt(doc: dict, zone: dict, context: str) -> str:
 
 
 async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -> dict:
-    from app.core import claude, nvidia
+    from app.core import claude
+    from app.core.judge import YesNo, ask_yes_no
+
     prompt = _judge_prompt(doc, zone, context)
-    result = None
 
-    async def _nvidia(model: str, engine: str) -> dict | None:
-        try:
-            parsed = await nvidia.complete_json_nvidia(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=800, log=log,
-                role="judge", fallback=False)
-            out = parse_judge(parsed)
-            out["judge_engine"] = engine
-            return out
-        except Exception as e:
-            log(f"NVIDIA {engine}: {type(e).__name__}: {str(e)[:80]}")
-            return None
+    def hop_if(yes: YesNo) -> bool:
+        return should_escalate_sonnet(parse_judge(yes.raw), doc)
 
-    async def _claude(model: str, engine: str) -> dict | None:
-        if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):
-            return None
-        try:
-            parsed = await claude.complete_json_claude(
-                JUDGE_SYSTEM, prompt, settings, model=model, max_tokens=300, log=log)
-            out = parse_judge(parsed)
-            out["judge_engine"] = engine
-            return out
-        except Exception as e:
-            log(f"Claude {engine}: {type(e).__name__}: {str(e)[:80]}")
-            return None
-
-    if nvidia.nvidia_enabled(settings):
-        tried: list[str] = []
-        last = None
-        for model in nvidia.models_for("judge"):
-            if model in tried:
-                continue
-            tried.append(model)
-            extra = await _nvidia(model, nvidia.engine_label(model))
-            if extra is None:
-                continue
-            last = extra
-            if not should_escalate_sonnet(extra, doc):
-                return extra
-            for nxt in nvidia.models_for("judge"):
-                if nxt in tried:
-                    continue
-                tried.append(nxt)
-                alt = await _nvidia(nxt, nvidia.engine_label(nxt))
-                if alt is not None:
-                    return alt
-            return extra
-        if last is not None:
-            return last
-
-    or_key = get_llm_key(settings)
-    if or_key:
-        try:
-            data = await _json_openrouter(prompt, JUDGE_SYSTEM, settings, 300)
-            out = parse_judge(data)
-            out["judge_engine"] = "openrouter"
-            if out.get("judge_status") != "inconclusive":
-                return out
-            result = out
-        except Exception as e:
-            log(f"OpenRouter juge: {type(e).__name__}: {str(e)[:80]}")
-
-    result = result or await _claude(claude.CLAUDE_HAIKU_MODEL, "claude-haiku")
-    if should_escalate_sonnet(result, doc):
-        sonnet = await _claude(claude.CLAUDE_SONNET_MODEL, "claude-sonnet")
-        if sonnet:
-            result = sonnet
-    if result is None:
-        result = parse_judge({"is_poe": None, "reason": "llm_error"})
-    return result
+    yes = await ask_yes_no(
+        JUDGE_SYSTEM, prompt, settings=settings, log=log,
+        role="judge", max_tokens=800,
+        openrouter_max_tokens=300, claude_max_tokens=300,
+        hop_if=hop_if,
+        claude_models=(claude.CLAUDE_HAIKU_MODEL, claude.CLAUDE_SONNET_MODEL),
+        on_empty="inconclusive")
+    out = parse_judge(yes.raw)
+    if yes.engine:
+        out["judge_engine"] = yes.engine
+    return out
 
 
 def drop_excluded_hits(hits: list[dict]) -> list[dict]:

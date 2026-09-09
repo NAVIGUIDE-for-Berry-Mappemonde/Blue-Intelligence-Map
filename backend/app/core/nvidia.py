@@ -15,10 +15,10 @@ json_object les fait pendre — on omet response_format.
 Fallbacks **à l'intérieur de NIM** (échec HTTP / timeout / JSON vide → suivant).
 Source unique : `CHAINS`. Hors NIM : OpenRouter, puis Claude (prix). Pas de web NIM.
 
-  judge   Pro → gpt-oss → Muse → Flash     # 4/4 ; Flash last (529)
+  judge   Pro → gpt-oss → Muse → Flash     # ask_yes_no PoE ; Flash last (529)
   extract Pro → gpt-oss → Muse             # Kimi seulement si décret (`legal`)
   legal   Kimi → Pro → Muse
-  json    Pro → gpt-oss → Muse             # gatekeeper, projet, géocode, AMP
+  json    Pro → gpt-oss → Muse             # ask_yes_no (gatekeeper, AMP), projet, géocode
   page    Pro → gpt-oss → Muse             # marina + capitainerie (même chaîne)
   text    Pro → gpt-oss → Muse             # ask_text, json_object=false
 
