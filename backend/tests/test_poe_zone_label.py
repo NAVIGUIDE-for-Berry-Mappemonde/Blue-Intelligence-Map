@@ -112,6 +112,7 @@ def test_serp_place_name_drops_internal_hexagone_qualifier():
 def test_keep_extracted_skips_other_polygon():
     from app.services.poe_zone_label import keep_extracted_in_zone
     assert keep_extracted_in_zone("spatial_rejected") is False
+    assert keep_extracted_in_zone("llm_spatial_rejected") is True
     assert keep_extracted_in_zone(None) is True
     assert keep_extracted_in_zone("agree") is True
     assert keep_extracted_in_zone("not_geocodeable") is True

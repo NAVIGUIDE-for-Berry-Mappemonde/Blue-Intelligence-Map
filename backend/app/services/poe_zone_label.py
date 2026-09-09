@@ -226,5 +226,10 @@ def zone_search_location(zone: dict) -> str | None:
 
 
 def keep_extracted_in_zone(arbitration: str | None) -> bool:
-    """Un GPS hors de CE polygone n'est pas écrit sur cette fiche."""
+    """Un GPS hors de CE polygone n'est pas écrit sur cette fiche.
+
+    ``spatial_rejected`` (annuaire ou coordonnées source) : on ne rattache
+    pas le nom — souvent un port d'un polygone frère. ``llm_spatial_rejected``
+    : le nom reste en file, sans GPS inventé hors de *ce* polygone.
+    """
     return arbitration != "spatial_rejected"

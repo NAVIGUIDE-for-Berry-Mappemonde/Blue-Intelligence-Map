@@ -492,7 +492,45 @@ def _registry_geocode(doc: dict, zone: dict, log) -> dict | None:
     return out
 
 
-async def geocode_one(doc: dict, zone: dict, log) -> dict:
+async def _llm_fill_mute_port(picked: dict, port: dict, zone: dict,
+                              settings: dict | None, log) -> dict:
+    """Annuaires muets → GPS au jugé, puis polygone VLIZ. Pas le havre Projet."""
+    from app.core.llm import llm_geocode_port
+    xy = await llm_geocode_port(port, zone, settings=settings, log=log)
+    if not xy:
+        return picked
+    geom, prepared = zone.get("_geom"), zone.get("_prep")
+    inland = inland_exception_flags(port, zone, {}, official_list=True)
+    kind, validated, dist = "unknown", geom is None, None
+    if geom is not None:
+        cls = classify_poe_point(xy[0], xy[1], geom, prepared, inland=inland)
+        kind = cls.get("kind") or "unknown"
+        validated = bool(cls.get("validated"))
+        dist = cls.get("dist_km")
+    if validated or kind in (None, "unknown"):
+        picked.update({
+            "lat": xy[0], "lon": xy[1],
+            "geocode_source": "llm",
+            "validated": bool(validated),
+            "spatial_kind": kind,
+            "distance_km": dist,
+            "geocode_arbitration": "llm",
+            "has_coords": True,
+        })
+        return picked
+    picked.update({
+        "geocode_arbitration": "llm_spatial_rejected",
+        "geocode_rejected_lat": xy[0],
+        "geocode_rejected_lon": xy[1],
+        "geocode_rejected_source": "llm",
+        "spatial_kind": kind,
+        "distance_km": dist,
+        "has_coords": False,
+    })
+    return picked
+
+
+async def geocode_one(doc: dict, zone: dict, log, settings: dict | None = None) -> dict:
     raw = doc.get("name") or ""
     name = geocode_query_name(raw)
     if name != raw:
@@ -521,6 +559,11 @@ async def geocode_one(doc: dict, zone: dict, log) -> dict:
     picked = pick_geocode(dual, port, zone, zone.get("_geom"), zone.get("_prep"))
     picked["geocoded_at"] = now_iso()
     picked["geocode_query"] = name
+    mute = not dual.get("nominatim") and not dual.get("geonames")
+    if (not picked.get("has_coords") and mute
+            and picked.get("geocode_arbitration") not in (
+                "ambiguous", "spatial_rejected")):
+        picked = await _llm_fill_mute_port(picked, port, zone, settings, log)
     if (not picked.get("has_coords") and doc.get("lat") is not None
             and doc.get("lon") is not None):
         # Ne jamais écraser un GPS existant par un miss / ambiguous.
@@ -1022,7 +1065,9 @@ async def execute_enrich(db, state, *, run_id: str = "",
                 counts["geo_no_zone"] += 1
                 return
             try:
-                upd = await geocode_one(doc, zone, lambda m: log(f"[{doc.get('name')}] {m}"))
+                upd = await geocode_one(
+                    doc, zone, lambda m: log(f"[{doc.get('name')}] {m}"),
+                    settings)
             except Exception as e:
                 counts["geo_error"] += 1
                 log(f"géocode FAIL {doc.get('name')}: {type(e).__name__}: {e}")

@@ -591,14 +591,6 @@ async def complete_json_claude(system: str, user: str,
     return parsed
 
 
-_TIEBREAK_SYSTEM = (
-    "Tu départages un géocodage double. Réponds UNIQUEMENT avec un JSON "
-    '{"picks": [{"name": "...", "choice": "nominatim|geonames|none"}]}. '
-    "Ne propose aucune autre coordonnée. none = les deux points sont faux "
-    "ou hors sujet pour ce port dans cette zone."
-)
-
-
 def _parse_tiebreak(parsed, items: list[dict]) -> dict:
     """Mappe name → choice. Clés originales + casefold."""
     allowed = {"nominatim", "geonames", "none"}
@@ -626,33 +618,19 @@ async def arbitrate_geocode_claude(zone: dict, items: list[dict],
     Retourne {name: 'nominatim'|'geonames'|'none'} (aussi en casefold).
     Dict vide si Claude éteint, budget, ou parse KO (repli EEZ côté pipeline).
     """
+    from app.core.geo import TIEBREAK_SYSTEM, tiebreak_user_prompt
+
     if not items:
         return {}
     if not claude_enabled(settings) or not budget_allows_call(settings):
         return {}
 
-    name = zone.get("name") or zone.get("geoname") or ""
-    sovereign = zone.get("sovereign") or ""
-    lines = [
-        f"Zone : {name} ({sovereign}).",
-        "Nominatim et GeoNames divergent. Choisis pour chaque port "
-        "nominatim, geonames ou none. N'invente aucune coordonnée.",
-        "",
-    ]
-    for i, it in enumerate(items, 1):
-        nom = it.get("nominatim") or [None, None]
-        geo = it.get("geonames") or [None, None]
-        lines.append(
-            f"{i}. {it.get('name')}\n"
-            f"   nominatim: {nom[0]}, {nom[1]}\n"
-            f"   geonames: {geo[0]}, {geo[1]}"
-        )
     payload = {
         "model": CLAUDE_MODEL,
         "max_tokens": 400,
         "temperature": 0,
-        "system": _TIEBREAK_SYSTEM,
-        "messages": [{"role": "user", "content": "\n".join(lines)}],
+        "system": TIEBREAK_SYSTEM,
+        "messages": [{"role": "user", "content": tiebreak_user_prompt(zone, items)}],
     }
     key = get_anthropic_key(settings)
     headers = {

@@ -45,7 +45,7 @@ from app.core.extract import (
     official_attachments, serp_filter, should_follow_attachments,
 )
 from app.core.geo import classify_poe_point, geocode_port_dual, inland_exception_flags
-from app.core.llm import extract_ports, grounded_search
+from app.core.llm import extract_ports, grounded_search, llm_geocode_port
 from app.core.rag import select_list_context, semantic_similarity
 from app.services.poe_confidence import apply_score, listing_role, score_port, zone_confidence_avg
 from app.services.poe_zone_label import (
@@ -1982,7 +1982,8 @@ def _pick_from_cands(row: dict, picks: dict) -> tuple[dict | None, str | None]:
     if not cands:
         return None, None
     if len(cands) == 1:
-        return cands[0], "single"
+        src = cands[0].get("source")
+        return cands[0], "llm" if src == "llm" else "single"
     if geo.get("agree"):
         nom = next((c for c in cands if c["source"] == "nominatim"), cands[0])
         return nom, "agree"
@@ -2055,7 +2056,8 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
     Nom non toponyme → pas de géocode. Désaccord dual → NIM / OR / Claude.
     Un point n'est gardé que s'il est dans cette ZEE, sur son bord terrestre
     (≤ 15 km), ou — exception rivière — un port de CE pays à ≤ 400 km.
-    Pas de tampon 300 km, pas de snap_to_ocean.
+    Annuaires muets → ``llm_geocode_port`` (pas ``llm_geocode`` Projet),
+    puis le même test VLIZ. Pas de tampon 300 km, pas de snap_to_ocean.
     """
     mrgid = int(zone["mrgid"])
     name = zone.get("name") or zone.get("geoname")
@@ -2131,7 +2133,25 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
             inland = inland_exception_flags(port_ev, zone, meta)
             cands.append(_spatial_cand(
                 coords[0], coords[1], source, geom, prepared, inland))
-        rows.append({"port": p, "norm": norm, "geo": geo, "hint": None, "cands": cands})
+        rows.append({"port": p, "norm": norm, "geo": geo, "hint": None,
+                     "cands": cands, "port_ev": port_ev})
+
+    for row in rows:
+        if row.get("hint") or row["cands"]:
+            continue
+        if row["geo"].get("nominatim") or row["geo"].get("geonames"):
+            continue
+        xy = await llm_geocode_port(
+            row["port"], zone, settings=settings, log=log)
+        if not xy:
+            continue
+        inland = inland_exception_flags(
+            row.get("port_ev") or row["port"], zone, {},
+            official_list=official_source)
+        row["cands"].append(_spatial_cand(
+            xy[0], xy[1], "llm", geom, prepared, inland))
+        await emit(rec, "geocode_llm", port=row["port"]["name"],
+                   lat=xy[0], lon=xy[1])
 
     disagreements = [
         r for r in rows
@@ -2147,6 +2167,10 @@ async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict
         p, norm, geo, cands = row["port"], row["norm"], row["geo"], row["cands"]
         chosen, arbitration = _pick_from_cands(row, picks)
         chosen, arbitration = _apply_spatial(chosen, arbitration, cands, p["name"], log)
+        if (arbitration == "spatial_rejected"
+                and cands and all(c.get("source") == "llm" for c in cands)):
+            # Inventé hors de CE polygone : garder le nom, pas le GPS.
+            chosen, arbitration = None, "llm_spatial_rejected"
 
         lat = chosen["lat"] if chosen else None
         lon = chosen["lon"] if chosen else None

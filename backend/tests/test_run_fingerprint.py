@@ -65,6 +65,8 @@ class TestFingerprint:
         assert fp["features"]["haiku_source_coords"] is True
         assert fp["features"]["geocode_name_veto"] is True
         assert fp["features"]["haiku_geocode_tiebreak"] is True
+        assert fp["features"]["geocode_name"] is True
+        assert fp["features"]["llm_geocode_port"] is True
         assert fp["features"]["seed_union"] is True
         assert fp["features"]["seed_verify"] is True
         assert fp["features"]["seed_osm"] is True
