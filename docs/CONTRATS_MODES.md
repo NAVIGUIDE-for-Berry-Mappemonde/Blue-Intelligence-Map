@@ -41,7 +41,7 @@ Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’ench
 | BU | Whitelist d’abord, puis sans si 0 hit | `include_domains` dans Search ; `url_allowed` ; **`serp_filter`** |
 | MM | Une fiche marina proche, pas un resto | Nom / slug + 8 km |
 | CE | Ignorer réseaux / OTA | **`serp_filter`** ; ranking `_url_rank` |
-| AV | Homepage interdite ; hits Search jugés | `serp_filter` **puis** score local **puis** juge NIM JSON |
+| AV | Homepage interdite ; hits Search jugés | `serp_filter` **puis** score local **puis** `ask_yes_no` |
 
 ## 3. Lecture — quel texte a-t-on ?
 
@@ -60,16 +60,16 @@ P, TD, BU, ME, CE et AV passent par `read_url`. MM reste Fetch-only (fiche `/pla
 
 | Job | Phrase | Outils aujourd’hui |
 | --- | --- | --- |
-| P | Projet marin, puis accessible en bateau | Gatekeeper ML → NIM → OpenRouter → Claude ; puis `site_publishable` |
+| P | Projet marin, puis accessible en bateau | Gatekeeper ML → `ask_yes_no` (rôle `json`, prompt marin) ; puis `site_publishable` |
 | TD | L’objet « port » sort à l’extraction (le filtre fort est la source d’État) | Parseur catalogue / NER plus tard |
-| BU | Juger seulement le résidu | NIM `judge` → OpenRouter → Claude |
+| BU | Juger seulement le résidu | `ask_yes_no` (rôle `judge`, prompt plaisance / cargo) |
 | Dump marinas | Marina de plaisance | Overpass `leisure=marina` |
 | Dump capitaineries | Bureau, pas plan d’eau | Overpass `office=harbour_master` (+ seamark / harbour) |
 | Mouillages | Objet mouillage | Tags Overpass anchorage / baie nommée |
 | AV (Fetch) | Lien visite dans le HTML | Score heuristique, pas de juge |
-| AV (Search) | Bonne page visite | Juge JSON NIM → OpenRouter → Claude |
+| AV (Search) | Bonne page visite | `ask_yes_no` (rôle `json`, prompt visite) ; URL parmi les candidates |
 
-Le dump OSM et le juge LLM ne sont pas la même implémentation ; la **question** est la même.
+P, BU et AV (Search) passent par `ask_yes_no`. Le dump OSM et le juge LLM ne sont pas la même implémentation ; la **question** est la même.
 
 ## 5. Extraction structurée — quels champs ?
 
@@ -155,6 +155,8 @@ Le problème n’est pas que les questions métier soient différentes. Elles do
 
 Le changement proposé est un adaptateur commun, pas un juge unique. On enverrait un prompt, et on recevrait un objet du type « j’accepte ou je refuse, éventuellement cette URL parmi les candidates, voici pourquoi ». Les trois textes de prompt resteraient trois textes. On n’écrirait pas un juge « projet ou port ou aire protégée » : ce serait plus faible que chaque spécialiste, et ça mélangerait des objets que le produit refuse de confondre.
 
+**Fait.** Porte `app.core.judge.ask_yes_no`. NVIDIA → OpenRouter → Claude. Réponse `YesNo` (accepté / refusé / URL parmi les candidates / raison). Trois prompts inchangés. Rôles NVIDIA distincts : `json` (gatekeeper, AMP, sans Flash) et `judge` (bottom-up, Flash en dernier). Une URL hors liste ou égale au `manager_url` est un refus — c’est le filet anti-hallucination des AMP, désormais dans l’adaptateur. `bool("false")` n’est plus un oui. Pas un juge unique « projet ou port ou AMP ».
+
 ### 5. Deux points proches : ce n’est pas toujours « le même objet »
 
 Les dumps marinas, capitaineries et mouillages partagent déjà Overpass et la grille mondiale. Il n’y a pas de projet d’unification Overpass : c’est déjà le cas. Le piège serait d’y coller la déduplication des projets et des ports d’entrée (cinq cents mètres et un nom proche).
@@ -171,7 +173,7 @@ Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le m
 
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **juge** commun (jumeau n°4 : **fait**) : un branchement `ask_yes_no`, trois prompts. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 

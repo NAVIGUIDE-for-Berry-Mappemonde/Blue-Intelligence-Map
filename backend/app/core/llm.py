@@ -5,7 +5,7 @@ Complétions JSON : NVIDIA (chaîne du rôle) → OpenRouter → Claude en derni
 grounded_search reste OpenRouter (:online) — NIM n'a pas de recherche web.
 
   - ask_json / ask_text        : complétions (JSON strict ou texte libre)
-  - gatekeeper_check           : filtre marin (pré-filtre ML local puis LLM)
+  - gatekeeper_check           : filtre marin (ML local puis ask_yes_no)
   - extract_project            : extraction structurée d'un projet marin
   - extract_ports              : extraction stricte des Ports d'Entrée
   - llm_geocode                : géocodage intelligent
@@ -133,41 +133,14 @@ async def ask_json_tracked(prompt: str, system: str = JSON_SYSTEM,
     """JSON strict : NVIDIA (chaîne du rôle) → OpenRouter → Claude en dernier.
 
     Retourne (objet, engine) — engine = nvidia-* | openrouter | claude.
+    Même câble que ``ask_yes_no`` (jumeau n°4).
     """
-    from app.core import claude, nvidia
-    last: Exception | None = None
-    if nvidia.nvidia_enabled(settings):
-        try:
-            data, used = await nvidia.complete_json_nvidia_tracked(
-                system, prompt, settings, max_tokens=max_tokens, log=log,
-                role=role)
-            return data, nvidia.engine_label(used)
-        except Exception as e:
-            last = e
-            if log:
-                log(f"nvidia JSON épuisé: {str(e)[:120]}")
-    key = get_llm_key(settings)
-    if key:
-        try:
-            data = await _json_openrouter(prompt, system, settings, max_tokens)
-            return data, "openrouter"
-        except Exception as e:
-            last = e
-            if log:
-                log(f"openrouter JSON: {str(e)[:120]}")
-    if claude.claude_enabled(settings) and claude.budget_allows_call(settings):
-        try:
-            data = await claude.complete_json_claude(
-                system, prompt, settings,
-                max_tokens=min(int(max_tokens), 800), log=log)
-            return data, "claude"
-        except Exception as e:
-            last = e
-            if log:
-                log(f"claude JSON (dernier): {str(e)[:120]}")
-    if last:
-        raise last
-    raise RuntimeError("no LLM backend")
+    from app.core.judge import complete_json_cascade
+    data, engine = await complete_json_cascade(
+        system, prompt, settings, role=role, max_tokens=max_tokens, log=log)
+    if (engine or "").startswith("claude"):
+        engine = "claude"
+    return data, engine
 
 
 async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
@@ -239,11 +212,15 @@ Page content (truncated):
 
 Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>"}}"""
     try:
-        out, engine = await ask_json_tracked(prompt, settings=settings)
-        score = float(out.get("score", 0))
-        return {"accepted": bool(out.get("marine")) and score >= float(settings.get("min_marine_score", 0.5)),
-                "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
-                "engine": _public_engine(engine, "Gatekeeper")}
+        from app.core.judge import ask_yes_no
+        yes = await ask_yes_no(
+            JSON_SYSTEM, prompt, settings=settings, role="json", max_tokens=400)
+        score = float((yes.raw or {}).get("score") or 0)
+        accepted = bool(yes.accepted) and score >= float(
+            settings.get("min_marine_score", 0.5))
+        return {"accepted": accepted, "score": round(score, 3),
+                "reason": (yes.reason or "")[:300],
+                "engine": _public_engine(yes.engine, "Gatekeeper")}
     except Exception as e:
         res = heuristic_gatekeeper(f"{title} {text}", settings)
         res["reason"] = f"llm failed ({str(e)[:80]}), {res['reason']}"
