@@ -146,7 +146,7 @@ class TestPaidSources:
 
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
         monkeypatch.setattr(enr, "_search_hits", boom_search)
-        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "search_named", boom_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "_judge_llm", fake_llm)
 
@@ -372,7 +372,7 @@ class TestJudgeAgentOnlyIfBlocked:
         monkeypatch.setattr(enr, "build_whitelist", lambda *a, **k: ["gouv.fr"])
         monkeypatch.setattr(enr, "url_allowed", lambda u, wl: "gouv.fr" in u)
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
-        monkeypatch.setattr(enr, "tf_search_pages", fake_search)
+        monkeypatch.setattr(enr, "search_named", fake_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "tf_poe_agent", fake_agent)
         monkeypatch.setattr(enr, "_judge_llm", fake_llm)
@@ -407,7 +407,7 @@ class TestJudgeAgentOnlyIfBlocked:
         monkeypatch.setattr(enr, "build_whitelist", lambda *a, **k: ["gouv.fr"])
         monkeypatch.setattr(enr, "url_allowed", lambda u, wl: "gouv.fr" in u)
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
-        monkeypatch.setattr(enr, "tf_search_pages", fake_search)
+        monkeypatch.setattr(enr, "search_named", fake_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "tf_poe_agent", fake_agent)
 
@@ -436,7 +436,7 @@ class TestJudgeAgentOnlyIfBlocked:
         monkeypatch.setattr(enr, "build_whitelist", lambda *a, **k: ["gouv.fr"])
         monkeypatch.setattr(enr, "url_allowed", lambda u, wl: True)
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
-        monkeypatch.setattr(enr, "tf_search_pages", fake_search)
+        monkeypatch.setattr(enr, "search_named", fake_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "tf_poe_agent", fake_agent)
 
@@ -694,7 +694,7 @@ def _patch_judge_net(monkeypatch, fetch_text=_MX_SCT, hits=None):
     monkeypatch.setattr(enr, "build_whitelist", lambda *a, **k: ["gob.mx"])
     monkeypatch.setattr(enr, "url_allowed", lambda u, wl: "gob.mx" in u)
     monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
-    monkeypatch.setattr(enr, "tf_search_pages", fake_search)
+    monkeypatch.setattr(enr, "search_named", fake_search)
     monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
     return searches
 
@@ -902,7 +902,7 @@ class TestMinePaidSources:
         async def fake_settings():
             return {}
 
-        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "search_named", boom_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
         monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [_MX_URL])
@@ -1052,7 +1052,7 @@ class TestRememberedCatalogs:
             "FR": ["https://www.douane.gouv.fr/liste-ports-de-plaisance-eligibles.pdf"],
             "MA": ["https://www.douane.gov.ma/already"],
         }})
-        monkeypatch.setattr(enr, "tf_search_pages", boom_search)
+        monkeypatch.setattr(enr, "search_named", boom_search)
         monkeypatch.setattr(enr, "tf_fetch", fake_fetch)
         monkeypatch.setattr(enr, "tf_api_key", lambda s=None: "k")
         monkeypatch.setattr(enr, "remember_seed_urls", lambda *a, **k: [])

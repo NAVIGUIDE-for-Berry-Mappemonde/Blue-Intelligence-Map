@@ -24,10 +24,10 @@ import json
 import re
 import time
 from typing import Any, Callable, Optional
-from urllib.parse import unquote
 
 import httpx
-from bs4 import BeautifulSoup
+
+from app.services.marina_world import osm_website_from_tags
 
 
 # TinyFish's schema validator is strict: no union types, no "description" on properties,
@@ -56,9 +56,9 @@ ENRICH_FIELDS = (
     "resume_avis",
 )
 
-DDG_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+MARINA_SITE_PURPOSE = (
+    "Official marina website (harbour facilities, VHF, visitor berths, draft). "
+    "Prefer the marina's own domain. Ignore Tripadvisor, Booking, Facebook, directories."
 )
 
 
@@ -125,41 +125,50 @@ async def openrouter_check_credit(
         return False
 
 
-# ------------------------------------------------------------------
-# DuckDuckGo HTML search (no API key required)
-# ------------------------------------------------------------------
+def marina_site_query(marina: dict) -> str:
+    """Requête propre au mode marina — pas une requête de port d'entrée."""
+    name = str(marina.get("name") or "").strip()
+    bits = [f'"{name}"' if name else "marina", "marina", "harbour", "port"]
+    try:
+        bits.append(f"{float(marina['lat']):.4f},{float(marina['lon']):.4f}")
+    except (TypeError, ValueError, KeyError):
+        pass
+    return " ".join(bits)
+
+
 async def duckduckgo_html_search(
     query: str,
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient | None = None,
     max_results: int = 3,
 ) -> list[dict]:
-    """Return a list of {url, title} — best-effort, silent on failure."""
-    try:
-        r = await client.post(
-            "https://html.duckduckgo.com/html/",
-            data={"q": query, "kl": "wt-wt"},
-            headers={"User-Agent": DDG_UA},
-            timeout=20,
-            follow_redirects=True,
-        )
-        if r.status_code != 200:
-            return []
-        soup = BeautifulSoup(r.text, "html.parser")
-        hits = []
-        for a in soup.select("a.result__a")[: max_results * 2]:
-            href = a.get("href", "")
-            title = a.get_text(" ", strip=True)
-            if "/l/?" in href or "duckduckgo.com/l/" in href:
-                m = re.search(r"uddg=([^&]+)", href)
-                if m:
-                    href = unquote(m.group(1))
-            if href.startswith("http") and title:
-                hits.append({"url": href, "title": title})
-            if len(hits) >= max_results:
-                break
-        return hits
-    except Exception:
-        return []
+    """Rétrocompat : le filet DDG vit dans ``app.core.search``."""
+    from app.core.search import duckduckgo_html_search as _ddg
+    return await _ddg(query, client=client, max_results=max_results)
+
+
+async def resolve_marina_website(
+    marina: dict,
+    *,
+    key: str | None = None,
+    logger: Optional[Callable[[str], None]] = None,
+) -> str | None:
+    """Tag OSM d'abord ; sinon ``search_named`` (TinyFish, DDG si pas de clé)."""
+    url = osm_website_from_tags(marina.get("tags") or {})
+    if url:
+        return url
+    from app.core.search import search_named
+    hits = await search_named(
+        marina_site_query(marina),
+        key=key,
+        purpose=MARINA_SITE_PURPOSE,
+        max_results=5,
+        log=logger,
+    )
+    picked = (hits[0].get("url") if hits else None) or None
+    if picked and logger:
+        engine = (hits[0].get("engine") or "search")
+        logger(f"[search] {engine} picked {picked}")
+    return picked
 
 
 async def fetch_readable(url: str, client: httpx.AsyncClient | None = None,
@@ -188,18 +197,7 @@ async def enrich_via_tinyfish(
     """
     from app.core.tinyfish import tf_get_run, tf_run_async
 
-    tags = marina.get("tags") or {}
-    url_hint = tags.get("website") or tags.get("contact:website") or tags.get("url")
-    if not url_hint:
-        try:
-            async with httpx.AsyncClient() as c:
-                hits = await duckduckgo_html_search(f"{marina['name']} marina port", c, max_results=3)
-                url_hint = hits[0]["url"] if hits else None
-                if url_hint and logger:
-                    logger(f"[tinyfish] DDG picked {url_hint}")
-        except Exception as e:
-            if logger:
-                logger(f"[tinyfish] DDG lookup failed: {e}")
+    url_hint = osm_website_from_tags(marina.get("tags") or {})
     if not url_hint:
         if logger:
             logger("[tinyfish] no URL hint — skipping")
@@ -274,6 +272,7 @@ async def enrich_via_openrouter(
     model: str | None = None,
     min_credit_usd: float = 0.5,
     logger: Optional[Callable[[str], None]] = None,
+    tinyfish_key: Optional[str] = None,
 ) -> Optional[dict]:
     from app.core.llm import openrouter_model
     model = model or openrouter_model()
@@ -283,12 +282,7 @@ async def enrich_via_openrouter(
         if not await openrouter_check_credit(client, or_key, min_usd=min_credit_usd, logger=logger):
             return None
         tags = marina.get("tags") or {}
-        url = tags.get("website") or tags.get("contact:website") or tags.get("url")
-        if not url:
-            hits = await duckduckgo_html_search(f"marina {marina['name']} port", client)
-            url = hits[0]["url"] if hits else None
-            if url and logger:
-                logger(f"[openrouter] DDG picked {url}")
+        url = await resolve_marina_website(marina, key=tinyfish_key, logger=logger)
         page_title = ""
         text = ""
         if url:
@@ -472,29 +466,24 @@ async def enrich_via_nvidia(
     marina: dict,
     settings: dict | None,
     logger: Optional[Callable[[str], None]] = None,
+    tinyfish_key: Optional[str] = None,
 ) -> Optional[dict]:
     """Chaîne `page` : Pro → gpt-oss → Muse (même contrat JSON qu'OpenRouter)."""
     from app.core import nvidia
     if not nvidia.nvidia_enabled(settings):
         return None
     tags = marina.get("tags") or {}
-    url = tags.get("website") or tags.get("contact:website") or tags.get("url")
+    url = await resolve_marina_website(marina, key=tinyfish_key, logger=logger)
     page_title = ""
     text = ""
-    async with httpx.AsyncClient() as client:
-        if not url:
-            hits = await duckduckgo_html_search(f"marina {marina['name']} port", client)
-            url = hits[0]["url"] if hits else None
-            if url and logger:
-                logger(f"[nvidia] DDG picked {url}")
-        if url:
-            try:
-                page_title, text = await fetch_readable(url, client)
-                if logger:
-                    logger(f"[nvidia] readability got {len(text)} chars from {url}")
-            except Exception as e:
-                if logger:
-                    logger(f"[nvidia] readability failed: {type(e).__name__}: {str(e)[:80]}")
+    if url:
+        try:
+            page_title, text = await fetch_readable(url)
+            if logger:
+                logger(f"[nvidia] readability got {len(text)} chars from {url}")
+        except Exception as e:
+            if logger:
+                logger(f"[nvidia] readability failed: {type(e).__name__}: {str(e)[:80]}")
     if not text:
         return None
     tags_str = json.dumps(
@@ -558,7 +547,8 @@ async def enrich_marina(
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if logger:
         logger("=== attempt 1: NVIDIA NIM ===")
-    nv_data = await enrich_via_nvidia(marina, settings, logger=logger)
+    nv_data = await enrich_via_nvidia(
+        marina, settings, logger=logger, tinyfish_key=tinyfish_key)
     if nv_data and any(nv_data.get(k) is not None for k in ENRICH_FIELDS):
         return {**nv_data, "enriched": True, "enrichment_source": "nvidia",
                 "enriched_at": now, "_tinyfish_attempted": False}
@@ -566,7 +556,8 @@ async def enrich_marina(
         if logger:
             logger("=== attempt 2: OpenRouter ===")
         or_data = await enrich_via_openrouter(
-            marina, openrouter_key, min_credit_usd=min_credit_usd, logger=logger
+            marina, openrouter_key, min_credit_usd=min_credit_usd, logger=logger,
+            tinyfish_key=tinyfish_key,
         )
         if or_data and any(or_data.get(k) is not None for k in ENRICH_FIELDS):
             return {**or_data, "enriched": True, "enrichment_source": "openrouter",
@@ -575,8 +566,7 @@ async def enrich_marina(
         logger("OpenRouter: no key configured — skipping")
     # 2. TinyFish — DERNIER recours : uniquement si un site officiel est connu (tag OSM),
     #    jamais sur un résultat DuckDuckGo (agrégateurs = runs longs et chers).
-    tags = marina.get("tags") or {}
-    has_official_site = bool(tags.get("website") or tags.get("contact:website") or tags.get("url"))
+    has_official_site = bool(osm_website_from_tags(marina.get("tags") or {}))
     tf_attempted = False
     if tinyfish_key and not skip_tinyfish and has_official_site:
         if logger:

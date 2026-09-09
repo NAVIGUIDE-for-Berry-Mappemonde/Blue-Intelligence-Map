@@ -431,7 +431,7 @@ class TestMarinaNvidiaFirst:
     def test_nvidia_hit_skips_openrouter(self, monkeypatch):
         from app.services import marina_enrich as me
 
-        async def fake_nv(marina, settings, logger=None):
+        async def fake_nv(marina, settings, logger=None, **k):
             return {"canal_vhf": "9", "places_visiteurs": 320,
                     "tirant_eau_max_metres": 3.5, "score_protection_meteo": None,
                     "services_disponibles": ["eau"], "telephone_capitainerie": "05",

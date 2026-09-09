@@ -76,7 +76,7 @@ HARD_CHALLENGE_RE = re.compile(
 # Couperet DUR : réseaux, OTA, dictionnaires, challenges — jamais une source PoE.
 SERP_HARD_RE = re.compile(
     r"(tripadvisor|booking\.com|expedia|airbnb|pinterest|facebook\.com|instagram\.com"
-    r"|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
+    r"|tiktok\.|youtube\.com|twitter\.com|/x\.com|linkedin\.com|reddit\.com|quora\.com"
     r"|hotels?\.com|kayak\.|skyscanner|cruisemapper|vesselfinder"
     r"|merriam-webster|dictionary\.com|thefreedictionary|cambridge\.org/(?:\w+/)?dictionary"
     r"|wiktionary|britannica\.com|wikihow|howtogeek|investopedia|linguee|wordreference"
