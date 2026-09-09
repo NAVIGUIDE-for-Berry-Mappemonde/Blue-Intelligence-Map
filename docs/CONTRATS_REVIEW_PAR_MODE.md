@@ -12,22 +12,22 @@ Hérite de : `docs/CAHIER_DES_CHARGES_REVIEW.md`, `docs/CONTRATS_MODES.md`, `doc
 
 Cette section **prime** dès qu’il y a conflit avec une UI ou un kind d’implémentation.
 
-Review est une **file de relecture qui aboutit au Gold**. Ce n’est pas une carte, pas un crawler, pas un goldiseur silencieux.
+Review est une **file de relecture qui aboutit à un run certifié**. Ce n’est pas une carte, pas un crawler, pas un goldiseur silencieux.
 
 | Règle | Sens |
 |-------|------|
 | **Une fiche = l’objet du mode** | Cumul **dédupliqué** de la v1 + de **tous** les runs. Pas un canari. Pas un `run_id` comme espace Gold. |
 | **Une fiche à la fois** | Commentaire, choix (garder / écarter), puis Gold. |
-| **Commentaire ≠ carte** | Sauver un texte n’écrit pas `projects` / `poe_ports` / `eez_zones` / `marinas` / `capitaineries` / `amp_sites`. |
-| **Gold = seul geste qui publie** | Clic explicite. Pas `generate-batch`. Pas une mutation au Enregistrer. |
+| **Commentaire ≠ live** | Sauver un texte n’écrit pas `projects` / `poe_ports` / `eez_zones` / `marinas` / `capitaineries` / `amp_sites`. |
+| **Gold = entrée dans le run certifié** | Clic explicite. Alimente le run Review du mode. Pas `generate-batch`. Pas une mutation au Enregistrer. **N’affiche rien tout seul sur Map.** |
 | **Pas de Générer** | Hors Review. |
 | **Run isolé = debug** | Utile pour comprendre un moteur. On ne goldise pas un canari / smoke / seed-enrich. |
 | **Clé de commentaire** | `{mode}:{entity_id}` sur la fiche union. Plus `{kind}:{run_id}:{id}` comme clé de job. |
 | **Listing-control** | Reste en Console. Pas une file Review. |
 
-**Phrase de test.** Un test qui enregistre un commentaire et voit la collection live mutée **sans** Gold **casse le contrat**. Un test qui clique Gold et ne voit **ni** le Gold **ni** l’effet carte du mode **casse aussi le contrat**.
+**Phrase de test.** Un test qui enregistre un commentaire et voit la collection live mutée **casse le contrat**. Un test qui clique Gold et ne voit **pas** la fiche dans le run certifié **casse aussi le contrat**. Un test qui clique Gold et voit la Map **changer sans** « Afficher la review » **casse le contrat**.
 
-Ce qui change par mode : **la question que le réviseur tranche**, **ce qui est une preuve**, **quand Gold s’allume**, **ce que la carte skipper montre**.
+Ce qui change par mode : **la question que le réviseur tranche**, **ce qui est une preuve**, **quand Gold s’allume**. L’effet Map est **le même** pour tous les modes (§8).
 
 ---
 
@@ -35,13 +35,13 @@ Ce qui change par mode : **la question que le réviseur tranche**, **ce qui est 
 
 Cinq modes produit, **cinq files**. Pas de file `poe` séparée (accident d’implémentation : deux collections Mongo). Pas de file pays à la place d’un `mrgid`.
 
-| Mode | Une fiche = | Identifiant | Preuve que le réviseur juge | Gold quand | Carte skipper |
-|------|-------------|-------------|-----------------------------|------------|---------------|
-| **Formalités** | un polygone VLIZ + ses ports | `mrgid` | URLs d’**État** (TD toutes runs, BU par port). WPI = contre-preuve. Noonsite hors fiche. | ≥ 1 TD gardée (ou UNCLOS `none`) **et** chaque port tranché | **Seulement** le snapshot Gold. La v1 n’est plus la couche. |
-| **Projets** | un projet (n sites) | `_id` ou `url` | URL de **page projet** + GPS du **lieu d’action** visitable en bateau | URL projet + ≥ 1 site accepté (pas snapped / fallback / HQ) | Sites **Gold**. Snapped, fallback, HQ : file, pas carte skipper. |
-| **Marinas** | une marina | `osm_id` | Identité OSM + GPS du bassin. Enrichissement (VHF, places, tirant) **sans inventer**. `/maps/place/` = signal. | Identité + GPS acceptés. Champs enrichis : garder seulement s’ils sont sourcés | **Catalogue OSM entier** (on n’en filtre aucune). Gold = badge / point de confiance, pas un masque. |
-| **Capitaineries** | un **bureau** | `osm_id` et/ou `shom_id` / `noaa_id` | Bâtiment (pas le plan d’eau). Tél + VHF sourcés (tags ou page officielle). Calque 250 m ≠ fusion 500 m. | Bureau + GPS acceptés. Contact : garder seulement s’il n’est pas inventé | Dump OSM + overlay SHOM/NOAA **visible**. Gold = contact vérifié. **Jamais** collé à une marina. |
-| **AMP** | un site ProtectedSeas (façade) | `site_id` | **Deux** URL distinctes : `manager_url` ≠ `visit_url`. Candidats visite tous visibles. | Couple tranché : visite gardée **distincte**, ou « pas de visite » assumé | Polygones de façade restent. Gold = URLs skipper (visite cliquable, jamais la homepage gestionnaire). |
+| Mode | Une fiche = | Identifiant | Preuve que le réviseur juge | Gold quand |
+|------|-------------|-------------|-----------------------------|------------|
+| **Formalités** | un polygone VLIZ + ses ports | `mrgid` | URLs d’**État** (TD toutes runs, BU par port). WPI = contre-preuve. Noonsite hors fiche. | ≥ 1 TD gardée (ou UNCLOS `none`) **et** chaque port tranché |
+| **Projets** | un projet (n sites) | `_id` ou `url` | URL de **page projet** + GPS du **lieu d’action** visitable en bateau | URL projet + ≥ 1 site accepté (pas snapped / fallback / HQ) |
+| **Marinas** | une marina | `osm_id` | Identité OSM + GPS du bassin. Enrichissement (VHF, places, tirant) **sans inventer**. `/maps/place/` = signal. | Identité + GPS acceptés. Champs enrichis : garder seulement s’ils sont sourcés |
+| **Capitaineries** | un **bureau** | `osm_id` et/ou `shom_id` / `noaa_id` | Bâtiment (pas le plan d’eau). Tél + VHF sourcés (tags ou page officielle). Calque 250 m ≠ fusion 500 m. | Bureau + GPS acceptés. Contact : garder seulement s’il n’est pas inventé |
+| **AMP** | un site ProtectedSeas (façade) | `site_id` | **Deux** URL distinctes : `manager_url` ≠ `visit_url`. Candidats visite tous visibles. | Couple tranché : visite gardée **distincte**, ou « pas de visite » assumé |
 
 ---
 
@@ -53,7 +53,7 @@ C’est `docs/CAHIER_DES_CHARGES_REVIEW.md` §3.4 / §7.2 / §11. On ne le réé
 
 **Interdit.** Pays à la place du polygone. File ports séparée. Cacher des TD « pour n’en garder qu’une ». Noonsite / wiki / forum comme preuve. WPI comme preuve **positive** de plaisance (sauf mixte explicite). Goldiser un canari.
 
-**Écritures Review.** Commentaire ; `keep_td` / `blacklist_url` / `blacklist_domain` / `keep_port` / `drop_port` (grain `mrgid`, agrégat souverain) ; Gold = snapshot + carte Formalités.
+**Écritures Review.** Commentaire ; `keep_td` / `blacklist_url` / `blacklist_domain` / `keep_port` / `drop_port` (grain `mrgid`, agrégat souverain) ; Gold = snapshot dans le **run certifié**. Map Formalités reste le run v1 tant que « Afficher la review » est décoché.
 
 ---
 
@@ -96,9 +96,9 @@ Files d’entrée (CDC phase D) : `snapped`, `fallback`, `unlocated`, `hq_suspec
 
 **Actif si** : au moins une URL de **projet** gardée **et** au moins un site `site_ok` accepté (GPS de lieu d’action, pas snapped / fallback / HQ).
 
-**Le clic** : fige URLs + sites acceptés ; écrit `review_gold` kind `project` ; la carte skipper montre **ces** sites ; les sites rejetés / snapped non acceptés **sortent** de la couche skipper (la v1 reste en mémoire). Sert ensuite à recalibrer le gatekeeper (CDC D2–D3) — **après** un Gold, pas avant.
+**Le clic** : fige URLs + sites acceptés ; écrit la fiche dans le **run certifié** (`review_gold` kind `project`). Map Projets continue d’afficher les 4400+ en base. Le run certifié n’apparaît que si « Afficher la review » est coché. Sert ensuite à recalibrer le gatekeeper (CDC D2–D3) — **après** un Gold, pas avant.
 
-**Ne fait pas** : goldiser 4 463 points d’un coup ; republier un `ocean_fallback` ; coller un polygone AMP comme preuve de projet.
+**Ne fait pas** : goldiser 4 463 points d’un coup ; republier un `ocean_fallback` ; coller un polygone AMP comme preuve de projet ; retirer un projet de la carte par défaut.
 
 ### 3.6 Ce que Review ne décide pas
 
@@ -112,7 +112,7 @@ Calque : Review §7.3 / CONTRATS_MODES « Marinas » / `REGLES_PARAMETRES` §3.3
 
 ### 4.1 Objet
 
-Une fiche = **une marina** (`osm_id`). Tant que les runs existent (`marina_run_marinas`), l’union v1 + runs. Les **mouillages** (`marina_run_anchorages`, corridor de route) **ne sont pas** cette file.
+Une fiche = **une marina** (`osm_id`). Union du run unique + enrichissements. Les **mouillages** (`marina_run_anchorages`, corridor de route) **ne sont pas** cette file.
 
 ### 4.2 Question du réviseur
 
@@ -145,9 +145,9 @@ L’enrichissement (VHF, places visiteurs, tirant, tél) est-il **lu** sur une p
 
 **Actif si** : identité OSM + GPS acceptés.
 
-**Le clic** : marque la fiche Gold (interrupteur). **Ne masque pas** les 28 k marinas OSM : le contrat produit est « on n’en filtre aucune ». Gold = **confiance affichée** (badge, point plus gros déjà utilisé pour Maps), pas une publication exclusive comme Formalités.
+**Le clic** : entre la fiche dans le **run certifié**. Map Marinas continue d’afficher le run unique.
 
-**Ne fait pas** : transformer une marina en PoE ; rattacher le téléphone de la capitainerie comme champ marina sans source ; goldiser un mouillage.
+**Ne fait pas** : transformer une marina en PoE ; rattacher le téléphone de la capitainerie comme champ marina sans source ; goldiser un mouillage ; masquer le run unique.
 
 ### 4.6 Écart code
 
@@ -192,7 +192,7 @@ Une fiche = **un bureau** (le bâtiment), pas le plan d’eau, pas la marina. Id
 
 **Actif si** : identité bâtiment + GPS acceptés. Tél / VHF optionnels, mais s’ils sont affichés ils doivent être **gardés** (sourcés).
 
-**Le clic** : Gold kind `capitainerie` (à ajouter). Carte : dump reste visible ; Gold = contact skipper de confiance.
+**Le clic** : Gold kind `capitainerie` (à ajouter) ; fiche dans le **run certifié**. Map Capitaineries continue d’afficher le run unique.
 
 **Ne fait pas** : fusionner avec une marina ; réutiliser `same_site` 500 m ; goldiser sans GPS de bâtiment.
 
@@ -223,7 +223,7 @@ La visite n’est **jamais** la homepage gestionnaire, ni une copie de `manager_
 | `manager_url` | Champ ProtectedSeas (Website) | La prendre pour *la* visite |
 | **Candidats `visit_url`** | Tous les hits Search / liens Fetch, **dédupliqués, cliquables** | N’en afficher qu’une « pour faire propre » ; en inventer une hors liste |
 | Statuts pipeline | `found` / `rejected_same_as_manager` / `not_found` / `none` | `found` alors que URL ≡ manager |
-| LFP, désignation, autorité | Contexte skipper | Critère Gold (LFP ne goldise pas) |
+| LFP, désignation, autorité | Contexte | Critère Gold (LFP ne goldise pas) |
 | Pays / façade | Filtre de file | Une file mondiale unique comme vérité |
 
 Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline propose un rang ; ce n’est pas un filtre qui cache.
@@ -240,7 +240,7 @@ Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline pro
 
 **Actif si** : une `visit_url` **gardée** et **distincte** de `manager_url`, **ou** confirmation explicite « pas de page visite » (équivalent UNCLOS `none` côté Formalités).
 
-**Le clic** : snapshot `{manager_url, visit_url}` ; polygone inchangé ; le popup skipper montre la visite Gold, jamais le Website recopié.
+**Le clic** : snapshot `{manager_url, visit_url}` dans le **run certifié**. Map AMP continue d’afficher le run unique. Le polygone ProtectedSeas n’est pas redessiné.
 
 **Ne fait pas** : goldiser la homepage ; servir le cache tuile 30 j. comme fusion de fiches ; lancer SearXNG (ce n’est pas une liste d’État par ZEE).
 
@@ -261,18 +261,30 @@ Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline pro
 | Relancer un crawl | non | non | non | non | non |
 | Inventer un GPS / une URL | non | non | non | non | non |
 | Écrire la live sans Gold | non | non | non | non | non |
+| Changer Map sans « Afficher la review » | non | non | non | non | non |
 
 ---
 
-## 8. Vocabulaire Gold — trois régimes, pas un seul bouton
+## 8. Map et Review — un seul interrupteur
 
-Le mot **Gold** est le même clic. L’**effet carte** n’est pas le même. Les confondre recaserait 28 k marinas OSM derrière une revue humaine impossible, ou republierait des PoE SERP.
+L’onglet **Map** a une couche **par défaut**, indépendante de la Review. Gold n’y touche pas.
 
-| Régime | Modes | Sens |
-|--------|-------|------|
-| **Publication exclusive** | Formalités | Hors Gold, le skipper **ne voit pas** la fiche. v1 = stock Review, pas couche. |
-| **Filtre skipper** | Projets | La carte skipper = Gold (v1 moins snapped/fallback/HQ, plus acceptés). Le trésor v1 reste en base. |
-| **Badge de confiance** | Marinas, Capitaineries, AMP | Le référentiel (OSM, SHOM, ProtectedSeas) **reste** sur la carte. Gold = champs / URLs **vérifiés** pour le skipper. |
+| Mode | Carte par défaut |
+|------|------------------|
+| **Projets** | les 4400+ projets en base |
+| **Formalités / PoE** | le run v1 |
+| **Marinas** | le run unique |
+| **Capitaineries** | le run unique |
+| **AMP** | le run unique |
+
+La Review constitue **un run certifié par l’humain** (les fiches goldisées, avec leurs choix). C’est un run de plus, le même objet pour tous les modes.
+
+Sur Map, un bouton **Afficher la review**, décoché par défaut :
+
+- **coché** → la carte montre le run certifié du mode actif ;
+- **décoché** → retour à la couche par défaut du tableau ci-dessus.
+
+Pas de régime « publication exclusive Formalités ». Pas de « filtre skipper Projets ». Pas de « badge OSM ». Un interrupteur, cinq couches par défaut.
 
 ---
 
@@ -293,12 +305,13 @@ Le mot **Gold** est le même clic. L’**effet carte** n’est pas le même. Les
 
 1. Cinq files, une par mode actif. **Zéro** onglet « Ports d’Entrée » à côté de « Polygones ».
 2. Commentaire persisté ; collections live **inchangées**.
-3. Formalités : déjà le CDC Review (toutes TD, Gold snapshot).
-4. Projets : Gold d’un projet snapped **refusé** tant que le site n’est pas accepté ; Gold d’un projet `site_ok` → marqueur skipper.
-5. Marinas : Gold **n’enlève** aucune marina OSM de la carte.
+3. Formalités : déjà le CDC Review (toutes TD, Gold → run certifié).
+4. Projets : Gold d’un projet snapped **refusé** tant que le site n’est pas accepté ; Gold d’un projet `site_ok` → fiche dans le run certifié ; les 4400+ restent sur Map.
+5. Marinas / Capitaineries / AMP : Gold → run certifié ; le run unique reste la carte par défaut.
 6. Capitaineries : plus de `gold_on: true` par défaut ; Gold après acceptation bâtiment.
 7. AMP : plusieurs candidats visite ; Gold refuse `visit_url == manager_url`.
-8. Phrase de test du §0 verte pour **chaque** kind.
+8. Map : « Afficher la review » coché = run certifié ; décoché = couche du §8. Gold seul ne change pas Map.
+9. Phrase de test du §0 verte pour **chaque** kind.
 
 ---
 
@@ -306,14 +319,14 @@ Le mot **Gold** est le même clic. L’**effet carte** n’est pas le même. Les
 
 | Document | Rôle |
 |----------|------|
-| `docs/CAHIER_DES_CHARGES_REVIEW.md` | **Contrat Formalités / PoE** (file, fiche, Gold). Prime sur « 1 TD » du CDC PoE §18. |
+| `docs/CAHIER_DES_CHARGES_REVIEW.md` | **Contrat Formalités / PoE** (file, fiche, Gold). Prime sur « 1 TD » du CDC PoE §18. **Sauf** « Gold pose l’accepté sur la carte » : ici Gold alimente le run certifié ; Map ne le montre que via **Afficher la review**. |
 | `docs/CAHIER_DES_CHARGES_POE.md` | Objet PoE, grain VLIZ, D∩P, WPI. |
 | `docs/CAHIER_DES_CHARGES_PROJETS.md` | Objet projet, phase D, snapped/fallback. |
 | `docs/CONTRATS_MODES.md` | Cinq contrats **pipeline** (pas Review). |
 | `docs/REGLES_PARAMETRES.md` | Règles que les choix Review doivent pouvoir **écrire**. |
 
 En cas de conflit sur **eez vs poe** : une fiche Formalités.  
-En cas de conflit sur **écriture carte** : pas de carte sans Gold, pas de Gold silencieux.  
-En cas de conflit sur **marinas filtrées par Gold** : le catalogue OSM prime ; Gold est un badge.
+En cas de conflit sur **écriture live** : pas de live sans Gold, pas de Gold silencieux.  
+En cas de conflit sur **ce que Map affiche** : couche par défaut du §8 ; le run certifié seulement si **Afficher la review** est coché.
 
 *Toute évolution de règle Review se fait d’abord dans le CDC Formalités (`CAHIER_DES_CHARGES_REVIEW.md`) pour les PoE, et ici pour les autres modes, puis dans le code.*
