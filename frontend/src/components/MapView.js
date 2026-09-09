@@ -27,6 +27,8 @@ export default function MapView({
   flyToCapitainerie,
   anchorages,
   showAnchorages = true,
+  showReview = false,
+  setShowReview,
   poeZones,
   poePorts,
   route,
@@ -291,6 +293,7 @@ export default function MapView({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
     poeMarkersById,
     mode, poeZones, poePorts, flyToZone, tRef,
+    showReview,
   });
   useProjectsLayer({
     mapObj, clusterRef, zoomingRef, pendingRef,
@@ -298,6 +301,7 @@ export default function MapView({
   });
   useAmpLayer({
     mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites: onAmpSites, flyToAmp,
+    showReview,
   });
 
   // ---------- Mode swap: attach the right cluster, hide the others ----------
@@ -376,6 +380,21 @@ export default function MapView({
   return (
     <div className="w-full h-full relative">
       <div ref={mapRef} data-testid="map-container" className="w-full h-full" />
+      {typeof setShowReview === "function" ? (
+        <button
+          type="button"
+          data-testid="map-show-review"
+          aria-pressed={Boolean(showReview)}
+          onClick={() => setShowReview(!showReview)}
+          className={`absolute z-[1000] top-3 right-3 px-2.5 py-1.5 text-[11px] font-semibold border rounded-sm shadow-sm ${
+            showReview
+              ? "border-accent bg-accent/20 text-accent"
+              : "border-line bg-surface/90 text-slate-300 hover:bg-raised"
+          }`}
+        >
+          {t("reviewShowReview")}
+        </button>
+      ) : null}
     </div>
   );
 }

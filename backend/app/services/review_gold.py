@@ -1,12 +1,12 @@
 """
-Gold Dataset — publication carte.
+Gold Dataset — run certifié Review.
 
-Les bases v1 (`projects`, `poe_ports`, `eez_zones`, `marinas`) ne sont
-jamais écrites. Seule `review_gold` porte les overrides (on / off + snapshot).
+Les bases live (`projects`, `poe_ports`, `eez_zones`, `marinas`,
+`capitaineries`, `amp_sites`) ne sont jamais écrites. Seule `review_gold`
+porte les overrides (on / off + snapshot).
 
-Projets / marinas : interrupteur. Formalités : Gold = publier la fiche
-(snapshot des TD / PoE gardés). La carte ne montre que ce snapshot — la v1
-est un run de Review, pas une couche carte.
+Gold = clic explicite. Map ne montre le run certifié que si
+« Afficher la review » est coché. Pas de pré-Gold silencieux.
 """
 from __future__ import annotations
 
@@ -18,10 +18,12 @@ from datetime import datetime, timezone
 from app.core.geo import haversine_km, ocean_fallback_coords
 from app.services.poe_stable import STABLE_REVIEW_MRGIDS
 from app.services.review_choices import (
-    GOLD_INCOMPLETE,
+    apply_snapshot_to_doc,
     build_gold_snapshot,
+    empty_choices,
     finalize_choices,
     get_choices,
+    gold_incomplete_message,
     gold_ready,
     save_choices_doc,
     snapshot_port_docs,
@@ -31,7 +33,7 @@ from app.services.review_choices import (
 class GoldNotReady(ValueError):
     """Gold Formalités cliqué trop tôt — TD / PoE pas encore tranchés."""
 
-GOLD_KINDS = ("project", "eez", "marina")
+GOLD_KINDS = ("project", "eez", "marina", "capitainerie", "amp")
 FALLBACK_SOURCES = frozenset({
     "ocean-region-fallback", "ocean_fallback", "ocean-fallback",
     "fallback", "ocean_region_fallback",
@@ -100,17 +102,52 @@ def is_pre_gold_project(doc: dict | None) -> bool:
 
 
 def is_pre_gold_marina(doc: dict | None) -> bool:
-    """Pour l'instant : le stock OSM (28k+)."""
+    """File : identité OSM + GPS présents. Pas un Gold silencieux."""
     if not doc:
         return False
     src = str(doc.get("source") or "").strip().lower()
-    return src in OSM_SOURCES
+    if src not in OSM_SOURCES and not doc.get("osm_id"):
+        return False
+    return _has_xy(doc)
+
+
+def is_pre_gold_capitainerie(doc: dict | None) -> bool:
+    """File : un bâtiment avec GPS. Gold reste un clic."""
+    if not doc:
+        return False
+    if not (doc.get("osm_id") or doc.get("shom_id") or doc.get("noaa_id") or doc.get("name")):
+        return False
+    return _has_xy(doc)
+
+
+def is_pre_gold_amp(doc: dict | None) -> bool:
+    """File : quelque chose à juger (manager ou candidats visite)."""
+    if not doc:
+        return False
+    if doc.get("manager_url") or doc.get("visit_url") or doc.get("other_helpful_links"):
+        return True
+    return bool(doc.get("visit_candidates"))
+
+
+def _has_xy(doc: dict | None) -> bool:
+    if not doc:
+        return False
+    try:
+        lat, lon = float(doc["lat"]), float(doc["lon"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return -90 <= lat <= 90 and -180 <= lon <= 180
+
+
+def gold_is_on(override: dict | None) -> bool:
+    """Gold = override allumé. Jamais un défaut pré-Gold."""
+    return bool(override and override.get("on"))
 
 
 def gold_pressed(is_pre_gold: bool, override: dict | None) -> bool:
-    if override is not None and "on" in override:
-        return bool(override["on"])
-    return bool(is_pre_gold)
+    """Compat : le pré-Gold ne pose plus l'interrupteur."""
+    del is_pre_gold
+    return gold_is_on(override)
 
 
 def eez_is_published(override: dict | None) -> bool:
@@ -119,7 +156,7 @@ def eez_is_published(override: dict | None) -> bool:
 
 
 def eez_on_map(override: dict | None) -> bool:
-    """Polygone Formalités visible = fiche Gold publiée. Pas de v1."""
+    """Couche « Afficher la review » Formalités = fiche Gold publiée."""
     return eez_is_published(override)
 
 
@@ -319,7 +356,9 @@ async def is_pre_gold_entity(db, kind: str, entity_id: str, doc: dict | None = N
     if kind == "marina":
         return is_pre_gold_marina(doc)
     if kind == "capitainerie":
-        return True
+        return is_pre_gold_capitainerie(doc)
+    if kind == "amp":
+        return is_pre_gold_amp(doc)
     if kind == "eez":
         try:
             mid = int(entity_id)
@@ -330,7 +369,7 @@ async def is_pre_gold_entity(db, kind: str, entity_id: str, doc: dict | None = N
 
 
 async def visible_eez_mrgids(db) -> set[int]:
-    """mrgid sur la carte Formalités : uniquement les fiches Gold publiées."""
+    """mrgid du run certifié Formalités (couche « Afficher la review »)."""
     return set(await published_snapshots(db))
 
 
@@ -352,7 +391,7 @@ async def published_snapshots(db) -> dict[int, dict]:
 
 async def visible_poe_port_docs(db, mrgid: int | None = None,
                                   country: str | None = None) -> list[dict]:
-    """Ports carte Formalités : snapshot Gold uniquement, jamais `poe_ports`."""
+    """Ports du run certifié Formalités — jamais `poe_ports` live."""
     snaps = await published_snapshots(db)
     if mrgid is not None:
         try:
@@ -373,29 +412,39 @@ async def visible_poe_port_docs(db, mrgid: int | None = None,
 
 
 async def filter_visible(db, kind: str, docs: list[dict], id_fn) -> list[dict]:
+    """Run certifié seulement : Gold explicite, jamais un pré-Gold silencieux."""
     overrides = await overrides_map(db, kind)
     out: list[dict] = []
     for d in docs:
         eid = _sid(id_fn(d))
         if not eid:
             continue
-        if kind == "project":
-            pre = is_pre_gold_project(d)
-        elif kind == "marina":
-            pre = is_pre_gold_marina(d)
-        elif kind == "eez":
+        ov = overrides.get(eid)
+        if kind == "eez":
             try:
                 mid = int(d.get("mrgid") or eid)
             except (TypeError, ValueError):
                 continue
-            if eez_on_map(overrides.get(str(mid))):
+            ov = overrides.get(str(mid)) or ov
+            if eez_on_map(ov):
                 out.append(d)
             continue
-        else:
-            pre = False
-        if gold_pressed(pre, overrides.get(eid)):
-            out.append(d)
+        if gold_is_on(ov):
+            out.append(apply_snapshot_to_doc(kind, d, ov.get("snapshot")))
     return out
+
+
+async def _load_fiche_for_gold(db, kind: str, eid: str, run_id: str | None,
+                               comment: str, choices: dict) -> tuple:
+    from app.services.review_queue import get_fiche
+    packed = await get_fiche(db, kind, run_id, eid)
+    if not packed:
+        return None, comment, choices
+    fiche = packed.get("fiche")
+    if not comment:
+        comment = packed.get("comment") or ""
+    ch = choices if choices else (packed.get("choices") or empty_choices())
+    return fiche, comment, ch
 
 
 async def toggle_gold(db, kind: str, entity_id: str, *,
@@ -405,7 +454,7 @@ async def toggle_gold(db, kind: str, entity_id: str, *,
                       comment: str = "",
                       choices: dict | None = None) -> dict:
     if kind not in GOLD_KINDS:
-        raise ValueError("kind must be project|eez|marina")
+        raise ValueError("kind must be project|eez|marina|capitainerie|amp")
     eid = _sid(entity_id)
     if not eid:
         raise ValueError("id required")
@@ -413,53 +462,52 @@ async def toggle_gold(db, kind: str, entity_id: str, *,
         return await _toggle_eez_gold(
             db, eid, run_id=run_id, fiche=fiche, comment=comment, choices=choices)
 
-    pre = await is_pre_gold_entity(db, kind, eid, None)
-    if kind == "project" or kind == "marina":
-        # Re-évaluer avec le doc v1 si possible (pré-Gold dépend du contenu).
-        if kind == "project":
-            doc = await db.projects.find_one({"_id": eid})
-            if not doc:
-                doc = await db.projects.find_one({"url": eid})
-            pre = is_pre_gold_project(doc)
-        else:
-            doc = await db.marinas.find_one({"_id": eid})
-            pre = is_pre_gold_marina(doc)
     override = await get_override(db, kind, eid)
-    currently_on = gold_pressed(pre, override)
+    currently_on = gold_is_on(override)
     cid = gold_key(kind, eid)
+    ch = choices if choices is not None else await get_choices(db, kind, eid)
     if currently_on:
-        if pre:
-            await db.review_gold.update_one(
-                {"_id": cid},
-                {"$set": {
-                    "_id": cid, "kind": kind, "entity_id": eid,
-                    "on": False, "run_id": run_id, "updated_at": now_iso(),
-                }},
-                upsert=True,
-            )
-        else:
-            await db.review_gold.delete_one({"_id": cid})
+        payload = {
+            "_id": cid, "kind": kind, "entity_id": eid,
+            "on": False, "run_id": run_id, "updated_at": now_iso(),
+        }
+        if override.get("snapshot"):
+            payload["snapshot"] = override["snapshot"]
+        await db.review_gold.update_one({"_id": cid}, {"$set": payload}, upsert=True)
         pressed = False
+        snap = payload.get("snapshot")
+        pre = await is_pre_gold_entity(db, kind, eid, fiche)
     else:
-        if pre:
-            await db.review_gold.delete_one({"_id": cid})
-        else:
-            payload = {
-                "_id": cid, "kind": kind, "entity_id": eid,
-                "on": True, "run_id": run_id, "updated_at": now_iso(),
-            }
-            if snapshot:
-                payload["snapshot"] = snapshot
-            await db.review_gold.update_one({"_id": cid}, {"$set": payload}, upsert=True)
+        if fiche is None:
+            fiche, comment, ch = await _load_fiche_for_gold(
+                db, kind, eid, run_id, comment, ch)
+        pre = await is_pre_gold_entity(db, kind, eid, fiche)
+        if fiche is None or not gold_ready(fiche, ch, kind=kind):
+            raise GoldNotReady(gold_incomplete_message(kind))
+        snap = snapshot
+        if snap is None:
+            snap = build_gold_snapshot(fiche, ch, comment, kind=kind)
+        payload = {
+            "_id": cid, "kind": kind, "entity_id": eid,
+            "on": True, "run_id": run_id, "updated_at": now_iso(),
+        }
+        if snap:
+            payload["snapshot"] = snap
+        await db.review_gold.update_one({"_id": cid}, {"$set": payload}, upsert=True)
         pressed = True
     return {
         "kind": kind,
         "id": eid,
         "gold_on": pressed,
         "pre_gold": pre,
+        "choices": ch,
+        "gold_ready": gold_ready(fiche, ch, kind=kind) if fiche is not None else True,
+        "snapshot": snap if pressed else None,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
+        "wrote_amp_sites": False,
     }
 
 
@@ -484,10 +532,12 @@ async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
             "gold_on": False,
             "pre_gold": pre,
             "choices": ch,
-            "gold_ready": gold_ready(fiche, ch) if fiche is not None else True,
+            "gold_ready": gold_ready(fiche, ch, kind="eez") if fiche is not None else True,
             "wrote_projects": False,
             "wrote_poe_ports": False,
             "wrote_marinas": False,
+            "wrote_capitaineries": False,
+            "wrote_amp_sites": False,
         }
 
     if fiche is None:
@@ -500,8 +550,8 @@ async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
     if not fiche:
         raise ValueError("fiche not found")
     ch = choices if choices is not None else await get_choices(db, "eez", eid)
-    if not gold_ready(fiche, ch):
-        raise GoldNotReady(GOLD_INCOMPLETE)
+    if not gold_ready(fiche, ch, kind="eez"):
+        raise GoldNotReady(gold_incomplete_message("eez"))
     ch = finalize_choices(fiche, ch)
     await save_choices_doc(db, "eez", eid, ch)
     snap = build_gold_snapshot(fiche, ch, comment)
@@ -521,6 +571,8 @@ async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
+        "wrote_amp_sites": False,
     }
 
 

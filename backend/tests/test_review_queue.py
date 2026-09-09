@@ -211,8 +211,9 @@ def _db():
         }],
         marinas=[{
             "_id": "m1", "name": "Port Vauban", "lat": 43.58, "lon": 7.13,
-            "source": "osm", "priority": 1, "enriched": True,
+            "source": "osm", "osm_id": "node/1", "priority": 1, "enriched": True,
             "canal_vhf": "9", "tags": {"name": "Port Vauban"},
+            "maps_place_url": "https://maps.google.com/maps/place/Port+Vauban",
         }, {
             "_id": "m-curated", "name": "Curated haven", "lat": 43.1, "lon": 5.9,
             "source": "curated", "priority": 1,
@@ -226,6 +227,15 @@ def _db():
             "manager_url": "https://parc-marin.fr",
             "visit_url": "https://parc-marin.fr/visite",
             "visit_url_status": "found",
+            "other_helpful_links": "https://parc-marin.fr/mouillage https://parc-marin.fr",
+        }],
+        capitaineries=[{
+            "_id": "c1", "name": "Capitainerie Vauban",
+            "lat": 43.58, "lon": 7.13, "source": "osm",
+            "osm_id": "node/1", "shom_id": "SHOM-1",
+            "telephone": "+33493900000",
+            "canal_vhf": "9",
+            "sources": ["osm", "shom"],
         }],
     )
 
@@ -298,6 +308,10 @@ def test_poe_and_marina_and_project_fiches():
     marina = asyncio.run(review_queue.get_fiche(db, "marina", "published", "m1"))
     assert marina["fiche"]["name"] == "Port Vauban"
     assert marina["fiche"]["canal_vhf"] == "9"
+    assert marina["fiche"]["osm_id"] == "node/1"
+    assert "/maps/place/" in (marina["fiche"].get("maps_place_url") or "")
+    assert marina["gold_on"] is False
+    assert marina["gold_ready"] is False
     proj = asyncio.run(review_queue.get_fiche(db, "project", "published", "p1"))
     assert proj["fiche"]["title"] == "Hope Spot Azores"
     assert proj["fiche"]["url"] == "https://example.org/hope"
@@ -306,6 +320,14 @@ def test_poe_and_marina_and_project_fiches():
     assert amp["fiche"]["manager_url"] == "https://parc-marin.fr"
     assert amp["fiche"]["visit_url"] == "https://parc-marin.fr/visite"
     assert amp["fiche"]["manager_url"] != amp["fiche"]["visit_url"]
+    cand = {c["url"] for c in amp["fiche"]["visit_candidates"]}
+    assert "https://parc-marin.fr/visite" in cand
+    assert "https://parc-marin.fr/mouillage" in cand
+    assert amp["gold_on"] is False
+    cap = asyncio.run(review_queue.get_fiche(db, "capitainerie", "published", "c1"))
+    assert cap["gold_on"] is False
+    assert cap["fiche"]["shom_id"] == "SHOM-1"
+    assert cap["wrote_capitaineries"] is False
     assert amp["wrote_amp_sites"] is False
     q = asyncio.run(review_queue.list_queue(db, "amp", "published"))
     assert q["kind"] == "amp"
@@ -372,7 +394,7 @@ def test_frontend_review_tab_exists():
     assert "ReviewView" in app
     assert "mapEpoch" in app
     assert "AmpFiche" in review
-    assert "kind !== \"amp\"" in review
+    assert "review-pregold-filter" in review
     assert "review-kind-switch" not in review
     assert "review-kind-${k.id}" not in review
     assert "reviewKindPoe" not in review
@@ -387,16 +409,35 @@ def test_frontend_review_tab_exists():
     assert "content_run_id" in review
     assert "runsReady" in review
     assert 'kind === "eez" && (' in review
+    assert "review-run-select" not in review
+    assert "setQueue([])" in review
+    assert "map-show-review" in (root / "components" / "MapView.js").read_text(encoding="utf-8")
+    assert "onChoice={applyChoice}" in review
+    formalities_layer = (root / "components" / "map" / "useFormalitiesLayers.js").read_text(encoding="utf-8")
+    assert "showReview" in formalities_layer
+    assert "visible: 1" in formalities_layer
+    assert "params: { visible: 1 }" not in formalities_layer
+    choice_ui = (root / "components" / "review" / "choiceUi.js").read_text(encoding="utf-8")
+    assert "export function KeepDrop" in choice_ui
+    assert "export function FicheShell" in choice_ui
+    for name in ("ProjectFiche.js", "MarinaFiche.js", "CapitainerieFiche.js", "AmpFiche.js"):
+        src = (root / "components" / "review" / name).read_text(encoding="utf-8")
+        assert "FicheShell" in src
+        assert "KeepDrop" in src or "UrlKeepRow" in src
     i18n = (root / "i18n.js").read_text(encoding="utf-8")
     assert "reviewStable" in i18n
     assert "reviewRecommended" in i18n
     assert "reviewKeep" in i18n
     assert "reviewDrop" in i18n
     assert "reviewGoldIncomplete" in i18n
+    assert "reviewShowReview" in i18n
+    assert "reviewNoVisit" in i18n
+    app = (root / "App.js").read_text(encoding="utf-8")
+    assert "useState(false)" in app
+    assert "showReview ? { visible: 1 }" in app or 'showReview ? { visible: 1 }' in app
     assert "review-comment" in review
     assert "review-next" in review
-    assert 'kind === "project"' in review
-    assert "reviewHintFormalities" in review
+    assert "reviewHint" in review
     assert "/generate" not in review
 
 
@@ -418,6 +459,12 @@ def test_test_run_labels_and_ocean_fallback():
     assert not review_gold.is_test_run({"label": "seed-verify-mondial"})
     assert not review_gold.is_test_run({"label": "bestof3-v1"})
     from app.core.geo import ocean_fallback_coords
+    assert review_gold.GOLD_KINDS == ("project", "eez", "marina", "capitainerie", "amp")
+    assert review_gold.is_pre_gold_marina({
+        "source": "openstreetmap", "osm_id": "1", "lat": 43.5, "lon": 7.1,
+    }) is True
+    assert review_gold.gold_is_on(None) is False
+    assert review_gold.gold_pressed(True, None) is False
     lat, lon = ocean_fallback_coords("Random dump")
     assert review_gold.is_pre_gold_project({
         "title": "Random dump", "lat": lat, "lon": lon,
@@ -433,12 +480,16 @@ def test_pre_gold_filter_projects_and_marinas():
     pre_p = asyncio.run(review_queue.list_queue(db, "project", "published", pre_gold=True))
     assert {i["id"] for i in all_p["items"]} == {"p1", "p-snap"}
     assert [i["id"] for i in pre_p["items"]] == ["p1"]
-    assert next(i for i in all_p["items"] if i["id"] == "p1")["gold_on"] is True
+    assert next(i for i in all_p["items"] if i["id"] == "p1")["gold_on"] is False
     assert next(i for i in all_p["items"] if i["id"] == "p-snap")["gold_on"] is False
     all_m = asyncio.run(review_queue.list_queue(db, "marina", "published"))
     pre_m = asyncio.run(review_queue.list_queue(db, "marina", "published", pre_gold=True))
     assert {i["id"] for i in all_m["items"]} == {"m1", "m-curated"}
     assert [i["id"] for i in pre_m["items"]] == ["m1"]
+    assert next(i for i in all_m["items"] if i["id"] == "m1")["gold_on"] is False
+    cap = asyncio.run(review_queue.list_queue(db, "capitainerie", "published"))
+    assert next(i for i in cap["items"] if i["id"] == "c1")["gold_on"] is False
+    assert next(i for i in cap["items"] if i["id"] == "c1")["pre_gold"] is True
 
 
 def test_pre_gold_eez_is_productive_prod_run():
@@ -564,6 +615,7 @@ def test_recommended_run_prefers_broader_stable_coverage():
 
 
 def test_gold_toggle_does_not_write_v1():
+    from app.services.review_choices import save_choice
     from app.services.review_gold import filter_visible, reset_eez_pre_gold_cache, toggle_gold
     reset_eez_pre_gold_cache()
     db = _db()
@@ -571,25 +623,40 @@ def test_gold_toggle_does_not_write_v1():
     n_ports = len(db.poe_ports.docs)
     n_zones = len(db.eez_zones.docs)
     n_marinas = len(db.marinas.docs)
-    fiche = asyncio.run(review_queue.get_fiche(db, "project", "published", "p1"))
-    assert fiche["gold_on"] is True
-    off = asyncio.run(toggle_gold(db, "project", "p1"))
-    assert off["gold_on"] is False
-    assert off["wrote_projects"] is False
-    assert len(db.projects.docs) == n_projects
-    visible = asyncio.run(filter_visible(
-        db, "project", db.projects.docs, lambda p: p.get("_id")))
-    assert [p["_id"] for p in visible] == []
+    packed = asyncio.run(review_queue.get_fiche(db, "project", "published", "p1"))
+    assert packed["gold_on"] is False
+    assert packed["gold_ready"] is False
+    live_name = (asyncio.run(db.projects.find_one({"_id": "p1"})))["title"]
+    try:
+        asyncio.run(toggle_gold(db, "project", "p1"))
+        raise AssertionError("Gold without URL + site_ok must fail")
+    except review_gold.GoldNotReady:
+        pass
+    for url in packed["fiche"]["urls"]:
+        asyncio.run(save_choice(db, "project", "p1", "url", "keep", url=url))
+    for site in packed["fiche"]["sites"]:
+        asyncio.run(save_choice(
+            db, "project", "p1", "site", "keep", site_id=site["site_id"]))
     on = asyncio.run(toggle_gold(db, "project", "p1"))
     assert on["gold_on"] is True
+    assert on["wrote_projects"] is False
+    assert on["snapshot"]["url"] == "https://example.org/hope"
+    assert len(db.projects.docs) == n_projects
+    assert (asyncio.run(db.projects.find_one({"_id": "p1"})))["title"] == live_name
     visible = asyncio.run(filter_visible(
         db, "project", db.projects.docs, lambda p: p.get("_id")))
     assert [p["_id"] for p in visible] == ["p1"]
-    snapped = asyncio.run(toggle_gold(db, "project", "p-snap"))
-    assert snapped["gold_on"] is True
-    visible = asyncio.run(filter_visible(
-        db, "project", db.projects.docs, lambda p: p.get("_id")))
-    assert {p["_id"] for p in visible} == {"p1", "p-snap"}
+    snap_q = asyncio.run(review_queue.get_fiche(db, "project", "published", "p-snap"))
+    for url in snap_q["fiche"]["urls"]:
+        asyncio.run(save_choice(db, "project", "p-snap", "url", "keep", url=url))
+    for site in snap_q["fiche"]["sites"]:
+        asyncio.run(save_choice(
+            db, "project", "p-snap", "site", "keep", site_id=site["site_id"]))
+    try:
+        asyncio.run(toggle_gold(db, "project", "p-snap"))
+        raise AssertionError("Gold of snapped site must fail until GPS is accepted")
+    except review_gold.GoldNotReady:
+        pass
     try:
         asyncio.run(toggle_gold(db, "eez", "5677"))
         raise AssertionError("Gold EEZ without choices must fail")
@@ -601,6 +668,128 @@ def test_gold_toggle_does_not_write_v1():
     assert len(db.poe_ports.docs) == n_ports
     assert len(db.eez_zones.docs) == n_zones
     assert len(db.marinas.docs) == n_marinas
+
+
+def test_comment_key_is_kind_entity_not_run():
+    db = _db()
+    n_zones = len(db.eez_zones.docs)
+    saved = asyncio.run(review_queue.save_comment(
+        db, "eez", "r-union", "5677", "union note"))
+    assert saved["wrote_poe_ports"] is False
+    row = asyncio.run(db.review_comments.find_one({"_id": "eez:5677"}))
+    assert row["comment"] == "union note"
+    asyncio.run(review_queue.save_comment(
+        db, "eez", "other-run", "5677", "still union"))
+    row2 = asyncio.run(db.review_comments.find_one({"_id": "eez:5677"}))
+    assert row2["comment"] == "still union"
+    assert asyncio.run(db.review_comments.find_one({"_id": "eez:r-union:5677"})) is None
+    zone = asyncio.run(db.eez_zones.find_one({"mrgid": 5677}))
+    assert zone["name"] == "France"
+    assert len(db.eez_zones.docs) == n_zones
+
+
+def test_amp_visit_candidates_and_gold_refuses_manager_url():
+    from app.services.review_choices import save_choice
+    from app.services.review_gold import filter_visible, toggle_gold
+
+    db = _db()
+    n_amp = len(db.amp_sites.docs)
+    packed = asyncio.run(review_queue.get_fiche(db, "amp", "published", "PS-1"))
+    urls = {c["url"] for c in packed["fiche"]["visit_candidates"]}
+    assert "https://parc-marin.fr/visite" in urls
+    assert "https://parc-marin.fr/mouillage" in urls
+    assert "https://parc-marin.fr" in urls
+    same = [c for c in packed["fiche"]["visit_candidates"] if c.get("same_as_manager")]
+    assert same
+    live_visit = (asyncio.run(db.amp_sites.find_one({"_id": "PS-1"})))["visit_url"]
+    asyncio.run(save_choice(
+        db, "amp", "PS-1", "visit", "keep", url="https://parc-marin.fr"))
+    try:
+        asyncio.run(toggle_gold(db, "amp", "PS-1"))
+        raise AssertionError("Gold must refuse visit_url == manager_url")
+    except review_gold.GoldNotReady:
+        pass
+    asyncio.run(save_choice(
+        db, "amp", "PS-1", "visit", "keep", url="https://parc-marin.fr/visite"))
+    golded = asyncio.run(toggle_gold(db, "amp", "PS-1"))
+    assert golded["gold_on"] is True
+    assert golded["wrote_amp_sites"] is False
+    assert golded["snapshot"]["visit_url"] == "https://parc-marin.fr/visite"
+    live = asyncio.run(db.amp_sites.find_one({"_id": "PS-1"}))
+    assert live["visit_url"] == live_visit
+    assert len(db.amp_sites.docs) == n_amp
+    overlay = asyncio.run(filter_visible(
+        db, "amp", db.amp_sites.docs, lambda d: d.get("site_id") or d.get("_id")))
+    assert overlay[0]["visit_url"] == "https://parc-marin.fr/visite"
+
+
+def test_map_overlay_shows_certified_run_only_after_gold():
+    from app.services.review_choices import save_choice
+    from app.services.review_gold import filter_visible, toggle_gold
+
+    db = _db()
+    before = asyncio.run(filter_visible(
+        db, "project", db.projects.docs, lambda p: p.get("_id")))
+    assert before == []
+    packed = asyncio.run(review_queue.get_fiche(db, "project", "published", "p1"))
+    for url in packed["fiche"]["urls"]:
+        asyncio.run(save_choice(db, "project", "p1", "url", "keep", url=url))
+    for site in packed["fiche"]["sites"]:
+        asyncio.run(save_choice(
+            db, "project", "p1", "site", "keep", site_id=site["site_id"]))
+    asyncio.run(toggle_gold(db, "project", "p1"))
+    overlay = asyncio.run(filter_visible(
+        db, "project", db.projects.docs, lambda p: p.get("_id")))
+    assert [p["_id"] for p in overlay] == ["p1"]
+    live = asyncio.run(db.projects.find_one({"_id": "p1"}))
+    assert live["title"] == "Hope Spot Azores"
+    assert len(db.projects.docs) == 2
+
+
+def test_marina_and_capitainerie_gold_after_identity_gps():
+    from app.services.review_choices import save_choice
+    from app.services.review_gold import filter_visible, toggle_gold
+
+    db = _db()
+    n_m = len(db.marinas.docs)
+    n_c = len(db.capitaineries.docs)
+    try:
+        asyncio.run(toggle_gold(db, "marina", "m1"))
+        raise AssertionError("marina Gold without identity+GPS must fail")
+    except review_gold.GoldNotReady:
+        pass
+    asyncio.run(save_choice(db, "marina", "m1", "identity", "keep"))
+    asyncio.run(save_choice(db, "marina", "m1", "gps", "keep"))
+    gold_m = asyncio.run(toggle_gold(db, "marina", "m1"))
+    assert gold_m["gold_on"] is True
+    assert gold_m["wrote_marinas"] is False
+    live_m = asyncio.run(db.marinas.find_one({"_id": "m1"}))
+    assert live_m["name"] == "Port Vauban"
+    overlay_m = asyncio.run(filter_visible(
+        db, "marina", db.marinas.docs, lambda m: m.get("_id")))
+    assert [m["_id"] for m in overlay_m] == ["m1"]
+    try:
+        asyncio.run(toggle_gold(db, "capitainerie", "c1"))
+        raise AssertionError("capitainerie Gold without identity+GPS must fail")
+    except review_gold.GoldNotReady:
+        pass
+    asyncio.run(save_choice(db, "capitainerie", "c1", "identity", "keep"))
+    asyncio.run(save_choice(db, "capitainerie", "c1", "gps", "keep"))
+    try:
+        asyncio.run(toggle_gold(db, "capitainerie", "c1"))
+        raise AssertionError("displayed phone/VHF must be decided before Gold")
+    except review_gold.GoldNotReady:
+        pass
+    asyncio.run(save_choice(db, "capitainerie", "c1", "field", "keep", field="telephone"))
+    asyncio.run(save_choice(db, "capitainerie", "c1", "field", "keep", field="canal_vhf"))
+    gold_c = asyncio.run(toggle_gold(db, "capitainerie", "c1"))
+    assert gold_c["gold_on"] is True
+    assert gold_c["wrote_capitaineries"] is False
+    assert gold_c["snapshot"]["fields"]["telephone"] == "+33493900000"
+    live_c = asyncio.run(db.capitaineries.find_one({"_id": "c1"}))
+    assert live_c["name"] == "Capitainerie Vauban"
+    assert len(db.marinas.docs) == n_m
+    assert len(db.capitaineries.docs) == n_c
 
 
 def _prepare_france_gold(db, *, drop_cambridge=True):
@@ -713,6 +902,9 @@ def test_gold_france_publishes_snapshot_not_v1():
     map_fiche = asyncio.run(build_map_zone_fiche(db, 5677))
     assert map_fiche["fiche_scope"] == "gold"
     assert [p["name"] for p in map_fiche["ports"]] == ["Marseille", "Sète"]
+    union_after = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
+    assert "Cambridge" in [p["name"] for p in union_after["fiche"]["ports"]]
+    assert union_after["fiche"]["fiche_scope"] == "union"
     td_kept = [s["url"] for s in map_fiche["sources_td"]]
     assert ready["fiche"]["sources_td"][0]["url"] in td_kept
     listed = asyncio.run(review_queue.list_queue(db, "eez", "published"))

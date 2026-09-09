@@ -27,7 +27,6 @@ function kindLabelKey(kind) {
 
 export default function ReviewView({ t, mode, onMapDirty }) {
   const kind = kindFromMode(mode);
-  const [runs, setRuns] = useState([]);
   const [runId, setRunId] = useState("published");
   const [queue, setQueue] = useState([]);
   const [total, setTotal] = useState(0);
@@ -58,6 +57,9 @@ export default function ReviewView({ t, mode, onMapDirty }) {
     setOffset(0);
     setFilter("");
     setQ("");
+    setQueue([]);
+    setTotal(0);
+    setFiche(null);
     setPreGold(true);
     setStableOnly(kindFromMode(mode) === "eez");
     setRunsReady(kindFromMode(mode) !== "eez");
@@ -105,7 +107,6 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         const { data } = await api.get("/review/runs", { params: { kind } });
         if (cancelled) return;
         const items = data.items || [];
-        setRuns(items);
         const rec = items.find((r) => r.recommended);
         if (kind === "eez" && rec) {
           setRunId(rec.id);
@@ -192,7 +193,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         setComment(data.comment || "");
         setSavedAt(data.comment_updated_at || null);
         setGoldOn(Boolean(data.gold_on));
-        setGoldReady(kind !== "eez" || Boolean(data.gold_ready));
+        setGoldReady(Boolean(data.gold_ready));
         setChoices(data.choices || { td: {}, ports: {}, bu: {} });
         dirtyRef.current = false;
       } catch (e) {
@@ -265,7 +266,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   };
 
   const applyChoice = async (payload) => {
-    if (!current || kind !== "eez") return;
+    if (!current) return;
     try {
       const { data } = await api.put("/review/choice", {
         kind, id: current.id, ...payload,
@@ -279,7 +280,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
 
   const toggleGold = async () => {
     if (!current || goldBusy) return;
-    if (kind === "eez" && !goldOn && !goldReady) return;
+    if (!goldOn && !goldReady) return;
     try {
       setGoldBusy(true);
       const { data } = await api.put("/review/gold", {
@@ -319,10 +320,10 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         />
       );
     }
-    if (kind === "project") return <ProjectFiche t={t} fiche={fiche} />;
-    if (kind === "capitainerie") return <CapitainerieFiche t={t} fiche={fiche} />;
-    if (kind === "amp") return <AmpFiche t={t} fiche={fiche} />;
-    return <MarinaFiche t={t} fiche={fiche} />;
+    if (kind === "project") return <ProjectFiche t={t} fiche={fiche} choices={choices} onChoice={applyChoice} />;
+    if (kind === "capitainerie") return <CapitainerieFiche t={t} fiche={fiche} choices={choices} onChoice={applyChoice} />;
+    if (kind === "amp") return <AmpFiche t={t} fiche={fiche} choices={choices} onChoice={applyChoice} />;
+    return <MarinaFiche t={t} fiche={fiche} choices={choices} onChoice={applyChoice} />;
   };
 
   return (
@@ -343,7 +344,6 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
             />
           </div>
-          {kind !== "amp" && (
           <button
             type="button"
             data-testid="review-pregold-filter"
@@ -357,7 +357,6 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           >
             {t("reviewPreGold")}
           </button>
-          )}
           {kind === "eez" && (
             <button
               type="button"
@@ -422,22 +421,6 @@ export default function ReviewView({ t, mode, onMapDirty }) {
               {t(kindLabelKey(kind))}
             </span>
           </h2>
-          {kind === "project" && (
-            <select
-              data-testid="review-run-select"
-              value={runId}
-              onChange={async (e) => { await persistIfDirty(); setRunId(e.target.value); setOffset(0); pendingIndexRef.current = 0; }}
-              className="bg-raised border border-line rounded-sm px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[280px]"
-            >
-              {runs.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.id === "published" ? t("reviewPublished") : (r.label || r.id)}
-                  {r.count != null ? ` (${r.count})` : ""}
-                  {r.recommended ? ` · ${t("reviewRecommended")}` : ""}
-                </option>
-              ))}
-            </select>
-          )}
           <span className="ml-auto font-mono text-[11px] text-slate-400" data-testid="review-counter">
             {total ? `${offset + index + 1} / ${total}` : "0 / 0"}
           </span>
@@ -461,7 +444,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           </button>
         </div>
         <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line" data-testid="review-hint">
-          {t(kind === "eez" ? "reviewHintFormalities" : "reviewHint")}
+          {t("reviewHint")}
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
           {queue.length === 0 && !loading ? (
@@ -501,14 +484,13 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {saving ? t("reviewSaving") : t("reviewSave")}
             </button>
-            {kind !== "capitainerie" && kind !== "amp" && (
             <button
               type="button"
               data-testid="review-gold"
               aria-pressed={goldOn}
-              title={kind === "eez" && !goldOn && !goldReady ? t("reviewGoldIncomplete") : undefined}
+              title={!goldOn && !goldReady ? t("reviewGoldIncomplete") : undefined}
               onClick={toggleGold}
-              disabled={!current || goldBusy || (kind === "eez" && !goldOn && !goldReady)}
+              disabled={!current || goldBusy || (!goldOn && !goldReady)}
               className={`px-3 py-1.5 text-[11px] font-semibold border rounded-sm disabled:opacity-40 ${
                 goldOn
                   ? "border-accent bg-accent/20 text-accent"
@@ -517,7 +499,6 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {t("reviewGold")}
             </button>
-            )}
           </div>
         </div>
       </div>

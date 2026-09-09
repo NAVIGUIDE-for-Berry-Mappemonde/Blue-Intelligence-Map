@@ -2,8 +2,8 @@
 File de revue humaine — une fiche à la fois, commentaire persisté.
 
 Ne lit que les collections de run / v1. N'écrit JAMAIS dans `projects`,
-`poe_ports`, `eez_zones`, `marinas` ni `amp_sites`. Mutées : `review_comments`,
-`review_gold`, `review_choices`.
+`poe_ports`, `eez_zones`, `marinas`, `capitaineries` ni `amp_sites`. Mutées :
+`review_comments`, `review_gold`, `review_choices`.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import re
 
 from app.core.dedup import normalize_name
+from app.core.identity import same_site
 from app.services.marina_world import google_maps_url
 from app.services.poe_zone_fiche import (
     PUBLISHED_RUN,
@@ -24,6 +25,7 @@ from app.services.review_choices import (
     ensure_choice_indexes,
     get_choices,
     gold_ready,
+    site_ok,
 )
 from app.services.poe_stable import (
     STABLE_REVIEW_MRGIDS,
@@ -40,8 +42,14 @@ _PROJECT_QUEUE_PROJ = {
 _POE_QUEUE_PROJ = {
     "_id": 1, "dedup_key": 1, "name": 1, "mrgid": 1, "zone_name": 1,
 }
-_MARINA_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1}
-_CAPITAINERIE_QUEUE_PROJ = {"_id": 1, "name": 1, "source": 1, "telephone": 1, "canal_vhf": 1}
+_MARINA_QUEUE_PROJ = {
+    "_id": 1, "name": 1, "source": 1, "osm_id": 1, "lat": 1, "lon": 1,
+    "source_id": 1,
+}
+_CAPITAINERIE_QUEUE_PROJ = {
+    "_id": 1, "name": 1, "source": 1, "telephone": 1, "canal_vhf": 1,
+    "osm_id": 1, "shom_id": 1, "noaa_id": 1, "lat": 1, "lon": 1, "source_id": 1,
+}
 _EEZ_QUEUE_PROJ = {
     "_id": 0, "mrgid": 1, "name": 1, "geoname": 1, "sovereign": 1,
     "iso2": 1, "sov_iso2": 1, "pol_type": 1, "poe_count": 1, "status": 1,
@@ -51,7 +59,8 @@ _EEZ_QUEUE_PROJ = {
 KINDS = ("project", "eez", "poe", "marina", "capitainerie", "amp")
 _AMP_QUEUE_PROJ = {
     "_id": 1, "site_id": 1, "name": 1, "country": 1, "lfp": 1,
-    "manager_url": 1, "visit_url": 1,
+    "manager_url": 1, "visit_url": 1, "other_helpful_links": 1,
+    "visit_candidates": 1, "visit_url_status": 1, "source_id": 1,
 }
 QUEUE_LIMIT_MAX = 2000
 QUEUE_LIMIT_DEFAULT = 500
@@ -61,7 +70,13 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def comment_key(kind: str, run_id: str, entity_id: str) -> str:
+def comment_key(kind: str, entity_id: str, run_id: str | None = None) -> str:
+    """Clé union `{mode}:{entity_id}`. `run_id` ignoré (legacy debug)."""
+    del run_id
+    return f"{kind}:{_sid(entity_id)}"
+
+
+def legacy_comment_key(kind: str, run_id: str, entity_id: str) -> str:
     return f"{kind}:{run_id}:{entity_id}"
 
 
@@ -91,9 +106,10 @@ async def ensure_review_indexes(db) -> None:
 async def _comment_flags(db, kind: str, run_id: str) -> dict[str, bool]:
     flags: dict[str, bool] = {}
     try:
-        docs = await db.review_comments.find({"kind": kind, "run_id": run_id}).to_list(20000)
+        docs = await db.review_comments.find({"kind": kind}).to_list(20000)
     except Exception:
         return flags
+    del run_id
     for d in docs:
         eid = _sid(d.get("entity_id"))
         flags[eid] = bool((d.get("comment") or "").strip())
@@ -357,7 +373,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 {
                     "verdict": d.get("verdict"),
                     "pre_gold": pre,
-                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                    "gold_on": review_gold.gold_is_on(overrides.get(eid)),
                 },
             ))
 
@@ -425,11 +441,17 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             eid = _sid(d.get("source_id") or d.get("_id"))
             if not eid:
                 continue
+            pre = review_gold.is_pre_gold_capitainerie(d)
+            if pre_gold and not pre:
+                continue
             items.append(_queue_item(
                 eid, d.get("name") or "",
                 d.get("source") or "",
                 flags,
-                {"pre_gold": True, "gold_on": True},
+                {
+                    "pre_gold": pre,
+                    "gold_on": review_gold.gold_is_on(overrides.get(eid)),
+                },
             ))
 
     elif kind == "amp":
@@ -445,6 +467,9 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             eid = _sid(d.get("source_id") or d.get("site_id") or d.get("_id"))
             if not eid:
                 continue
+            pre = review_gold.is_pre_gold_amp(d)
+            if pre_gold and not pre:
+                continue
             items.append(_queue_item(
                 eid, d.get("name") or "",
                 d.get("country") or "",
@@ -453,8 +478,8 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                     "lfp": d.get("lfp"),
                     "manager_url": d.get("manager_url"),
                     "visit_url": d.get("visit_url"),
-                    "pre_gold": False,
-                    "gold_on": False,
+                    "pre_gold": pre,
+                    "gold_on": review_gold.gold_is_on(overrides.get(eid)),
                 },
             ))
 
@@ -468,7 +493,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
             docs = await (db.marina_run_marinas.find(filt, _MARINA_QUEUE_PROJ)
                           .sort("name", 1).to_list(50000))
         for d in docs:
-            eid = _sid(d.get("source_id") or d.get("osm_id") or d.get("_id"))
+            eid = _sid(d.get("source_id") or d.get("_id") or d.get("osm_id"))
             if not eid:
                 continue
             pre = review_gold.is_pre_gold_marina(d)
@@ -480,7 +505,7 @@ async def list_queue(db, kind: str, run_id: str | None = None,
                 flags,
                 {
                     "pre_gold": pre,
-                    "gold_on": review_gold.gold_pressed(pre, overrides.get(eid)),
+                    "gold_on": review_gold.gold_is_on(overrides.get(eid)),
                 },
             ))
 
@@ -500,19 +525,84 @@ async def list_queue(db, kind: str, run_id: str | None = None,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
         "wrote_amp_sites": False,
     }
 
 
-def _project_fiche(doc: dict) -> dict:
-    funders = doc.get("funders") or ([doc.get("funder")] if doc.get("funder") else [])
+def _dedupe_urls(*groups) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in groups:
+        for raw in group or []:
+            href = raw if isinstance(raw, str) else (raw or {}).get("url")
+            href = (href or "").strip()
+            if href and href not in seen:
+                seen.add(href)
+                out.append(href)
+    return out
+
+
+def _project_fiche(doc: dict, extras: list[dict] | None = None) -> dict:
+    extras = [e for e in (extras or []) if isinstance(e, dict)]
+    funders: list[str] = []
+    seen_f: set[str] = set()
+    for src in [doc, *extras]:
+        for f in (src.get("funders") or ([src.get("funder")] if src.get("funder") else [])):
+            name = str(f or "").strip()
+            if name and name not in seen_f:
+                seen_f.add(name)
+                funders.append(name)
+    urls = _dedupe_urls(
+        [doc.get("url")],
+        [e.get("url") for e in extras],
+        doc.get("urls") or [],
+    )
+    sites: list[dict] = []
+    seen_sites: set[str] = set()
+    for src in [doc, *extras]:
+        raw_sites = list(src.get("sites") or [])
+        if not raw_sites and src.get("lat") is not None:
+            raw_sites = [{
+                "site_id": _sid(src.get("_id") or src.get("url") or "main"),
+                "name": src.get("location") or src.get("title"),
+                "lat": src.get("lat"),
+                "lon": src.get("lon"),
+                "geo_source": src.get("geo_source"),
+                "snapped": bool(src.get("snapped") or src.get("snapped_coastal")),
+                "hq_suspect": bool(src.get("hq_suspect")),
+                "run_id": src.get("run_id"),
+            }]
+        for i, s in enumerate(raw_sites):
+            if not isinstance(s, dict):
+                continue
+            row = dict(s)
+            sid = _sid(row.get("site_id") or row.get("id") or f"{src.get('_id') or 's'}-{i}")
+            if sid in seen_sites:
+                continue
+            seen_sites.add(sid)
+            row["site_id"] = sid
+            row["site_ok"] = site_ok(row, title=str(doc.get("title") or ""))
+            sites.append(row)
+    verdicts = []
+    if doc.get("snapped") or doc.get("snapped_coastal"):
+        verdicts.append("snapped")
+    geo = str(doc.get("geo_source") or "").strip().lower()
+    if "fallback" in geo:
+        verdicts.append("fallback")
+    if doc.get("hq_suspect") or geo in ("hq", "hq_suspect"):
+        verdicts.append("hq_suspect")
+    if not sites:
+        verdicts.append("unlocated")
     return {
         "kind": "project",
+        "review_kind": "project",
         "id": _sid(doc.get("_id") or doc.get("url")),
         "title": doc.get("title"),
-        "url": doc.get("url"),
+        "url": urls[0] if urls else doc.get("url"),
+        "urls": urls,
         "description": doc.get("description") or "",
-        "funders": [f for f in funders if f],
+        "funders": funders,
         "location": doc.get("location"),
         "lat": doc.get("lat"),
         "lon": doc.get("lon"),
@@ -520,16 +610,21 @@ def _project_fiche(doc: dict) -> dict:
         "category_group": doc.get("category_group"),
         "image": doc.get("image"),
         "verdict": doc.get("verdict"),
+        "verdicts": verdicts,
         "geo_source": doc.get("geo_source"),
-        "sites": doc.get("sites") or [],
+        "sites": sites,
         "snapped": bool(doc.get("snapped")),
+        "fiche_scope": "union" if extras else "v1",
         "wrote_projects": False,
     }
 
 
 def _marina_fiche(doc: dict) -> dict:
+    maps_place = doc.get("maps_place_url") or None
+    website = doc.get("website")
     return {
         "kind": "marina",
+        "review_kind": "marina",
         "id": _sid(doc.get("_id")),
         "name": doc.get("name"),
         "lat": doc.get("lat"),
@@ -549,28 +644,35 @@ def _marina_fiche(doc: dict) -> dict:
         "services_disponibles": doc.get("services_disponibles"),
         "telephone_capitainerie": doc.get("telephone_capitainerie"),
         "resume_avis": doc.get("resume_avis"),
-        "website": doc.get("website"),
+        "website": website,
         "website_status": doc.get("website_status"),
+        "maps_place_url": maps_place,
         "maps_url": (
             google_maps_url(doc.get("name"), doc["lat"], doc["lon"])
             if doc.get("lat") is not None and doc.get("lon") is not None
             else None
         ),
+        "urls": _dedupe_urls([website, maps_place]),
         "wrote_marinas": False,
     }
 
 
 def _capitainerie_fiche(doc: dict) -> dict:
+    sources = list(doc.get("sources") or [])
+    if doc.get("source") and doc.get("source") not in sources:
+        sources = [doc.get("source"), *sources]
     return {
         "kind": "capitainerie",
+        "review_kind": "capitainerie",
         "id": _sid(doc.get("_id")),
         "name": doc.get("name"),
         "lat": doc.get("lat"),
         "lon": doc.get("lon"),
         "source": doc.get("source"),
-        "sources": doc.get("sources") or [],
+        "sources": sources,
         "osm_id": doc.get("osm_id"),
         "shom_id": doc.get("shom_id"),
+        "noaa_id": doc.get("noaa_id"),
         "tags": doc.get("tags") or {},
         "enriched": bool(doc.get("enriched")),
         "enrichment_source": doc.get("enrichment_source"),
@@ -582,7 +684,9 @@ def _capitainerie_fiche(doc: dict) -> dict:
             if doc.get("lat") is not None and doc.get("lon") is not None
             else None
         ),
+        "urls": _dedupe_urls([doc.get("website")]),
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
     }
 
 
@@ -628,9 +732,12 @@ async def _poe_fiche(db, doc: dict, run_id: str) -> dict:
 
 
 async def get_comment(db, kind: str, run_id: str, entity_id: str) -> dict:
-    doc = await db.review_comments.find_one({
-        "_id": comment_key(kind, run_id, entity_id),
-    })
+    eid = _sid(entity_id)
+    doc = await db.review_comments.find_one({"_id": comment_key(kind, eid)})
+    if not doc and run_id:
+        doc = await db.review_comments.find_one({
+            "_id": legacy_comment_key(kind, run_id, eid),
+        })
     if not doc:
         return {"comment": "", "updated_at": None}
     return {
@@ -644,7 +751,7 @@ async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str)
         raise ValueError("kind must be project|eez|poe|marina|capitainerie|amp")
     rid = run_id or PUBLISHED_RUN
     eid = _sid(entity_id)
-    cid = comment_key(kind, rid, eid)
+    cid = comment_key(kind, eid)
     text = comment if comment is not None else ""
     if not isinstance(text, str):
         text = str(text)
@@ -666,19 +773,93 @@ async def save_comment(db, kind: str, run_id: str, entity_id: str, comment: str)
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
         "wrote_amp_sites": False,
     }
+
+
+def _amp_visit_candidates(doc: dict) -> list[dict]:
+    from app.services.amp import (
+        extract_urls, protectedseas_visit_blobs, urls_equivalent,
+    )
+    manager = doc.get("manager_url")
+    seen: set[str] = set()
+    out: list[dict] = []
+
+    def _add(url: str | None, source: str, status: str | None = None):
+        href = (url or "").strip()
+        if not href or href in seen:
+            return
+        seen.add(href)
+        same = urls_equivalent(href, manager)
+        out.append({
+            "url": href,
+            "source": source,
+            "same_as_manager": bool(same),
+            "status": status or (
+                "rejected_same_as_manager" if same else "candidate"
+            ),
+        })
+
+    for raw in doc.get("visit_candidates") or []:
+        if isinstance(raw, dict):
+            _add(raw.get("url"), raw.get("source") or "pipeline", raw.get("status"))
+        else:
+            _add(str(raw), "pipeline")
+    _add(doc.get("visit_url"), doc.get("visit_url_source") or "pipeline",
+         doc.get("visit_url_status"))
+    for blob in protectedseas_visit_blobs(doc):
+        for href in extract_urls(blob):
+            _add(href, "protectedseas")
+    return out
 
 
 def _amp_fiche(doc: dict) -> dict:
     from app.services.amp import public_properties
     props = public_properties(doc)
+    candidates = _amp_visit_candidates(doc)
     return {
         "kind": "amp",
+        "review_kind": "amp",
         "id": props.get("site_id"),
         **props,
+        "visit_candidates": candidates,
         "wrote_amp_sites": False,
     }
+
+
+async def _project_union_extras(db, doc: dict) -> list[dict]:
+    """Occurrences run du même projet (url / _id / same_site), hors canaris."""
+    if not doc:
+        return []
+    eid = _sid(doc.get("_id") or doc.get("url"))
+    url = str(doc.get("url") or "").strip()
+    extras: list[dict] = []
+    seen: set[str] = set()
+
+    async def _take(rows):
+        for row in rows or []:
+            rid = _sid(row.get("_id") or row.get("url"))
+            if not rid or rid == eid or rid in seen:
+                continue
+            seen.add(rid)
+            extras.append(row)
+
+    try:
+        if eid:
+            await _take(await db.project_run_projects.find({"_id": eid}).to_list(50))
+        if url:
+            await _take(await db.project_run_projects.find({"url": url}).to_list(50))
+        title = str(doc.get("title") or "").strip()
+        if title:
+            cand = await db.project_run_projects.find({"title": title}).to_list(80)
+            await _take([
+                row for row in cand
+                if same_site(doc, row, title_key="title")
+            ])
+    except Exception:
+        return extras
+    return extras
 
 
 async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
@@ -702,7 +883,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
                 doc = await db.project_run_projects.find_one({"run_id": rid, "url": eid})
         if not doc:
             return None
-        fiche = _project_fiche(doc)
+        extras = await _project_union_extras(db, doc) if is_published(rid) else []
+        fiche = _project_fiche(doc, extras)
 
     elif kind == "eez":
         try:
@@ -715,7 +897,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
             db, mid, run_id=fiche_run, union=union)
         if fiche is None:
             return None
-        fiche["kind"] = "eez"
+        # `kind` reste le verdict pipeline (none / general_list / …).
+        fiche["review_kind"] = "eez"
         fiche["id"] = str(mid)
 
     elif kind == "poe":
@@ -734,6 +917,12 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
     elif kind == "capitainerie":
         if is_published(rid):
             doc = await db.capitaineries.find_one({"_id": eid})
+            if not doc:
+                doc = await db.capitaineries.find_one({"osm_id": eid})
+            if not doc:
+                doc = await db.capitaineries.find_one({"shom_id": eid})
+            if not doc:
+                doc = await db.capitaineries.find_one({"noaa_id": eid})
         else:
             from app.services.isolated_runs import find_item
             doc = await find_item(db, "capitaineries", rid, eid)
@@ -756,6 +945,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
     else:
         if is_published(rid):
             doc = await db.marinas.find_one({"_id": eid})
+            if not doc:
+                doc = await db.marinas.find_one({"osm_id": eid})
         else:
             from app.services.isolated_runs import find_item
             doc = await find_item(db, "marinas", rid, eid)
@@ -764,21 +955,16 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         fiche = _marina_fiche(doc)
 
     comment = await get_comment(db, kind, rid, eid)
-    source = None
-    if kind == "project":
-        source = doc
-    elif kind in ("marina", "capitainerie"):
-        source = doc
+    source = doc if kind in ("project", "marina", "capitainerie", "amp") else None
     pre = await review_gold.is_pre_gold_entity(db, kind, eid, source)
     override = await review_gold.get_override(db, kind, eid)
+    choices = await get_choices(db, kind, eid) if kind in (
+        "eez", "project", "marina", "capitainerie", "amp") else empty_choices()
     if kind == "eez":
         gold_on = review_gold.eez_is_published(override)
-        choices = await get_choices(db, kind, eid)
-        ready = gold_ready(fiche, choices)
     else:
-        gold_on = review_gold.gold_pressed(pre, override)
-        choices = empty_choices()
-        ready = True
+        gold_on = review_gold.gold_is_on(override)
+    ready = gold_ready(fiche, choices, kind=kind)
     return {
         "kind": kind,
         "run_id": rid,
@@ -793,5 +979,6 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         "wrote_projects": False,
         "wrote_poe_ports": False,
         "wrote_marinas": False,
+        "wrote_capitaineries": False,
         "wrote_amp_sites": False,
     }

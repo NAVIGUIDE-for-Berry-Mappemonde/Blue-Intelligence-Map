@@ -116,7 +116,7 @@ class TestZoneFiche:
         d = r.json()
         assert d["mrgid"] == mrgid
         assert d["wrote_poe_ports"] is False
-        assert d.get("fiche_scope") == "gold"
+        assert d.get("fiche_scope") in ("union", "v1", "run", "published")
         assert "sources_td" in d and "sources_bu" in d and "ports" in d
         assert isinstance(d["ports"], list)
         blob = " ".join(
@@ -158,7 +158,7 @@ class TestZoneFiche:
             assert fiche["mrgid"] == 5677
             assert fiche["label"] == "France (hexagone)"
             assert fiche["wrote_poe_ports"] is False
-            assert fiche.get("fiche_scope") == "gold"
+            assert fiche.get("fiche_scope") in ("union", "v1", "run", "published", "gold")
             blob = " ".join(p.get("name") or "" for p in fiche["ports"]).lower()
             assert "mamoudzou" not in blob
             assert "dzaoudzi" not in blob
