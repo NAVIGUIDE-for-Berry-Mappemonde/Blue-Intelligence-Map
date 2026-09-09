@@ -327,6 +327,18 @@ Pas de régime « publication exclusive Formalités ». Pas de « filtre skipper
 | `docs/CONTRATS_MODES.md` | Cinq contrats **pipeline** (pas Review). |
 | `docs/REGLES_PARAMETRES.md` | Règles que les choix Review doivent pouvoir **écrire**. |
 
+## 12. Rapport de review
+
+La base garde déjà tout : `review_comments` (clé `{mode}:{entity_id}`), `review_choices`, `review_gold`. Le rapport (`GET /api/review/report`, bouton **Rapport** de l'onglet Review, export JSON ou Markdown) agrège ces trois collections **en lecture seule** pour préparer les améliorations du pipeline :
+
+- **URLs proposées** : toute URL collée dans un commentaire (ex. liste PoE d'un polygone ZEE trouvée à la main via Gemini) ressort en tête de rapport — candidate à lecture / récupération par le pipeline au run suivant.
+- **Écartés** : TD, URLs, ports, sites et champs enrichis écartés — candidats blacklist / correctifs moteur (avec la liste des domaines écartés).
+- **Gold** : fiches certifiées, avec la date.
+
+Le rapport n'écrit rien : ni règle, ni collection live, ni Gold. C'est la matière première d'une décision humaine.
+
+---
+
 En cas de conflit sur **eez vs poe** : une fiche Formalités.  
 En cas de conflit sur **écriture live** : pas de live sans Gold, pas de Gold silencieux.  
 En cas de conflit sur **ce que Map affiche** : couche par défaut du §8 ; le run certifié seulement si **Afficher la review** est coché.
