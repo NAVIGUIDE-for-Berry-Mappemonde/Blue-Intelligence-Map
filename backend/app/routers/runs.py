@@ -262,7 +262,7 @@ async def poe_runs_code_fingerprint():
 @router.get("/poe/runs/searxng")
 async def poe_searxng_health():
     instances = poe.searx_instances()
-    own = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/")
+    own = poe.configured_searxng_url()
     results = []
     for inst in instances[:6]:
         t0 = time.time()
@@ -283,8 +283,8 @@ async def poe_searxng_health():
             err = f"{type(e).__name__}"
         results.append({"instance": inst, "ok": ok, "n": n, "error": err,
                         "ms": int((time.time() - t0) * 1000),
-                        "local": inst == own})
-    return {"searxng_url": own or None, "instances": results,
+                        "local": inst.rstrip("/") == own})
+    return {"searxng_url": own, "instances": results,
             "ok": any(x["ok"] for x in results)}
 
 

@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Idempotent repository bootstrap for the Blue Intelligence dev environment.
-# Prepares: MongoDB (system), the FastAPI backend (Python venv + deps) and the
-# React frontend (npm). Safe to run repeatedly and against a warm snapshot.
+# Prepares: MongoDB (system), the FastAPI backend (Python venv + deps),
+# Playwright Chromium, SearXNG (venv only — no server), and the React frontend.
+# Safe to run repeatedly and against a warm snapshot.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTORCH_INDEX="https://download.pytorch.org/whl/cpu"
 EMERGENT_INDEX="https://d33sy5i8bnduwe.cloudfront.net/simple/"
 
-echo "==> [1/4] MongoDB (system package)"
+# shellcheck source=../infra/searxng/install-local.sh
+. "$REPO/infra/searxng/install-local.sh"
+
+echo "==> [1/6] MongoDB (system package)"
 if ! command -v mongod >/dev/null 2>&1; then
   sudo apt-get install -y gnupg curl
   curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
@@ -23,7 +27,7 @@ fi
 sudo mkdir -p /var/lib/mongodb /var/log/mongodb
 sudo chown -R "$(id -u):$(id -g)" /var/lib/mongodb /var/log/mongodb
 
-echo "==> [2/4] Backend (Python venv + dependencies)"
+echo "==> [2/6] Backend (Python venv + dependencies)"
 sudo apt-get install -y python3.12-venv build-essential \
   tesseract-ocr tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-eng \
   >/dev/null 2>&1 || true
@@ -39,9 +43,12 @@ python -m pip install --upgrade pip wheel setuptools
 grep -v -iE '^emergentintegrations' requirements.txt > /tmp/req.core.txt
 pip install -r /tmp/req.core.txt --extra-index-url "$PYTORCH_INDEX"
 pip install --no-deps "emergentintegrations==0.2.0" --extra-index-url "$EMERGENT_INDEX"
+
+echo "==> [3/6] Playwright Chromium (PoE N3 render — browser pack, not a daemon)"
+python -m playwright install --with-deps chromium
 deactivate
 
-echo "==> [3/4] backend/.env"
+echo "==> [4/6] backend/.env"
 # Squelette localhost seulement si le fichier n'existe pas. Puis on aligne
 # MONGO_URL / clés API sur les secrets du process (Atlas, NIM) sans les logger.
 if [ ! -f "$REPO/backend/.env" ]; then
@@ -50,6 +57,7 @@ MONGO_URL=mongodb://localhost:27017
 DB_NAME=${DB_NAME:-}
 CORS_ORIGINS=*
 GEONAMES_USERNAME=${GEONAMES_USERNAME:-}
+SEARXNG_URL=http://127.0.0.1:8888
 # Optional LLM / scraping keys (cascade falls back gracefully when empty).
 EMERGENT_LLM_KEY=${EMERGENT_LLM_KEY:-}
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
@@ -60,8 +68,12 @@ EOF
   echo "    wrote backend/.env skeleton"
 fi
 python3 "$REPO/backend/scripts/sync_backend_env.py" --env-file "$REPO/backend/.env"
+ensure_searxng_url "$REPO/backend/.env"
 
-echo "==> [4/4] Frontend (npm)"
+echo "==> [5/6] SearXNG (venv /opt/searxng — do not start the server here)"
+install_searxng_venv
+
+echo "==> [6/6] Frontend (npm + production build, preview unifié port 8001)"
 if [ ! -f "$REPO/frontend/.env" ]; then
   cat > "$REPO/frontend/.env" <<'EOF'
 # Laisser vide pour le mode même-origine (preview Cloud Agent + prod derrière reverse proxy).
@@ -74,9 +86,6 @@ EOF
 fi
 cd "$REPO/frontend"
 npm install
-
-echo "==> [5/5] Frontend production build (preview unifié port 8001)"
-cd "$REPO/frontend"
 CI=true REACT_APP_BACKEND_URL= npm run build
 
 echo "==> install.sh complete"
