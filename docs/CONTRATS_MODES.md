@@ -87,12 +87,12 @@ ME et CE sont le jumeau « JSON sur du texte de page » (`page`). P et TD sont l
 
 | Job | Phrase | Outils aujourd’hui |
 | --- | --- | --- |
-| P | GPS du lieu d’action | `geocode()` Nominatim **puis** GeoNames ; LLM si besoin ; havre ≤ 15 km |
-| TD | Coller le port dans **ce** polygone | `geocode_port_dual` Nominatim **∥** GeoNames ; départage LLM ; in-EEZ / 15 km / rivière 400 km |
+| P | GPS du lieu d’action | **`geocode_name`** Nominatim **∥** GeoNames ; départage LLM si désaccord ; havre ≤ 15 km (`site_publishable`) |
+| TD | Coller le port dans **ce** polygone | **`geocode_port_dual`** (même appel parallèle) ; départage LLM ; in-EEZ / 15 km / rivière 400 km |
 | BU | Géocoder les noms sans point | **Le même** `geocode_port_dual` + filtre polygone |
 | MM / dumps / AMP | — | GPS déjà dans OSM / SHOM / NOAA / ProtectedSeas |
 
-P et PoE n’appellent pas le même géocodeur alors que la question « un point dans le bon espace » est la même (espace = havre vs polygone VLIZ).
+P et PoE partagent `geocode_dual` (Nominatim ∥ GeoNames). Les tests d’espace restent distincts : havre (`site_publishable`) vs polygone VLIZ (`classify_poe_point`).
 
 ## 7. Identité / doublon — est-ce déjà là ?
 
@@ -173,9 +173,11 @@ Les Projets et les ports d’entrée demandent tous les deux à Nominatim et à 
 
 Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le même : c’est pour cela qu’un seul appel « demande aux deux, départage s’il le faut » est justifié. Ce qui ne doit pas fusionner, c’est le **test d’espace** ensuite. Un projet n’a pas à entrer dans un polygone VLIZ. Un port d’entrée n’a pas le droit d’être collé sur Mayotte alors qu’on fiche l’hexagone. On unifierait l’outil de géocodage, pas la géographie du produit.
 
+**Fait.** Porte `app.core.geo.geocode_name` / `geocode_dual`. Nominatim ∥ GeoNames, départage `arbitrate_geocode` si désaccord, aucune troisième coordonnée. `geocode_port_dual` réutilise `pack_geocode_dual`. Projets : `site_publishable` (havre ≤ 15 km) dans `apply_havre`, bascule sur l’autre annuaire si le choisi est inland. PoE : polygone VLIZ inchangé. `llm_geocode` seulement si les deux annuaires sont muets. Pas de `classify_poe_point` sur un projet.
+
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **juge** commun (jumeau n°4 : **fait**) : un branchement `ask_yes_no`, trois prompts. Le **garde-fou identité** (jumeau n°5 : **fait**) : `same_site` n’est pas `find_building`. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **juge** commun (jumeau n°4 : **fait**) : un branchement `ask_yes_no`, trois prompts. Le **garde-fou identité** (jumeau n°5 : **fait**) : `same_site` n’est pas `find_building`. Le **géocode** (jumeau n°6 : **fait**) : les Projets réutilisent l’appel parallèle des ports d’entrée, sans toucher à la règle du havre.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 

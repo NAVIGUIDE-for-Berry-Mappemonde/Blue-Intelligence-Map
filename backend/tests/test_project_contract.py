@@ -58,6 +58,8 @@ def test_pipeline_does_not_call_snap_or_fallback():
     text = src.read_text()
     assert "ocean_fallback_coords" not in text
     assert "snap_to_ocean" not in text
+    assert "geocode_project_site" in text
+    assert "from app.core.geo import geocode" not in text
 
 
 def test_force_extract_does_not_call_snap_or_fallback():

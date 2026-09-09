@@ -1,10 +1,13 @@
 """
 geo_core.py — Module géospatial unifié (Core mutualisé PoE / Projets).
 
-Regroupe : géocodage multi-source (Nominatim → GeoNames) avec rate-limit et
-cache, masque terrestre (global_land_mask), snap_to_ocean, distance côtière,
-validation point-in-EEZ (shapely), variantes de noms de ports, re-ranking des
-candidats de géocodage, et détection d'anomalies spatiales (scikit-learn).
+Regroupe : géocodage double Nominatim ∥ GeoNames (rate-limit + cache),
+masque terrestre, snap_to_ocean, distance côtière, validation point-in-EEZ,
+variantes de noms de ports, re-ranking des candidats, anomalies spatiales.
+
+Porte d'entrée : ``geocode_name`` / ``geocode_dual``. Même question partout
+(« où est ce nom ? »). Les tests d'espace restent propres à chaque mode :
+havre Projet (``site_publishable``) vs polygone VLIZ (``classify_poe_point``).
 """
 import asyncio
 import hashlib
@@ -19,7 +22,6 @@ from global_land_mask import globe
 
 UA = "BerryMappemonde-BlueIntelligence/1.0 (+https://berrymappemonde.org; contact: clementfilisetti@berrymappemonde.org)"
 
-_geo_cache: dict = {}
 _nominatim_lock = asyncio.Lock()
 _last_nominatim = 0.0
 
@@ -262,8 +264,11 @@ async def ensure_geo_indexes(db=None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Géocodage multi-source : Nominatim (rate-limité) → GeoNames
+# Géocodage multi-source : Nominatim ∥ GeoNames (pas de test d'espace)
 # ---------------------------------------------------------------------------
+GEOCODE_AGREE_KM = 2.0
+
+
 async def _nominatim_rows(query: str, country_code: str | None = None, limit: int = 1) -> list[dict]:
     cached = await _geocode_cache_get("nominatim", query, country_code, limit)
     if cached is not None:
@@ -338,25 +343,256 @@ async def _geonames_rows(query: str, country_code: str | None = None, limit: int
         return rows
 
 
+TIEBREAK_SYSTEM = (
+    "Tu départages un géocodage double. Réponds UNIQUEMENT avec un JSON "
+    '{"picks": [{"name": "...", "choice": "nominatim|geonames|none"}]}. '
+    "Ne propose aucune autre coordonnée. none = les deux points sont faux "
+    "ou hors sujet pour ce lieu."
+)
+
+
+def tiebreak_user_prompt(zone: dict | None, items: list[dict]) -> str:
+    """Prompt de départage Nominatim vs GeoNames. Pas un test d'espace."""
+    zone = zone or {}
+    name = zone.get("name") or zone.get("geoname") or zone.get("title") or ""
+    sovereign = zone.get("sovereign") or ""
+    location = (zone.get("location") or "").strip()
+    is_poe = zone.get("mrgid") is not None or bool(sovereign)
+    if is_poe:
+        lines = [
+            f"Zone : {name} ({sovereign}).",
+            "Nominatim et GeoNames divergent. Choisis pour chaque port "
+            "nominatim, geonames ou none. N'invente aucune coordonnée.",
+            "",
+        ]
+    else:
+        suffix = ""
+        if location and location.casefold() != str(name).casefold():
+            suffix = f" ({location})"
+        lines = [
+            f"Lieu : {name}{suffix}.",
+            "Nominatim et GeoNames divergent. Choisis pour chaque toponyme "
+            "nominatim, geonames ou none. N'invente aucune coordonnée.",
+            "",
+        ]
+    for i, it in enumerate(items, 1):
+        nom = it.get("nominatim") or [None, None]
+        geo = it.get("geonames") or [None, None]
+        lines.append(
+            f"{i}. {it.get('name')}\n"
+            f"   nominatim: {nom[0]}, {nom[1]}\n"
+            f"   geonames: {geo[0]}, {geo[1]}"
+        )
+    return "\n".join(lines)
+
+
+def pack_geocode_dual(
+    nomi: dict | None,
+    geon: dict | None,
+    *,
+    candidates: list[dict] | None = None,
+    pick: dict | None = None,
+) -> dict:
+    """Paquet Nominatim ∥ GeoNames. Aucun havre, aucun polygone VLIZ."""
+    nomi_xy = _xy(nomi)
+    geon_xy = _xy(geon)
+    agreement_km = None
+    agree = None
+    if nomi_xy and geon_xy:
+        agreement_km = round(haversine_km(
+            nomi_xy[0], nomi_xy[1], geon_xy[0], geon_xy[1]), 2)
+        agree = agreement_km <= GEOCODE_AGREE_KM
+    cands: list[dict] = list(candidates) if candidates is not None else []
+    if candidates is None:
+        if nomi and nomi_xy:
+            row = dict(nomi)
+            row.setdefault("source", "nominatim")
+            row["lat"], row["lon"] = nomi_xy[0], nomi_xy[1]
+            _add_unique_cand(cands, row)
+        if geon and geon_xy:
+            row = dict(geon)
+            row.setdefault("source", "geonames")
+            row["lat"], row["lon"] = geon_xy[0], geon_xy[1]
+            _add_unique_cand(cands, row)
+    if pick is None:
+        if not cands:
+            pick = {"status": "miss", "chosen": None, "ranked": []}
+        elif agree:
+            pick = {"status": "agree", "chosen": None, "ranked": []}
+        elif nomi_xy and geon_xy:
+            pick = {"status": "disagree", "chosen": None, "ranked": []}
+        else:
+            pick = {"status": "single", "chosen": None, "ranked": []}
+    return {
+        "nominatim": nomi_xy,
+        "geonames": geon_xy,
+        "nominatim_meta": {
+            "osm_class": (nomi or {}).get("osm_class") or "",
+            "osm_type": (nomi or {}).get("osm_type") or "",
+        },
+        "geonames_meta": {
+            "geonames_fcode": (geon or {}).get("geonames_fcode") or "",
+        },
+        "agreement_km": agreement_km,
+        "agree": agree,
+        "geonames_available": geonames_status() == "ok",
+        "candidates": cands,
+        "pick": pick,
+    }
+
+
+def choose_from_dual(dual: dict | None, choice: str | None = None) -> dict:
+    """Choisit un point parmi les deux annuaires. Pas de test d'espace.
+
+    ``choice`` : nominatim | geonames | none | None (accord / un seul / désaccord).
+    """
+    dual = dual or {}
+    nomi = dual.get("nominatim")
+    geon = dual.get("geonames")
+
+    def _hit(xy, source: str, arbitration: str) -> dict:
+        if not xy:
+            return {"lat": None, "lon": None, "source": None, "arbitration": "miss"}
+        return {
+            "lat": float(xy[0]), "lon": float(xy[1]),
+            "source": source, "arbitration": arbitration,
+        }
+
+    if choice == "none":
+        return {"lat": None, "lon": None, "source": None, "arbitration": "none"}
+    if choice == "nominatim":
+        return _hit(nomi, "nominatim", "nominatim")
+    if choice == "geonames":
+        return _hit(geon, "geonames", "geonames")
+    if dual.get("agree") and nomi:
+        return _hit(nomi, "nominatim", "agree")
+    if dual.get("agree") and geon:
+        return _hit(geon, "geonames", "agree")
+    if nomi and not geon:
+        return _hit(nomi, "nominatim", "single")
+    if geon and not nomi:
+        return _hit(geon, "geonames", "single")
+    if not nomi and not geon:
+        return {"lat": None, "lon": None, "source": None, "arbitration": "miss"}
+    return {"lat": None, "lon": None, "source": None, "arbitration": "disagree"}
+
+
+def _empty_name_hit(query: str, dual: dict | None = None, arbitration: str = "miss") -> dict:
+    dual = dual or pack_geocode_dual(None, None)
+    return {
+        "query": query,
+        "lat": None,
+        "lon": None,
+        "source": None,
+        "arbitration": arbitration,
+        "agree": dual.get("agree"),
+        "agreement_km": dual.get("agreement_km"),
+        "nominatim": dual.get("nominatim"),
+        "geonames": dual.get("geonames"),
+        "nominatim_meta": dual.get("nominatim_meta"),
+        "geonames_meta": dual.get("geonames_meta"),
+        "geonames_available": dual.get("geonames_available"),
+        "candidates": dual.get("candidates") or [],
+    }
+
+
+def _hit_from_choice(query: str, dual: dict, chosen: dict) -> dict:
+    out = _empty_name_hit(query, dual, chosen.get("arbitration") or "miss")
+    out.update({
+        "lat": chosen.get("lat"),
+        "lon": chosen.get("lon"),
+        "source": chosen.get("source"),
+        "arbitration": chosen.get("arbitration"),
+    })
+    return out
+
+
+async def geocode_dual(query: str, country_code: str | None = None,
+                       *, limit: int = 1, log=None) -> dict:
+    """Nominatim ∥ GeoNames pour un nom. Pas de havre, pas de polygone VLIZ."""
+    log = log or (lambda m: None)
+    q = (query or "").strip()
+    if not q:
+        return pack_geocode_dual(None, None)
+    nomi_rows, geon_rows = await asyncio.gather(
+        _nominatim_rows(q, country_code, limit),
+        _geonames_rows(q, country_code, limit),
+    )
+    cands: list[dict] = []
+    for row in nomi_rows or []:
+        _add_unique_cand(cands, _nominatim_cand(row))
+    for row in geon_rows or []:
+        _add_unique_cand(cands, _geonames_cand(row))
+    nomi = next((c for c in cands if c.get("source") == "nominatim"), None)
+    geon = next((c for c in cands if c.get("source") == "geonames"), None)
+    if not nomi and not geon:
+        log(f"géocodage: aucun résultat pour « {q} »")
+    return pack_geocode_dual(nomi, geon, candidates=cands)
+
+
+async def geocode_name(query: str, country_code: str | None = None, *,
+                       context: dict | None = None,
+                       settings: dict | None = None,
+                       log=None,
+                       limit: int = 1) -> dict:
+    """Demande aux deux annuaires, départage s'il le faut. Pas de test d'espace.
+
+    Un accord ou un seul hit suffit. Un désaccord appelle ``arbitrate_geocode``
+    (un des deux points, ou none) — jamais une troisième coordonnée. Le havre
+    Projet et le polygone VLIZ restent chez l'appelant.
+    """
+    log = log or (lambda m: None)
+    q = (query or "").strip()
+    dual = await geocode_dual(q, country_code, limit=limit, log=log)
+    chosen = choose_from_dual(dual)
+    if chosen.get("arbitration") != "disagree":
+        return _hit_from_choice(q, dual, chosen)
+    ctx = context or {}
+    name = (ctx.get("name") or q).strip()
+    zone = {
+        "name": ctx.get("zone_name") or ctx.get("title") or name,
+        "geoname": ctx.get("geoname"),
+        "sovereign": ctx.get("sovereign") or "",
+        "location": ctx.get("location") or "",
+        "title": ctx.get("title") or "",
+        "mrgid": ctx.get("mrgid"),
+    }
+    items = [{
+        "name": name,
+        "nominatim": dual.get("nominatim"),
+        "geonames": dual.get("geonames"),
+    }]
+    picks: dict = {}
+    if settings is not None:
+        try:
+            from app.core.llm import arbitrate_geocode
+            picks = await arbitrate_geocode(
+                zone, items, settings=settings, log=log) or {}
+        except Exception as e:
+            log(f"départage GPS: échec ({type(e).__name__}: {str(e)[:80]})")
+            picks = {}
+    choice = picks.get(name) or picks.get(name.casefold()) if picks else None
+    if choice in ("nominatim", "geonames"):
+        chosen = choose_from_dual(dual, choice=choice)
+        out = _hit_from_choice(q, dual, chosen)
+        out["arbitration"] = "haiku_tiebreak"
+        return out
+    if choice == "none":
+        return _empty_name_hit(q, dual, "haiku_none")
+    return _empty_name_hit(
+        q, dual, "haiku_miss" if settings is not None else "disagree")
+
+
 async def geocode(query: str, country_code: str | None = None):
-    """Géocodage simple avec cache : Nominatim → GeoNames. Retourne (lat, lon) | None."""
-    if not query:
+    """Compat (lat, lon) | None via l'appel parallèle. Pas de test d'espace.
+
+    Accord ou un seul annuaire → ce point. Désaccord → None
+    (utiliser ``geocode_name`` pour départager).
+    """
+    hit = await geocode_name(query, country_code)
+    if hit.get("lat") is None:
         return None
-    key = (query.strip().lower(), (country_code or "").lower())
-    if key in _geo_cache:
-        return _geo_cache[key]
-    rows = await _nominatim_rows(query, country_code)
-    if rows:
-        coords = (float(rows[0]["lat"]), float(rows[0]["lon"]))
-        _geo_cache[key] = coords
-        return coords
-    rows = await _geonames_rows(query, country_code)
-    if rows:
-        coords = (float(rows[0]["lat"]), float(rows[0]["lng"]))
-        _geo_cache[key] = coords
-        return coords
-    _geo_cache[key] = None
-    return None
+    return float(hit["lat"]), float(hit["lon"])
 
 
 # ---------------------------------------------------------------------------
@@ -838,20 +1074,14 @@ async def _geocode_port_geonames(port: dict, zone: dict) -> dict | None:
 async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
     """Nominatim ∥ GeoNames, puis score d'homonymes (ZEE, parenthèses, listing).
 
-    Retourne aussi `candidates` et `pick` pour pick_geocode. L'accord < 2 km
-    reste un signal ; il ne départage pas deux homonymes identiques.
+    L'appel parallèle est le même ``pack_geocode_dual`` que ``geocode_name``.
+    Le score ZEE reste ici : un projet n'entre pas dans ce polygone.
     """
     log = log or (lambda m: None)
     nomi, geon = await asyncio.gather(
         _geocode_port_nominatim(port, zone),
         _geocode_port_geonames(port, zone),
     )
-    agreement_km = None
-    agree = None
-    if nomi and geon and nomi.get("lat") is not None and geon.get("lat") is not None:
-        agreement_km = round(haversine_km(
-            nomi["lat"], nomi["lon"], geon["lat"], geon["lon"]), 2)
-        agree = agreement_km <= 2.0
     if not nomi and not geon:
         log(f"géocodage: aucun résultat pour « {port['name']} »")
     candidates: list[dict] = []
@@ -862,26 +1092,15 @@ async def geocode_port_dual(port: dict, zone: dict, log=None) -> dict:
     pick = select_geocode_candidate(candidates, port, zone, geom, prepared) if candidates else {
         "status": "miss", "chosen": None, "ranked": [],
     }
-    return {
-        "nominatim": _xy(nomi),
-        "geonames": _xy(geon),
-        "nominatim_meta": {
-            "osm_class": (nomi or {}).get("osm_class") or "",
-            "osm_type": (nomi or {}).get("osm_type") or "",
-        },
-        "geonames_meta": {
-            "geonames_fcode": (geon or {}).get("geonames_fcode") or "",
-        },
-        "agreement_km": agreement_km,
-        "agree": agree,
-        "geonames_available": geonames_status() == "ok",
-        "candidates": candidates,
-        "pick": {
+    return pack_geocode_dual(
+        nomi, geon,
+        candidates=candidates,
+        pick={
             "status": pick.get("status"),
             "chosen": pick.get("chosen"),
             "ranked": pick.get("ranked") or [],
         },
-    }
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -9,12 +9,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from app.core.llm import extract_project, gatekeeper_check, has_llm, llm_geocode
+from app.core.llm import extract_project, gatekeeper_check, has_llm
 from app.static_data.categories import normalize_category
 from app.core.dedup import is_duplicate
 from app.core.extract import extract_cascade
-from app.core.geo import geocode
-from app.core.project_geo import site_publishable
+from app.core.project_geo import geocode_project_site, site_publishable, valid_coords
 from app.core.rag import select_context
 from app.static_data.seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
@@ -582,24 +581,21 @@ class Swarm:
 
             lat, lon = proj.get("latitude"), proj.get("longitude")
             geo_src = "extracted"
-            if not self._valid_coords(lat, lon):
+            if not valid_coords(lat, lon):
                 lat = lon = None
-                if proj.get("location"):
-                    g = await geocode(proj["location"])
-                    if g:
-                        lat, lon = g
-                        geo_src = "geocoded:location"
-                if lat is None:
-                    g = await llm_geocode(proj.get("location") or "", proj["title"], self.settings)
-                    if g:
-                        lat, lon = g
-                        geo_src = "llm-geocoded"
-                        self.agent_log(aid, "Smart geocoding: LLM estimated site coordinates")
-                if lat is None:
-                    g = await geocode(proj["title"])
-                    if g:
-                        lat, lon = g
-                        geo_src = "geocoded:title"
+            elif not site_publishable(lat, lon, self.settings)[0]:
+                # Siège / ville intérieure extraits : tenter le toponyme avant unlocated.
+                lat = lon = None
+            if lat is None:
+                geo = await geocode_project_site(
+                    proj.get("location") or "",
+                    proj.get("title") or "",
+                    self.settings,
+                    log=lambda m: self.agent_log(aid, m),
+                )
+                if geo.get("lat") is not None:
+                    lat, lon = geo["lat"], geo["lon"]
+                    geo_src = geo.get("geo_source") or "geocoded:location"
 
             ok, kind = site_publishable(lat, lon, self.settings)
             if not ok:
@@ -666,14 +662,6 @@ class Swarm:
             await self.add_failed(url, source, funder, str(e), "extract")
             self._bump_saturation(False)
             return {"status": "failed", "url": url}
-
-    @staticmethod
-    def _valid_coords(lat, lon):
-        try:
-            return lat is not None and lon is not None and -90 <= float(lat) <= 90 and -180 <= float(lon) <= 180 \
-                and not (float(lat) == 0 and float(lon) == 0)
-        except (TypeError, ValueError):
-            return False
 
     async def _dedup_merge(self, proj, url, funder, lat, lon):
         """Dédup dans le run, puis lecture seule de v1. N'écrit jamais `projects`."""

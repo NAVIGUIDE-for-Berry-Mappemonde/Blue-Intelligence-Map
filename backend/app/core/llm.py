@@ -539,34 +539,16 @@ async def grounded_search(prompt: str, log=None, domain_fn=None) -> tuple[list[d
 
 
 # ---------------------------------------------------------------------------
-# Départage Nominatim vs GeoNames (un appel JSON par zone)
+# Départage Nominatim vs GeoNames (un appel JSON par zone / lieu)
 # ---------------------------------------------------------------------------
-_TIEBREAK_SYSTEM = (
-    "Tu départages un géocodage double. Réponds UNIQUEMENT avec un JSON "
-    '{"picks": [{"name": "...", "choice": "nominatim|geonames|none"}]}. '
-    "Ne propose aucune autre coordonnée. none = les deux points sont faux "
-    "ou hors sujet pour ce port dans cette zone."
-)
-
-
 def _tiebreak_user(zone: dict, items: list[dict]) -> str:
-    name = zone.get("name") or zone.get("geoname") or ""
-    sovereign = zone.get("sovereign") or ""
-    lines = [
-        f"Zone : {name} ({sovereign}).",
-        "Nominatim et GeoNames divergent. Choisis pour chaque port "
-        "nominatim, geonames ou none. N'invente aucune coordonnée.",
-        "",
-    ]
-    for i, it in enumerate(items, 1):
-        nom = it.get("nominatim") or [None, None]
-        geo = it.get("geonames") or [None, None]
-        lines.append(
-            f"{i}. {it.get('name')}\n"
-            f"   nominatim: {nom[0]}, {nom[1]}\n"
-            f"   geonames: {geo[0]}, {geo[1]}"
-        )
-    return "\n".join(lines)
+    from app.core.geo import tiebreak_user_prompt
+    return tiebreak_user_prompt(zone, items)
+
+
+def _tiebreak_system() -> str:
+    from app.core.geo import TIEBREAK_SYSTEM
+    return TIEBREAK_SYSTEM
 
 
 async def arbitrate_geocode(zone: dict, items: list[dict],
@@ -577,10 +559,11 @@ async def arbitrate_geocode(zone: dict, items: list[dict],
     if not items:
         return {}
     prompt = _tiebreak_user(zone, items)
+    system = _tiebreak_system()
     if nvidia.nvidia_enabled(settings):
         try:
             data = await nvidia.complete_json_nvidia(
-                _TIEBREAK_SYSTEM, prompt, settings, role="json",
+                system, prompt, settings, role="json",
                 max_tokens=400, log=log)
             picks = claude._parse_tiebreak(data, items)
             if picks:
@@ -593,7 +576,7 @@ async def arbitrate_geocode(zone: dict, items: list[dict],
     if get_llm_key(settings):
         try:
             data = await _json_openrouter(
-                prompt, _TIEBREAK_SYSTEM, settings, 400)
+                prompt, system, settings, 400)
             picks = claude._parse_tiebreak(data, items)
             if picks:
                 if log:
