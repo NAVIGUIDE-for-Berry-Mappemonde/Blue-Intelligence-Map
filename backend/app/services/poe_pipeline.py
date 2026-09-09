@@ -85,6 +85,9 @@ SEARX_PUBLIC_INSTANCES = [
     "https://search.sapti.me",
 ]
 
+# Notre process local (cf. infra/searxng/, .cursor/start.sh). Pas une clé fournisseur.
+LOCAL_SEARXNG_URL = "http://127.0.0.1:8888"
+
 PIPELINE_VARIANTS = ("v1", "v2", "tinyfish")
 _VARIANT_ALIASES = {
     "searx_only": "v2", "searx": "v2", "tf": "tinyfish", "v3": "tinyfish",
@@ -101,11 +104,21 @@ def normalize_variant(value: str | None) -> str:
     return v
 
 
-def searx_instances() -> list[str]:
-    """Instance SearXNG auto-hébergée (SEARXNG_URL, cf. infra/searxng/) en tête,
-    instances publiques en secours."""
+def configured_searxng_url() -> str:
+    """URL de notre instance. SEARXNG_URL si non vide, sinon loopback:8888."""
     own = (os.environ.get("SEARXNG_URL") or "").strip().rstrip("/")
-    return ([own] if own else []) + SEARX_PUBLIC_INSTANCES
+    return own or LOCAL_SEARXNG_URL
+
+
+def searx_instances() -> list[str]:
+    """Instance SearXNG auto-hébergée en tête, instances publiques en secours.
+
+    Si SEARXNG_URL est vide, on préfixe quand même http://127.0.0.1:8888
+    (sans dupliquer). Les publiques restent en secours.
+    """
+    own = configured_searxng_url()
+    rest = [u.rstrip("/") for u in SEARX_PUBLIC_INSTANCES if u.rstrip("/") != own]
+    return [own] + rest
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@
   ],
   "ports": [
     { "name": "Application (UI + API)", "port": 8001 },
-    { "name": "Dev frontend (hot reload)", "port": 3000 }
+    { "name": "Dev frontend (hot reload)", "port": 3000 },
+    { "name": "SearXNG (debug)", "port": 8888 }
   ]
 }
