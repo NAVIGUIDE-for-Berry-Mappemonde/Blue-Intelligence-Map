@@ -188,7 +188,7 @@ The header pill lets you switch between four modes. Each mode paints the app wit
 - **Map**: ProtectedSeas Navigator polygons, coloured by Level of Fishing Protection (LFP 1–5). Zoom in on a coast (zoom ≥ 5); the world view only shows the invite, not 20 000 polygons.
 - **Popup**: two separate URLs. Grey = manager website (ProtectedSeas `url` / Website). Green = visit / entry procedures. The visit URL is never a copy of the manager homepage.
 - **Left sidebar**: search by site, country or designation; LFP filter; list of areas in the current tile.
-- **Review**: one sheet per cached site, same two-URL contract. No Gold toggle — AMP is not a curated gold set.
+- **Review**: one sheet per cached site. Keep / drop visit URL candidates, then Gold into the certified run. Map stays on the unique run until Show review is on.
 - *Export GeoJSON* — centroids + `manager_url` / `visit_url`, not official boundaries.
 
 ## Swarm Intelligence Audit (header toggle)
@@ -257,7 +257,7 @@ La pastille de l'en-tête permet de basculer entre quatre modes. Chaque mode hab
 - **Carte** : polygones ProtectedSeas Navigator, colorés par niveau de protection pêche (LFP 1–5). Zoomez sur une côte (zoom ≥ 5) ; la vue monde n'affiche que l'invite, pas 20 000 polygones.
 - **Popup** : deux URL séparées. Gris = site du gestionnaire (champ ProtectedSeas `url` / Website). Vert = procédures de visite / d'entrée. L'URL de visite n'est jamais une copie de la page gestionnaire.
 - **Bandeau gauche** : recherche par site, pays ou désignation ; filtre LFP ; liste des aires de la tuile courante.
-- **Review** : une fiche par site en cache, même contrat des deux URL. Pas d'interrupteur Gold — les AMP ne sont pas un jeu gold curé.
+- **Review** : une fiche par site en cache. Garder / écarter les candidats visite, puis Gold dans le run certifié. La carte reste sur le run unique tant que Afficher la review est décoché.
 - *Export GeoJSON* — centroïdes + `manager_url` / `visit_url`, pas les limites officielles.
 
 ## Audit Swarm Intelligence (bascule dans l'en-tête)

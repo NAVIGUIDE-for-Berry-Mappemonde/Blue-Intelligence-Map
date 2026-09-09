@@ -61,6 +61,8 @@ export default function App() {
   const [zoneFiche, setZoneFiche] = useState(null);
   const [ficheLoading, setFicheLoading] = useState(false);
   const [mapEpoch, setMapEpoch] = useState(0);
+  const [showReview, setShowReview] = useState(false);
+  useEffect(() => { lastTotalRef.current = -1; }, [showReview]);
   const [flyToPoe, setFlyToPoe] = useState(null);
   const [ampSites, setAmpSites] = useState({ type: "FeatureCollection", features: [] });
   const [flyToAmp, setFlyToAmp] = useState(null);
@@ -105,15 +107,16 @@ export default function App() {
         lastTotalRef.current = -1;   // retour au live => refetch complet
         return;
       }
-      const f = await api.get("/funders", { params: { visible: 1 } });
+      const params = showReview ? { visible: 1 } : {};
+      const f = await api.get("/funders", { params: { ...params } });
       setFunders(f.data);
       if (force || f.data.total !== lastTotalRef.current) {
-        const p = await api.get("/projects", { params: { visible: 1 } });
+        const p = await api.get("/projects", { params });
         setProjects(p.data);
         lastTotalRef.current = f.data.total;
       }
     } catch (e) { /* transient */ }
-  }, []);
+  }, [showReview]);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -134,20 +137,20 @@ export default function App() {
       const run = mapRunsRef.current.marinas;
       const { data } = run?.id
         ? await api.get(`/marinas/runs/${run.id}/geojson`)
-        : await api.get("/marinas", { params: { visible: 1 } });
+        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {} });
       setMarinas(data);
     } catch (e) { /* transient */ }
-  }, []);
+  }, [showReview]);
 
   const fetchCapitaineries = useCallback(async () => {
     try {
       const run = mapRunsRef.current.capitaineries;
       const { data } = run?.id
         ? await api.get(`/capitaineries/runs/${run.id}/geojson`)
-        : await api.get("/capitaineries");
+        : await api.get("/capitaineries", { params: showReview ? { visible: 1 } : {} });
       setCapitaineries(data);
     } catch (e) { /* transient */ }
-  }, []);
+  }, [showReview]);
 
   // Phase 8 — anchorages fetcher
   const fetchAnchorages = useCallback(async () => {
@@ -159,21 +162,21 @@ export default function App() {
 
   const fetchPoeZones = useCallback(async () => {
     try {
-      const { data } = await api.get("/poe/zones", { params: { visible: 1 } });
+      const { data } = await api.get("/poe/zones", { params: showReview ? { visible: 1 } : {} });
       setPoeZones(data);
     } catch (e) { /* transient */ }
     finally { setPoeZonesLoading(false); }
-  }, []);
+  }, [showReview]);
 
   const fetchPoePorts = useCallback(async () => {
     try {
       const run = mapRunsRef.current.formalities;
       const { data } = run?.id
         ? await api.get(`/poe/runs/${run.id}/ports`)
-        : await api.get("/poe/ports", { params: { visible: 1 } });
+        : await api.get("/poe/ports", { params: showReview ? { visible: 1 } : {} });
       setPoePorts(data);
     } catch (e) { /* transient */ }
-  }, []);
+  }, [showReview]);
 
   const refreshMapData = useCallback(() => {
     fetchProjects(true);
@@ -383,12 +386,12 @@ export default function App() {
     }
     let alive = true;
     setFicheLoading(true);
-    api.get(`/poe/zones/${selectedZone}`)
+    api.get(`/poe/zones/${selectedZone}`, { params: showReview ? { review: 1 } : {} })
       .then(({ data }) => { if (alive) setZoneFiche(data); })
       .catch(() => { if (alive) setZoneFiche(null); })
       .finally(() => { if (alive) setFicheLoading(false); });
     return () => { alive = false; };
-  }, [selectedZone, mapEpoch]);
+  }, [selectedZone, mapEpoch, showReview]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss" data-mode={mode}>
@@ -456,6 +459,8 @@ export default function App() {
               flyToCapitainerie={flyToCapitainerie}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
+              showReview={showReview}
+              setShowReview={setShowReview}
               poeZones={poeZones.items}
               poePorts={poePorts}
               onSelectZone={handleSelectZone}

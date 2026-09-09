@@ -107,11 +107,16 @@ async def import_capitaineries_geojson(fc: dict = Body(...)):
 
 
 @router.get("/capitaineries")
-async def list_capitaineries(source: str | None = None):
+async def list_capitaineries(source: str | None = None, visible: bool = False,
+                             review: bool = False):
     q: dict = {}
     if source:
         q["source"] = source
     docs = await _all_docs(q)
+    if visible or review:
+        from app.services.review_gold import filter_visible
+        docs = await filter_visible(
+            db, "capitainerie", docs, lambda c: c.get("_id"))
     return to_slim_geojson(docs)
 
 
