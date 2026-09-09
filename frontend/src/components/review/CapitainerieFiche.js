@@ -10,6 +10,7 @@ export default function CapitainerieFiche({ t, fiche }) {
         {t("reviewSource")} · {fiche.source || "—"}
         {fiche.osm_id ? ` · OSM ${fiche.osm_id}` : ""}
         {fiche.shom_id ? ` · ${fiche.shom_id}` : ""}
+        {fiche.noaa_id ? ` · ${fiche.noaa_id}` : ""}
       </p>
       {fiche.lat != null && fiche.lon != null && (
         <p className="font-mono text-[11px] text-slate-400">

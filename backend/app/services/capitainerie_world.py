@@ -1,11 +1,14 @@
-"""Dump mondial des capitaineries OSM (harbour_master) + overlay SHOM CATSCF=6.
+"""Dump mondial des capitaineries OSM (harbour_master) + overlays SHOM / NOAA.
 
 Contrat :
   * objet = bureau de capitainerie, pas le plan d'eau, pas la marina
-  * identité OSM = osm_id (type/id) ; SHOM orphelin = shom:{fid}
+  * identité OSM = osm_id (type/id) ; SHOM orphelin = shom:{layer}:{fid}
+    ; NOAA orphelin = noaa:{service}:{layer}:{fid}
   * pas de rattachement aux marinas
   * pas de purge (upsert)
   * job tuilé Overpass reprenable, puis overlay SHOM
+    (BUISGL FUNCTN=2 = harbour-master's office ; SMCFAC CATSCF=6 s'il existe)
+    puis overlay NOAA ENC Direct (même FUNCTN=2, points + centroïdes d'aires)
   * téléphone / VHF lus d'abord dans les tags, jamais inventés
 """
 from __future__ import annotations
@@ -43,11 +46,46 @@ from app.services.marina_world import (
 
 SCHEMA = "capitainerie_world_v1"
 CURSOR_ID = "world_harbour_master"
-SHOM_CATSCF = "6"
+SHOM_CATSCF = "6"  # SMCFAC : rarement peuplé sur le WFS public
+SHOM_BUISGL_FUNCTN = "2"  # S-57 FUNCTN = harbour-master's office
 SHOM_MERGE_KM = 0.25
+NOAA_MERGE_KM = 0.25
+SHOM_LAYERS: tuple[tuple[str, str], ...] = (
+    ("INFORMATIONS_PORTUAIRES_BDD_WFS:buisgl_point", "buisgl"),
+    ("INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point", "smcfac"),
+)
+# ENC Direct to GIS — FUNCTN=2 vit surtout sur les *aires* harbour, pas les points.
+NOAA_MAPSERVER = "https://gis.charttools.noaa.gov/arcgis/rest/services/encdirect"
+NOAA_FUNCTN_WHERE = (
+    "FUNCTN='2' OR FUNCTN LIKE '2,%' OR FUNCTN LIKE '%,2' "
+    "OR FUNCTN LIKE '%,2,%' OR FUNCTN LIKE '2;%' OR FUNCTN LIKE '%;2' "
+    "OR FUNCTN LIKE '%;2;%'"
+)
+# (service, layer_id, kind) — kind = point | area
+NOAA_ENC_LAYERS: tuple[tuple[str, int, str], ...] = (
+    ("enc_harbour", 22, "point"),
+    ("enc_harbour", 143, "area"),
+    ("enc_approach", 24, "point"),
+    ("enc_approach", 148, "area"),
+    ("enc_coastal", 21, "point"),
+    ("enc_coastal", 110, "area"),
+    ("enc_berthing", 12, "point"),
+    ("enc_berthing", 66, "area"),
+)
 OSM_SOURCE = "openstreetmap"
 SHOM_SOURCE = "shom"
+NOAA_SOURCE = "noaa"
 MERGED_SOURCE = "osm+shom"
+GENERIC_OFFICE_NAMES = frozenset({
+    "capitainerie",
+    "harbour office",
+    "harbour office (unnamed)",
+    "harbour master's office",
+    "harbour master",
+    "harbourmaster",
+    "harbormaster",
+    "harbor master",
+})
 
 # Bboxes WGS84 (south, west, north, east) où le WFS SHOM a des SMCFAC.
 SHOM_BBOXES: tuple[tuple[float, float, float, float], ...] = (
@@ -69,6 +107,7 @@ PRESERVE_ON_UPDATE = (
     "telephone",
     "canal_vhf",
     "shom_id",
+    "noaa_id",
     "sources",
     "image",
 )
@@ -80,6 +119,7 @@ SLIM_PROJECTION = {
     "lon": 1,
     "osm_id": 1,
     "shom_id": 1,
+    "noaa_id": 1,
     "source": 1,
     "sources": 1,
     "website": 1,
@@ -102,15 +142,28 @@ VHF_TAG_KEYS = (
 INFO_TAG_KEYS = (
     "description", "seamark:information", "seamark:information:fr",
     "inform", "ninfom", "shom:inform", "shom:ninfom", "note",
+    "noaa:inform", "noaa:objnam",
 )
 
-_VHF_RE = re.compile(
-    r"(?:vhf|canal|channel|ch\.?)\s*[:n°#]?\s*(\d{1,2}(?:\s*[/;&]\s*\d{1,2})?)",
+# ITU marine VHF : 1–28 simplex, 60–88 duplex (US 68/72, UK 80, …).
+_VHF_BLOCK_RE = re.compile(
+    r"(?:vhf|canal(?:\s*vhf)?|channel|ch\.?|comcha)\s*[:n°#]?\s*"
+    r"([\d][\d\s/;,&-]{0,24})",
     re.I,
 )
 _PHONE_RE = re.compile(
-    r"(?:\+|00)?\d[\d.\s()/]{7,18}\d",
+    r"(?:\+|00)?\d[\d.\s()/.-]{6,20}\d",
 )
+_PHONE_CONTEXT_RE = re.compile(
+    r"(?:tél\.?(?:éphone)?|telephone|\bphone\b|\btel\b|"
+    r"harbour\s*master|harbor\s*master|capitainerie)"
+    r"[^\d+]{0,48}"
+    r"((?:\+|00)?\d[\d.\s()/.-]{6,18}\d)",
+    re.I,
+)
+_TEL_LINK_RE = re.compile(r"tel:(\+?[\d\s().-]{8,22})", re.I)
+_FAX_ONLY_RE = re.compile(r"\bfax\b", re.I)
+_TEL_WORD_RE = re.compile(r"tel|phone|tél", re.I)
 
 FetchTile = Callable[
     [httpx.AsyncClient, tuple[float, float, float, float]],
@@ -118,6 +171,10 @@ FetchTile = Callable[
 ]
 FetchShom = Callable[
     [httpx.AsyncClient, tuple[float, float, float, float]],
+    Awaitable[list[dict]],
+]
+FetchNoaa = Callable[
+    [httpx.AsyncClient],
     Awaitable[list[dict]],
 ]
 
@@ -167,10 +224,60 @@ def kept_tags(tags: dict | None) -> dict[str, str]:
         if (
             k in KEPT_TAGS or k in extra or k in PHONE_TAG_KEYS or k in VHF_TAG_KEYS
             or k.startswith("seamark:") or k.startswith("name") or k.startswith("contact:")
-            or k.startswith("shom:")
+            or k.startswith("shom:") or k.startswith("noaa:")
         ):
             out[str(k)] = str(v)[:240]
     return out
+
+
+def _digit_count(text: str) -> int:
+    return len(re.sub(r"\D", "", text or ""))
+
+
+def _looks_like_year(digits: str) -> bool:
+    return bool(re.fullmatch(r"(?:19|20)\d{2}", digits))
+
+
+def _format_phone(raw: str) -> str:
+    cand = re.sub(r"\s+", " ", raw).strip()
+    if cand.startswith("00") and _digit_count(cand) >= 10:
+        cand = "+" + cand[2:].lstrip()
+    return cand[:40]
+
+
+def _phone_candidate_ok(raw: str) -> bool:
+    n = _digit_count(raw)
+    if n < 8 or n > 15:
+        return False
+    compact = re.sub(r"\D", "", raw)
+    if _looks_like_year(compact):
+        return False
+    return True
+
+
+def _iter_phone_chunks(text: str) -> list[str]:
+    return [c.strip() for c in re.split(r"[;|]", text) if c.strip()]
+
+
+def _phones_in_chunk(chunk: str) -> list[str]:
+    if _FAX_ONLY_RE.search(chunk) and not _TEL_WORD_RE.search(chunk):
+        return []
+    found: list[str] = []
+    for m in _TEL_LINK_RE.finditer(chunk):
+        cand = _format_phone(m.group(1))
+        if _phone_candidate_ok(cand):
+            found.append(cand)
+    for m in _PHONE_CONTEXT_RE.finditer(chunk):
+        cand = _format_phone(m.group(1))
+        if _phone_candidate_ok(cand) and cand not in found:
+            found.append(cand)
+    if found:
+        return found
+    for m in _PHONE_RE.finditer(chunk):
+        cand = _format_phone(m.group(0))
+        if _phone_candidate_ok(cand) and cand not in found:
+            found.append(cand)
+    return found
 
 
 def _clean_phone(raw: str | None) -> str | None:
@@ -179,22 +286,50 @@ def _clean_phone(raw: str | None) -> str | None:
     text = str(raw).strip()
     if not text or text.lower() in ("no", "none", "null"):
         return None
-    m = _PHONE_RE.search(text)
-    if not m:
-        digits = re.sub(r"[^\d+]", "", text)
-        if len(re.sub(r"\D", "", digits)) < 8:
-            return None
-        return text[:40]
-    return re.sub(r"\s+", " ", m.group(0)).strip()[:40]
+    preferred = None
+    fallback = None
+    for chunk in _iter_phone_chunks(text):
+        cands = _phones_in_chunk(chunk)
+        for cand in cands:
+            if cand.startswith("+"):
+                return cand
+            if preferred is None:
+                preferred = cand
+            elif fallback is None:
+                fallback = cand
+    if preferred:
+        return preferred
+    if fallback:
+        return fallback
+    if _FAX_ONLY_RE.search(text) and not _TEL_WORD_RE.search(text):
+        return None
+    digits = re.sub(r"[^\d+]", "", text)
+    if _digit_count(digits) < 8:
+        return None
+    return text[:40]
+
+
+def _is_marine_channel(n: int) -> bool:
+    return 1 <= n <= 28 or 60 <= n <= 88
 
 
 def _norm_vhf_part(part: str) -> str | None:
+    part = str(part or "").strip()
     if not part.isdigit():
         return None
     n = int(part)
-    if 1 <= n <= 28:
+    if _is_marine_channel(n):
         return str(n)
     return None
+
+
+def _channels_from_fragment(fragment: str) -> list[str]:
+    nums: list[str] = []
+    for p in re.findall(r"\d{1,2}", fragment or ""):
+        n = _norm_vhf_part(p)
+        if n and n not in nums:
+            nums.append(n)
+    return nums
 
 
 def _clean_vhf(raw: str | None) -> str | None:
@@ -203,13 +338,29 @@ def _clean_vhf(raw: str | None) -> str | None:
     text = str(raw).strip()
     if not text or text.lower() in ("no", "none", "null"):
         return None
-    m = _VHF_RE.search(text)
-    candidate = m.group(1) if m else text
-    parts = [p.strip() for p in re.split(r"[;/,]", candidate) if p.strip()]
-    nums = [n for p in parts if (n := _norm_vhf_part(p))]
+    compact = re.sub(r"\D", "", text)
+    if _looks_like_year(compact):
+        return None
+    nums: list[str] = []
+    for m in _VHF_BLOCK_RE.finditer(text):
+        for n in _channels_from_fragment(m.group(1)):
+            if n not in nums:
+                nums.append(n)
     if nums:
         return "/".join(nums)[:20]
+    if len(text) <= 24:
+        nums = _channels_from_fragment(text)
+        if nums:
+            return "/".join(nums)[:20]
     return None
+
+
+def contact_from_text(text: str | None) -> tuple[str | None, str | None]:
+    """Tél / VHF extraits d'une page (markdown Fetch, readability, INFORM)."""
+    if not text or not str(text).strip():
+        return None, None
+    blob = str(text)
+    return _clean_phone(blob), _clean_vhf(blob)
 
 
 def contact_from_tags(tags: dict | None) -> tuple[str | None, str | None]:
@@ -275,18 +426,33 @@ def is_catscf_harbour_master(catscf: Any) -> bool:
     return str(catscf or "").strip() == SHOM_CATSCF
 
 
-def shom_feature_id(feat: dict, props: dict, lat: float, lon: float) -> str:
-    raw = feat.get("id") or props.get("gml_id") or props.get("id") or props.get("fid")
+def is_buisgl_harbour_master(functn: Any) -> bool:
+    """S-57 FUNCTN 2 = harbour-master's office (list-valued, e.g. '2,3')."""
+    raw = str(functn or "").strip()
+    if raw.endswith(".0") and raw[:-2].replace("-", "", 1).isdigit():
+        raw = raw[:-2]
+    parts = [
+        p.strip()
+        for p in raw.replace(";", ",").split(",")
+        if p.strip()
+    ]
+    return SHOM_BUISGL_FUNCTN in parts
+
+
+def shom_feature_id(
+    feat: dict, props: dict, lat: float, lon: float, layer: str = "smcfac",
+) -> str:
+    raw = (
+        feat.get("id") or props.get("inspireid") or props.get("gml_id")
+        or props.get("id") or props.get("fid")
+    )
     if raw not in (None, "", "null"):
-        return f"shom:{raw}"
-    return f"shom:{lat:.5f}:{lon:.5f}"
+        return f"shom:{layer}:{raw}"
+    return f"shom:{layer}:{lat:.5f}:{lon:.5f}"
 
 
-def capitainerie_from_shom(feat: dict) -> dict | None:
+def _shom_latlon(feat: dict) -> tuple[float, float] | None:
     geom = feat.get("geometry") or {}
-    props = feat.get("properties") or {}
-    if not is_catscf_harbour_master(props.get("catscf")):
-        return None
     coords = geom.get("coordinates")
     if geom.get("type") == "Point" and coords:
         x, y = coords[:2]
@@ -304,15 +470,41 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
         lon, lat = xf, yf
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return None
-    cat_label = SHOM_CATSCF_LABELS.get(SHOM_CATSCF, "Capitainerie")
-    name = (
+    return lat, lon
+
+
+def capitainerie_from_shom(feat: dict, *, layer: str = "smcfac") -> dict | None:
+    """Bureau SHOM : BUISGL FUNCTN=2, ou SMCFAC CATSCF=6 s'il existe."""
+    props = feat.get("properties") or {}
+    if layer == "buisgl":
+        if not is_buisgl_harbour_master(props.get("functn")):
+            return None
+        cat_label = "Capitainerie"
+        layer_tags = {
+            "shom:functn": str(props.get("functn") or "").strip(),
+            "shom:layer": "buisgl",
+        }
+    else:
+        if not is_catscf_harbour_master(props.get("catscf")):
+            return None
+        cat_label = SHOM_CATSCF_LABELS.get(SHOM_CATSCF, "Capitainerie")
+        layer_tags = {
+            "shom:catscf": SHOM_CATSCF,
+            "shom:category": cat_label,
+            "shom:layer": "smcfac",
+        }
+    coords = _shom_latlon(feat)
+    if coords is None:
+        return None
+    lat, lon = coords
+    name = _chart_office_name(
         str(props.get("objnam") or "").strip()
         or str(props.get("nobjnm") or "").strip()
-        or str(props.get("inform") or "").strip()
-        or str(props.get("toponyme") or "").strip()
-        or cat_label
+        or str(props.get("toponyme") or "").strip(),
+        str(props.get("inform") or "").strip(),
+        cat_label,
     )
-    tags = {"shom:catscf": SHOM_CATSCF, "shom:category": cat_label}
+    tags = dict(layer_tags)
     for k, v in props.items():
         if v is None or isinstance(v, (dict, list)):
             continue
@@ -321,10 +513,9 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
             continue
         tags[f"shom:{k}"] = val[:120]
     phone, vhf = contact_from_tags(tags)
-    shom_id = shom_feature_id(feat, props, lat, lon)
+    shom_id = shom_feature_id(feat, props, lat, lon, layer=layer)
     return {
         "shom_id": shom_id,
-        "osm_id": None,
         "name": name[:120],
         "lat": lat,
         "lon": lon,
@@ -337,18 +528,17 @@ def capitainerie_from_shom(feat: dict) -> dict | None:
     }
 
 
-def nearest_osm(lat: float, lon: float, osm_pts: list[dict], radius_km: float = SHOM_MERGE_KM):
-    best = None
-    best_d = radius_km
-    for doc in osm_pts:
-        try:
-            d = haversine_km(lat, lon, float(doc["lat"]), float(doc["lon"]))
-        except (TypeError, ValueError, KeyError):
-            continue
-        if d <= best_d:
-            best_d = d
-            best = doc
-    return best
+def _better_name(current: str | None, incoming: str | None) -> str | None:
+    incoming = (incoming or "").strip()
+    if not incoming:
+        return None
+    cur = (current or "").strip()
+    if not cur or cur.lower() in GENERIC_OFFICE_NAMES:
+        if incoming.lower() not in GENERIC_OFFICE_NAMES:
+            return incoming
+        if not cur:
+            return incoming
+    return None
 
 
 def slim_feature(doc: dict) -> dict:
@@ -366,6 +556,7 @@ def slim_feature(doc: dict) -> dict:
             "name": name,
             "osm_id": doc.get("osm_id"),
             "shom_id": doc.get("shom_id"),
+            "noaa_id": doc.get("noaa_id"),
             "source": doc.get("source") or OSM_SOURCE,
             "sources": sources,
             "website": website,
@@ -386,7 +577,7 @@ def to_slim_geojson(docs: Iterable[dict]) -> dict:
         ],
         "attribution": (
             "© OpenStreetMap contributors (ODbL) · SHOM INFORMATIONS_PORTUAIRES "
-            "(Licence Ouverte Etalab)"
+            "(Licence Ouverte Etalab) · NOAA ENC Direct to GIS (not for navigation)"
         ),
     }
 
@@ -401,11 +592,41 @@ def _merge_sources(*groups: Iterable[str] | None) -> list[str]:
 
 
 def _source_label(sources: list[str]) -> str:
-    if OSM_SOURCE in sources and SHOM_SOURCE in sources:
-        return MERGED_SOURCE
-    if SHOM_SOURCE in sources and OSM_SOURCE not in sources:
-        return SHOM_SOURCE
-    return OSM_SOURCE
+    has_osm = OSM_SOURCE in sources
+    has_shom = SHOM_SOURCE in sources
+    has_noaa = NOAA_SOURCE in sources
+    parts: list[str] = []
+    if has_osm:
+        parts.append("osm" if (has_shom or has_noaa) else OSM_SOURCE)
+    if has_shom:
+        parts.append(SHOM_SOURCE)
+    if has_noaa:
+        parts.append(NOAA_SOURCE)
+    if not parts:
+        return OSM_SOURCE
+    if parts == [OSM_SOURCE]:
+        return OSM_SOURCE
+    return "+".join(parts)
+
+
+def nearest_office(
+    lat: float, lon: float, pts: list[dict], radius_km: float = SHOM_MERGE_KM,
+):
+    best = None
+    best_d = radius_km
+    for doc in pts:
+        try:
+            d = haversine_km(lat, lon, float(doc["lat"]), float(doc["lon"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if d <= best_d:
+            best_d = d
+            best = doc
+    return best
+
+
+def nearest_osm(lat: float, lon: float, osm_pts: list[dict], radius_km: float = SHOM_MERGE_KM):
+    return nearest_office(lat, lon, osm_pts, radius_km=radius_km)
 
 
 async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
@@ -457,14 +678,15 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
         tags.update(cand.get("tags") or {})
         patch: dict[str, Any] = {
             "shom_id": cand["shom_id"],
-            "source": MERGED_SOURCE,
+            "source": _source_label(sources),
             "sources": sources,
             "tags": tags,
             "fetched_at": now_iso,
             "schema": SCHEMA,
         }
-        if cand.get("name") and not (hit.get("name") or "").strip():
-            patch["name"] = cand["name"]
+        better = _better_name(hit.get("name"), cand.get("name"))
+        if better:
+            patch["name"] = better
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
         if not hit.get("telephone") and cand.get("telephone"):
             patch["telephone"] = cand["telephone"]
@@ -482,7 +704,6 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
         "source": SHOM_SOURCE,
         "sources": [SHOM_SOURCE],
         "shom_id": shom_id,
-        "osm_id": None,
         "tags": cand.get("tags") or {},
         "website": None,
         "fetched_at": now_iso,
@@ -493,13 +714,75 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
-        await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
+        await coll.update_one(
+            {"_id": existing["_id"]},
+            {"$set": patch, "$unset": {"osm_id": ""}},
+        )
         return "updated"
     patch["_id"] = shom_id
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
     await coll.insert_one(patch)
+    return "inserted"
+
+
+async def upsert_noaa(coll, cand: dict, now_iso: str, pts: list[dict]) -> str:
+    """Fusionne sur un bureau existant à ≤ 250 m, sinon orphelin NOAA."""
+    hit = nearest_office(cand["lat"], cand["lon"], pts, radius_km=NOAA_MERGE_KM)
+    if hit:
+        sources = _merge_sources(hit.get("sources"), [NOAA_SOURCE])
+        tags = dict(hit.get("tags") or {})
+        tags.update(cand.get("tags") or {})
+        patch: dict[str, Any] = {
+            "noaa_id": cand["noaa_id"],
+            "source": _source_label(sources),
+            "sources": sources,
+            "tags": tags,
+            "fetched_at": now_iso,
+            "schema": SCHEMA,
+        }
+        better = _better_name(hit.get("name"), cand.get("name"))
+        if better:
+            patch["name"] = better
+        fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+        if not hit.get("telephone") and cand.get("telephone"):
+            patch["telephone"] = cand["telephone"]
+        if not hit.get("canal_vhf") and cand.get("canal_vhf"):
+            patch["canal_vhf"] = cand["canal_vhf"]
+        await coll.update_one({"_id": hit["_id"]}, {"$set": patch})
+        hit.update(patch)
+        return "merged"
+    noaa_id = cand["noaa_id"]
+    existing = await coll.find_one({"_id": noaa_id}) or await coll.find_one({"noaa_id": noaa_id})
+    patch = {
+        "name": cand.get("name") or "",
+        "lat": cand["lat"],
+        "lon": cand["lon"],
+        "source": NOAA_SOURCE,
+        "sources": [NOAA_SOURCE],
+        "noaa_id": noaa_id,
+        "tags": cand.get("tags") or {},
+        "website": None,
+        "fetched_at": now_iso,
+        "schema": SCHEMA,
+    }
+    if existing:
+        for field in PRESERVE_ON_UPDATE:
+            if existing.get(field) not in (None, "", [], {}):
+                patch[field] = existing[field]
+        fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+        await coll.update_one(
+            {"_id": existing["_id"]},
+            {"$set": patch, "$unset": {"osm_id": ""}},
+        )
+        return "updated"
+    patch["_id"] = noaa_id
+    patch["enriched"] = False
+    patch["stale"] = False
+    fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+    await coll.insert_one(patch)
+    pts.append(patch)
     return "inserted"
 
 
@@ -531,8 +814,14 @@ async def reset_cursor(cursor_coll) -> None:
 
 async def ensure_indexes(coll) -> None:
     try:
+        # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
+        if hasattr(coll, "update_many"):
+            await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
+            await coll.update_many({"shom_id": None}, {"$unset": {"shom_id": ""}})
+            await coll.update_many({"noaa_id": None}, {"$unset": {"noaa_id": ""}})
         await coll.create_index("osm_id", unique=True, sparse=True)
         await coll.create_index("shom_id", unique=True, sparse=True)
+        await coll.create_index("noaa_id", unique=True, sparse=True)
         await coll.create_index("name")
         await coll.create_index("source")
     except Exception:
@@ -578,67 +867,234 @@ async def fetch_tile_harbour_masters(
         raise
 
 
+async def shom_fetch_harbour_offices(
+    client: httpx.AsyncClient,
+    bbox: tuple[float, float, float, float],
+    logger=None,
+) -> list[dict]:
+    """WFS SHOM : BUISGL FUNCTN=2 (bureaux) + SMCFAC CATSCF=6. Filtre local (CQL en 403)."""
+    s, w, n, e = bbox
+    bbox_str = f"{w:.6f},{s:.6f},{e:.6f},{n:.6f},EPSG:4326"
+    out: list[dict] = []
+    for typename, layer in SHOM_LAYERS:
+        start = 0
+        page = 1000
+        got = 0
+        while True:
+            params = {
+                "service": "WFS",
+                "version": "2.0.0",
+                "request": "GetFeature",
+                "typenames": typename,
+                "bbox": bbox_str,
+                "outputFormat": "application/json",
+                "count": str(page),
+                "startIndex": str(start),
+            }
+            try:
+                r = await client.get(
+                    SHOM_WFS,
+                    params=params,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=60,
+                )
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                if logger:
+                    logger(f"SHOM {layer} {bbox_str}: {type(exc).__name__}: {str(exc)[:80]}")
+                break
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code != 200 or "json" not in ct:
+                if logger:
+                    logger(f"SHOM {typename}: HTTP {r.status_code}")
+                break
+            fc = r.json()
+            feats = fc.get("features") or []
+            for feat in feats:
+                cand = capitainerie_from_shom(feat, layer=layer)
+                if cand:
+                    out.append(cand)
+                    got += 1
+            if len(feats) < page:
+                break
+            start += page
+            if start > 20000:
+                break
+        if logger:
+            logger(f"SHOM {layer} {bbox_str}: {got} capitaineries")
+    return out
+
+
 async def shom_fetch_catscf6(
     client: httpx.AsyncClient,
     bbox: tuple[float, float, float, float],
     logger=None,
 ) -> list[dict]:
-    """WFS SHOM smcfac_point filtré CATSCF=6. CQL d'abord, sinon filtre local."""
-    s, w, n, e = bbox
-    bbox_str = f"{w:.6f},{s:.6f},{e:.6f},{n:.6f},EPSG:4326"
-    typename = "INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point"
+    return await shom_fetch_harbour_offices(client, bbox, logger=logger)
+
+
+def _geojson_latlon(geom: dict | None) -> tuple[float, float] | None:
+    geom = geom or {}
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    try:
+        if gtype == "Point" and coords and len(coords) >= 2:
+            return float(coords[1]), float(coords[0])
+        ring = None
+        if gtype == "Polygon" and coords:
+            ring = coords[0] or []
+        elif gtype == "MultiPolygon" and coords:
+            ring = (coords[0] or [[]])[0] or []
+        if ring:
+            lon = sum(float(p[0]) for p in ring) / len(ring)
+            lat = sum(float(p[1]) for p in ring) / len(ring)
+            return lat, lon
+        if "x" in geom and "y" in geom:
+            return float(geom["y"]), float(geom["x"])
+        rings = geom.get("rings")
+        if rings and rings[0]:
+            lon = sum(float(p[0]) for p in rings[0]) / len(rings[0])
+            lat = sum(float(p[1]) for p in rings[0]) / len(rings[0])
+            return lat, lon
+    except (TypeError, ValueError, IndexError, ZeroDivisionError):
+        return None
+    return None
+
+
+def noaa_feature_id(feat: dict, props: dict, service: str, layer_id: int, kind: str) -> str:
+    raw = (
+        props.get("OBJECTID") or props.get("objectid") or props.get("FID")
+        or props.get("fid") or feat.get("id")
+    )
+    if raw in (None, "", "null"):
+        for key, val in props.items():
+            ku = str(key).upper()
+            if ku.endswith(".FID") or ku.endswith("OBJECTID"):
+                raw = val
+                break
+    if raw not in (None, "", "null"):
+        return f"noaa:{service}:{kind}:{layer_id}:{raw}"
+    coords = _geojson_latlon(feat.get("geometry") or {})
+    if coords:
+        lat, lon = coords
+        return f"noaa:{service}:{kind}:{lat:.5f}:{lon:.5f}"
+    return f"noaa:{service}:{kind}:{layer_id}:unknown"
+
+
+_OFFICE_NAME_RE = re.compile(
+    r"harbour\s*master|harbor\s*master|harbormaster|capitainerie|"
+    r"coast\s*guard|\bccg\b|harbour\s*office|harbor\s*office",
+    re.I,
+)
+
+
+def _chart_office_name(objnam: str | None, inform: str | None, fallback: str) -> str:
+    objnam = (objnam or "").strip()
+    if objnam:
+        return objnam[:120]
+    inform = (inform or "").strip()
+    if inform and _OFFICE_NAME_RE.search(inform):
+        return inform[:120]
+    return fallback
+
+
+def capitainerie_from_noaa(
+    feat: dict, *, service: str, layer_id: int, kind: str = "point",
+) -> dict | None:
+    """Bureau NOAA ENC : BUISGL FUNCTN=2 (point ou centroïde d'aire)."""
+    props = feat.get("properties") or feat.get("attributes") or {}
+    if not is_buisgl_harbour_master(props.get("FUNCTN") or props.get("functn")):
+        return None
+    coords = _geojson_latlon(feat.get("geometry") or {})
+    if coords is None:
+        return None
+    lat, lon = coords
+    name = _chart_office_name(
+        props.get("OBJNAM") or props.get("objnam"),
+        props.get("INFORM") or props.get("inform"),
+        "Harbour master's office",
+    )
+    tags = {
+        "noaa:functn": str(props.get("FUNCTN") or props.get("functn") or "").strip(),
+        "noaa:layer": f"{service}:{layer_id}:{kind}",
+        "noaa:service": service,
+    }
+    for k, v in props.items():
+        if v is None or isinstance(v, (dict, list)):
+            continue
+        val = str(v).strip()
+        if not val or val in ("null", "None"):
+            continue
+        tags[f"noaa:{k.lower()}"] = val[:120]
+    phone, vhf = contact_from_tags(tags)
+    noaa_id = noaa_feature_id(feat, props, service, layer_id, kind)
+    return {
+        "noaa_id": noaa_id,
+        "name": name[:120],
+        "lat": lat,
+        "lon": lon,
+        "source": NOAA_SOURCE,
+        "sources": [NOAA_SOURCE],
+        "tags": tags,
+        "website": None,
+        "telephone": phone,
+        "canal_vhf": vhf,
+    }
+
+
+async def noaa_fetch_harbour_offices(
+    client: httpx.AsyncClient,
+    logger=None,
+    layers: tuple[tuple[str, int, str], ...] | None = None,
+) -> list[dict]:
+    """ENC Direct : FUNCTN=2 sur points + aires, plusieurs bandes d'échelle."""
     out: list[dict] = []
-    start = 0
-    page = 1000
-    used_cql = True
-    while True:
-        params = {
-            "service": "WFS",
-            "version": "2.0.0",
-            "request": "GetFeature",
-            "typenames": typename,
-            "bbox": bbox_str,
-            "outputFormat": "application/json",
-            "count": str(page),
-            "startIndex": str(start),
-        }
-        if used_cql:
-            params["CQL_FILTER"] = "catscf='6'"
-        try:
-            r = await client.get(
-                SHOM_WFS,
-                params=params,
-                headers={"User-Agent": USER_AGENT},
-                timeout=60,
-            )
-        except (httpx.HTTPError, httpx.TimeoutException) as exc:
-            if logger:
-                logger(f"SHOM {bbox_str}: {type(exc).__name__}: {str(exc)[:80]}")
-            break
-        ct = (r.headers.get("content-type") or "").lower()
-        if r.status_code != 200 or "json" not in ct:
-            if used_cql:
-                used_cql = False
-                start = 0
+    for service, layer_id, kind in (layers or NOAA_ENC_LAYERS):
+        url = f"{NOAA_MAPSERVER}/{service}/MapServer/{layer_id}/query"
+        start = 0
+        page = 1000
+        got = 0
+        while True:
+            params = {
+                "where": NOAA_FUNCTN_WHERE,
+                "outFields": "*",
+                "returnGeometry": "true",
+                "outSR": "4326",
+                "resultOffset": str(start),
+                "resultRecordCount": str(page),
+                "f": "geojson",
+            }
+            try:
+                r = await client.get(
+                    url,
+                    params=params,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=60,
+                )
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
                 if logger:
-                    logger(f"SHOM CQL refusé ({r.status_code}) — repli filtre local")
-                continue
-            if logger:
-                logger(f"SHOM {typename}: HTTP {r.status_code}")
-            break
-        fc = r.json()
-        feats = fc.get("features") or []
-        for feat in feats:
-            cand = capitainerie_from_shom(feat)
-            if cand:
-                out.append(cand)
-        if len(feats) < page:
-            break
-        start += page
-        if start > 20000:
-            break
-    if logger:
-        logger(f"SHOM CATSCF=6 {bbox_str}: {len(out)} capitaineries")
+                    logger(f"NOAA {service}/{layer_id}: {type(exc).__name__}: {str(exc)[:80]}")
+                break
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code != 200 or "json" not in ct:
+                if logger:
+                    logger(f"NOAA {service}/{layer_id}: HTTP {r.status_code}")
+                break
+            fc = r.json() if r.content else {}
+            feats = fc.get("features") or []
+            for feat in feats:
+                cand = capitainerie_from_noaa(
+                    feat, service=service, layer_id=layer_id, kind=kind,
+                )
+                if cand:
+                    out.append(cand)
+                    got += 1
+            if len(feats) < page:
+                break
+            start += page
+            if start > 20000:
+                break
+        if logger:
+            logger(f"NOAA {service}/{kind}/{layer_id}: {got} capitaineries")
     return out
 
 
@@ -702,6 +1158,56 @@ async def overlay_shom(
     }
 
 
+async def overlay_noaa(
+    coll,
+    *,
+    client: httpx.AsyncClient,
+    logger=None,
+    fetch_noaa: FetchNoaa | None = None,
+) -> dict:
+    pts = [
+        d for d in await _all_docs(coll)
+        if d.get("lat") is not None and d.get("lon") is not None
+    ]
+    if logger:
+        logger(
+            f"Overlay NOAA ENC : {len(pts)} bureaux en base pour fusion "
+            f"≤ {int(NOAA_MERGE_KM * 1000)} m"
+        )
+    inserted = merged = updated = 0
+    seen: set[str] = set()
+    try:
+        if fetch_noaa:
+            cands = await fetch_noaa(client)
+        else:
+            cands = await noaa_fetch_harbour_offices(client, logger=logger)
+    except Exception as exc:
+        if logger:
+            logger(f"NOAA overlay: {type(exc).__name__}: {str(exc)[:80]}")
+        cands = []
+    fetched = len(cands)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for cand in cands:
+        nid = cand.get("noaa_id")
+        if nid in seen:
+            continue
+        seen.add(nid)
+        result = await upsert_noaa(coll, cand, now_iso, pts)
+        if result == "inserted":
+            inserted += 1
+        elif result == "merged":
+            merged += 1
+        else:
+            updated += 1
+    return {
+        "fetched": fetched,
+        "inserted": inserted,
+        "merged": merged,
+        "updated": updated,
+        "unique": len(seen),
+    }
+
+
 async def build_world_capitaineries(
     *,
     coll,
@@ -713,10 +1219,12 @@ async def build_world_capitaineries(
     throttle_s: float | None = None,
     fetch_tile: FetchTile | None = None,
     fetch_shom: FetchShom | None = None,
+    fetch_noaa: FetchNoaa | None = None,
     shom_bboxes: tuple[tuple[float, float, float, float], ...] | None = None,
     skip_shom: bool = False,
+    skip_noaa: bool = False,
 ) -> dict:
-    """Dump OSM harbour_master (tuiles) puis overlay SHOM CATSCF=6."""
+    """Dump OSM harbour_master (tuiles), overlay SHOM, overlay NOAA ENC."""
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
@@ -736,7 +1244,7 @@ async def build_world_capitaineries(
             state.log("Reprise désactivée — curseur tuiles remis à zéro (pas de purge)")
 
         done = set(await load_done_tiles(cursor_coll)) if resume else set()
-        state.total = len(grid) + (0 if skip_shom else 1)
+        state.total = len(grid) + (0 if skip_shom else 1) + (0 if skip_noaa else 1)
         state.progress = 0
         state.log(
             f"Dump mondial harbour_master : {len(grid)} tuiles, "
@@ -802,8 +1310,11 @@ async def build_world_capitaineries(
             shom_summary = {
                 "fetched": 0, "inserted": 0, "merged": 0, "updated": 0, "unique": 0,
             }
+            noaa_summary = {
+                "fetched": 0, "inserted": 0, "merged": 0, "updated": 0, "unique": 0,
+            }
             if not skip_shom and not state.cancel:
-                state.log("Overlay SHOM CATSCF=6 (capitainerie)")
+                state.log("Overlay SHOM BUISGL FUNCTN=2 + SMCFAC CATSCF=6")
                 shom_summary = await overlay_shom(
                     coll, client=http, logger=state.log,
                     fetch_shom=fetch_shom, bboxes=shom_bboxes,
@@ -812,6 +1323,16 @@ async def build_world_capitaineries(
                 state.log(
                     f"SHOM : {shom_summary['unique']} uniques, "
                     f"+{shom_summary['inserted']} / fusion {shom_summary['merged']}"
+                )
+            if not skip_noaa and not state.cancel:
+                state.log("Overlay NOAA ENC Direct BUISGL FUNCTN=2")
+                noaa_summary = await overlay_noaa(
+                    coll, client=http, logger=state.log, fetch_noaa=fetch_noaa,
+                )
+                state.progress += 1
+                state.log(
+                    f"NOAA : {noaa_summary['unique']} uniques, "
+                    f"+{noaa_summary['inserted']} / fusion {noaa_summary['merged']}"
                 )
         finally:
             if own_client:
@@ -830,6 +1351,7 @@ async def build_world_capitaineries(
             "with_phone_tag": with_phone,
             "with_vhf_tag": with_vhf,
             "shom": shom_summary,
+            "noaa": noaa_summary,
             "resume": resume,
         }
         state.summary = summary

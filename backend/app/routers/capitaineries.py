@@ -1,5 +1,5 @@
-"""app.routers.capitaineries — dump OSM harbour_master + overlay SHOM CATSCF=6,
-enrichissement téléphone / VHF."""
+"""app.routers.capitaineries — dump OSM harbour_master + overlays SHOM / NOAA
+(BUISGL FUNCTN=2), enrichissement téléphone / VHF."""
 import asyncio
 import os
 import time
@@ -62,10 +62,11 @@ async def import_capitaineries_geojson(fc: dict = Body(...)):
             name = str(p.get("name") or "").strip()
             osm_id = p.get("osm_id")
             shom_id = p.get("shom_id")
-            if not name and not osm_id and not shom_id:
+            noaa_id = p.get("noaa_id")
+            if not name and not osm_id and not shom_id and not noaa_id:
                 invalid += 1
                 continue
-            mid = str(p.get("id") or osm_id or shom_id or "").strip() or str(uuid.uuid4())
+            mid = str(p.get("id") or osm_id or shom_id or noaa_id or "").strip() or str(uuid.uuid4())
             website = p.get("website") or official_website({"tags": p.get("tags") or {}})
             doc = {
                 "_id": mid,
@@ -77,6 +78,7 @@ async def import_capitaineries_geojson(fc: dict = Body(...)):
                 "tags": p.get("tags") or {},
                 "osm_id": osm_id,
                 "shom_id": shom_id,
+                "noaa_id": noaa_id,
                 "website": website,
                 "website_status": p.get("website_status") or ("unchecked" if website else None),
                 "website_source": p.get("website_source") or ("osm_tag" if website else None),
@@ -188,6 +190,9 @@ async def capitaineries_count():
             "openstreetmap": await db.capitaineries.count_documents({"source": "openstreetmap"}),
             "shom": await db.capitaineries.count_documents({"source": "shom"}),
             "osm+shom": await db.capitaineries.count_documents({"source": "osm+shom"}),
+            "noaa": await db.capitaineries.count_documents({"source": "noaa"}),
+            "osm+noaa": await db.capitaineries.count_documents({"source": "osm+noaa"}),
+            "osm+shom+noaa": await db.capitaineries.count_documents({"source": "osm+shom+noaa"}),
         },
         "enriched": await db.capitaineries.count_documents({"enriched": True}),
     }
@@ -196,12 +201,15 @@ async def capitaineries_count():
 class EnrichBatchBody(BaseModel):
     limit: int = 10
     include_enriched: bool = False
+    skip_tinyfish: bool = False
 
 
 _ENGINE_LABELS = {
-    "tinyfish": "TinyFish",
+    "tinyfish": "TinyFish Agent",
+    "fetch": "TinyFish Fetch",
+    "nvidia-muse": "NVIDIA Muse",
     "openrouter": "OpenRouter",
-    "tags": "OSM/SHOM tags",
+    "tags": "OSM/SHOM/NOAA tags",
 }
 
 
@@ -229,6 +237,7 @@ async def _run_enrich_one(doc: dict, min_credit_usd: float, log_fn, skip_tinyfis
             min_credit_usd=min_credit_usd,
             logger=log_fn,
             skip_tinyfish=skip_tf,
+            settings=settings,
         )
     except Exception as e:
         await _telemetry(doc, "FAILED", (time.time() - t0) * 1000, "Enrichment", 0,
@@ -280,7 +289,7 @@ async def enrich_one(item_id: str):
             task["result"] = {
                 k: fresh.get(k) for k in (
                     "_id", "name", "lat", "lon", "source", "osm_id", "shom_id",
-                    "enriched", "enrichment_source", "enriched_at", *ENRICH_FIELDS,
+                    "noaa_id", "enriched", "enrichment_source", "enriched_at", *ENRICH_FIELDS,
                 )
             }
             task["state"] = "done"
@@ -359,6 +368,7 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
                         result = await _run_enrich_one(
                             m, min_credit,
                             lambda s: ENRICH_BATCH_STATE.log(f"  {s}"),
+                            skip_tinyfish=body.skip_tinyfish,
                         )
                         ENRICH_BATCH_STATE.results.append({
                             "id": m["_id"], "name": m.get("name"),
