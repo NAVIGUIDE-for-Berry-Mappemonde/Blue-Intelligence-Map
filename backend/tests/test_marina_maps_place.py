@@ -226,6 +226,7 @@ def test_slim_feature_flags_place():
 class _Cursor:
     def __init__(self, docs):
         self.docs = list(docs)
+        self._iter = None
 
     def sort(self, *a, **k):
         return self
@@ -234,19 +235,41 @@ class _Cursor:
         self.docs = self.docs[:n]
         return self
 
+    def batch_size(self, n):
+        return self
+
+    def __aiter__(self):
+        self._iter = iter(self.docs)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
     async def to_list(self, n):
-        return self.docs[:n]
+        raise AssertionError("to_list must not load the whole marina cursor")
 
 
 class _Coll:
     def __init__(self, docs):
         self.docs = list(docs)
 
-    def find(self, q):
+    def find(self, q, projection=None):
+        last_id = None
+        qq = q or {}
+        if "$and" in qq:
+            for part in qq["$and"]:
+                raw = part.get("_id") if isinstance(part, dict) else None
+                if isinstance(raw, dict) and "$gt" in raw:
+                    last_id = raw["$gt"]
         out = []
         for d in self.docs:
             name = d.get("name")
             if name in ("", None):
+                continue
+            if last_id is not None and str(d.get("_id")) <= str(last_id):
                 continue
             if d.get("maps_place_status") not in (None,):
                 # force=False query uses $or missing/None
@@ -254,6 +277,9 @@ class _Coll:
                     continue
             out.append(d)
         return _Cursor(out)
+
+    async def count_documents(self, q, **kwargs):
+        return len(self.find(q).docs)
 
     async def update_one(self, q, upd):
         for d in self.docs:
@@ -302,6 +328,8 @@ def test_resolve_batched_fetch_skips_search():
     assert summary["found"] == 2
     assert summary["osm_tag"] == 1
     assert summary["none"] == 1
+    assert any("sans to_list" in line for line in state.logs)
+    assert any("Lot Fetch 1" in line for line in state.logs)
     by_id = {d["_id"]: d for d in coll.docs}
     assert by_id["way/741789648"]["maps_place_source"] == "tinyfish_fetch"
     assert by_id["way/9"]["maps_place_source"] == "osm_tag"
@@ -339,3 +367,28 @@ def test_resolve_batch_signals_without_filtering():
     assert "maps_place_status" not in by_id["node/1"] or by_id["node/1"].get("maps_place_status") in (None, "skipped_unnamed")
     # On n'a pas filtré : les 3 docs restent.
     assert len(coll.docs) == 3
+
+
+def test_resolve_pages_across_cursor_batches():
+    from app.core.tasks import TaskState
+
+    n = mp.CURSOR_BATCH + 3
+    docs = [
+        {"_id": f"way/{i:05d}", "name": f"Marina {i:05d}", "lat": 46.0, "lon": -1.0}
+        for i in range(n)
+    ]
+    coll = _Coll(docs)
+    calls = {"n": 0}
+
+    async def fetch_many(marinas):
+        calls["n"] += 1
+        return {m["_id"]: {"title": "Google Maps", "text": "can't find", "links": []} for m in marinas}
+
+    state = TaskState()
+    summary = asyncio.run(mp.resolve_maps_places(
+        marinas_coll=coll, state=state, skip_search=True, fetch_many_fn=fetch_many,
+    ))
+    assert summary["selected"] == n
+    assert summary["none"] == n
+    assert calls["n"] == (n + 9) // 10
+    assert all(d.get("maps_place_status") == "none" for d in coll.docs)
