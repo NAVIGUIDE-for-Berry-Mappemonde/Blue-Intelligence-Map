@@ -26,6 +26,7 @@ from app.core.geo import haversine_km
 OVERLAY_RADIUS_KM = 0.25
 _KM_PER_DEG = 111.32
 _BBOX_SLACK = 1.05
+_EPS_KM = 1e-6  # 1 mm : Haversine et destination_point ne tombent pas au bit près
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ def find_building(
         if not _in_bbox(lat_f, lon_f, plat, plon, radius):
             continue
         dist = haversine_km(lat_f, lon_f, plat, plon)
-        if dist > radius:
+        if dist > radius + _EPS_KM:
             continue
         if best is None or dist < best.distance_km:
             best = OverlayHit(doc=doc, distance_km=dist)

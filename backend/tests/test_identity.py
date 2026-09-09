@@ -93,10 +93,12 @@ class TestFindBuilding:
     def test_inclusive_250m_exclusive_beyond(self):
         osm = {**ORIGIN, "osm_id": "node/1"}
         on = _office("SHOM", 0.25)
-        over = _office("SHOM", 0.26)
+        under = _office("SHOM", 0.249)
+        over = _office("SHOM", 0.251)
         hit = identity.find_building(on["lat"], on["lon"], [osm])
         assert hit is not None
-        assert hit.distance_km == pytest.approx(0.25, abs=0.005)
+        assert hit.distance_km == pytest.approx(0.25, abs=0.001)
+        assert identity.find_building(under["lat"], under["lon"], [osm]) is not None
         assert identity.find_building(over["lat"], over["lon"], [osm]) is None
 
     def test_closest_wins_not_last(self):
