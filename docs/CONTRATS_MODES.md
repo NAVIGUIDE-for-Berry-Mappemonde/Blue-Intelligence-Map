@@ -2,159 +2,189 @@
 
 **Ce que je cherche à faire.** Transformer le web maritime vivant en une base géospatiale fiable, posée sur une carte mondiale : sites d’action accessibles en bateau, ports d’entrée officiels, marinas, capitaineries, aires protégées — sans confondre un siège, une page institutionnelle ou un port commercial avec ce dont un plaisancier a besoin.
 
----
+Les cinq modes ont été câblés séparément. Des jobs qui posent **la même question** n’utilisent pas les mêmes outils. Ce document recadre les pipelines sur **7 familles** (pas 5 : « qualification » ne doit pas devenir un fourre-tout), puis nomme les jumeaux à faire converger.
 
-## Projets
+## Ce que chaque mode cherche
 
-Trouver les projets de conservation, restauration ou protection marine financés par des fondations, extraire le lieu d’action (un GPS par page, pas le siège), n’en garder que ce qui est assez précis et accessible en bateau, les scorer (S_ocean) et les enregistrer dans un run isolé — sans vider ni modifier la carte live.
-
-| Étape | Outils |
+| Mode | Contrat |
 | --- | --- |
-| Ouvrir un run isolé, sans vider ni écrire la carte live | MongoDB (`project_runs`, `project_run_projects`, `project_run_events`) ; `clear_db` refusé |
-| Partir des listings financeurs connus | MasterSeeds (21 portails ; 3 en mode test, tous en full) |
-| Réutiliser ce qui a déjà été vu | TTL `discovery_state` (7 j.) ; cache `deeplink_pages` ; en full, les pages cachées absentes de `projects` sont remises en file |
-| Découvrir les URL de projets sur chaque listing | Crawler HTML (httpx, BeautifulSoup) ; si 0 URL et clé présente : TinyFish Agent |
-| Si l’URL est déjà sur la carte live, la tracer sans recrawler | Lecture seule de `projects` |
-| Extraire le texte des pages et des PDF | httpx ; trafilatura ∥ Readability ; PyMuPDF (+ Tesseract si scan) ; si trop court ou challenge souple : Playwright / Chromium ; puis miroir Jina ∥ TinyFish Fetch, sinon Wayback |
-| Décider si c’est bien un projet marin | Classifieur local TF-IDF + régression logistique ; sinon NVIDIA NIM (Pro → gpt-oss → Muse) → OpenRouter → Claude (si budget) ; sinon heuristique mots-clés |
-| Isoler les passages utiles des pages trop longues | RAG local au-delà de 6 000 caractères (sentence-transformers, sinon TF-IDF) |
-| Extraire le nom, le lieu, S_ocean, la catégorie et les partenaires | NVIDIA NIM → OpenRouter → Claude ; sinon heuristique ; au plus 3 partenaires |
-| Trouver le GPS du lieu d’action | Coordonnées déjà dans la page ; Nominatim puis GeoNames ; géocodage LLM (NIM / OpenRouter / Claude) ; Nominatim / GeoNames sur le titre |
-| Ne retenir que ce qui est accessible en bateau | `site_publishable` + masque terrestre : mer, ou havre ≤ 15 km ; pas de snap océan |
-| Dédupliquer, dans le run puis contre la v1 | Même URL ; Haversine < 500 m et similarité de noms ≥ 60 %, ou similarité ≥ 90 % ; lecture seule de `projects` |
-| Suivre l’argent vers les organisations partenaires | Même découverte (crawler, puis Agent si vide), plafond 5 partenaires |
-| S’arrêter quand ça ne trouve plus rien de nouveau | Seuil de saturation (défaut 50 extractions d’affilée sans nouveau site unique) |
+| **Projets** | Trouver les projets de conservation marine financés par des fondations, extraire le **lieu d’action** (un GPS par page, pas le siège), n’en garder que ce qui est accessible en bateau, scorer (S_ocean), écrire un run isolé — sans vider la carte live. |
+| **Ports d’entrée** | Pour **chaque polygone VLIZ** (`mrgid`, jamais un pays), retrouver la page ou le PDF d’État qui liste les ports d’entrée plaisance, et n’écrire un GPS que s’il tombe dans *ce* polygone. Top-down : polygone → liste. Bottom-up : lieu déjà connu → preuve, et catalogue entier si la page en est un. Noonsite, OSM et le WPI sont des signaux / contre-liste, pas une preuve. Publication carte = revue / Gold. |
+| **Marinas** | Annuaire mondial `leisure=marina` (identité OSM stable), signal Google `/maps/place/` s’il existe vraiment, contacts et services **sans inventer**. Mouillages OSM à part, le long de la route. Runs isolés. |
+| **Capitaineries** | Recenser les **bureaux** (le bâtiment, pas le plan d’eau ni la marina), en tirer téléphone et VHF, sans jamais les rattacher aux marinas. |
+| **AMP** | Polygones ProtectedSeas sur une **façade** (pas le monde), et **deux URL distinctes** : gestionnaire (`manager_url`) vs visite / entrée / permis / mouillage (`visit_url`). La visite n’est jamais la homepage gestionnaire. |
+
+Légende des jobs web : **P** Projets swarm · **TD** PoE top-down · **BU** PoE bottom-up · **MM** Marinas Maps · **ME** Marinas enrich · **CE** Capitaineries enrich · **AV** AMP visit.
+
+Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’enchaînent pas les 7 familles. Ce n’est pas un trou : ce n’est pas le même objet.
 
 ---
 
-## Ports d’entrée
+## 1. Recherche — où est la page ?
 
-Pour chaque polygone VLIZ (`mrgid`, jamais un agrégat pays : l’hexagone et Mayotte sont deux fiches), retrouver la page ou le PDF d’État qui liste les ports d’entrée, et les noms de ces ports utilisables par un yacht étranger, puis n’écrire un GPS que s’il tombe dans *ce* polygone. Deux bras distincts alimentent la même fiche ZEE : le Top-Down part du polygone ; le Bottom-Up part d’un lieu déjà connu et, si la page ouverte est un catalogue, moissonne toute la liste. Noonsite, OSM et le WPI sont des signaux / contre-liste, pas une preuve. Un run écrit `poe_run_*` ; la publication carte passe par la revue / Gold.
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P | Découvrir les URL de projets sur chaque listing | Crawler httpx + BeautifulSoup sur un **MasterSeed déjà connu** ; TinyFish **Agent** si 0 URL |
+| TD | Chercher l’URL d’État qui porte la liste | SearXNG + Serper ; TinyFish Search selon variante ; OpenRouter `:online` en dernier |
+| BU | Chercher la page d’État de ce nom | TinyFish Search paginé (`tf_search_pages`) seulement |
+| MM | Ouvrir le lien Maps et ramasser `/place/` | TinyFish **Fetch** d’une URL Maps **déjà construite** ; Search sauté |
+| ME | Trouver un site s’il n’y a pas de tag OSM | DuckDuckGo HTML (pas TinyFish Search) |
+| CE | Trouver des pages de contact | TinyFish Search, puis DuckDuckGo HTML si vide |
+| AV | Chercher visite `site:` puis web ouvert | TinyFish Search seulement (pas DDG, pas SearXNG) |
 
-### Top-down (un polygone → la liste)
+## 2. Filtre de source — cette URL a-t-elle le droit d’être lue ?
 
-| Étape | Outils |
-| --- | --- |
-| Prendre **ce** polygone VLIZ (nom, ISO2, souverain, géométrie) | VLIZ Marine Regions WFS → MongoDB `eez_zones` |
-| Lister les domaines d’État autorisés | Whitelist ISO2 du polygone + du souverain + exceptions disque |
-| Chercher l’URL d’État qui porte la liste, avec le nom du polygone | **v1** : SearXNG (EN, puis localisé si vide) + Serper. **v2** : SearXNG EN ∥ local + Serper, sans TinyFish. **tinyfish** (défaut) : SearXNG ∥ TinyFish Search + Serper ; filet TinyFish `include_domains` ; 2ᵉ round « leçons » ; SearXNG `site:` PDF/pages. OpenRouter `:online` seulement si rien n’a été trouvé |
-| Écarter forums, OTA, dictionnaires ; garder les domaines d’État | Filtre SERP + classifieur ML + gatekeeper whitelist |
-| Télécharger et lire la page / le PDF | httpx → trafilatura ∥ Readability ; PDF PyMuPDF (+ Tesseract si scan) ; Playwright / Chromium si JS ; miroir Jina ∥ TinyFish Fetch (variante tinyfish seulement) puis Wayback |
-| Extraire les noms (et les lat/lon déjà écrits dans le texte) | Parseur catalogue d’abord (saute le LLM si la table suffit) ; sinon NVIDIA NIM en parallèle spaCy NER ; second lecteur NIM ; Claude Haiku en dernier ; RAG si texte long |
-| Coller chaque port dans **ce** polygone | Nominatim ∥ GeoNames ; si désaccord : NIM → OpenRouter → Claude. Point gardé seulement in-EEZ / bord terrestre ≤ 15 km / exception rivière ≤ 400 km |
-| Noter la confiance (signal, pas vérité) | Score 0–100 (source d’État, lecture, carte, listing Noonsite + OSM) |
-| Écrire l’étape, sans toucher la carte v1 | MongoDB `poe_run_ports` / `poe_run_zones` / `poe_run_events` |
-| Qualifier une ZEE **sans** port physique | Règles UNCLOS (île vide, revendication, régime conjoint, Antarctique, entrée via l’État souverain) — hors boucle d’extraction |
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P | Écarter contact / dons / news du listing | Liste noire de chemins **dans le crawler**, pas `serp_filter` |
+| TD | Domaines d’État + jeter forums / OTA | Whitelist ISO2 + `serp_filter` + classifieur ML SERP |
+| BU | Whitelist d’abord, puis sans si 0 hit | `include_domains` dans Search ; `url_allowed` ; **pas** `serp_filter` |
+| MM | Une fiche marina proche, pas un resto | Nom / slug + 8 km |
+| CE | Ignorer réseaux / OTA | `SEARCH_EXCLUDE_SNIPS` maison + `_url_ok` ; **pas** `serp_filter` |
+| AV | Homepage interdite ; hits Search jugés | `serp_filter` **puis** score local **puis** juge NIM JSON |
 
-### Bottom-up (un lieu déjà connu → la preuve, et parfois la liste)
+## 3. Lecture — quel texte a-t-on ?
 
-| Étape | Outils |
-| --- | --- |
-| (Optionnel) Rafraîchir l’inventaire OSM | Overpass → cache `osm_port_seeds` ; Taginfo |
-| Unionner les lieux déjà connus | v1 `poe_ports` ∪ runs ∪ OSM ∪ listing Noonsite. WPI = contre-liste commerce, jamais une preuve ni une nouvelle graine |
-| Trier ce qu’il reste à faire | `confirmed` / `probable` / `unverified` / `name_only` |
-| Géocoder les noms sans point | Nominatim ∥ GeoNames ; même filtre polygone. Pas de SearXNG / TinyFish ici |
-| Chercher la page d’État **de ce nom** | TinyFish Search (whitelist d’abord). Pas SearXNG, pas Serper, pas Playwright, pas `:online` |
-| Télécharger les hits whitelistés | TinyFish Fetch ; si `bot_blocked` : TinyFish Agent sur une URL officielle déjà vue |
-| Si la page est un catalogue : prendre **toute** la liste | Parseur catalogue → `sources_bu` ; les noms déjà sur la liste : juge sauté |
-| Juger seulement le **résidu** | NVIDIA NIM ; sinon OpenRouter ; Claude Haiku → Sonnet si listing ou inconclusive. `kind=cargo` → rejeté. N’écrit jamais `poe_ports` |
-| Relire les URLs déjà payées, sans nouvelle recherche | TinyFish Fetch seulement, puis juge du résidu |
-| (À part) Recoller OSM sur la carte v1, sans bouger nom/GPS | Overpass autour du point → `osm_confidence` |
-| (À part) File de revue vs listing Noonsite | Listing control (le listing n’est pas Gold) |
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P + TD | Extraire pages et PDF | **`extract_cascade`** : httpx, trafilatura ∥ Readability, PyMuPDF / Tesseract, Playwright, Jina ∥ TinyFish Fetch, Wayback |
+| BU | Télécharger les hits whitelistés | TinyFish Fetch ; Agent si `bot_blocked`. **Pas** de cascade, **pas** Playwright |
+| ME | Lire le site officiel | `fetch_readable` (httpx + Readability) seulement |
+| CE | Télécharger les pages contact | TinyFish Fetch, **puis** `fetch_readable` si vide |
+| MM | Lire la page Maps rendue | TinyFish Fetch (besoin du JS Maps) |
+| AV | Lire le `manager_url` | TinyFish Fetch ; scoring **sans** LLM |
 
----
+P et TD partagent déjà `extract_cascade`. ME / CE / BU / AV relisent le web avec trois autres chemins.
 
-## Marinas
+## 4. Filtre de contenu / objet — est-ce le bon objet ?
 
-Constituer l’annuaire mondial des marinas de plaisance (identité OSM `type/id` stable, pas de purge, pas de mélange PoE), y coller un signal de fiche Google `/maps/place/` s’il existe vraiment, puis remplir contacts et services sans inventer ; à part, lister les mouillages OSM le long de la route Berry-Mappemonde. Les jobs écrivent dans un run isolé, pas dans la carte live.
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P | Projet marin, puis accessible en bateau | Gatekeeper ML → NIM → OpenRouter → Claude ; puis `site_publishable` |
+| TD | L’objet « port » sort à l’extraction (le filtre fort est la source d’État) | Parseur catalogue / NER plus tard |
+| BU | Juger seulement le résidu | NIM `judge` → OpenRouter → Claude |
+| Dump marinas | Marina de plaisance | Overpass `leisure=marina` |
+| Dump capitaineries | Bureau, pas plan d’eau | Overpass `office=harbour_master` (+ seamark / harbour) |
+| Mouillages | Objet mouillage | Tags Overpass anchorage / baie nommée |
+| AV (Fetch) | Lien visite dans le HTML | Score heuristique, pas de juge |
+| AV (Search) | Bonne page visite | Juge JSON NIM → OpenRouter → Claude |
 
-### Dump mondial
+Le dump OSM et le juge LLM ne sont pas la même implémentation ; la **question** est la même.
 
-| Étape | Outils |
-| --- | --- |
-| Balayer la planète par tuiles, reprendre celles déjà faites, sans vider les fiches | Grille `WORLD_TILES` ; curseur MongoDB ; collection isolée |
-| Ne garder que les marinas de plaisance OSM | Overpass `leisure=marina` — pas `harbour=yes` ni seamark commercial |
-| Casser les tuiles trop vastes ou trop lourdes | Split si côté > 40° ; pause 3 s |
-| Identifier et mettre à jour sans casser l’enrichissement ni la fiche Google | Upsert MongoDB par `osm_id` |
-| Recopier le site OSM tel quel, sans le vérifier | Tags `website` / `contact:website` / `url` |
-| Offrir un lien Maps de recherche, pas une vérité Places | URL déterministe `google.com/maps/search/?api=1&query=` (nom + coords) |
-| Si le tag OSM est déjà une URL Google `/maps/place/` | Copie dans `maps_place_url`, source `osm_tag` — sans TinyFish |
+## 5. Extraction structurée — quels champs ?
 
-### Signal fiche Google
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P | Nom, lieu, S_ocean, partenaires | NIM `extract` → OpenRouter → Claude ; heuristique |
+| TD | Noms de ports (+ lat/lon dans le texte) | Parseur catalogue d’abord ; NIM `extract` / `legal` ∥ spaCy ; Claude en dernier |
+| ME | VHF, places, tirant, services, tél | NIM `page` → OpenRouter → TinyFish Agent ; tags OSM |
+| CE | Téléphone, canal VHF | Regex d’abord ; NIM `page` → OpenRouter → Agent ; tags |
+| AV | Pas des champs métier : une URL | Liens extraits du Fetch ; pas de schéma JSON page |
 
-| Étape | Outils |
-| --- | --- |
-| Savoir si une marina nommée a une vraie page Google `/maps/place/`, sans API Places | Job séparé, reprenable |
-| Réutiliser d’abord un lien `/place/` déjà dans OSM | `website`, tags OSM, `contact:google` |
-| Ouvrir le lien de recherche Maps et ramasser un lien `/place/` | TinyFish Fetch (lots de 10) ; TinyFish Search est sauté (n’indexe pas `/place/`) |
-| Ne retenir qu’une fiche marina, proche, pas un resto / hôtel / pin de commune | Filtre nom + slug marina/port ; écart max 8 km ; sans nom → ignoré |
+ME et CE sont le jumeau « JSON sur du texte de page » (`page`). P et TD sont le jumeau « JSON métier sur un corpus long » (`extract`).
 
-### Enrichissement contacts / services
+## 6. Géocodage — ce point est-il dans le bon espace ?
 
-| Étape | Outils |
-| --- | --- |
-| Extraire VHF, places visiteurs, tirant, abri, services, téléphone — null si inconnu, jamais inventé | Schéma JSON (canal VHF, places, tirant, protection, services, téléphone, résumé d’avis) |
-| Lire le site officiel (ou un premier résultat web s’il n’y a pas d’URL OSM) | httpx + Readability ; DuckDuckGo HTML seulement pour NIM / OpenRouter si pas de tag site |
-| Premier extracteur, le moins cher | NVIDIA NIM rôle `page` : DeepSeek-V4 Pro → gpt-oss-20b → Muse |
-| Si NIM off ou vide | OpenRouter ; garde-fou crédit |
-| Dernier recours payant, uniquement si un site OSM officiel existe | TinyFish Agent — pas Claude |
-| Sinon ce qu’OSM sait déjà | Tags `vhf`, `capacity`, `depth` / `draught`, `phone`, shower/toilets/eau/élec/fuel/wifi |
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P | GPS du lieu d’action | `geocode()` Nominatim **puis** GeoNames ; LLM si besoin ; havre ≤ 15 km |
+| TD | Coller le port dans **ce** polygone | `geocode_port_dual` Nominatim **∥** GeoNames ; départage LLM ; in-EEZ / 15 km / rivière 400 km |
+| BU | Géocoder les noms sans point | **Le même** `geocode_port_dual` + filtre polygone |
+| MM / dumps / AMP | — | GPS déjà dans OSM / SHOM / NOAA / ProtectedSeas |
 
-### Mouillages
+P et PoE n’appellent pas le même géocodeur alors que la question « un point dans le bon espace » est la même (espace = havre vs polygone VLIZ).
 
-| Étape | Outils |
-| --- | --- |
-| Trouver les mouillages naturels et postes le long de la route officielle, pas un dump mondial | GeoJSON Berry-Mappemonde ; Overpass seulement |
-| Couvrir les approches d’escale | Overpass `around:` par waypoint, rayon 10 NM |
-| Couvrir la bande maritime | Points tous les 25 NM ; bboxes ±25 NM |
-| Ne garder que les objets mouillage OSM | `seamark:type=anchorage` ; `anchor_berth` ; baie nommée ; `leisure=anchorage` |
-| Fusionner les doublons et classer par proximité d’escale | Nom normalisé + geohash ; priorité vs escales / waypoints |
+## 7. Identité / doublon — est-ce déjà là ?
 
----
-
-## Capitaineries
-
-Recenser les **bureaux** de capitainerie (le bâtiment, pas le plan d’eau ni la marina) dans le monde, pour en tirer téléphone et canal VHF utilisables par un skipper, sans jamais les rattacher aux marinas.
-
-### Dump mondial
-
-| Étape | Outils |
-| --- | --- |
-| Balayer le monde tuile par tuile, reprisable, sans vider la base | Overpass ; grille `WORLD_TILES` ; curseur `world_harbour_master` |
-| Ne garder que les objets bureau de capitainerie | `office=harbour_master` ; `seamark:building:function=harbour_master` ; `harbour=harbour_master` |
-| Lire téléphone et VHF déjà écrits (jamais inventés) | Tags `phone` / `contact:phone` ; `vhf` / `comcha` / canal seamark ; regex sur descriptions |
-| Superposer les bureaux SHOM (France + outre-mer seulement) | WFS SHOM : `buisgl_point` FUNCTN=2, `smcfac_point` CATSCF=6 |
-| Coller un SHOM sur un OSM proche, sinon le garder orphelin | Fusion ≤ 0,25 km |
-| Superposer les bureaux NOAA (cartes ENC US) | NOAA ENC Direct : FUNCTN=2 sur points et centroïdes d’aires |
-| Coller un NOAA sur un bureau déjà en base, sinon orphelin | Fusion ≤ 0,25 km sur OSM ou SHOM déjà présents |
-
-### Enrichissement téléphone / VHF
-
-| Étape | Outils |
-| --- | --- |
-| Reprendre tags OSM / SHOM / NOAA ; s’arrêter si téléphone **et** VHF sont déjà là | Tags uniquement |
-| Ne chercher sur le web que s’il y a un site officiel, un nom distinct, ou un GPS | Site OSM ; nom hors libellés génériques ; lat, lon |
-| Trouver des pages de contact (URL officielle d’abord) | TinyFish Search ; si vide ou sans clé → DuckDuckGo HTML |
-| Télécharger les pages et extraire tél / VHF ; s’arrêter dès que les deux champs sont remplis | TinyFish Fetch ; si bloqué → Readability + BeautifulSoup ; regex |
-| S’il reste un trou **et** du texte de page | NVIDIA NIM chaîne `page` : DeepSeek-V4-Pro → gpt-oss-20b → Muse |
-| S’il reste un trou | OpenRouter — pas de Claude |
-| Dernier recours, uniquement s’il existe un site officiel | TinyFish Agent sur cette URL seulement |
+| Job | Phrase | Outils aujourd’hui |
+| --- | --- | --- |
+| P + TD | Fusionner deux fiches du même lieu | `app.core.dedup` : 500 m + similarité 60 % / 90 % |
+| BU catalogue | Noms déjà sur la liste : juge sauté | Identité **de nom dans un catalogue**, pas un merge GPS |
+| Dump marinas | Upsert | `osm_id` |
+| Dump capitaineries | Coller SHOM / NOAA sur OSM | 0,25 km |
+| Mouillages | Doublons de corridor | nom + geohash6 |
+| AMP carte | Ne pas retélécharger | Cache tuile 30 j. (pas un merge d’entités) |
 
 ---
 
-## Aires marines protégées
+## Jumeaux réels (à faire converger)
 
-Afficher les polygones d’AMP sur la carte (façade, pas le monde) et, pour chaque site, coller **deux pages distinctes** : le site institutionnel du gestionnaire (`manager_url`) et les procédures de visite / entrée / permis / mouillage (`visit_url`). La page de visite n’est jamais la homepage gestionnaire (même hôte autorisé, autre chemin).
+Fonctions qui posent la même question et qui, dans le code, ont divergé.
 
-| Étape | Outils |
-| --- | --- |
-| Ne charger la couche qu’une fois zoomé sur une façade, pas un continent | Zoom ≥ 5 ; bbox trop large → rien |
-| Servir d’abord les polygones déjà en cache si la tuile est encore bonne | MongoDB `amp_sites` + `amp_tiles` (TTL 30 j.) |
-| Sinon télécharger les polygones ProtectedSeas dans la bbox | ArcGIS FeatureServer Navigator ; upsert `amp_sites` |
-| Coller l’URL du gestionnaire | Champ ProtectedSeas `url` (Website) |
-| Voir si ProtectedSeas a déjà écrit une page visite | Heuristique : `other_helpful_links`, extras Website / purpose ; jamais égal à `manager_url` |
-| Avant le web, recharger les fiches attributs (sans polygone) | ArcGIS sans géométrie (`SITE_ID`, `url`, `other_helpful_links`, `purpose`) |
-| Relancer l’heuristique extras / labels Website | Choix local, sans TinyFish |
-| Lire le site du gestionnaire pour extraire une sous-page visite | TinyFish Fetch sur `manager_url` ; scoring sans juge LLM ; sauté si pas de clé TinyFish |
-| Si Fetch n’a rien, chercher d’abord sur le site, puis sur le web ouvert | TinyFish Search : `site:{hôte}`, puis requête ouverte ; jamais la homepage |
-| Faire choisir l’URL parmi les hits Search (pas après Fetch) | NVIDIA NIM (JSON) → OpenRouter → Claude Haiku en dernier ; l’URL doit déjà être dans la liste |
+### 1. Lecture web (famille 3) — le plus gros écart
+
+`extract_cascade` (P, TD) vs `tf_fetch` (BU, CE, AV, MM) vs `fetch_readable` (ME, repli CE).
+
+- CE a déjà importé `fetch_readable` depuis `marina_enrich`.
+- BU, si Fetch est vide ou JS, n’a ni Playwright ni cascade : un décret PDF PoE BU est plus fragile qu’en TD.
+- ME n’a pas Playwright : un site de marina tout JS échoue plus tôt que le swarm.
+
+**Cible.** Une porte unique « donne-moi le texte » (`extract_cascade`, Fetch en miroir N3 comme aujourd’hui dans la cascade). TinyFish Fetch **seul** seulement quand on a besoin du DOM rendu (Maps `/place/`).
+
+### 2. Recherche web ouverte (famille 1) — CE, AV, BU, et le DDG de ME
+
+Tous cherchent « la page officielle de *ce* nom ».
+
+| Job | Search payant | Filet gratuit | Filtre hits |
+| --- | --- | --- | --- |
+| BU | TinyFish Search | aucun | whitelist, pas `serp_filter` |
+| CE | TinyFish Search | DuckDuckGo HTML | snips maison |
+| AV | TinyFish Search | aucun | `serp_filter` + score |
+| ME | aucun | DuckDuckGo HTML | — |
+| TD | SearXNG + Serper ± TinyFish | `:online` | `serp_filter` + ML |
+
+**Cible.** `tf_search` + `serp_filter` (déjà dans `extract.py`, déjà utilisé par TD et AV) + DDG comme filet **uniquement** si pas de clé TinyFish — le filet que CE a et que BU / AV n’ont pas.
+
+**Ne pas** coller SearXNG sur CE / AV / ME : SearXNG chez TD sert une **liste d’État par polygone**, pas une fiche nommée.
+
+### 3. Enrichissement page (familles 3+5) — `marina_enrich` et `capitainerie_enrich`
+
+Déjà les plus proches : même chaîne NIM `page`, OpenRouter + crédit, Agent en dernier, « jamais inventé », DDG et `fetch_readable` partagés.
+
+Écarts à refermer :
+
+- CE cherche **avant** de lire (Search) ; ME lit le tag OSM d’abord, DDG seulement si pas de site.
+- CE : regex **avant** le LLM ; ME : LLM d’abord, tags OSM en repli.
+- ME : Agent peut partir d’une URL DDG ; CE : Agent seulement si site officiel.
+
+**Cible.** Même squelette : `tags → (Search si pas d’URL) → Fetch/cascade → regex champs triviaux → NIM page → OpenRouter → Agent si URL officielle`.
+
+### 4. Juge « est-ce la bonne page / le bon objet ? » (familles 2+4)
+
+BU `judge`, AV juge JSON, P gatekeeper : trois prompts, trois rôles NIM, même idée — accepter ou jeter **après** lecture ou SERP.
+
+- AV juge **parmi une liste fermée** d’URL (ne pas inventer) : bon modèle pour ne pas halluciner une `visit_url`.
+- BU juge un **lieu** (plaisance vs cargo).
+- P juge un **projet marin**.
+
+**Cible.** Un contrat juge commun `{accept, url?, reason}` + chaînes NIM déjà dans `CHAINS`. Pas un seul prompt : trois schémas, **un** adaptateur.
+
+### 5. Dumps Overpass tuilés
+
+`marina_world`, `capitainerie_world`, `anchorage_build` partagent déjà `WORLD_TILES` / Overpass. Les fusions 0,25 km capitaineries ne doivent **pas** copier le `dedup` 500 m des projets : ce n’est pas le même grain (overlay SHOM vs deux projets au même GPS).
+
+### 6. Géocodeurs (famille 6)
+
+`geocode()` séquentiel (P) vs `geocode_port_dual` parallèle (TD/BU). Même Nominatim + GeoNames. P n’a pas le départage LLM ni le polygone.
+
+**Cible.** `geocode_port_dual` (ou un `geocode_pair`) partout, puis **prédicat d’espace** différent (`site_publishable` vs in-EEZ).
+
+---
+
+## Ce qu’il ne faut pas unifier
+
+- **MM Fetch Maps** : il faut un navigateur (TinyFish) sur une URL Google, pas `extract_cascade` sur un HTML d’État.
+- **Dumps OSM** : ce n’est pas de la recherche web ; Overpass est le bon outil.
+- **Cache tuile AMP** : ce n’est pas un merge d’entités.
+- **SearXNG sur l’enrich marina / capitainerie** : mauvais outil (pas une liste réglementaire par ZEE).
+- **Playwright sur chaque Fetch TinyFish** : coût ; le garder dans la cascade quand httpx / Fetch suffisent.
+
+---
+
+## Ordre d’amélioration
+
+1. **Lecture.** Brancher CE / ME / BU (PDF, JS) sur `extract_cascade` là où TinyFish Fetch ne rend pas un décret / un site JS.
+2. **Recherche nommée.** `tf_search` + `serp_filter` + DDG filet pour CE, AV, ME (et BU filet DDG si pas de clé).
+3. **Enrich ME/CE.** Un seul orchestrateur `page`.
+4. **Géocode P** → dual + prédicat havre.
+5. **Juge.** Adaptateur commun, prompts séparés.
