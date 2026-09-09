@@ -77,8 +77,8 @@ Le dump OSM et le juge LLM ne sont pas la même implémentation ; la **question*
 | --- | --- | --- |
 | P | Nom, lieu, S_ocean, partenaires | NIM `extract` → OpenRouter → Claude ; heuristique |
 | TD | Noms de ports (+ lat/lon dans le texte) | Parseur catalogue d’abord ; NIM `extract` / `legal` ∥ spaCy ; Claude en dernier |
-| ME | VHF, places, tirant, services, tél | NIM `page` → OpenRouter → TinyFish Agent ; tags OSM |
-| CE | Téléphone, canal VHF | Regex d’abord ; NIM `page` → OpenRouter → Agent ; tags |
+| ME | VHF, places, tirant, services, tél | **`run_page_enrich`** : tags ; regex tél/VHF ; NIM `page` → OpenRouter ; Agent si site officiel |
+| CE | Téléphone, canal VHF | **`run_page_enrich`** (même ordre) ; schéma contact seulement |
 | AV | Pas des champs métier : une URL | Liens extraits du Fetch ; pas de schéma JSON page |
 
 ME et CE sont le jumeau « JSON sur du texte de page » (`page`). P et TD sont le jumeau « JSON métier sur un corpus long » (`extract`).
@@ -145,6 +145,8 @@ Ils ne font pourtant pas les étapes dans le même ordre, et ce n’est pas just
 
 On ne fusionnerait pas les deux schémas de données : une marina a des places visiteurs et un tirant d’eau, une capitainerie n’a besoin que du téléphone et du VHF. Ce qu’on partagerait, c’est **l’ordre** des étapes. On partirait des tags déjà là. On ne chercherait le web que s’il manque une URL. On lirait la page. On extrairait par une règle simple ce qui est trivial (un numéro, un canal). On n’appellerait NVIDIA puis OpenRouter que s’il reste un trou. On n’appellerait l’Agent que si l’URL est vraiment officielle. On éviterait ainsi de payer un modèle pour relire un téléphone déjà dans OpenStreetMap, et d’envoyer l’Agent sur un résultat de moteur.
 
+**Fait.** Porte `app.core.enrich.run_page_enrich`. Ordre commun : tags → URL déjà là (`search_named` seulement s’il en manque) → lecture → regex téléphone/VHF → NVIDIA `page` puis OpenRouter s’il reste un trou → Agent TinyFish seulement si l’URL est officielle (`serp_filter`, jamais un hit moteur). Schémas distincts : marina = places visiteurs, tirant, services ; capitainerie = téléphone + VHF. Un champ déjà rempli n’est pas écrasé.
+
 ### 4. Dire oui ou non : un même branchement, trois prompts différents
 
 Trois jobs disent « j’accepte » ou « je refuse » après avoir vu du texte ou des résultats de recherche. Chacun a son propre prompt et son propre rôle NVIDIA. Le gatekeeper des Projets demande si la page est un projet marin. Le juge bottom-up demande si *ce lieu* est un port d’entrée plaisance, ou du cargo. Le juge AMP demande, parmi une **liste d’URL déjà trouvées**, laquelle est une page de visite — et il n’a pas le droit d’en inventer une. Cette dernière contrainte est précieuse : c’est elle qui empêche d’halluciner une adresse de visite.
@@ -169,7 +171,7 @@ Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le m
 
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 

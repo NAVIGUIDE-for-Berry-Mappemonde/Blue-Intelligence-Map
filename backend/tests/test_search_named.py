@@ -266,3 +266,15 @@ class TestCallersKeepOwnQueries:
             "name": "Minimes", "lat": 46.1, "lon": -1.1, "tags": {},
         }, key="k"))
         assert url == "https://minimes.port.fr"
+
+    def test_capitainerie_official_site_skips_search(self, monkeypatch):
+        async def boom(*a, **k):
+            raise AssertionError("search must not run when official website exists")
+
+        monkeypatch.setattr(ce, "search_named", boom)
+        urls = _run(ce.discover_contact_urls({
+            "name": "Capitainerie des Minimes", "lat": 46.15, "lon": -1.16,
+            "website": "https://larochelle.port.fr/capitainerie",
+            "tags": {},
+        }, tinyfish_key="k"))
+        assert urls == ["https://larochelle.port.fr/capitainerie"]

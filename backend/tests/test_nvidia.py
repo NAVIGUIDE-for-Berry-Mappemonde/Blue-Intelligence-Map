@@ -431,7 +431,14 @@ class TestMarinaNvidiaFirst:
     def test_nvidia_hit_skips_openrouter(self, monkeypatch):
         from app.services import marina_enrich as me
 
-        async def fake_nv(marina, settings, logger=None, **k):
+        async def urls(*a, **k):
+            return ["https://minimes.port.fr"]
+
+        async def pages(u, tinyfish_key=None, logger=None):
+            return [{"url": u[0], "title": "Minimes",
+                     "text": "The marina welcomes visiting yachts."}]
+
+        async def fake_nv(*a, **k):
             return {"canal_vhf": "9", "places_visiteurs": 320,
                     "tirant_eau_max_metres": 3.5, "score_protection_meteo": None,
                     "services_disponibles": ["eau"], "telephone_capitainerie": "05",
@@ -443,6 +450,8 @@ class TestMarinaNvidiaFirst:
         async def boom_tf(*a, **k):
             raise AssertionError("TinyFish must not run after NVIDIA hit")
 
+        monkeypatch.setattr(me, "discover_marina_urls", urls)
+        monkeypatch.setattr(me, "fetch_marina_pages", pages)
         monkeypatch.setattr(me, "enrich_via_nvidia", fake_nv)
         monkeypatch.setattr(me, "enrich_via_openrouter", boom_or)
         monkeypatch.setattr(me, "enrich_via_tinyfish", boom_tf)

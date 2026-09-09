@@ -498,9 +498,14 @@ class MapsPlaceBody(BaseModel):
 
 
 _MARINA_ENGINE_LABELS = {
-    "tinyfish": "TinyFish",
-    "openrouter": "OpenRouter",
+    "tinyfish": "TinyFish Agent",
+    "fetch": "Fetch / regex",
     "nvidia": "NVIDIA NIM",
+    "nvidia-deepseek": "NVIDIA DeepSeek",
+    "nvidia-muse": "NVIDIA Muse",
+    "nvidia-gpt-oss": "NVIDIA gpt-oss",
+    "openrouter": "OpenRouter",
+    "tags": "OSM tags",
     "fallback": "OSM Fallback",
 }
 
