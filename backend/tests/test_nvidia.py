@@ -133,6 +133,7 @@ class TestProvider:
         assert nvidia.FLASH_MODEL in chain
         assert nvidia.LEGAL_MODEL in nvidia.models_for("legal")
         assert nvidia.LEGAL_MODEL in nvidia.models_for("extract")
+        assert nvidia.GPT_OSS_MODEL in nvidia.models_for("extract")
         assert nvidia.models_for("page")[0] == nvidia.PRIMARY_MODEL
         assert nvidia.models_for("text")[0] == nvidia.SECONDARY_MODEL
         assert nvidia.GPT_OSS_MODEL in nvidia.models_for("json")

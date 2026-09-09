@@ -15,7 +15,7 @@ json_object les fait pendre — on omet response_format.
 Chaînes de fallback (échec HTTP / timeout / JSON vide → suivant) :
 
   judge   Pro → Muse → gpt-oss-20b → Flash
-  extract Pro → Muse → Kimi
+  extract Pro → Muse → gpt-oss-20b → Kimi
   legal   Kimi → Pro → Muse
   json    Pro → Muse → gpt-oss-20b   # gatekeeper, projet, géocode, AMP
   page    Pro → Muse → gpt-oss-20b   # marina / capitainerie (texte de page)
@@ -75,7 +75,7 @@ _ALIASES = {
 # sous charge ; Kimi pour les décrets ; Laguna 503 capacité ; Gemma hang.
 CHAINS = {
     "judge": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, FLASH_MODEL),
-    "extract": (PRO_MODEL, SECONDARY_MODEL, LEGAL_MODEL),
+    "extract": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL, LEGAL_MODEL),
     "legal": (LEGAL_MODEL, PRO_MODEL, SECONDARY_MODEL),
     "json": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
     "page": (PRO_MODEL, SECONDARY_MODEL, GPT_OSS_MODEL),
