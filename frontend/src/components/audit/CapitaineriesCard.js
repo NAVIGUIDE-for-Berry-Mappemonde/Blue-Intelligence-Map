@@ -58,6 +58,7 @@ export default function CapitaineriesCard({ t }) {
   };
 
   const shom = buildStatus?.summary?.shom || {};
+  const noaa = buildStatus?.summary?.noaa || {};
 
   return (
     <div data-testid="audit-batch-hub" data-mode-card="capitaineries">
@@ -85,6 +86,7 @@ export default function CapitaineriesCard({ t }) {
             <p className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed" data-testid="audit-capitaineries-summary">
               ✓ OSM +{buildStatus.summary.inserted ?? 0} · ~{buildStatus.summary.updated ?? 0}
               {" · "}SHOM +{shom.inserted ?? 0} · fusion {shom.merged ?? 0}
+              {" · "}NOAA +{noaa.inserted ?? 0} · fusion {noaa.merged ?? 0}
             </p>
           )}
           {buildStatus?.error && !buildStatus.running && (

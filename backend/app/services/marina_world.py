@@ -31,6 +31,10 @@ SCHEMA = "marina_world_v1"
 CURSOR_ID = "world_leisure_marina"
 OVERPASS_THROTTLE_S = 3.0
 OVERPASS_TILE_TIMEOUT_S = 180
+# Tuiles monde ~30×90° : Overpass public lâche ou ne rend jamais.
+# On découpe avant l'appel dès que le plus grand côté dépasse ça.
+SPLIT_BEFORE_DEG = 40.0
+UPSERT_HEARTBEAT = 250
 
 # Statuts que le palier 2 posera ; le dump ne les écrase pas.
 LOCKED_WEBSITE_STATUSES = frozenset({"osm_ok", "tinyfish_ok"})
@@ -83,6 +87,21 @@ FetchTile = Callable[
 def tile_key(tile: tuple[float, float, float, float]) -> str:
     south, west, north, east = tile
     return f"{south:.4f},{west:.4f},{north:.4f},{east:.4f}"
+
+
+def tile_span_deg(tile: tuple[float, float, float, float]) -> float:
+    south, west, north, east = tile
+    return max(north - south, east - west)
+
+
+def should_split_before_overpass(
+    tile: tuple[float, float, float, float],
+    *,
+    min_span: float = MIN_TILE_DEG,
+    max_span: float = SPLIT_BEFORE_DEG,
+) -> bool:
+    span = tile_span_deg(tile)
+    return span > max_span and span > min_span
 
 
 def split_bbox(
@@ -339,6 +358,27 @@ def _throttle_s(explicit: float | None) -> float:
         return OVERPASS_THROTTLE_S
 
 
+async def _split_and_fetch(
+    client: httpx.AsyncClient,
+    tile: tuple[float, float, float, float],
+    *,
+    logger,
+    timeout: int,
+    min_span: float,
+    reason: str,
+) -> list[dict]:
+    if logger:
+        logger(f"Tuile {tile_key(tile)} {reason} — split")
+    out: list[dict] = []
+    south, west, north, east = tile
+    for sub in split_bbox(south, west, north, east):
+        await asyncio.sleep(1.2)
+        out.extend(await fetch_tile_leisure_marinas(
+            client, sub, logger=logger, timeout=timeout, min_span=min_span,
+        ))
+    return out
+
+
 async def fetch_tile_leisure_marinas(
     client: httpx.AsyncClient,
     tile: tuple[float, float, float, float],
@@ -348,23 +388,24 @@ async def fetch_tile_leisure_marinas(
     min_span: float = MIN_TILE_DEG,
 ) -> list[dict]:
     south, west, north, east = tile
+    if should_split_before_overpass(tile, min_span=min_span):
+        return await _split_and_fetch(
+            client, tile, logger=logger, timeout=timeout, min_span=min_span,
+            reason=f"trop vaste ({tile_span_deg(tile):.0f}°)",
+        )
+    if logger:
+        logger(f"Overpass {tile_key(tile)} …")
     body = leisure_marina_bbox_ql(south, west, north, east, timeout=timeout)
     try:
         return await overpass_fetch_bbox(
             south, west, north, east, client, logger=logger, body=body,
         )
     except Exception as exc:
-        span = max(north - south, east - west)
-        if span > min_span:
-            if logger:
-                logger(f"Tuile trop lourde {tile} ({type(exc).__name__}) — split")
-            out: list[dict] = []
-            for sub in split_bbox(south, west, north, east):
-                await asyncio.sleep(1.2)
-                out.extend(await fetch_tile_leisure_marinas(
-                    client, sub, logger=logger, timeout=timeout, min_span=min_span,
-                ))
-            return out
+        if tile_span_deg(tile) > min_span:
+            return await _split_and_fetch(
+                client, tile, logger=logger, timeout=timeout, min_span=min_span,
+                reason=f"trop lourde ({type(exc).__name__})",
+            )
         raise
 
 
@@ -411,7 +452,10 @@ async def build_world_marinas(
         inserted = updated = fetched_raw = errors = skipped = 0
         named = unnamed = with_site = 0
         own_client = client is None
-        http = client or httpx.AsyncClient(headers={"User-Agent": USER_AGENT})
+        http = client or httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT},
+            timeout=httpx.Timeout(connect=15.0, read=130.0, write=20.0, pool=10.0),
+        )
         try:
             for tile in grid:
                 key = tile_key(tile)
@@ -420,6 +464,7 @@ async def build_world_marinas(
                     state.progress += 1
                     state.log(f"Tuile {key} déjà faite — skip")
                     continue
+                state.log(f"Tuile {key} — Overpass + upsert…")
                 try:
                     if fetch_tile:
                         elements = await fetch_tile(http, tile)
@@ -433,7 +478,9 @@ async def build_world_marinas(
                     continue
 
                 fetched_raw += len(elements)
+                state.log(f"Tuile {key} : {len(elements)} éléments Overpass — upsert")
                 tile_ins = tile_upd = 0
+                seen = 0
                 for elem in elements:
                     cand = marina_from_overpass(elem)
                     if not cand:
@@ -451,6 +498,12 @@ async def build_world_marinas(
                         unnamed += 1
                     if cand.get("website"):
                         with_site += 1
+                    seen += 1
+                    if seen % UPSERT_HEARTBEAT == 0:
+                        state.log(
+                            f"Tuile {key} upsert {seen}/{len(elements)} "
+                            f"(+{tile_ins} / ~{tile_upd})"
+                        )
 
                 await mark_tile_done(cursor_coll, key, now_iso)
                 state.progress += 1

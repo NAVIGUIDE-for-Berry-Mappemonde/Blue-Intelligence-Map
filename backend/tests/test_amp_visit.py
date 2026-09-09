@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,9 @@ class _FakeColl:
         for k, v in q.items():
             if isinstance(v, dict) and "$in" in v:
                 if doc.get(k) not in v["$in"]:
+                    return False
+            elif isinstance(v, dict) and "$regex" in v:
+                if not re.search(v["$regex"], str(doc.get(k) or "")):
                     return False
             elif doc.get(k) != v:
                 return False
@@ -67,15 +71,29 @@ def test_score_rejects_manager_homepage():
         "https://parc-marin.fr/equipe", "https://parc-marin.fr") == 0
 
 
-def test_search_query_scopes_to_manager_host():
+def test_search_query_is_open_web():
     q, host = amp_visit.search_query({
         "name": "Cap de Creus",
         "country": "Spain",
         "manager_url": "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici",
     })
     assert host == "parcsnaturals.gencat.cat"
-    assert q.startswith("site:parcsnaturals.gencat.cat")
+    assert "site:" not in q
     assert "Cap de Creus" in q
+    assert "visit" in q
+
+
+def test_search_queries_prefer_same_host_then_open_web():
+    scoped, open_q = amp_visit.search_queries({
+        "name": "Cap de Creus",
+        "country": "Spain",
+        "manager_url": "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici",
+    })
+    assert scoped[1] == "parcsnaturals.gencat.cat"
+    assert scoped[0].startswith("site:parcsnaturals.gencat.cat")
+    assert open_q[1] is None
+    assert "site:" not in open_q[0]
+    assert "Cap de Creus" in open_q[0]
 
 
 def test_score_prefers_same_domain_procedure_page():
@@ -85,6 +103,21 @@ def test_score_prefers_same_domain_procedure_page():
     other = amp_visit.score_visit_candidate(
         "https://ofb.gouv.fr/visite-amp", home)
     assert visite > other > 0
+
+
+def test_search_score_rejects_unrelated_offhost_even_with_visit_hint():
+    home = "https://parcsnaturals.gencat.cat/ca/xarxa-de-parcs/cap-creus/inici"
+    assert amp_visit.score_visit_candidate(
+        "https://www.mom.gov.sg", home,
+        title="Visit Singapore", name="Cap de Creus", require_name=True) == 0
+    assert amp_visit.score_visit_candidate(
+        "https://atraques.es/en/guides/free-anchoring-spain-permitted-bays/",
+        home, title="Free anchoring Spain", name="Aiguamolls de l'Alt Empordà",
+        require_name=True) == 0
+    assert amp_visit.score_visit_candidate(
+        "https://ofb.gouv.fr/aires/cap-de-creus/visite",
+        home, title="Visite Cap de Creus", name="Cap de Creus",
+        require_name=True) > 0
 
 
 def test_pick_from_fetch_links_never_returns_homepage():
@@ -160,6 +193,7 @@ def test_discover_fetch_then_search_and_keeps_urls_apart():
     out = asyncio.run(amp_visit.discover_visit_urls(
         db, state=state, limit=20, skip_search=False,
         fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
+        refresh_attrs=False, use_llm_judge=False,
     ))
     by = {d["_id"]: d for d in db.amp_sites.docs}
     assert by["A"]["visit_url"] == "https://parc-a.fr/entrer"
@@ -178,6 +212,40 @@ def test_discover_fetch_then_search_and_keeps_urls_apart():
     assert out["found"] == 3
 
 
+def test_discover_search_accepts_named_offhost_visit_page():
+    docs = [{
+        "_id": "F", "site_id": "F", "name": "Cerbère-Banyuls",
+        "manager_url": "https://parc-f.fr",
+        "other_helpful_links": "",
+        "visit_url": None, "visit_url_status": "none",
+    }]
+    db = _FakeDB(docs)
+    state = TaskState()
+
+    async def fetch_many(urls):
+        return {u: {"links": [], "text": ""} for u in urls}
+
+    async def search(query, include_domains=None):
+        if include_domains:
+            return [{"url": "https://www.mom.gov.sg", "title": "Visit Singapore"}]
+        return [
+            {"url": "https://www.mom.gov.sg", "title": "Visit Singapore"},
+            {"url": "https://ofb.gouv.fr/visite-cerbere-banyuls",
+             "title": "Visite Cerbère-Banyuls"},
+        ]
+
+    out = asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=False,
+        fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
+        refresh_attrs=False, use_llm_judge=False,
+    ))
+    assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-cerbere-banyuls"
+    assert db.amp_sites.docs[0]["visit_url_source"] == "tinyfish_search"
+    assert not amp_svc.is_manager_suburl(
+        db.amp_sites.docs[0]["visit_url"], "https://parc-f.fr")
+    assert out["from_search"] == 1
+
+
 def test_discover_without_tinyfish_key_keeps_heuristic_only():
     docs = [{
         "_id": "E", "site_id": "E", "name": "Parc E",
@@ -190,7 +258,157 @@ def test_discover_without_tinyfish_key_keeps_heuristic_only():
     out = asyncio.run(amp_visit.discover_visit_urls(
         db, state=state, limit=10, tf_key="",
         fetch_many_fn=lambda urls: (_ for _ in ()).throw(AssertionError("no fetch")),
+        refresh_attrs=False, use_llm_judge=False,
     ))
     assert out["no_tinyfish_key"] is True
     assert out["from_fetch"] == 0
     assert db.amp_sites.docs[0]["visit_url"] is None or not db.amp_sites.docs[0].get("visit_url")
+
+
+def test_parse_visit_judge_only_accepts_listed_url():
+    cands = [{"url": "https://ofb.gouv.fr/visite-cerbere", "title": "Visite"}]
+    assert amp_visit.parse_visit_judge(
+        {"accept": True, "url": "https://ofb.gouv.fr/visite-cerbere"},
+        cands, "https://parc.fr") == "https://ofb.gouv.fr/visite-cerbere"
+    assert amp_visit.parse_visit_judge(
+        {"accept": True, "url": "https://evil.example/invented"},
+        cands, "https://parc.fr") is None
+    assert amp_visit.parse_visit_judge(
+        {"accept": False, "url": "https://ofb.gouv.fr/visite-cerbere"},
+        cands, "https://parc.fr") is None
+    assert amp_visit.parse_visit_judge(
+        {"accept": True, "url": "https://parc.fr"},
+        [{"url": "https://parc.fr", "title": "Home"}],
+        "https://www.parc.fr/") is None
+
+
+def test_discover_refresh_then_links_without_tinyfish():
+    docs = [{
+        "_id": "G", "site_id": "G", "name": "Cerbère-Banyuls",
+        "manager_url": "https://reserve website|https://www.reserves-naturelles.org/cerbere-banyuls",
+        "other_helpful_links": "",
+        "visit_url": None, "visit_url_status": "none",
+    }]
+    db = _FakeDB(docs)
+    state = TaskState()
+
+    async def fetch_attrs(ids):
+        return {"G": {
+            "url": (
+                "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls; "
+                "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
+            ),
+            "other_helpful_links": "",
+        }}
+
+    out = asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, tf_key="",
+        refresh_attrs=True, attrs_fetch_fn=fetch_attrs, use_llm_judge=False,
+    ))
+    assert out["attrs_refreshed"] == 1
+    assert out["from_links"] == 1
+    assert "afbiodiversite.fr" in db.amp_sites.docs[0]["visit_url"]
+    assert db.amp_sites.docs[0]["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert not amp_svc.urls_equivalent(
+        db.amp_sites.docs[0]["visit_url"], db.amp_sites.docs[0]["manager_url"])
+
+
+def test_discover_search_uses_injected_judge():
+    docs = [{
+        "_id": "H", "site_id": "H", "name": "Cerbère-Banyuls",
+        "manager_url": "https://parc-h.fr",
+        "other_helpful_links": "",
+        "visit_url": None, "visit_url_status": "none",
+    }]
+    db = _FakeDB(docs)
+    state = TaskState()
+
+    async def fetch_many(urls):
+        return {u: {"links": [], "text": ""} for u in urls}
+
+    async def search(query, include_domains=None):
+        return [
+            {"url": "https://yachtmate.fr/blog/en/anchoring-regulations-france.html",
+             "title": "Anchoring France"},
+            {"url": "https://ofb.gouv.fr/visite-cerbere-banyuls",
+             "title": "Visite Cerbère-Banyuls"},
+        ]
+
+    async def judge(doc, cands):
+        for cand in cands:
+            if "ofb.gouv.fr" in cand["url"]:
+                doc["visit_url_judge"] = "nvidia-muse"
+                return cand["url"]
+        return None
+
+    out = asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=False,
+        fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
+        refresh_attrs=False, use_llm_judge=True, judge_fn=judge,
+    ))
+    assert db.amp_sites.docs[0]["visit_url"] == "https://ofb.gouv.fr/visite-cerbere-banyuls"
+    assert db.amp_sites.docs[0]["visit_url_judge"] == "nvidia-muse"
+    assert out["from_search"] == 1
+
+
+def test_discover_fetch_dedupes_shared_manager_url():
+    docs = [
+        {
+            "_id": "J1", "site_id": "J1", "name": "Zone J1",
+            "manager_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+            "visit_url": None, "visit_url_status": "none",
+        },
+        {
+            "_id": "J2", "site_id": "J2", "name": "Zone J2",
+            "manager_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+            "visit_url": None, "visit_url_status": "none",
+        },
+    ]
+    db = _FakeDB(docs)
+    state = TaskState()
+    seen = []
+
+    async def fetch_many(urls):
+        seen.append(list(urls))
+        return {
+            u: {"links": ["https://natura2000.eea.europa.eu/Natura2000/visite"], "text": ""}
+            for u in urls
+        }
+
+    asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=True,
+        fetch_many_fn=fetch_many, tf_key="test",
+        refresh_attrs=False, use_llm_judge=False,
+    ))
+    assert seen == [["https://natura2000.eea.europa.eu/Natura2000/SDF.aspx"]]
+    assert all(d.get("visit_url") for d in db.amp_sites.docs)
+
+
+def test_discover_judge_can_reject_every_hit():
+    docs = [{
+        "_id": "I", "site_id": "I", "name": "Cap de Creus",
+        "manager_url": "https://parc-i.fr",
+        "other_helpful_links": "",
+        "visit_url": None, "visit_url_status": "none",
+    }]
+    db = _FakeDB(docs)
+    state = TaskState()
+
+    async def fetch_many(urls):
+        return {u: {"links": [], "text": ""} for u in urls}
+
+    async def search(query, include_domains=None):
+        return [{"url": "https://www.mom.gov.sg", "title": "Visit Singapore"}]
+
+    async def judge(doc, cands):
+        return None
+
+    out = asyncio.run(amp_visit.discover_visit_urls(
+        db, state=state, limit=10, skip_search=False,
+        fetch_many_fn=fetch_many, search_fn=search, tf_key="test",
+        refresh_attrs=False, use_llm_judge=True, judge_fn=judge,
+    ))
+    assert not db.amp_sites.docs[0].get("visit_url")
+    assert out["from_search"] == 0

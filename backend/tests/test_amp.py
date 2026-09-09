@@ -77,7 +77,19 @@ def test_pick_visit_prefers_same_host_suburl_from_website_blob():
     assert not amp_svc.urls_equivalent(url, "https://parcsnaturals.gencat.cat")
 
 
-def test_pick_visit_ignores_offhost_ofb_label_without_hints():
+def test_name_matches_requires_distinctive_token():
+    assert amp_svc.name_matches(
+        "Cap de Creus", "https://parcsnaturals.gencat.cat/cap-creus/normativa")
+    assert not amp_svc.name_matches(
+        "Cap de Creus", "https://www.mom.gov.sg Visit Singapore")
+    assert amp_svc.name_matches(
+        "Cerbère-Banyuls", "http://www.amp.afbiodiversite.fr/visite-cerbere")
+    assert not amp_svc.name_matches(
+        "Aiguamolls de l'Alt Empordà",
+        "https://atraques.es/en/guides/free-anchoring-spain-permitted-bays/")
+
+
+def test_pick_visit_accepts_offhost_extra_when_it_is_not_the_manager():
     url, status = amp_svc.pick_visit_url(
         "https://reserves-naturelles.org/cerbere-banyuls",
         extra_blobs=[
@@ -85,8 +97,11 @@ def test_pick_visit_ignores_offhost_ofb_label_without_hints():
             "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
         ],
     )
-    assert url is None
-    assert status == "not_found"
+    assert status == "found"
+    assert url == "https://www.amp.afbiodiversite.fr/accueil_fr/fiche" or (
+        url and "afbiodiversite.fr" in url)
+    assert not amp_svc.urls_equivalent(url, "https://reserves-naturelles.org/cerbere-banyuls")
+    assert not amp_svc.is_manager_suburl(url, "https://reserves-naturelles.org/cerbere-banyuls")
 
 
 def test_attrs_parses_dirty_website_and_keeps_suburl_visit():
@@ -306,3 +321,90 @@ def test_amp_router_and_legacy_mpa_stay_apart():
     assert "/api/mpa" in mpa_paths
     gone = [r for r in projects_router.router.routes if getattr(r, "path", "") == "/api/mpa"]
     assert gone and all(getattr(r, "status_code", None) == 410 for r in gone)
+
+
+def test_apply_protectedseas_attrs_cleans_manager_and_keeps_extras():
+    doc = {
+        "_id": "PS-1",
+        "site_id": "PS-1",
+        "manager_url": "https://reserve website|https://www.reserves-naturelles.org/cerbere-banyuls",
+        "other_helpful_links": "",
+    }
+    amp_svc.apply_protectedseas_attrs(doc, {
+        "url": (
+            "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls; "
+            "OFB website|http://www.amp.afbiodiversite.fr/accueil_fr/fiche"
+        ),
+        "other_helpful_links": "https://parc.fr/visite",
+        "purpose": "Protect seabed.",
+    })
+    assert doc["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert "afbiodiversite.fr" in doc["ps_website_raw"]
+    assert doc["other_helpful_links"] == "https://parc.fr/visite"
+    assert doc["purpose"].startswith("Protect")
+
+
+def test_refresh_protectedseas_attrs_writes_cache():
+    docs = [{
+        "_id": "PS-1", "site_id": "PS-1", "name": "Cerbère",
+        "manager_url": "https://reserve website|https://old.example",
+        "other_helpful_links": "",
+    }]
+
+    class _Coll:
+        def __init__(self):
+            self.docs = list(docs)
+
+        async def update_one(self, q, upd, upsert=False):
+            self.docs[0].update(upd.get("$set") or {})
+
+    class _DB:
+        def __init__(self):
+            self.amp_sites = _Coll()
+
+    async def fetch(ids):
+        assert ids == ["PS-1"]
+        return {"PS-1": {
+            "SITE_ID": "PS-1",
+            "url": "Reserve website|https://www.reserves-naturelles.org/cerbere-banyuls",
+            "other_helpful_links": "https://ofb.gouv.fr/visite-cerbere",
+        }}
+
+    db = _DB()
+    n = asyncio.run(amp_svc.refresh_protectedseas_attrs(db, docs, fetch_fn=fetch))
+    assert n == 1
+    assert docs[0]["manager_url"] == "https://reserves-naturelles.org/cerbere-banyuls"
+    assert docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
+    assert db.amp_sites.docs[0]["other_helpful_links"] == "https://ofb.gouv.fr/visite-cerbere"
+
+
+def test_refresh_clears_visit_url_that_becomes_the_manager():
+    docs = [{
+        "_id": "PS-2", "site_id": "PS-2",
+        "manager_url": "https://natura 2000|https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+        "visit_url": "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+        "visit_url_status": "found",
+        "visit_url_source": "other_helpful_links",
+    }]
+
+    class _Coll:
+        def __init__(self):
+            self.docs = list(docs)
+
+        async def update_one(self, q, upd, upsert=False):
+            self.docs[0].update(upd.get("$set") or {})
+
+    class _DB:
+        def __init__(self):
+            self.amp_sites = _Coll()
+
+    async def fetch(ids):
+        return {"PS-2": {
+            "url": "Natura 2000|https://natura2000.eea.europa.eu/Natura2000/SDF.aspx",
+            "other_helpful_links": "",
+        }}
+
+    asyncio.run(amp_svc.refresh_protectedseas_attrs(_DB(), docs, fetch_fn=fetch))
+    assert docs[0]["manager_url"] == "https://natura2000.eea.europa.eu/Natura2000/SDF.aspx"
+    assert docs[0]["visit_url"] is None
+    assert docs[0]["visit_url_status"] == "not_found"

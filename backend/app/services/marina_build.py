@@ -272,7 +272,11 @@ async def overpass_fetch_bbox(
                 timeout=httpx.Timeout(connect=10.0, read=120.0, write=15.0, pool=8.0),
             )
             if r.status_code == 200:
-                return (r.json().get("elements") or [])
+                payload = r.json() if r.content else {}
+                remark = str((payload or {}).get("remark") or "")
+                if "timed out" in remark.lower():
+                    raise TimeoutError(f"Overpass remark timeout on {endpoint}: {remark[:120]}")
+                return (payload.get("elements") or [])
             if r.status_code in (429, 502, 503, 504):
                 sleep_s = 3 * (2 ** min(attempt, 3))
                 if logger:

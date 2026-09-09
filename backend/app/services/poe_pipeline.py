@@ -1047,7 +1047,9 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
 
     _KNOWN_ENGINES = (
         "claude", "openrouter", "catalog", "ner",
-        "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "llm",
+        "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "nvidia-deepseek",
+        "nvidia-gpt-oss", "nvidia-gemma", "nvidia-minimax", "nvidia-nemotron",
+        "llm",
     )
 
     async def _primary():
@@ -1066,7 +1068,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                 model, engine = choice
                 ports = await nvidia.extract_ports_nvidia(
                     context, zone, settings=settings, log=log,
-                    model=model, engine=engine)
+                    model=model, engine=engine, fallback=False)
                 return ports
             from app.core import claude
             if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):

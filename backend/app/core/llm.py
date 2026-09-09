@@ -122,7 +122,8 @@ async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None
     from app.core.nvidia import complete_json_nvidia, nvidia_enabled
     if nvidia_enabled(settings):
         return await complete_json_nvidia(
-            system, prompt, settings, max_tokens=max_tokens, log=log)
+            system, prompt, settings, max_tokens=max_tokens, log=log,
+            role="json")
     key = get_llm_key(settings)
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing")
