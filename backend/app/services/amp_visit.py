@@ -254,19 +254,26 @@ def _needs_visit(doc: dict) -> bool:
 
 
 async def _write_visit(db, doc: dict) -> None:
-    await db.amp_sites.update_one(
-        {"_id": doc["_id"]},
-        {"$set": {
-            "visit_url": doc.get("visit_url"),
-            "visit_url_status": doc.get("visit_url_status"),
-            "visit_url_source": doc.get("visit_url_source"),
-            "visit_url_judge": doc.get("visit_url_judge"),
-            "enriched_at": doc.get("enriched_at"),
-            "manager_url": doc.get("manager_url"),
-            "ps_website_raw": doc.get("ps_website_raw"),
-            "other_helpful_links": doc.get("other_helpful_links"),
-        }},
-    )
+    from app.services.isolated_runs import current_run_id, write_item
+    rid = current_run_id()
+    fields = {
+        "visit_url": doc.get("visit_url"),
+        "visit_url_status": doc.get("visit_url_status"),
+        "visit_url_source": doc.get("visit_url_source"),
+        "visit_url_judge": doc.get("visit_url_judge"),
+        "enriched_at": doc.get("enriched_at"),
+        "manager_url": doc.get("manager_url"),
+        "ps_website_raw": doc.get("ps_website_raw"),
+        "other_helpful_links": doc.get("other_helpful_links"),
+    }
+    if rid:
+        payload = {**doc, **fields}
+        await write_item(
+            db, "amp", rid, payload,
+            source_id=doc.get("site_id") or doc.get("_id"),
+        )
+        return
+    await db.amp_sites.update_one({"_id": doc["_id"]}, {"$set": fields})
 
 
 async def _commit_discovered(db, doc: dict, url: str | None, source: str) -> str:
@@ -337,8 +344,12 @@ async def discover_visit_urls(
     attrs_fetch_fn: AttrsFetchFn | None = None,
     use_llm_judge: bool = True,
     judge_fn: JudgeFn | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """Refresh PS → extras → Fetch → Search → juge Muse / OpenRouter."""
+    from app.services.isolated_runs import bind_run, reset_run
+
+    token = bind_run(run_id) if run_id else None
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
@@ -347,6 +358,7 @@ async def discover_visit_urls(
     state.summary = None
     state.progress = 0
     state.cancel = False
+    state.run_id = run_id
 
     docs = await pending_sites(db, limit)
     state.total = len(docs)
@@ -510,3 +522,5 @@ async def discover_visit_urls(
     finally:
         state.finished_at = time.time()
         state.running = False
+        if token is not None:
+            reset_run(token)

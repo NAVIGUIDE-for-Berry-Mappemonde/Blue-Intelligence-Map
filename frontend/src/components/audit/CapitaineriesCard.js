@@ -70,6 +70,14 @@ export default function CapitaineriesCard({ t }) {
           <p className="mb-2 text-[10px] font-mono text-slate-500 leading-relaxed">
             {t("auditCapitaineriesHint")}
           </p>
+          <p className="mb-2 font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
+            {t("isolatedRunHintLive")}
+          </p>
+          {(buildStatus?.run_id || batchStatus?.run_id) && (
+            <p className="mb-2 font-mono text-[10px] text-accent/80" data-testid="capitainerie-run-id">
+              {t("currentRun")} {buildStatus?.run_id || batchStatus?.run_id} · {t("wroteCapitaineriesFalse")}
+            </p>
+          )}
           <button
             data-testid="audit-capitaineries-scan-btn"
             onClick={startBuild}

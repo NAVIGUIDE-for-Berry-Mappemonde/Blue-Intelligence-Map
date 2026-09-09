@@ -116,6 +116,14 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
           <p className="mb-2 text-[10px] font-mono text-slate-500 leading-relaxed">
             {t("auditMarinasWorldHint")}
           </p>
+          <p className="mb-2 font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
+            {t("isolatedRunHintLive")}
+          </p>
+          {(buildStatus?.run_id || marinaBatchStatus?.run_id || mapsPlaceStatus?.run_id || anchStatus?.run_id) && (
+            <p className="mb-2 font-mono text-[10px] text-alert/80" data-testid="marina-run-id">
+              {t("currentRun")} {buildStatus?.run_id || marinaBatchStatus?.run_id || mapsPlaceStatus?.run_id || anchStatus?.run_id} · {t("wroteMarinasFalse")}
+            </p>
+          )}
           <button
             data-testid="audit-marinas-scan-btn"
             onClick={startBuild}

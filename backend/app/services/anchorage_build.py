@@ -285,18 +285,23 @@ async def build_anchorages(
     include_corridor: bool = True,
     corridor_step_nm: float = 25.0,
     corridor_radius_nm: float = 25.0,
+    run_id: str | None = None,
 ) -> dict:
     """
     Build complet : OSM autour de chaque waypoint + bande corridor
     ±corridor_radius_nm (bbox-batched, fallback per-point), dedup,
-    upsert dans `anchorages_coll`. Retourne un résumé.
+    `run_id` : écriture isolée (collection `marina_run_anchorages`).
     """
+    from app.services.isolated_runs import bind_run, reset_run
+
+    token = bind_run(run_id) if run_id else None
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
     state.error = None
     state.logs = []
     state.summary = None
+    state.run_id = run_id
 
     try:
         wps, maritime_lines = load_route(route_path)
@@ -323,7 +328,12 @@ async def build_anchorages(
 
         # Indexes up-front so incremental flushes benefit from dedup_key lookups
         try:
-            await anchorages_coll.create_index("dedup_key", unique=True)
+            if run_id:
+                await anchorages_coll.create_index(
+                    [("run_id", 1), ("dedup_key", 1)], unique=True)
+                await anchorages_coll.create_index("run_id")
+            else:
+                await anchorages_coll.create_index("dedup_key", unique=True)
             await anchorages_coll.create_index([("priority", 1), ("name", 1)])
             await anchorages_coll.create_index("anchorage_type")
         except Exception:
@@ -398,18 +408,27 @@ async def build_anchorages(
         dup_count = len(candidates) - len(deduped)
 
         inserted = updated = 0
+        from app.services.isolated_runs import current_run_id, stamp
+        rid = current_run_id()
         for doc in deduped:
-            existing_doc = await anchorages_coll.find_one({"dedup_key": doc["dedup_key"]}, {"_id": 1})
+            payload = stamp(doc, source_id=doc.get("dedup_key"), wrote_flag="wrote_marinas")
+            q = {"dedup_key": payload["dedup_key"]}
+            if rid:
+                q["run_id"] = rid
+            existing_doc = await anchorages_coll.find_one(q, {"_id": 1})
             if existing_doc:
-                doc["_id"] = existing_doc["_id"]
-                await anchorages_coll.replace_one({"_id": existing_doc["_id"]}, doc)
+                payload["_id"] = existing_doc["_id"]
+                await anchorages_coll.replace_one({"_id": existing_doc["_id"]}, payload)
                 updated += 1
             else:
-                await anchorages_coll.insert_one(doc)
+                if rid:
+                    payload["_id"] = f"{rid}:{payload['dedup_key']}"
+                await anchorages_coll.insert_one(payload)
                 inserted += 1
 
         try:
-            await anchorages_coll.create_index("dedup_key", unique=True)
+            if not run_id:
+                await anchorages_coll.create_index("dedup_key", unique=True)
             await anchorages_coll.create_index([("priority", 1), ("name", 1)])
             await anchorages_coll.create_index("anchorage_type")
         except Exception:
@@ -448,6 +467,8 @@ async def build_anchorages(
     finally:
         state.finished_at = time.time()
         state.running = False
+        if token is not None:
+            reset_run(token)
 
 
 # ---------------------------------------------------------------------------

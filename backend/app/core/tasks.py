@@ -22,6 +22,7 @@ class TaskState:
         self.summary = None
         self.result = None
         self.cancel = False
+        self.run_id = None
 
     def log(self, msg: str):
         self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
@@ -46,6 +47,7 @@ class TaskState:
             "progress": self.progress, "total": self.total, "results": self.results[-40:],
             "logs_tail": self.logs[-60:], "error": self.error, "summary": self.summary,
             "cancelling": self.cancel and self.running,
+            "run_id": self.run_id,
         }
 
 

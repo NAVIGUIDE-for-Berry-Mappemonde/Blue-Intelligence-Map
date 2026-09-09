@@ -90,6 +90,8 @@ async def _startup():
     try:
         from app.services.project_runs import ensure_run_indexes
         await ensure_run_indexes(db)
+        from app.services.isolated_runs import ensure_indexes as ensure_isolated_indexes
+        await ensure_isolated_indexes(db)
     except Exception as e:
         print(f"[startup] project run index creation failed (non-fatal): {e}")
     try:

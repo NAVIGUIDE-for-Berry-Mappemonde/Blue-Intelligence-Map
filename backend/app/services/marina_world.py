@@ -283,8 +283,9 @@ def marinas_to_slim_geojson(docs: Iterable[dict]) -> dict:
 
 
 async def upsert_world_marina(coll, cand: dict, now_iso: str) -> str:
+    from app.services.isolated_runs import current_run_id, identity_query, run_doc_id, stamp
     osm_id = cand["osm_id"]
-    existing = await coll.find_one({"osm_id": osm_id})
+    existing = await coll.find_one(identity_query("osm_id", osm_id))
     website, status, wsrc = merge_website(existing, cand.get("website"))
     patch: dict[str, Any] = {
         "name": cand.get("name") or "",
@@ -304,44 +305,63 @@ async def upsert_world_marina(coll, cand: dict, now_iso: str) -> str:
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
     _apply_osm_google_place(patch, website, existing)
+    patch = stamp(patch, source_id=osm_id, wrote_flag="wrote_marinas")
     if existing:
         await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
         return "updated"
-    patch["_id"] = osm_id
+    patch["_id"] = run_doc_id(osm_id)
     patch["enriched"] = False
     patch["stale"] = False
     await coll.insert_one(patch)
     return "inserted"
 
 
+def _cursor_key() -> str:
+    from app.services.isolated_runs import cursor_id
+    return cursor_id(CURSOR_ID)
+
+
 async def load_done_tiles(cursor_coll) -> list[str]:
-    doc = await cursor_coll.find_one({"_id": CURSOR_ID}) or {}
+    cid = _cursor_key()
+    doc = await cursor_coll.find_one({"_id": cid}) or {}
     return list(doc.get("done_tiles") or [])
 
 
 async def mark_tile_done(cursor_coll, key: str, now_iso: str) -> None:
+    from app.services.isolated_runs import current_run_id
+    cid = _cursor_key()
     done = await load_done_tiles(cursor_coll)
     if key not in done:
         done.append(key)
-    payload = {"_id": CURSOR_ID, "done_tiles": done, "updated_at": now_iso, "schema": SCHEMA}
-    existing = await cursor_coll.find_one({"_id": CURSOR_ID})
+    payload = {"_id": cid, "done_tiles": done, "updated_at": now_iso, "schema": SCHEMA}
+    rid = current_run_id()
+    if rid:
+        payload["run_id"] = rid
+    existing = await cursor_coll.find_one({"_id": cid})
     if existing:
-        await cursor_coll.replace_one({"_id": CURSOR_ID}, payload)
+        await cursor_coll.replace_one({"_id": cid}, payload)
     else:
         await cursor_coll.insert_one(payload)
 
 
 async def reset_cursor(cursor_coll) -> None:
-    existing = await cursor_coll.find_one({"_id": CURSOR_ID})
+    cid = _cursor_key()
+    existing = await cursor_coll.find_one({"_id": cid})
     if existing:
         await cursor_coll.replace_one(
-            {"_id": CURSOR_ID},
-            {"_id": CURSOR_ID, "done_tiles": [], "updated_at": None, "schema": SCHEMA},
+            {"_id": cid},
+            {"_id": cid, "done_tiles": [], "updated_at": None, "schema": SCHEMA},
         )
 
 
-async def ensure_indexes(marinas_coll) -> None:
+async def ensure_indexes(marinas_coll, *, isolated: bool = False) -> None:
     try:
+        if isolated:
+            await marinas_coll.create_index(
+                [("run_id", 1), ("osm_id", 1)], unique=True, sparse=True)
+            await marinas_coll.create_index("run_id")
+            await marinas_coll.create_index("name")
+            return
         await marinas_coll.create_index("osm_id", unique=True, sparse=True)
         await marinas_coll.create_index("name")
     except Exception:
@@ -419,24 +439,30 @@ async def build_world_marinas(
     client: httpx.AsyncClient | None = None,
     throttle_s: float | None = None,
     fetch_tile: FetchTile | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """
     Balaye les tuiles monde, upsert par osm_id, reprend les tuiles déjà faites.
     `fetch_tile` est injectable pour les tests (pas d'Overpass).
+    `run_id` : écriture isolée (ne pas passer la collection live).
     """
+    from app.services.isolated_runs import bind_run, reset_run
+
+    token = bind_run(run_id) if run_id else None
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
     state.error = None
     state.logs = []
     state.summary = None
+    state.run_id = run_id
 
     grid = tiles or WORLD_TILES
     pause = _throttle_s(throttle_s)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     try:
-        await ensure_indexes(marinas_coll)
+        await ensure_indexes(marinas_coll, isolated=bool(run_id))
         if not resume:
             await reset_cursor(cursor_coll)
             state.log("Reprise désactivée — curseur tuiles remis à zéro (pas de purge des fiches)")
@@ -538,3 +564,5 @@ async def build_world_marinas(
     finally:
         state.finished_at = time.time()
         state.running = False
+        if token is not None:
+            reset_run(token)

@@ -118,6 +118,17 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         raise HTTPException(409, "A visit-URL discover is already running")
     body = body or DiscoverBody()
     limit = min(max(int(body.limit or 200), 1), 2000)
+    from app.db import get_settings
+    from app.services import isolated_runs
+    settings = await get_settings()
+    opened = await isolated_runs.open_run(
+        db, "amp", kind="discover_visit",
+        label="amp-visit", settings=settings,
+        extra_params={"limit": limit, "skip_search": bool(body.skip_search)},
+    )
+    run_id = opened["run_id"]
+    VISIT_DISCOVER_STATE.run_id = run_id
+    isolated_runs.reset_run(opened["token"])
 
     async def _runner():
         try:
@@ -126,12 +137,20 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
                 state=VISIT_DISCOVER_STATE,
                 limit=limit,
                 skip_search=bool(body.skip_search),
+                run_id=run_id,
             )
+            await isolated_runs.finalize_run(
+                db, "amp", run_id, extra=VISIT_DISCOVER_STATE.summary)
         except Exception as exc:
             VISIT_DISCOVER_STATE.error = f"{type(exc).__name__}: {exc}"
+            await isolated_runs.finalize_run(
+                db, "amp", run_id, error=VISIT_DISCOVER_STATE.error)
 
     asyncio.create_task(_runner())
-    return {"started": True, "limit": limit, "skip_search": bool(body.skip_search)}
+    return {
+        "started": True, "limit": limit, "skip_search": bool(body.skip_search),
+        "run_id": run_id, "wrote_amp_sites": False,
+    }
 
 
 @router.post("/amp/discover-visit-urls/cancel")
@@ -156,6 +175,19 @@ async def amp_discover_visit_status():
         "summary": s.summary,
         "error": s.error,
         "logs_tail": s.logs[-40:],
+        "run_id": s.run_id,
+        "wrote_amp_sites": False,
+    }
+
+
+@router.get("/amp/runs")
+async def amp_runs_list():
+    from app.services import isolated_runs
+    items = await isolated_runs.list_meta_runs(db, "amp")
+    return {
+        "count": len(items),
+        "wrote_amp_sites": False,
+        "items": items,
     }
 
 

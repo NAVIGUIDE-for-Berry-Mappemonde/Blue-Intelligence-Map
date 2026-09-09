@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-07",
+  "updated": "2026-09-09",
   "principle": "Un chiffre n'est pas une opinion. Il est soit une loi (contrat métier, jamais modulable), soit une mesure (phénomène physique + intervalle de validité), soit une calibration (jeu étiqueté / courbe précision-rappel), soit un budget (quota ou argent). L'intervalle dit encore de quoi on parle ; le défaut est le point d'opération. Un run ne peut bouger que dans l'intervalle. Hors intervalle, ce n'est plus la même règle.",
   "kinds": {
     "loi": {
@@ -950,6 +950,30 @@
       "principle": "AUP Overpass : une tuile monde à la fois. 3 s = poli. Plancher 1,2 s = déjà utilisé par osm_seeds. Ce n'est pas une géographie métier.",
       "cdc": "wiki OSM API usage policy · marina_world",
       "code": ["app/services/marina_world.py"]
+    },
+    {
+      "id": "capitaineries.overpass_throttle_s",
+      "mode": "capitaineries",
+      "kind": "budget",
+      "value": 3.0,
+      "unit": "s",
+      "interval": [1.2, 8.0],
+      "vary": true,
+      "principle": "AUP Overpass : une tuile harbour_master à la fois. Même poli que les marinas.",
+      "cdc": "Mode Capitaineries",
+      "code": ["app/services/capitainerie_world.py"]
+    },
+    {
+      "id": "capitaineries.merge_km",
+      "mode": "capitaineries",
+      "kind": "geometrie",
+      "value": 0.25,
+      "unit": "km",
+      "interval": [0.1, 0.8],
+      "vary": true,
+      "principle": "250 m : même quai / même bureau OSM↔SHOM↔NOAA. Au-delà on fusionne deux bureaux distincts.",
+      "cdc": "Mode Capitaineries",
+      "code": ["app/services/capitainerie_world.py"]
     },
     {
       "id": "amp.visit_url_must_differ",

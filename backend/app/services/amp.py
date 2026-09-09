@@ -668,7 +668,8 @@ async def refresh_protectedseas_attrs(
             doc["visit_url_source"] = None
             doc["visit_url_judge"] = None
         n += 1
-        if db is not None and doc.get("_id") is not None:
+        from app.services.isolated_runs import current_run_id
+        if db is not None and doc.get("_id") is not None and not current_run_id():
             await db.amp_sites.update_one(
                 {"_id": doc["_id"]},
                 {"$set": {
