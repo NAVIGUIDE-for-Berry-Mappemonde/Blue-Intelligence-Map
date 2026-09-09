@@ -27,12 +27,17 @@ async def health():
 
 
 @router.get("/run-rules")
-async def read_run_rules(mode: str | None = None, profile: str | None = None):
-    """Catalogue des règles modulables + snapshot qui serait pris pour un run."""
+async def read_run_rules(mode: str | None = None, profile: str | None = None,
+                         from_settings: bool = True):
+    """Catalogue des règles modulables + snapshot qui serait pris pour un run.
+
+    `from_settings=false` : valeurs du profil (catalogue + overrides du profil),
+    sans merger les settings Mongo — pour remplir le formulaire Console.
+    """
     from app.core.run_rules import RuleError, public_catalog, snapshot_for_run
     try:
         catalog = public_catalog(mode)
-        settings = await get_settings()
+        settings = await get_settings() if from_settings else {}
         preview = snapshot_for_run(mode=mode, settings=settings, profile=profile)
     except RuleError as e:
         raise HTTPException(400, str(e)) from e

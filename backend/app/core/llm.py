@@ -519,7 +519,9 @@ async def _parse_llm_gps(prompt: str, settings: dict | None) -> tuple[float, flo
     try:
         out = await ask_json(prompt, settings=settings, max_tokens=300)
         lat, lon = float(out.get("latitude")), float(out.get("longitude"))
-        if float(out.get("confidence", 0)) >= 0.4 and -90 <= lat <= 90 and -180 <= lon <= 180 and not (lat == 0 and lon == 0):
+        from app.core.run_rules import get_rule
+        min_conf = float(get_rule("shared.llm_geocode_min_confidence", 0.4))
+        if float(out.get("confidence", 0)) >= min_conf and -90 <= lat <= 90 and -180 <= lon <= 180 and not (lat == 0 and lon == 0):
             return lat, lon
     except Exception:
         pass

@@ -388,10 +388,13 @@ def _group_outlier(seed: dict, members: list[dict],
         return [], {}
     nearest = min(haversine_km(xy[0], xy[1], p[0], p[1]) for p in healthy)
     kind = (spatial or {}).get("kind")
+    from app.core.run_rules import get_rule
+    in_eez_km = float(get_rule("formalities.basin_split_km", GROUP_OUTLIER_IN_EEZ_KM))
+    near_km = float(get_rule("formalities.peer_near_km", GROUP_OUTLIER_KM))
     if kind in COASTAL_OK:
-        if nearest <= GROUP_OUTLIER_IN_EEZ_KM:
+        if nearest <= in_eez_km:
             return [], {}
-    elif nearest <= GROUP_OUTLIER_KM:
+    elif nearest <= near_km:
         return [], {}
     diam = _diameter_km(healthy) if len(healthy) >= 2 else 0.0
     ml = sum(p[0] for p in healthy) / len(healthy)

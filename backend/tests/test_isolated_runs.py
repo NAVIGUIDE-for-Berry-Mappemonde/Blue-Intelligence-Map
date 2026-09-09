@@ -430,5 +430,42 @@ def test_routers_expose_runs_endpoints():
     cap_paths = {getattr(r, "path", "") for r in cap_router.router.routes}
     amp_paths = {getattr(r, "path", "") for r in amp_router.router.routes}
     assert "/api/marinas/runs" in marina_paths
+    assert "/api/marinas/runs/{run_id}" in marina_paths
     assert "/api/capitaineries/runs" in cap_paths
-    assert "/api/amp/runs" in amp_paths
+    assert "/api/capitaineries/runs/{run_id}" in cap_paths
+    from app.routers import project_runs as project_runs_router
+    from app.routers import runs as poe_router
+    project_paths = {getattr(r, "path", "") for r in project_runs_router.router.routes}
+    poe_paths = {getattr(r, "path", "") for r in poe_router.router.routes}
+    assert "/api/projects/runs/{run_id}" in project_paths
+    assert "/api/poe/runs/{run_id}" in poe_paths
+
+
+def test_list_and_get_meta_run_expose_snapshot():
+    from app.core.run_rules import snapshot_for_run
+    rules = snapshot_for_run(mode="marinas", profile="strict")
+    db = _FakeDB(marina_runs=[{
+        "_id": "marina-rules-1",
+        "label": "dump",
+        "state": "done",
+        "created_at": "2026-09-09T00:00:00+00:00",
+        "kind": "world_leisure_marina",
+        "wrote_marinas": False,
+        "params": {"rules": rules},
+        "summary": {"inserted": 4, "updated": 0},
+    }])
+
+    async def _go():
+        items = await isolated_runs.list_meta_runs(db, "marinas")
+        detail = await isolated_runs.get_meta_run(db, "marinas", "marina-rules-1")
+        return items, detail
+
+    items, detail = asyncio.run(_go())
+    row = next(r for r in items if r["id"] == "marina-rules-1")
+    assert row["profile"] == "strict"
+    assert row["hash"] == rules["hash"]
+    assert row["hash8"] == rules["hash"][:8]
+    assert row["counts"]["total"] == rules["counts"]["total"]
+    assert detail["profile"] == "strict"
+    assert detail["chosen"]["marinas.corridor_radius_nm"]["value"] == 15
+    assert detail["chosen"]["marinas.corridor_radius_nm"]["source"] == "profile"

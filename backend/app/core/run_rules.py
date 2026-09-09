@@ -27,6 +27,8 @@ _current: ContextVar[dict | None] = ContextVar("run_rules_snapshot", default=Non
 
 MODES = ("projects", "formalities", "marinas", "capitaineries", "amp", "shared")
 KINDS = ("loi", "geometrie", "score", "budget")
+GROUPS = ("identity", "space", "qualification", "geocode", "reading", "budget", "contracts")
+PROFILE_ORDER = ("cdc_default", "strict", "recall")
 
 
 class RuleError(ValueError):
@@ -60,6 +62,15 @@ def _validate_catalog(cat: dict) -> None:
             raise RuleError(f"{rid}: mode inconnu {rule.get('mode')}")
         if rule.get("kind") not in KINDS:
             raise RuleError(f"{rid}: kind inconnu {rule.get('kind')}")
+        if rule.get("group") not in GROUPS:
+            raise RuleError(f"{rid}: group inconnu {rule.get('group')}")
+        title, help_ = rule.get("title") or {}, rule.get("help") or {}
+        if not isinstance(title, dict) or not title.get("fr") or not title.get("en"):
+            raise RuleError(f"{rid}: title.fr/en requis")
+        if not isinstance(help_, dict) or not help_.get("fr") or not help_.get("en"):
+            raise RuleError(f"{rid}: help.fr/en requis")
+        if rule.get("kind") == "loi" and rule.get("group") != "contracts":
+            raise RuleError(f"{rid}: une loi va dans Contrats")
         if rule.get("kind") != "loi":
             _assert_in_interval(rid, rule.get("value"), rule.get("interval"))
 
@@ -99,6 +110,16 @@ def rules_for_mode(mode: str | None = None, *, include_shared: bool = True) -> l
 
 def profiles() -> dict:
     return dict(load_catalog().get("profiles") or {})
+
+
+def _loc_pair(raw) -> dict:
+    """Normalise un libellé bilingue {fr, en} (string héritée → les deux langues)."""
+    if isinstance(raw, dict):
+        fr = str(raw.get("fr") or raw.get("en") or "").strip()
+        en = str(raw.get("en") or raw.get("fr") or "").strip()
+        return {"fr": fr, "en": en}
+    text = str(raw or "").strip()
+    return {"fr": text, "en": text}
 
 
 def _assert_in_interval(rule_id: str, value: Any, interval: Any) -> None:
@@ -221,28 +242,39 @@ def snapshot_for_run(*, mode: str | None, settings: dict | None = None,
 def public_catalog(mode: str | None = None) -> dict:
     """Vue API : principe + profils + règles (sans secrets)."""
     cat = load_catalog()
+    known = profiles()
+    ordered = [name for name in PROFILE_ORDER if name in known]
+    ordered += [name for name in known if name not in PROFILE_ORDER]
     return {
         "version": cat.get("version"),
         "updated": cat.get("updated"),
         "principle": cat.get("principle"),
         "kinds": cat.get("kinds"),
+        "groups": cat.get("groups") or [
+            {"id": g, "fr": g, "en": g} for g in GROUPS
+        ],
+        "identity_banner": cat.get("identity_banner") or {},
         "profiles": {
             name: {
-                "label": spec.get("label"),
-                "overrides": spec.get("overrides") or {},
+                "label": _loc_pair(known[name].get("label")),
+                "hint": _loc_pair(known[name].get("hint") or known[name].get("label")),
+                "overrides": known[name].get("overrides") or {},
             }
-            for name, spec in profiles().items()
+            for name in ordered
         },
         "rules": [
             {
                 "id": r["id"],
                 "mode": r["mode"],
                 "kind": r["kind"],
+                "group": r.get("group"),
                 "value": r["value"],
                 "unit": r.get("unit"),
                 "interval": r.get("interval"),
                 "vary": bool(r.get("vary")),
                 "settings_key": r.get("settings_key"),
+                "title": _loc_pair(r.get("title")),
+                "help": _loc_pair(r.get("help") or r.get("principle")),
                 "principle": r.get("principle"),
                 "cdc": r.get("cdc"),
                 "code": r.get("code") or [],
@@ -281,3 +313,17 @@ def attach_rules(params: dict, snapshot: dict) -> dict:
     out = dict(params)
     out["rules"] = snapshot
     return out
+
+
+def snapshot_list_fields(params: dict | None) -> dict:
+    """Champs maigres pour une liste de runs : profil, hash, counts."""
+    rules = (params or {}).get("rules") or {}
+    if not isinstance(rules, dict):
+        rules = {}
+    digest = str(rules.get("hash") or "")
+    return {
+        "profile": rules.get("profile") or (params or {}).get("profile"),
+        "hash": digest,
+        "hash8": digest[:8] if digest else None,
+        "counts": rules.get("counts"),
+    }

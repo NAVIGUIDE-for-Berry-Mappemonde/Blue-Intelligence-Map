@@ -1263,10 +1263,13 @@ async def _skip_if_unchanged(db, zone: dict, force: bool, log, rec=None) -> dict
                    md5_fresh=md5, md5_same=md5_same, semantic_sim=sim,
                    chars=len(text or ""))
 
+    from app.core.run_rules import get_rule
+    unchanged_sim = float(get_rule("shared.content_changed_sim", 0.95))
+
     def _source_unchanged(v):
         if v["md5_same"] is True:
             return True
-        return v["semantic_sim"] is not None and v["semantic_sim"] >= 0.95
+        return v["semantic_sim"] is not None and v["semantic_sim"] >= unchanged_sim
 
     reachable = [v for v in verdicts if v["md5_same"] is not None or v["semantic_sim"] is not None]
     skip = bool(reachable) and all(_source_unchanged(v) for v in verdicts)
@@ -1275,7 +1278,7 @@ async def _skip_if_unchanged(db, zone: dict, force: bool, log, rec=None) -> dict
         reason = "md5" if not cosmetic else "semantic"
         log("monitoring: sources inchangées "
             + ("(MD5 identiques)" if reason == "md5"
-               else f"(MD5 modifiés mais similarité >= 0.95 : changement cosmétique sur {len(cosmetic)} source(s))")
+               else f"(MD5 modifiés mais similarité >= {unchanged_sim} : changement cosmétique sur {len(cosmetic)} source(s))")
             + " — ré-extraction sautée")
         await emit(rec, "monitoring_decision", skip=True, reason=reason, verdicts=verdicts)
         await db.eez_zones.update_one({"mrgid": mrgid}, {"$set": {

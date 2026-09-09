@@ -16,7 +16,7 @@ import time
 import uuid
 
 from app.core.events import RunRecorder
-from app.core.run_rules import attach_rules, bind_rules, snapshot_for_run
+from app.core.run_rules import attach_rules, bind_rules, snapshot_for_run, snapshot_list_fields
 from app.services.run_fingerprint import build_code_fingerprint, merge_run_params
 
 _current_run_id: ContextVar[str | None] = ContextVar("isolated_run_id", default=None)
@@ -382,6 +382,7 @@ async def list_meta_runs(db, dataset: str, *, skip_kinds: tuple[str, ...] = ()) 
         if n == 0:
             n = _summary_count(d)
         wrote_live = bool(d.get(spec.wrote_flag))
+        fields = snapshot_list_fields(d.get("params") or {})
         out.append({
             "id": rid,
             "label": d.get("label") or rid,
@@ -393,5 +394,44 @@ async def list_meta_runs(db, dataset: str, *, skip_kinds: tuple[str, ...] = ()) 
             "wrote_live": wrote_live,
             spec.wrote_flag: False if not wrote_live else True,
             "recommended": False,
+            "profile": fields["profile"],
+            "hash": fields["hash"],
+            "hash8": fields["hash8"],
+            "counts": fields["counts"],
         })
     return out
+
+
+async def get_meta_run(db, dataset: str, run_id: str) -> dict | None:
+    """Détail d'un run : snapshot `chosen` complet."""
+    spec = spec_for(dataset)
+    try:
+        doc = await coll(db, spec.meta_coll).find_one({"_id": run_id})
+    except Exception:
+        doc = None
+    if not doc:
+        return None
+    rules = (doc.get("params") or {}).get("rules") or {}
+    if not isinstance(rules, dict):
+        rules = {}
+    fields = snapshot_list_fields(doc.get("params") or {})
+    wrote_live = bool(doc.get(spec.wrote_flag))
+    return {
+        "id": str(doc.get("_id")),
+        "label": doc.get("label") or str(doc.get("_id")),
+        "state": doc.get("state"),
+        "created_at": doc.get("created_at"),
+        "finished_at": doc.get("finished_at"),
+        "kind": doc.get("kind") or "",
+        "dataset": dataset,
+        "error": doc.get("error"),
+        "summary": doc.get("summary"),
+        "wrote_live": wrote_live,
+        spec.wrote_flag: False if not wrote_live else True,
+        "profile": fields["profile"],
+        "hash": fields["hash"],
+        "hash8": fields["hash8"],
+        "counts": fields["counts"],
+        "chosen": rules.get("chosen") or {},
+        "params": {"rules": rules},
+    }

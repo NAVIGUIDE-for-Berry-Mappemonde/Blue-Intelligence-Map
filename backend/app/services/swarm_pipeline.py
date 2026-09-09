@@ -267,7 +267,10 @@ class Swarm:
                         self.queued_count += 1
                         await self.queue.put({"url": c["url"], "funder": c.get("funder", ""), "source": c.get("source", "cache")})
 
-            tf_agents = max(1, min(2, int(self.settings.get("tinyfish_agents", 2))))
+            from app.core.run_rules import get_rule
+            tf_agents = max(1, min(2, int(get_rule(
+                "projects.tinyfish_agents",
+                self.settings.get("tinyfish_agents", 2)))))
             sem = asyncio.Semaphore(tf_agents)
 
             async def guarded(seed):

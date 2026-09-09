@@ -26,6 +26,8 @@ class RefreshBody(BaseModel):
 class DiscoverBody(BaseModel):
     limit: int = 200
     skip_search: bool = False
+    profile: str | None = None
+    rules: dict | None = None
 
 
 def _parse_bbox(raw: str):
@@ -118,19 +120,29 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         raise HTTPException(409, "A visit-URL discover is already running")
     body = body or DiscoverBody()
     limit = min(max(int(body.limit or 200), 1), 2000)
+    from app.core.run_rules import RuleError, bind_rules, reset_rules, snapshot_for_run
     from app.db import get_settings
     from app.services import isolated_runs
     settings = await get_settings()
+    try:
+        rules = snapshot_for_run(
+            mode="amp", settings=settings,
+            overrides=body.rules, profile=body.profile)
+    except RuleError as e:
+        raise HTTPException(400, str(e)) from e
     opened = await isolated_runs.open_run(
         db, "amp", kind="discover_visit",
         label="amp-visit", settings=settings,
-        extra_params={"limit": limit, "skip_search": bool(body.skip_search)},
+        extra_params={"limit": limit, "skip_search": bool(body.skip_search),
+                      "profile": rules.get("profile")},
+        rules_overrides=body.rules, profile=body.profile,
     )
     run_id = opened["run_id"]
     VISIT_DISCOVER_STATE.run_id = run_id
     isolated_runs.reset_run(opened["token"])
 
     async def _runner():
+        rules_token = bind_rules(rules)
         try:
             await amp_visit.discover_visit_urls(
                 db,
@@ -145,11 +157,14 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
             VISIT_DISCOVER_STATE.error = f"{type(exc).__name__}: {exc}"
             await isolated_runs.finalize_run(
                 db, "amp", run_id, error=VISIT_DISCOVER_STATE.error)
+        finally:
+            reset_rules(rules_token)
 
     asyncio.create_task(_runner())
     return {
         "started": True, "limit": limit, "skip_search": bool(body.skip_search),
         "run_id": run_id, "wrote_amp_sites": False,
+        "profile": rules.get("profile"), "rules_hash": rules.get("hash"),
     }
 
 
@@ -189,6 +204,15 @@ async def amp_runs_list():
         "wrote_amp_sites": False,
         "items": items,
     }
+
+
+@router.get("/amp/runs/{run_id}")
+async def amp_run_detail(run_id: str):
+    from app.services import isolated_runs
+    doc = await isolated_runs.get_meta_run(db, "amp", run_id)
+    if not doc:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    return {**doc, "wrote_amp_sites": False}
 
 
 @router.get("/export/amp.geojson")

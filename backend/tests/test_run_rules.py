@@ -51,6 +51,11 @@ def test_cdc_numbers_are_catalogued():
         "capitaineries.overpass_throttle_s", "capitaineries.merge_km",
         "amp.visit_url_must_differ", "amp.min_zoom", "amp.bbox_max_deg",
         "shared.dedup_dist_km", "shared.no_snap",
+        "projects.tinyfish_agents", "marinas.place_match_m",
+        "formalities.geocode_candidate_limit", "formalities.basin_split_km",
+        "formalities.peer_near_km", "formalities.listing_name_sim_mid",
+        "shared.extract_agree_sim", "shared.llm_geocode_min_confidence",
+        "shared.content_changed_sim",
     ):
         assert rid in ids
 
@@ -72,6 +77,16 @@ def test_defaults_match_code_constants():
     assert catalog_default("capitaineries.merge_km") == capitainerie_world.SHOM_MERGE_KM
     assert catalog_default("capitaineries.merge_km") == identity.OVERLAY_RADIUS_KM
     assert capitainerie_world.NOAA_MERGE_KM == capitainerie_world.SHOM_MERGE_KM
+    assert catalog_default("formalities.geocode_candidate_limit") == geo.GEOCODE_CANDIDATE_LIMIT
+    assert catalog_default("formalities.peer_near_km") == geo.PEER_NEAR_KM
+    assert catalog_default("formalities.basin_split_km") == geo.BASIN_SPLIT_KM
+    from app.services.marina_maps_place import MAX_PLACE_DISTANCE_M
+    assert catalog_default("marinas.place_match_m") == MAX_PLACE_DISTANCE_M
+    assert catalog_default("projects.tinyfish_agents") == 2
+    assert catalog_default("shared.extract_agree_sim") == 0.55
+    assert catalog_default("shared.llm_geocode_min_confidence") == 0.4
+    assert catalog_default("shared.content_changed_sim") == 0.95
+    assert catalog_default("formalities.listing_name_sim_mid") == 0.82
 
 
 def test_loi_cannot_be_overridden():
@@ -112,6 +127,18 @@ def test_profile_strict_and_recall():
     assert recall["chosen"]["formalities.eez_sliver_km"]["value"] == 3.5
     assert strict["hash"] != recall["hash"]
     assert strict["chosen"]["formalities.eez_sliver_km"]["source"] == "profile"
+
+
+def test_strict_recall_move_identity_radii():
+    cap_s = snapshot_for_run(mode="capitaineries", profile="strict")
+    cap_r = snapshot_for_run(mode="capitaineries", profile="recall")
+    assert cap_s["chosen"]["capitaineries.merge_km"]["value"] == 0.15
+    assert cap_r["chosen"]["capitaineries.merge_km"]["value"] == 0.4
+    proj_s = snapshot_for_run(mode="projects", profile="strict")
+    proj_r = snapshot_for_run(mode="projects", profile="recall")
+    assert proj_s["chosen"]["shared.dedup_dist_km"]["value"] == 0.35
+    assert proj_r["chosen"]["shared.dedup_dist_km"]["value"] == 0.7
+    assert cap_s["chosen"]["capitaineries.merge_km"]["source"] == "profile"
 
 
 def test_snapshot_hash_stable():
@@ -159,6 +186,99 @@ def test_public_catalog_has_principle():
     assert "phénomène" in pub["principle"] or "loi" in pub["principle"]
     assert "cdc_default" in pub["profiles"]
     assert any(r["id"] == "marinas.corridor_radius_nm" for r in pub["rules"])
+
+
+def test_catalog_title_help_group():
+    cat = load_catalog()
+    assert {g["id"] for g in cat["groups"]} == {
+        "identity", "space", "qualification", "geocode", "reading", "budget", "contracts",
+    }
+    for rule in cat["rules"]:
+        assert rule.get("group") in {
+            "identity", "space", "qualification", "geocode", "reading", "budget", "contracts",
+        }, rule["id"]
+        assert (rule.get("title") or {}).get("fr")
+        assert (rule.get("title") or {}).get("en")
+        assert (rule.get("help") or {}).get("fr")
+        assert (rule.get("help") or {}).get("en")
+        if rule["kind"] == "loi":
+            assert rule["group"] == "contracts"
+    pub = public_catalog("projects")
+    inland = next(r for r in pub["rules"] if r["id"] == "projects.max_inland_km")
+    assert inland["title"]["fr"].startswith("Hinterland")
+    assert inland["group"] == "space"
+    assert pub["identity_banner"]["help"]["fr"]
+    assert pub["profiles"]["cdc_default"]["label"]["fr"] == "Défaut"
+    coast = next(r for r in pub["rules"] if r["id"] == "projects.max_coast_km")
+    assert coast["legacy"] is True
+
+
+def test_preview_without_settings_is_pure_profile():
+    with_s = snapshot_for_run(
+        mode="projects", profile="cdc_default", settings={"max_inland_km": 12})
+    pure = snapshot_for_run(mode="projects", profile="cdc_default", settings={})
+    assert with_s["chosen"]["projects.max_inland_km"]["value"] == 12
+    assert with_s["chosen"]["projects.max_inland_km"]["source"] == "settings"
+    assert pure["chosen"]["projects.max_inland_km"]["value"] == catalog_default(
+        "projects.max_inland_km")
+    assert pure["chosen"]["projects.max_inland_km"]["source"] == "catalog"
+
+
+def test_bind_changes_same_site_distance():
+    from app.core.geo import destination_point
+    a = {"title": "Port de Papeete", "lat": 46.15, "lon": -1.16}
+    lat2, lon2 = destination_point(a["lat"], a["lon"], 90, 0.60)
+    b = {"title": "Papeete", "lat": lat2, "lon": lon2}
+    assert dedup.is_duplicate(a, b) is False
+    snap = snapshot_for_run(
+        mode="projects", overrides={"shared.dedup_dist_km": 0.70})
+    token = bind_rules(snap)
+    try:
+        assert get_rule("shared.dedup_dist_km") == 0.70
+        assert dedup.is_duplicate(a, b) is True
+    finally:
+        reset_rules(token)
+    assert dedup.is_duplicate(a, b) is False
+
+
+def test_bind_changes_place_match_and_geocode_hits():
+    from app.core.geo import destination_point
+    from app.services.marina_maps_place import place_hit_matches
+
+    lat, lon = 46.15, -1.16
+    lat2, lon2 = destination_point(lat, lon, 90, 9.0)
+    url = f"https://www.google.com/maps/place/Minimes+Marina/@{lat2},{lon2},15z"
+    hit = {"title": "Minimes Marina", "url": url, "snippet": "yacht harbour"}
+    assert place_hit_matches("Minimes Marina", hit, lat=lat, lon=lon) is False
+    snap = snapshot_for_run(
+        mode="marinas", overrides={"marinas.place_match_m": 20000})
+    token = bind_rules(snap)
+    try:
+        assert get_rule("marinas.place_match_m") == 20000
+        assert place_hit_matches("Minimes Marina", hit, lat=lat, lon=lon) is True
+        assert geo._geocode_candidate_limit() == 10
+    finally:
+        reset_rules(token)
+
+    snap2 = snapshot_for_run(
+        mode="formalities",
+        overrides={"formalities.geocode_candidate_limit": 6})
+    token2 = bind_rules(snap2)
+    try:
+        assert geo._geocode_candidate_limit() == 6
+    finally:
+        reset_rules(token2)
+    assert geo._geocode_candidate_limit() == 10
+
+
+def test_post_bodies_accept_profile_and_rules():
+    from app.routers.amp import DiscoverBody
+    from app.routers.capitaineries import BuildBody, EnrichBatchBody
+    from app.routers.marinas import MarinasBuildBody
+    for model in (BuildBody, EnrichBatchBody, DiscoverBody, MarinasBuildBody):
+        fields = model.model_fields
+        assert "profile" in fields, model.__name__
+        assert "rules" in fields, model.__name__
 
 
 def test_attach_rules_nests_snapshot():
