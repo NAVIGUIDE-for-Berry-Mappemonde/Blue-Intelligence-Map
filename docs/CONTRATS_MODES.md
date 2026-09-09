@@ -47,14 +47,14 @@ Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’ench
 
 | Job | Phrase | Outils aujourd’hui |
 | --- | --- | --- |
-| P + TD | Extraire pages et PDF | **`extract_cascade`** : httpx, trafilatura ∥ Readability, PyMuPDF / Tesseract, Playwright, Jina ∥ TinyFish Fetch, Wayback |
-| BU | Télécharger les hits whitelistés | TinyFish Fetch ; Agent si `bot_blocked`. **Pas** de cascade, **pas** Playwright |
-| ME | Lire le site officiel | `fetch_readable` (httpx + Readability) seulement |
-| CE | Télécharger les pages contact | TinyFish Fetch, **puis** `fetch_readable` si vide |
-| MM | Lire la page Maps rendue | TinyFish Fetch (besoin du JS Maps) |
-| AV | Lire le `manager_url` | TinyFish Fetch ; scoring **sans** LLM |
+| P + TD | Extraire pages et PDF | **`read_url`** → `extract_cascade` : httpx, trafilatura ∥ Readability, PyMuPDF / Tesseract, Playwright, Jina ∥ TinyFish Fetch, Wayback |
+| BU | Télécharger les hits whitelistés | **`read_url(prefer_fetch=True)`** : Fetch, cascade si texte inutilisable ; Agent si `bot_blocked` |
+| ME | Lire le site officiel | **`read_url`** (cascade : PDF, HTML, Playwright) |
+| CE | Télécharger les pages contact | **`read_url(prefer_fetch=True)`** : Fetch, cascade si vide |
+| MM | Lire la page Maps rendue | TinyFish Fetch seulement (DOM JS Maps — hors cascade) |
+| AV | Lire le `manager_url` | **`read_url(prefer_fetch=True, keep_if_links=True)`** ; scoring **sans** LLM |
 
-P et TD partagent déjà `extract_cascade`. ME / CE / BU / AV relisent le web avec trois autres chemins.
+P, TD, BU, ME, CE et AV passent par `read_url`. MM reste Fetch-only (fiche `/place/`).
 
 ## 4. Filtre de contenu / objet — est-ce le bon objet ?
 
@@ -123,6 +123,8 @@ Le problème se voit concrètement. Un décret d’État en PDF, ouvert par le t
 
 Le changement proposé est donc une seule porte d’entrée pour lire une URL. Dès que TinyFish Fetch ne rend pas un texte utilisable — surtout un PDF ou un site JavaScript — le bottom-up, les marinas et les capitaineries rentreraient dans la même cascade que les Projets et le top-down. On ne supprime pas Fetch : il reste le bon outil quand on a besoin du DOM après JavaScript, typiquement la fiche Google Maps `/place/`, que la cascade n’a pas vocation à parser comme un décret. On n’allume pas non plus le navigateur local à chaque Fetch réussi : il ne sert que si le HTML simple et Fetch ont déjà échoué. Sinon le coût explose, et on n’a rien gagné.
 
+**Fait.** Porte `app.core.extract.read_url` / `read_urls`. Fetch d’abord pour BU, CE, AV. Cascade dès que Fetch est vide. Chromium seulement après HTML simple et Fetch. Maps : Fetch seulement. `extract_cascade` : magie `%PDF-`, Content-Type / Content-Disposition ; un HTML d’erreur sous une URL `.pdf` n’est plus un PDF.
+
 ### 2. Chercher « la page officielle de ce nom » : même outillage, questions métier distinctes
 
 Quatre jobs cherchent la page officielle d’un **lieu déjà nommé** : un port, une capitainerie, une aire protégée, une marina sans site dans OpenStreetMap. C’est la même question humaine. Chacun a pourtant sa recette.
@@ -165,7 +167,7 @@ Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le m
 
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture**, parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée**, pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée**, pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 

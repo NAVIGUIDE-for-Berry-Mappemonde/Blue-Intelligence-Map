@@ -28,7 +28,6 @@ from urllib.parse import unquote
 
 import httpx
 from bs4 import BeautifulSoup
-from readability import Document
 
 
 # TinyFish's schema validator is strict: no union types, no "description" on properties,
@@ -163,20 +162,16 @@ async def duckduckgo_html_search(
         return []
 
 
-async def fetch_readable(url: str, client: httpx.AsyncClient, timeout: int = 20) -> tuple[str, str]:
-    r = await client.get(
-        url,
-        headers={"User-Agent": DDG_UA},
-        timeout=timeout,
-        follow_redirects=True,
-    )
-    r.raise_for_status()
-    doc = Document(r.text)
-    title = (doc.short_title() or "").strip()
-    summary_html = doc.summary()
-    soup = BeautifulSoup(summary_html, "html.parser")
-    text = re.sub(r"\s+", " ", soup.get_text(" ")).strip()
-    return title, text[:6000]
+async def fetch_readable(url: str, client: httpx.AsyncClient | None = None,
+                         timeout: int = 20) -> tuple[str, str]:
+    """Texte d'une URL via la porte unique (cascade PDF / HTML / JS).
+
+    ``client`` est ignoré : la cascade gère httpx, PDF et le navigateur.
+    Conservé pour le contrat d'appel des enrichisseurs marina.
+    """
+    from app.core.extract import read_url
+    page = await read_url(url, min_chars=80, prefer_fetch=False, log=None)
+    return (page.get("title") or "", (page.get("text") or "")[:6000])
 
 
 # ------------------------------------------------------------------

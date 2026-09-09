@@ -210,30 +210,23 @@ async def _run_project_enrich(project_id: str, task: dict):
         return
     log_fn(f"Refreshing {url}")
 
-    import httpx as _httpx
     from bs4 import BeautifulSoup as _BS
-    from readability import Document as _Doc
+    from app.core.extract import read_url as _read_url
     from app.core.llm import extract_project as _extract, gatekeeper_check as _gk
-    from app.services.swarm_pipeline import UA as _UA, pick_image as _pick_image
+    from app.services.swarm_pipeline import pick_image as _pick_image
 
     try:
         settings = await get_settings()
-        async with _httpx.AsyncClient(timeout=25, follow_redirects=True, headers=_UA) as c:
-            r = await c.get(url)
-            html = r.text
-        doc = _Doc(html)
-        page_title = (doc.short_title() or "").strip() or proj.get("title") or url
-        summary_html = doc.summary()
-        soup = _BS(summary_html, "html.parser")
-        import re as _re
-        text = _re.sub(r"\s+", " ", soup.get_text(" ")).strip()
-        full = _BS(html, "html.parser")
-        if len(text) < 200:
-            text = _re.sub(r"\s+", " ", full.get_text(" ")).strip()[:8000]
-        meta = full.find("meta", attrs={"name": "description"}) or full.find("meta", attrs={"property": "og:description"})
-        meta_desc = meta.get("content", "").strip() if meta else ""
-        image = _pick_image(full, soup, url)
-        log_fn(f"Fetched + Readability: {len(text)} chars")
+        page = await _read_url(url, min_chars=200, prefer_fetch=False, log=log_fn)
+        text = page.get("text") or ""
+        html = page.get("html") or ""
+        page_title = (page.get("title") or "").strip() or proj.get("title") or url
+        meta_desc = page.get("meta_desc") or ""
+        image = page.get("image")
+        if not image and html:
+            full = _BS(html, "html.parser")
+            image = _pick_image(full, full, url)
+        log_fn(f"Fetched via {page.get('level')}: {len(text)} chars")
         gk = await _gk(page_title, text, settings)
         if not gk["accepted"]:
             log_fn(f"Gatekeeper REJECTED: {gk['reason'][:80]}")
