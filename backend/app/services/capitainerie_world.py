@@ -22,7 +22,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from app.core.geo import haversine_km
+from app.core.identity import OVERLAY_RADIUS_KM, building_radius_km, find_building
 from app.services.marina_build import (
     KEPT_TAGS,
     SHOM_CATSCF_LABELS,
@@ -48,8 +48,8 @@ SCHEMA = "capitainerie_world_v1"
 CURSOR_ID = "world_harbour_master"
 SHOM_CATSCF = "6"  # SMCFAC : rarement peuplé sur le WFS public
 SHOM_BUISGL_FUNCTN = "2"  # S-57 FUNCTN = harbour-master's office
-SHOM_MERGE_KM = 0.25
-NOAA_MERGE_KM = 0.25
+SHOM_MERGE_KM = OVERLAY_RADIUS_KM
+NOAA_MERGE_KM = OVERLAY_RADIUS_KM
 SHOM_LAYERS: tuple[tuple[str, str], ...] = (
     ("INFORMATIONS_PORTUAIRES_BDD_WFS:buisgl_point", "buisgl"),
     ("INFORMATIONS_PORTUAIRES_BDD_WFS:smcfac_point", "smcfac"),
@@ -610,22 +610,14 @@ def _source_label(sources: list[str]) -> str:
 
 
 def nearest_office(
-    lat: float, lon: float, pts: list[dict], radius_km: float = SHOM_MERGE_KM,
+    lat: float, lon: float, pts: list[dict], radius_km: float | None = None,
 ):
-    best = None
-    best_d = radius_km
-    for doc in pts:
-        try:
-            d = haversine_km(lat, lon, float(doc["lat"]), float(doc["lon"]))
-        except (TypeError, ValueError, KeyError):
-            continue
-        if d <= best_d:
-            best_d = d
-            best = doc
-    return best
+    """Calque bâtiment (≤ 250 m, distance seule). Pas la fusion de fiches Projets/PoE."""
+    hit = find_building(lat, lon, pts, radius_km=radius_km)
+    return None if hit is None else hit.doc
 
 
-def nearest_osm(lat: float, lon: float, osm_pts: list[dict], radius_km: float = SHOM_MERGE_KM):
+def nearest_osm(lat: float, lon: float, osm_pts: list[dict], radius_km: float | None = None):
     return nearest_office(lat, lon, osm_pts, radius_km=radius_km)
 
 
@@ -673,7 +665,7 @@ async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
 
 
 async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> str:
-    """Fusionne sur un OSM à ≤ 250 m, sinon insère un point SHOM orphelin."""
+    """Calque SHOM sur un OSM à ≤ 250 m (distance seule), sinon orphelin."""
     hit = nearest_osm(cand["lat"], cand["lon"], osm_pts)
     if hit:
         sources = _merge_sources(hit.get("sources"), [OSM_SOURCE, SHOM_SOURCE])
@@ -738,8 +730,8 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
 
 
 async def upsert_noaa(coll, cand: dict, now_iso: str, pts: list[dict]) -> str:
-    """Fusionne sur un bureau existant à ≤ 250 m, sinon orphelin NOAA."""
-    hit = nearest_office(cand["lat"], cand["lon"], pts, radius_km=NOAA_MERGE_KM)
+    """Calque NOAA sur un bureau à ≤ 250 m (distance seule), sinon orphelin."""
+    hit = nearest_office(cand["lat"], cand["lon"], pts)
     if hit:
         sources = _merge_sources(hit.get("sources"), [NOAA_SOURCE])
         tags = dict(hit.get("tags") or {})
@@ -1164,7 +1156,8 @@ async def overlay_shom(
         if d.get("osm_id") and d.get("lat") is not None
     ]
     if logger:
-        logger(f"Overlay SHOM : {len(osm_pts)} OSM en base pour fusion ≤ {int(SHOM_MERGE_KM * 1000)} m")
+        radius_m = int(round(building_radius_km() * 1000))
+        logger(f"Overlay SHOM : {len(osm_pts)} OSM en base pour fusion ≤ {radius_m} m")
     inserted = merged = updated = fetched = 0
     seen: set[str] = set()
     for bbox in (bboxes or SHOM_BBOXES):
@@ -1213,9 +1206,10 @@ async def overlay_noaa(
         if d.get("lat") is not None and d.get("lon") is not None
     ]
     if logger:
+        radius_m = int(round(building_radius_km() * 1000))
         logger(
             f"Overlay NOAA ENC : {len(pts)} bureaux en base pour fusion "
-            f"≤ {int(NOAA_MERGE_KM * 1000)} m"
+            f"≤ {radius_m} m"
         )
     inserted = merged = updated = 0
     seen: set[str] = set()
