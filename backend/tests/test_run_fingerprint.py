@@ -41,6 +41,9 @@ class TestFingerprint:
         assert "sk-ant-secret" not in blob
         assert "nvapi-secret" not in blob
         assert fp["nvidia_configured"] is True
+        assert fp["nvidia_model"] == "deepseek-ai/deepseek-v4-pro-0813"
+        assert fp["nvidia_judge_chain"][0] == "deepseek-ai/deepseek-v4-pro-0813"
+        assert "meta/muse-glimmer-30b" in fp["nvidia_judge_chain"]
         assert fp["features"]["nvidia_adapter"] is True
         assert fp["openrouter_configured"] is True
         assert fp["tinyfish_configured"] is True
