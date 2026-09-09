@@ -37,7 +37,8 @@ blue-intelligence/
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
 ├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, contrats Review par mode, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
 ├── infra/              SearXNG auto-hébergé (`searxng/`) + déploiement production VPS OVH (`vps/`)
-└── scripts/            Outillage d'exploitation (restauration de sauvegardes)
+├── scripts/            Outillage d'exploitation (restauration de sauvegardes)
+└── naviguide/          NAVIGUIDE — planificateur de route de l'expédition (application autonome, voir `naviguide/README.md`)
 ```
 
 ### Intelligence artificielle : NIM pour l'inférence, OpenRouter pour le web
@@ -50,6 +51,14 @@ Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par
 - **Sans clé**, l'application reste fonctionnelle en mode dégradé : heuristiques par mots-clés + modèles ML locaux (TF-IDF, spaCy NER) sans aucun appel réseau IA.
 
 Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les sources reste `null`, chaque port d'entrée est géocodé puis validé spatialement dans son polygone de ZEE.
+
+## NAVIGUIDE (monorepo)
+
+Le dossier `naviguide/` héberge **NAVIGUIDE**, le planificateur de route de l'expédition Berry-Mappemonde (React Vite + MapLibre GL ; services FastAPI : routage avec évitement des terres, données Copernicus, orchestrateur multi-agents LangGraph, polaires). Le dépôt `naviguide-berry-mappemonde` a été fusionné ici avec son historique complet, nettoyé au passage (`naviguide-api/venv` retiré de tout l'historique).
+
+- **Application autonome** : démarrage, dépendances et déploiement séparés de Blue Intelligence — voir `naviguide/README.md` (`naviguide/start-all.sh` pour tout lancer en local).
+- **Déploiement indépendant** : NAVIGUIDE n'est pas servi par blueintelligence.online.
+- **Point d'intégration prévu** : les couches de NAVIGUIDE (`MaritimeLayers.jsx`) consommeront les exports GeoJSON de Blue Intelligence (`GET /api/export/{geojson|marinas.geojson|capitaineries.geojson|poe.geojson}`).
 
 ## Démarrage local
 
