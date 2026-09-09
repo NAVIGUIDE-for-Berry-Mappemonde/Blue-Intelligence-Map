@@ -221,6 +221,25 @@ async def amp_run_detail(run_id: str):
     return {**doc, "wrote_amp_sites": False}
 
 
+@router.get("/amp/runs/{run_id}/geojson")
+async def amp_run_geojson(run_id: str):
+    """FeatureCollection du run (polygones) — sélecteur de run de la carte."""
+    meta = await db.amp_runs.find_one({"_id": run_id})
+    if not meta:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    docs = await db.amp_run_sites.find({"run_id": run_id}).to_list(20000)
+    live_fallback = False
+    if not docs and meta.get("wrote_amp_sites"):
+        docs = await db.amp_sites.find({}).to_list(20000)
+        live_fallback = True
+    return amp_svc.to_feature_collection(docs, extra={
+        "run_id": run_id,
+        "live_fallback": live_fallback,
+        "hint": None,
+        "wrote_amp_sites": False,
+    })
+
+
 @router.get("/export/amp.geojson")
 async def export_amp_geojson():
     docs = await db.amp_sites.find({}, amp_svc.SLIM_PROJECTION).to_list(20000)

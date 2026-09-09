@@ -525,3 +525,25 @@ async def capitaineries_run_detail(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     return {**doc, "wrote_capitaineries": False}
+
+
+@router.get("/capitaineries/runs/{run_id}/geojson")
+async def capitaineries_run_geojson(run_id: str):
+    """FeatureCollection du run — sélecteur de run de la carte.
+
+    Les dumps live historiques (`wrote_capitaineries=true`) n'ont pas
+    d'items isolés : on sert alors la collection live, qu'ils ont écrite.
+    """
+    meta = await db.capitainerie_runs.find_one({"_id": run_id})
+    if not meta:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    docs = await db.capitainerie_run_sites.find(
+        {"run_id": run_id}, SLIM_PROJECTION).to_list(50000)
+    live_fallback = False
+    if not docs and meta.get("wrote_capitaineries"):
+        docs = await _all_docs({})
+        live_fallback = True
+    fc = to_slim_geojson(docs)
+    fc["run_id"] = run_id
+    fc["live_fallback"] = live_fallback
+    return fc
