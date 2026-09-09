@@ -16,11 +16,25 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
   const load = useCallback(async () => {
     try {
       const { data } = await api.get(spec.list);
-      setItems(data.items || []);
-    } catch (_) { /* transient */ }
+      return data.items || [];
+    } catch (_) {
+      return null;
+    }
   }, [spec.list]);
 
-  useEffect(() => { load(); const i = setInterval(load, 8000); return () => clearInterval(i); }, [load]);
+  useEffect(() => {
+    let alive = true;
+    setItems([]);
+    (async () => {
+      const rows = await load();
+      if (alive && rows) setItems(rows);
+    })();
+    const i = setInterval(async () => {
+      const rows = await load();
+      if (alive && rows) setItems(rows);
+    }, 8000);
+    return () => { alive = false; clearInterval(i); };
+  }, [load]);
 
   const open = async (row) => {
     const id = row.id || row._id;
