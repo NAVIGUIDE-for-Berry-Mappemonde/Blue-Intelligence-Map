@@ -5,12 +5,14 @@ N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas` /
 `capitaineries` / `amp_sites`.
 """
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.db import db
 from app.services import review_gold, review_queue
 from app.services.review_choices import gold_ready, save_choice
 from app.services.review_gold import GoldNotReady
+from app.services.review_report import REPORT_KINDS, build_report, report_markdown
 from app.services.poe_zone_fiche import PUBLISHED_RUN
 
 router = APIRouter(prefix="/api")
@@ -49,6 +51,23 @@ async def review_fiche_get(kind: str, id: str, run_id: str = PUBLISHED_RUN,
     if out is None:
         raise HTTPException(404, "fiche not found")
     return out
+
+
+@router.get("/review/report")
+async def review_report_get(kind: str = "all", format: str = "json"):
+    """Rapport de review : commentaires + choix + Gold, lecture seule."""
+    if kind != "all" and kind not in REPORT_KINDS:
+        raise HTTPException(
+            400, "kind must be all|eez|project|marina|capitainerie|amp")
+    report = await build_report(db, kind)
+    if format == "md":
+        return PlainTextResponse(
+            report_markdown(report),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition":
+                     f"attachment; filename=review_report_{kind}.md"},
+        )
+    return report
 
 
 class CommentBody(BaseModel):

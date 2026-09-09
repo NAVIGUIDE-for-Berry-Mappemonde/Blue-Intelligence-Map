@@ -439,6 +439,10 @@ def test_frontend_review_tab_exists():
     assert "review-next" in review
     assert "reviewHint" in review
     assert "/generate" not in review
+    assert "review-report" in review
+    assert "/api/review/report" in review
+    assert "reviewReport" in i18n
+    assert "Gemini" in i18n
 
 
 def test_stable_mrgids_match_probe_targets():
@@ -948,4 +952,78 @@ def test_gold_ready_none_and_zero_ports():
         "bu": {},
     }
     assert gold_ready(listed, done) is True
+
+
+def test_review_report_surfaces_comments_choices_and_manual_urls():
+    """Rapport de review : commentaires + choix + Gold, URLs manuelles en tête.
+
+    Cas d'usage : le pipeline n'a pas trouvé la liste PoE d'un polygone ZEE.
+    Le réviseur la trouve à la main (Gemini), la colle dans le commentaire,
+    et le rapport la ressort comme URL « à rendre lisible par le pipeline ».
+    """
+    from app.services.review_choices import save_choice
+    from app.services.review_report import build_report, report_markdown
+
+    db = _db()
+    n_zones = len(db.eez_zones.docs)
+    n_amp = len(db.amp_sites.docs)
+    asyncio.run(review_queue.save_comment(
+        db, "eez", "published", "48944",
+        "Pipeline sans TD. Liste PoE trouvée à la main via Gemini : "
+        "https://douane.gouv.fr/mayotte-liste-poe.pdf — à rendre lisible "
+        "par l'appli au prochain run."))
+    asyncio.run(save_choice(db, "eez", "5677", "td", "drop",
+                            url="https://bad.example/annuaire"))
+    asyncio.run(save_choice(db, "amp", "PS-1", "visit", "keep",
+                            url="https://parc-marin.fr/visite"))
+
+    rep = asyncio.run(build_report(db, "all"))
+    mayotte = next(i for i in rep["items"]
+                   if i["kind"] == "eez" and i["id"] == "48944")
+    assert mayotte["title"] == "Mayotte"
+    assert mayotte["suggested_urls"] == [
+        "https://douane.gouv.fr/mayotte-liste-poe.pdf"]
+    sugg = rep["pipeline_actions"]["suggested_urls"]
+    assert sugg == [{
+        "kind": "eez", "id": "48944", "title": "Mayotte",
+        "url": "https://douane.gouv.fr/mayotte-liste-poe.pdf"}]
+    dropped = rep["pipeline_actions"]["td_dropped"]
+    assert dropped[0]["url"] == "https://bad.example/annuaire"
+    assert "bad.example" in rep["pipeline_actions"]["domains_dropped"]
+    kept = rep["pipeline_actions"]["visit_kept"]
+    assert kept[0]["url"] == "https://parc-marin.fr/visite"
+    assert kept[0]["title"] == "Parc marin du cap"
+    assert rep["summary"]["eez"]["fiches"] == 2
+    assert rep["summary"]["eez"]["comments"] == 1
+
+    # Filtre par mode : kind=eez ne remonte pas la fiche AMP.
+    only_eez = asyncio.run(build_report(db, "eez"))
+    assert {i["kind"] for i in only_eez["items"]} == {"eez"}
+
+    md = report_markdown(rep)
+    assert "Rapport de review" in md
+    assert "mayotte-liste-poe.pdf" in md
+    assert "bad.example" in md
+    assert "Parc marin du cap" in md
+    assert "à rendre lisibles par le pipeline" in md
+
+    # Lecture seule : rien n'est écrit dans les collections live.
+    assert len(db.eez_zones.docs) == n_zones
+    assert len(db.amp_sites.docs) == n_amp
+
+
+def test_review_report_includes_gold_status():
+    from app.services.review_gold import reset_eez_pre_gold_cache
+    from app.services.review_report import build_report
+
+    reset_eez_pre_gold_cache()
+    db = _db()
+    _prepare_france_gold(db)
+    asyncio.run(review_gold.toggle_gold(db, "eez", "5677"))
+    rep = asyncio.run(build_report(db, "eez"))
+    france = next(i for i in rep["items"] if i["id"] == "5677")
+    assert france["title"] == "France"
+    assert france["gold_on"] is True
+    assert france["golded_at"]
+    assert rep["summary"]["eez"]["gold"] == 1
 

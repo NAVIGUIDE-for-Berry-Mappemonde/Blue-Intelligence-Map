@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ClipboardCheck, Search } from "lucide-react";
-import api from "../api";
+import { ChevronLeft, ChevronRight, ClipboardCheck, FileDown, Search } from "lucide-react";
+import api, { BACKEND_URL } from "../api";
 import ZoneFiche from "./ZoneFiche";
 import ProjectFiche from "./review/ProjectFiche";
 import MarinaFiche from "./review/MarinaFiche";
@@ -442,6 +442,16 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           >
             {t("reviewNext")} <ChevronRight size={13} />
           </button>
+          <a
+            data-testid="review-report"
+            href={`${BACKEND_URL}/api/review/report?kind=${kind}&format=md`}
+            target="_blank"
+            rel="noreferrer"
+            title={t("reviewReportHint")}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised"
+          >
+            <FileDown size={13} /> {t("reviewReport")}
+          </a>
         </div>
         <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line" data-testid="review-hint">
           {t("reviewHint")}
