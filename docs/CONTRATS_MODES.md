@@ -98,10 +98,10 @@ P et PoE n’appellent pas le même géocodeur alors que la question « un point
 
 | Job | Phrase | Outils aujourd’hui |
 | --- | --- | --- |
-| P + TD | Fusionner deux fiches du même lieu | `app.core.dedup` : 500 m + similarité 60 % / 90 % |
+| P + TD | Fusionner deux fiches du même lieu | `same_site` (`app.core.dedup`) : 500 m + similarité 60 % / 90 % |
 | BU catalogue | Noms déjà sur la liste : juge sauté | Identité **de nom dans un catalogue**, pas un merge GPS |
 | Dump marinas | Upsert | `osm_id` |
-| Dump capitaineries | Coller SHOM / NOAA sur OSM | 0,25 km |
+| Dump capitaineries | Coller SHOM / NOAA sur OSM | `find_building` : 0,25 km, distance seule, pas de nom |
 | Mouillages | Doublons de corridor | nom + geohash6 |
 | AMP carte | Ne pas retélécharger | Cache tuile 30 j. (pas un merge d’entités) |
 
@@ -165,6 +165,8 @@ Quand on fusionne deux projets à moins de cinq cents mètres, on dit : c’est 
 
 Ce point n’est donc pas un chantier d’unification. C’est un **garde-fou**. Même famille « identité » dans la taxonomie, deux règles, deux codes. On ne les mélange pas.
 
+**Fait.** Portes `app.core.identity.same_site` et `app.core.identity.find_building`. `same_site` reste `app.core.dedup` (500 m + similarité 60 % / 90 %) — fusion de fiches Projets / PoE. `find_building` est le calque 250 m, distance seule, premier plus proche (plus de last-wins), préfiltre degré, rayon lu dans `capitaineries.merge_km`. Un nom différent n’empêche pas le calque. Un nom proche à 400 m ne colle pas deux bureaux. Pas de `is_duplicate` sur les capitaineries.
+
 ### 6. Géocoder un nom : un même appel aux deux annuaires, deux tests d’espace ensuite
 
 Les Projets et les ports d’entrée demandent tous les deux à Nominatim et à GeoNames où se trouve un nom. Les Projets les appellent l’un après l’autre, puis un modèle de langage si besoin, puis vérifient qu’on est en mer ou dans un havre à moins de quinze kilomètres. Les ports d’entrée les appellent en parallèle, départagent au modèle s’ils ne sont pas d’accord, puis exigent que le point tombe dans **ce** polygone de zone économique exclusive — pas « en France », *ce* polygone VLIZ.
@@ -173,7 +175,7 @@ Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le m
 
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **juge** commun (jumeau n°4 : **fait**) : un branchement `ask_yes_no`, trois prompts. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie (jumeau n°3 : **fait**), qui devient simple une fois lecture et recherche stables. Le **juge** commun (jumeau n°4 : **fait**) : un branchement `ask_yes_no`, trois prompts. Le **garde-fou identité** (jumeau n°5 : **fait**) : `same_site` n’est pas `find_building`. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 

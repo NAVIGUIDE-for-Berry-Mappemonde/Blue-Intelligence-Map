@@ -43,7 +43,8 @@ def mongo():
 
 # --- Modules core : importabilité -------------------------------------------
 class TestCoreImports:
-    @pytest.mark.parametrize("mod", ["app.core.llm", "app.core.nvidia", "app.core.geo", "app.core.dedup", "app.core.extract",
+    @pytest.mark.parametrize("mod", ["app.core.llm", "app.core.nvidia", "app.core.geo", "app.core.dedup",
+                                     "app.core.identity", "app.core.extract",
                                      "app.core.rag", "app.core.ml", "app.services.osm_validate"])
     def test_module_importable(self, mod):
         m = importlib.import_module(mod)

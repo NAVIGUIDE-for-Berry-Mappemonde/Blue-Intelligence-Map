@@ -1,12 +1,18 @@
-"""
-dedup_core.py — Déduplication spatio-textuelle mutualisée (PoE + Projets).
+"""Même site d'action (Projets / ports d'entrée) — pas un calque de bâtiment.
 
-Algorithme : Haversine < 500 m ET similarité > 60 %, OU similarité > 90 % seule.
+Algorithme : Haversine < 500 m ET similarité ≥ 60 %, OU similarité ≥ 90 % seule.
 Non-destructif : ne supprime jamais — fusionne par enrichissement additif.
+
+Ce n'est pas l'overlay capitainerie (SHOM / NOAA sur OSM, 250 m, distance
+seule). Voir ``app.core.identity.find_building``. On ne réutilise pas
+``is_duplicate`` pour coller deux cartes officielles du même bureau.
 """
+from __future__ import annotations
+
 import difflib
-import unicodedata
+import math
 import re
+import unicodedata
 
 from app.core.geo import haversine_km
 
@@ -43,21 +49,31 @@ def _dedup_thresholds() -> tuple[float, float, float]:
     )
 
 
+def _xy(doc: dict, lat_key: str, lon_key: str):
+    try:
+        lat, lon = doc.get(lat_key), doc.get(lon_key)
+        if lat is None or lon is None or lat == "" or lon == "":
+            return None
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(lat_f) or not math.isfinite(lon_f):
+        return None
+    return lat_f, lon_f
+
+
 def is_duplicate(doc_a: dict, doc_b: dict, lat_key: str = "lat", lon_key: str = "lon",
                  title_key: str = "title") -> bool:
+    """True si c'est le même site d'action. Jamais un calque OSM↔SHOM."""
     dist_km, sim_low, sim_high = _dedup_thresholds()
     sim = text_similarity(str(doc_a.get(title_key) or ""), str(doc_b.get(title_key) or ""))
     if sim >= sim_high:
         return True
-    vals = [doc_a.get(lat_key), doc_a.get(lon_key), doc_b.get(lat_key), doc_b.get(lon_key)]
-    if all(v is not None for v in vals):
-        try:
-            dist = haversine_km(float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
-            if dist < dist_km and sim >= sim_low:
-                return True
-        except (ValueError, TypeError):
-            pass
-    return False
+    xy_a, xy_b = _xy(doc_a, lat_key, lon_key), _xy(doc_b, lat_key, lon_key)
+    if xy_a is None or xy_b is None:
+        return False
+    dist = haversine_km(xy_a[0], xy_a[1], xy_b[0], xy_b[1])
+    return dist < dist_km and sim >= sim_low
 
 
 def merge_docs(existing: dict, incoming: dict) -> dict:

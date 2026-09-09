@@ -66,9 +66,12 @@ def test_defaults_match_code_constants():
     assert catalog_default("formalities.marina_control_m") == osm_seeds.MARINA_CONTROL_RADIUS_M
     assert catalog_default("formalities.zone_timeout_s") == poe_runs.ZONE_TIMEOUT_S
     assert catalog_default("marinas.overpass_throttle_s") == marina_world.OVERPASS_THROTTLE_S
+    from app.core import identity
     from app.services import capitainerie_world
     assert catalog_default("capitaineries.overpass_throttle_s") == capitainerie_world.OVERPASS_THROTTLE_S
     assert catalog_default("capitaineries.merge_km") == capitainerie_world.SHOM_MERGE_KM
+    assert catalog_default("capitaineries.merge_km") == identity.OVERLAY_RADIUS_KM
+    assert capitainerie_world.NOAA_MERGE_KM == capitainerie_world.SHOM_MERGE_KM
 
 
 def test_loi_cannot_be_overridden():

@@ -109,9 +109,9 @@
       "unit": "km",
       "interval": [0.3, 1.0],
       "vary": true,
-      "principle": "Deux noms pour le même quai : un havre de plaisance tient typiquement dans 300–800 m. En dessous de 300 m on dédouble « Port of X » / « X Harbour ». Au-delà de 1 km on fusionne deux sites distincts (baies voisines).",
+      "principle": "Deux noms pour le même site d'action : un havre de plaisance tient typiquement dans 300–800 m. En dessous de 300 m on dédouble « Port of X » / « X Harbour ». Au-delà de 1 km on fusionne deux sites distincts (baies voisines). Ce n'est pas le calque capitainerie (250 m, distance seule).",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §17 · CAHIER_DES_CHARGES_POE.md §17.2",
-      "code": ["app/core/dedup.py:DIST_THRESHOLD_KM"]
+      "code": ["app/core/dedup.py:DIST_THRESHOLD_KM", "app/core/identity.py"]
     },
     {
       "id": "shared.dedup_sim_low",
@@ -971,9 +971,9 @@
       "unit": "km",
       "interval": [0.1, 0.8],
       "vary": true,
-      "principle": "250 m : même quai / même bureau OSM↔SHOM↔NOAA. Au-delà on fusionne deux bureaux distincts.",
+      "principle": "250 m : même bâtiment sur deux cartes officielles (OSM↔SHOM↔NOAA), distance seule, pas de nom. Ce n'est pas la dédup Projets/PoE (500 m + similarité). En dessous de 100 m on refuse un centroïde ENC légitime. Au-delà de 800 m on superpose deux bureaux.",
       "cdc": "Mode Capitaineries",
-      "code": ["app/services/capitainerie_world.py"]
+      "code": ["app/core/identity.py:OVERLAY_RADIUS_KM", "app/services/capitainerie_world.py"]
     },
     {
       "id": "amp.visit_url_must_differ",
