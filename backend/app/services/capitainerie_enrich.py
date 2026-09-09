@@ -353,7 +353,8 @@ async def enrich_via_nvidia_muse(
             logger("[muse] NVIDIA Muse on page text")
         data = await nvidia.complete_json_nvidia(
             CONTACT_SYSTEM, _contact_prompt(doc, context), settings,
-            model=nvidia.secondary_model(), max_tokens=200, log=logger,
+            model=nvidia.secondary_model(), role="page",
+            max_tokens=200, log=logger,
         )
         cleaned = _normalise_contact(data if isinstance(data, dict) else {})
         if any(cleaned.values()):

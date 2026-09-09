@@ -161,7 +161,7 @@ async def llm_judge_visit(
     settings: dict | None = None,
     log=None,
 ) -> str | None:
-    """Muse d'abord (comme le juge PoE), OpenRouter si NVIDIA absent ou en échec."""
+    """NVIDIA (chaîne json) → OpenRouter → Claude en dernier."""
     if not candidates:
         return None
     from app.core import nvidia
@@ -172,9 +172,10 @@ async def llm_judge_visit(
     engine = None
     if nvidia.nvidia_enabled(settings):
         try:
-            parsed = await nvidia.complete_json_nvidia(
-                VISIT_JUDGE_SYSTEM, prompt, settings, max_tokens=400, log=log)
-            engine = nvidia.engine_label()
+            parsed, used = await nvidia.complete_json_nvidia_tracked(
+                VISIT_JUDGE_SYSTEM, prompt, settings, max_tokens=400, log=log,
+                role="json")
+            engine = nvidia.engine_label(used)
         except Exception as exc:
             if log:
                 log(f"NVIDIA juge AMP: {type(exc).__name__}: {str(exc)[:80]}")
@@ -190,6 +191,17 @@ async def llm_judge_visit(
             except Exception as exc:
                 if log:
                     log(f"OpenRouter juge AMP: {type(exc).__name__}: {str(exc)[:80]}")
+                parsed = None
+    if parsed is None:
+        from app.core import claude
+        if claude.claude_enabled(settings) and claude.budget_allows_call(settings):
+            try:
+                parsed = await claude.complete_json_claude(
+                    VISIT_JUDGE_SYSTEM, prompt, settings, max_tokens=400, log=log)
+                engine = "claude-haiku"
+            except Exception as exc:
+                if log:
+                    log(f"Claude juge AMP (dernier): {type(exc).__name__}: {str(exc)[:80]}")
                 parsed = None
     chosen = parse_visit_judge(parsed, candidates, doc.get("manager_url"))
     if chosen:

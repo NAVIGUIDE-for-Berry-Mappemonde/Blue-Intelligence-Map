@@ -1,9 +1,7 @@
 """
 llm_core.py — Adaptateur LLM.
 
-Complétions JSON : NVIDIA NIM si LLM_PROVIDER=nvidia (ou auto + clé),
-sinon OpenRouter. extract_ports_openrouter reste le lecteur OpenRouter ;
-le second lecteur (Muse / Kimi / Claude) est orchestré dans le pipeline.
+Complétions JSON : NVIDIA (chaîne du rôle) → OpenRouter → Claude en dernier.
 grounded_search reste OpenRouter (:online) — NIM n'a pas de recherche web.
 
   - ask_json / ask_text        : complétions (JSON strict ou texte libre)
@@ -56,7 +54,10 @@ def get_llm_key(settings: dict | None = None) -> str:
 
 def has_llm(settings: dict | None = None) -> bool:
     from app.core.nvidia import nvidia_enabled
-    return nvidia_enabled(settings) or bool(get_llm_key(settings))
+    from app.core import claude
+    if nvidia_enabled(settings) or bool(get_llm_key(settings)):
+        return True
+    return claude.claude_enabled(settings) and claude.budget_allows_call(settings)
 
 
 # ---------------------------------------------------------------------------
@@ -116,28 +117,77 @@ async def _call_openrouter(prompt: str, system: str, key: str, model: str | None
 # ---------------------------------------------------------------------------
 # API publique
 # ---------------------------------------------------------------------------
-async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
-                   max_tokens: int = 2000, log=None) -> dict:
-    """Complétion en mode JSON strict. Lève RuntimeError si pas de clé ou pas de JSON."""
-    from app.core.nvidia import complete_json_nvidia, nvidia_enabled
-    if nvidia_enabled(settings):
-        return await complete_json_nvidia(
-            system, prompt, settings, max_tokens=max_tokens, log=log,
-            role="json")
+def _public_engine(engine: str, kind: str) -> str:
+    """Libellé persisté (gatekeeper / extracteur projet)."""
+    if (engine or "").startswith("nvidia"):
+        return f"NVIDIA {kind}"
+    if (engine or "").startswith("claude"):
+        return f"Claude {kind}"
+    return f"OpenRouter {kind}"
+
+
+async def ask_json_tracked(prompt: str, system: str = JSON_SYSTEM,
+                           settings: dict | None = None,
+                           max_tokens: int = 2000, log=None,
+                           role: str = "json") -> tuple[dict, str]:
+    """JSON strict : NVIDIA (chaîne du rôle) → OpenRouter → Claude en dernier.
+
+    Retourne (objet, engine) — engine = nvidia-* | openrouter | claude.
+    """
+    from app.core import claude, nvidia
+    last: Exception | None = None
+    if nvidia.nvidia_enabled(settings):
+        try:
+            data, used = await nvidia.complete_json_nvidia_tracked(
+                system, prompt, settings, max_tokens=max_tokens, log=log,
+                role=role)
+            return data, nvidia.engine_label(used)
+        except Exception as e:
+            last = e
+            if log:
+                log(f"nvidia JSON épuisé: {str(e)[:120]}")
     key = get_llm_key(settings)
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY missing")
-    raw = await _call_openrouter(prompt, system, key, json_mode=True, max_tokens=max_tokens)
-    data = parse_json_flexible(raw)
-    if isinstance(data, dict):
-        return data
-    if log:
-        log("llm_core: no JSON in OpenRouter output")
-    raise RuntimeError("openrouter: no JSON in output")
+    if key:
+        try:
+            data = await _json_openrouter(prompt, system, settings, max_tokens)
+            return data, "openrouter"
+        except Exception as e:
+            last = e
+            if log:
+                log(f"openrouter JSON: {str(e)[:120]}")
+    if claude.claude_enabled(settings) and claude.budget_allows_call(settings):
+        try:
+            data = await claude.complete_json_claude(
+                system, prompt, settings,
+                max_tokens=min(int(max_tokens), 800), log=log)
+            return data, "claude"
+        except Exception as e:
+            last = e
+            if log:
+                log(f"claude JSON (dernier): {str(e)[:120]}")
+    if last:
+        raise last
+    raise RuntimeError("no LLM backend")
+
+
+async def ask_json(prompt: str, system: str = JSON_SYSTEM, settings: dict | None = None,
+                   max_tokens: int = 2000, log=None, role: str = "json") -> dict:
+    """JSON strict : NVIDIA → OpenRouter → Claude en dernier."""
+    data, _engine = await ask_json_tracked(
+        prompt, system, settings, max_tokens=max_tokens, log=log, role=role)
+    return data
 
 
 async def ask_text(prompt: str, system: str = "You are a helpful assistant.",
                    settings: dict | None = None, max_tokens: int = 2000) -> str:
+    """Texte : NVIDIA (chaîne text) puis OpenRouter. Pas de Claude (adaptateur JSON)."""
+    from app.core import nvidia
+    if nvidia.nvidia_enabled(settings):
+        try:
+            return await nvidia.complete_text_nvidia(
+                system, prompt, settings, max_tokens=max_tokens)
+        except Exception:
+            pass
     key = get_llm_key(settings)
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing")
@@ -178,7 +228,7 @@ async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
             return {"accepted": False, "score": round(ml["score"], 3),
                     "reason": "ML gatekeeper: high-confidence non-marine (local model, no LLM call)",
                     "engine": "ML Gatekeeper (local)"}
-    # 2. LLM (OpenRouter) ou heuristique
+    # 2. LLM (NIM → OpenRouter → Claude) ou heuristique
     if not has_llm(settings):
         return heuristic_gatekeeper(f"{title} {text}", settings)
     prompt = f"""Gatekeeper Protocol: decide if this project is a MARINE/OCEAN/COASTAL conservation, restoration or protection project.
@@ -189,11 +239,11 @@ Page content (truncated):
 
 Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>"}}"""
     try:
-        out = await ask_json(prompt, settings=settings)
+        out, engine = await ask_json_tracked(prompt, settings=settings)
         score = float(out.get("score", 0))
         return {"accepted": bool(out.get("marine")) and score >= float(settings.get("min_marine_score", 0.5)),
                 "score": round(score, 3), "reason": str(out.get("reason", ""))[:300],
-                "engine": "OpenRouter Gatekeeper"}
+                "engine": _public_engine(engine, "Gatekeeper")}
     except Exception as e:
         res = heuristic_gatekeeper(f"{title} {text}", settings)
         res["reason"] = f"llm failed ({str(e)[:80]}), {res['reason']}"
@@ -237,7 +287,7 @@ Return JSON:
  "category": "<exactly one of: MPA, Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Other>",
  "partners": [<up to 3 partner/grantee MARINE conservation organizations explicitly mentioned, each {{"name": "...", "url": "<their website from the links list, or null>"}}. Empty array if none>]}}"""
     try:
-        out = await ask_json(prompt, settings=settings)
+        out, engine = await ask_json_tracked(prompt, settings=settings)
         return {
             "title": str(out.get("title") or title)[:200],
             "description": str(out.get("description") or "")[:250],
@@ -247,7 +297,7 @@ Return JSON:
             "s_ocean": round(float(out.get("s_ocean") or 0.5), 3),
             "category": str(out.get("category") or "Other"),
             "partners": [p for p in (out.get("partners") or []) if isinstance(p, dict) and p.get("name")][:3],
-            "engine": "OpenRouter Extractor",
+            "engine": _public_engine(engine, "Extractor"),
         }
     except Exception:
         return heuristic_extract(title, text, meta_desc, settings)
@@ -375,17 +425,30 @@ def coerce_ports(data, context: str | None = None) -> list[dict]:
     return out[:150]  # plafond de sécurité élevé — pas de cap par pays (grands États maritimes)
 
 
+async def _json_openrouter(prompt: str, system: str, settings: dict | None,
+                           max_tokens: int) -> dict:
+    key = get_llm_key(settings)
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY missing")
+    raw = await _call_openrouter(
+        prompt, system, key, json_mode=True, max_tokens=max_tokens)
+    data = parse_json_flexible(raw)
+    if isinstance(data, dict):
+        return data
+    raise RuntimeError("openrouter: no JSON in output")
+
+
 async def extract_ports_openrouter(context: str, zone: dict,
                                    settings: dict | None = None, log=None) -> list[dict]:
-    """Lecteur OpenRouter seul — le pipeline l'appelle en parallèle de Claude."""
+    """Lecteur OpenRouter seul (pas de reboucle NIM)."""
     from app.services.poe_zone_label import search_polygon_name
     prompt = POE_EXTRACT_PROMPT.format(
         name=search_polygon_name(zone) or (zone.get("name") or zone.get("geoname") or ""),
         sovereign=zone.get("sovereign") or "",
         context=context[:20000],
     )
-    data = await ask_json(prompt, system="Tu réponds uniquement en JSON strict.",
-                          settings=settings, max_tokens=2500, log=log)
+    data = await _json_openrouter(
+        prompt, "Tu réponds uniquement en JSON strict.", settings, 2500)
     ports = coerce_ports(data, context=context)
     for p in ports:
         p["extraction_engine"] = "openrouter"
@@ -405,9 +468,21 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
         except Exception:
             s = {}
     from app.core.nvidia import extract_ports_nvidia, nvidia_enabled
+    from app.core import claude
     if nvidia_enabled(s):
-        return await extract_ports_nvidia(context, zone, settings=s, log=log)
-    return await extract_ports_openrouter(context, zone, settings=s, log=log)
+        try:
+            return await extract_ports_nvidia(context, zone, settings=s, log=log)
+        except Exception as e:
+            if log:
+                log(f"NVIDIA extract épuisé: {type(e).__name__}: {str(e)[:100]}")
+    try:
+        return await extract_ports_openrouter(context, zone, settings=s, log=log)
+    except Exception as e:
+        if log:
+            log(f"OpenRouter extract: {type(e).__name__}: {str(e)[:100]}")
+    if claude.claude_enabled(s) and claude.budget_allows_call(s):
+        return await claude.extract_ports_claude(context, zone, settings=s, log=log)
+    raise RuntimeError("extract_ports: no backend")
 
 
 # ---------------------------------------------------------------------------
@@ -484,3 +559,71 @@ async def grounded_search(prompt: str, log=None, domain_fn=None) -> tuple[list[d
             out.append({"url": u, "domain": d})
     log(f"OpenRouter :online: {len(out)} sources candidates, synthèse {len(synthesis)} chars")
     return out[:10], synthesis or None
+
+
+# ---------------------------------------------------------------------------
+# Départage Nominatim vs GeoNames (un appel JSON par zone)
+# ---------------------------------------------------------------------------
+_TIEBREAK_SYSTEM = (
+    "Tu départages un géocodage double. Réponds UNIQUEMENT avec un JSON "
+    '{"picks": [{"name": "...", "choice": "nominatim|geonames|none"}]}. '
+    "Ne propose aucune autre coordonnée. none = les deux points sont faux "
+    "ou hors sujet pour ce port dans cette zone."
+)
+
+
+def _tiebreak_user(zone: dict, items: list[dict]) -> str:
+    name = zone.get("name") or zone.get("geoname") or ""
+    sovereign = zone.get("sovereign") or ""
+    lines = [
+        f"Zone : {name} ({sovereign}).",
+        "Nominatim et GeoNames divergent. Choisis pour chaque port "
+        "nominatim, geonames ou none. N'invente aucune coordonnée.",
+        "",
+    ]
+    for i, it in enumerate(items, 1):
+        nom = it.get("nominatim") or [None, None]
+        geo = it.get("geonames") or [None, None]
+        lines.append(
+            f"{i}. {it.get('name')}\n"
+            f"   nominatim: {nom[0]}, {nom[1]}\n"
+            f"   geonames: {geo[0]}, {geo[1]}"
+        )
+    return "\n".join(lines)
+
+
+async def arbitrate_geocode(zone: dict, items: list[dict],
+                            settings: dict | None = None,
+                            log=None) -> dict:
+    """NVIDIA → OpenRouter → Claude. Dict vide = repli EEZ côté pipeline."""
+    from app.core import claude, nvidia
+    if not items:
+        return {}
+    prompt = _tiebreak_user(zone, items)
+    if nvidia.nvidia_enabled(settings):
+        try:
+            data = await nvidia.complete_json_nvidia(
+                _TIEBREAK_SYSTEM, prompt, settings, role="json",
+                max_tokens=400, log=log)
+            picks = claude._parse_tiebreak(data, items)
+            if picks:
+                if log:
+                    log(f"NVIDIA tiebreak: {len(items)} port(s)")
+                return picks
+        except Exception as e:
+            if log:
+                log(f"NVIDIA tiebreak: {type(e).__name__}: {str(e)[:80]}")
+    if get_llm_key(settings):
+        try:
+            data = await _json_openrouter(
+                prompt, _TIEBREAK_SYSTEM, settings, 400)
+            picks = claude._parse_tiebreak(data, items)
+            if picks:
+                if log:
+                    log(f"OpenRouter tiebreak: {len(items)} port(s)")
+                return picks
+        except Exception as e:
+            if log:
+                log(f"OpenRouter tiebreak: {type(e).__name__}: {str(e)[:80]}")
+    return await claude.arbitrate_geocode_claude(
+        zone, items, settings=settings, log=log)

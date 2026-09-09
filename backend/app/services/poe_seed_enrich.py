@@ -2,7 +2,8 @@
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
 Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
-juge NVIDIA (Pro → Muse → gpt-oss → Flash) si clé NIM, sinon Haiku → Sonnet → OpenRouter.
+juge NVIDIA (Pro → Muse → gpt-oss → Flash) si clé NIM, sinon OpenRouter,
+puis Claude Haiku → Sonnet en dernier.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
 Agent TinyFish seulement si Fetch renvoie bot_blocked (1 / graine, lite puis
 stealth, 2 concurrents, cap crédits).
@@ -33,7 +34,7 @@ from app.core.geo import (
     select_geocode_candidate,
 )
 from app.services.poe_gps_registry import accepted_by_key
-from app.core.llm import ask_json
+from app.core.llm import _json_openrouter, get_llm_key
 from app.core.tinyfish import (
     FETCH_URL_CAP, SEARCH_PAGE_CAP, tf_api_key, tf_fetch, tf_poe_agent,
     tf_search_pages,
@@ -609,23 +610,25 @@ async def _judge_llm(doc: dict, zone: dict, context: str, settings: dict, log) -
         if last is not None:
             return last
 
-    result = await _claude(claude.CLAUDE_HAIKU_MODEL, "claude-haiku")
+    or_key = get_llm_key(settings)
+    if or_key:
+        try:
+            data = await _json_openrouter(prompt, JUDGE_SYSTEM, settings, 300)
+            out = parse_judge(data)
+            out["judge_engine"] = "openrouter"
+            if out.get("judge_status") != "inconclusive":
+                return out
+            result = out
+        except Exception as e:
+            log(f"OpenRouter juge: {type(e).__name__}: {str(e)[:80]}")
+
+    result = result or await _claude(claude.CLAUDE_HAIKU_MODEL, "claude-haiku")
     if should_escalate_sonnet(result, doc):
         sonnet = await _claude(claude.CLAUDE_SONNET_MODEL, "claude-sonnet")
         if sonnet:
             result = sonnet
-    if result is None or result.get("judge_status") == "inconclusive":
-        try:
-            data = await ask_json(prompt, system=JUDGE_SYSTEM, settings=settings,
-                                  max_tokens=300, log=log)
-            out = parse_judge(data)
-            out["judge_engine"] = "openrouter"
-            if result is None or out.get("judge_status") != "inconclusive":
-                result = out
-        except Exception as e:
-            log(f"OpenRouter juge: {type(e).__name__}: {str(e)[:80]}")
-            if result is None:
-                result = parse_judge({"is_poe": None, "reason": "llm_error"})
+    if result is None:
+        result = parse_judge({"is_poe": None, "reason": "llm_error"})
     return result
 
 

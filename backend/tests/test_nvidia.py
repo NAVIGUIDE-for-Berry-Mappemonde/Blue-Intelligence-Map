@@ -75,6 +75,7 @@ class TestParseAndLegal:
         assert nvidia.engine_label("moonshotai/kimi-k3") == "nvidia-kimi"
         assert nvidia.engine_label("poolside/laguna-xs-2.1") == "nvidia-laguna"
         assert nvidia.engine_label("openai/gpt-oss-20b") == "nvidia-gpt-oss"
+        assert nvidia.engine_label("meta/llama-3.2-11b-vision-instruct") == "nvidia-llama"
 
     def test_second_extract_muse_if_primary_overridden(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "other/reader")
@@ -132,6 +133,9 @@ class TestProvider:
         assert nvidia.FLASH_MODEL in chain
         assert nvidia.LEGAL_MODEL in nvidia.models_for("legal")
         assert nvidia.LEGAL_MODEL in nvidia.models_for("extract")
+        assert nvidia.models_for("page")[0] == nvidia.PRIMARY_MODEL
+        assert nvidia.models_for("text")[0] == nvidia.SECONDARY_MODEL
+        assert nvidia.GPT_OSS_MODEL in nvidia.models_for("json")
 
     def test_payload_follows_infer_docs(self):
         extras = nvidia.generation_extras("meta/muse-glimmer-30b")
@@ -146,6 +150,9 @@ class TestProvider:
         assert kimi["temperature"] == 1.0
         assert kimi["reasoning_effort"] == "low"
         assert "top_p" not in kimi  # non exposé sur kimi-k3-infer
+        kimi_legal = nvidia.chat_payload(
+            "moonshotai/kimi-k3", "sys", "user", 32, role="legal")
+        assert kimi_legal["reasoning_effort"] == "high"
 
         pro = nvidia.chat_payload("deepseek-ai/deepseek-v4-pro-0813", "sys", "user", 32)
         assert pro["temperature"] == 0
@@ -251,7 +258,7 @@ class TestJudgeNvidia:
 
         monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
         monkeypatch.setattr(nvidia, "complete_json_nvidia", fake_complete)
-        monkeypatch.setattr(enr, "ask_json", boom)
+        monkeypatch.setattr(enr, "_json_openrouter", boom)
 
         out = _run(enr._judge_llm(
             {"name": "Port Commerce", "seed_sources": ["v1"]},
@@ -308,3 +315,85 @@ class TestTrackedFallback:
         assert used == nvidia.SECONDARY_MODEL
         assert data == {"ok": True}
         assert calls[0] == nvidia.PRIMARY_MODEL
+
+
+class TestAskJsonCascade:
+    def test_nvidia_then_openrouter_then_claude(self, monkeypatch):
+        from app.core import claude, llm
+
+        order = []
+
+        async def nv_fail(*a, **k):
+            order.append("nvidia")
+            raise RuntimeError("nvidia down")
+
+        async def or_fail(*a, **k):
+            order.append("openrouter")
+            raise RuntimeError("or down")
+
+        async def claude_ok(*a, **k):
+            order.append("claude")
+            return {"ok": True}
+
+        monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
+        monkeypatch.setattr(nvidia, "complete_json_nvidia_tracked", nv_fail)
+        monkeypatch.setattr(llm, "get_llm_key", lambda s=None: "sk-or")
+        monkeypatch.setattr(llm, "_json_openrouter", or_fail)
+        monkeypatch.setattr(claude, "claude_enabled", lambda s=None: True)
+        monkeypatch.setattr(claude, "budget_allows_call", lambda s=None: True)
+        monkeypatch.setattr(claude, "complete_json_claude", claude_ok)
+
+        data, engine = _run(llm.ask_json_tracked("p"))
+        assert data == {"ok": True}
+        assert engine == "claude"
+        assert order == ["nvidia", "openrouter", "claude"]
+
+    def test_gatekeeper_label_is_nvidia(self, monkeypatch):
+        from app.core import llm
+
+        async def fake_tracked(*a, **k):
+            return {"marine": True, "score": 0.9, "reason": "reef"}, "nvidia-deepseek"
+
+        monkeypatch.setattr(llm, "has_llm", lambda s=None: True)
+        monkeypatch.setattr(llm, "ask_json_tracked", fake_tracked)
+        import app.core.ml as ml
+        monkeypatch.setattr(ml, "predict_relevance", lambda t: None)
+
+        out = _run(llm.gatekeeper_check(
+            "Reef restore", "coral reef ocean marine sea coast", {}))
+        assert out["engine"] == "NVIDIA Gatekeeper"
+        assert out["accepted"] is True
+
+
+class TestCompleteText:
+    def test_text_payload_omits_json_object(self):
+        body = nvidia.chat_payload(
+            nvidia.SECONDARY_MODEL, "sys", "user", 32, json_object=False, role="text")
+        assert "response_format" not in body
+        assert body["temperature"] == 0.95
+
+
+class TestMarinaNvidiaFirst:
+    def test_nvidia_hit_skips_openrouter(self, monkeypatch):
+        from app.services import marina_enrich as me
+
+        async def fake_nv(marina, settings, logger=None):
+            return {"canal_vhf": "9", "places_visiteurs": 320,
+                    "tirant_eau_max_metres": 3.5, "score_protection_meteo": None,
+                    "services_disponibles": ["eau"], "telephone_capitainerie": "05",
+                    "resume_avis": None}
+
+        async def boom_or(*a, **k):
+            raise AssertionError("OpenRouter must not run after NVIDIA hit")
+
+        async def boom_tf(*a, **k):
+            raise AssertionError("TinyFish must not run after NVIDIA hit")
+
+        monkeypatch.setattr(me, "enrich_via_nvidia", fake_nv)
+        monkeypatch.setattr(me, "enrich_via_openrouter", boom_or)
+        monkeypatch.setattr(me, "enrich_via_tinyfish", boom_tf)
+        out = _run(me.enrich_marina(
+            {"name": "Minimes", "lat": 46.1, "lon": -1.1, "tags": {}},
+            tinyfish_key="tf", openrouter_key="or", settings={"nvidia_api_key": "nv"}))
+        assert out["enrichment_source"] == "nvidia"
+        assert out["canal_vhf"] == "9"

@@ -1029,8 +1029,8 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
       - LLM indisponible → la liste NER devient le fallback (comportement conservé).
     Une vraie table (noms + coords) court-circuite le LLM ; les fragments
     « port de X » ne suffisent plus — les lecteurs JSON lisent ces pages.
-    Second lecteur : Muse (ou Kimi si décret) si NVIDIA est allumé,
-    sinon Claude s'il est allumé, à côté du lecteur principal.
+    Second lecteur : Muse (ou Kimi si décret) si NVIDIA est allumé.
+    Claude n'intervient qu'après échec des deux lecteurs NIM/OR.
     """
     raw_catalog = catalog_text if catalog_text is not None else context
     catalog = extract_structured_ports(raw_catalog)
@@ -1049,7 +1049,7 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         "claude", "openrouter", "catalog", "ner",
         "nvidia-laguna", "nvidia-muse", "nvidia-kimi", "nvidia-deepseek",
         "nvidia-gpt-oss", "nvidia-gemma", "nvidia-minimax", "nvidia-nemotron",
-        "llm",
+        "nvidia-llama", "llm",
     )
 
     async def _primary():
@@ -1070,13 +1070,8 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
                     context, zone, settings=settings, log=log,
                     model=model, engine=engine, fallback=False)
                 return ports
-            from app.core import claude
-            if not (claude.claude_enabled(settings) and claude.budget_allows_call(settings)):
-                return None
-            ports = await claude.extract_ports_claude(context, zone, settings=settings, log=log)
-            if log:
-                log(f"LLM Claude Haiku (second lecteur): {len(ports)} port(s)")
-            return ports
+            # NVIDIA off : pas de Claude ici (dernier recours après les deux lecteurs).
+            return None
         except Exception as e:
             if log:
                 log(f"second lecteur: échec ({type(e).__name__})")
@@ -1105,6 +1100,17 @@ async def extract_ports_llm(context: str, zone: dict, log, rec=None,
         log("lecteur principal indisponible — second lecteur retenu")
         llm_ports, llm_err = claude_ports, None
         claude_names = []  # déjà la liste principale
+    if llm_ports is None:
+        from app.core import claude
+        if claude.claude_enabled(settings) and claude.budget_allows_call(settings):
+            try:
+                llm_ports = await claude.extract_ports_claude(
+                    context, zone, settings=settings, log=log)
+                llm_err = None
+                if log:
+                    log(f"LLM Claude Haiku (dernier recours): {len(llm_ports)} port(s)")
+            except Exception as e:
+                llm_err = e
     if llm_ports is None:
         log(f"LLM: échec ({type(llm_err).__name__}: {str(llm_err)[:100]})")
         fallback = catalog_ports_to_keep(catalog)
@@ -2018,10 +2024,10 @@ async def _haiku_tiebreak_zone(zone, rows, settings, log, rec) -> dict:
     if not items:
         return {}
     try:
-        from app.core.claude import arbitrate_geocode_claude
-        picks = await arbitrate_geocode_claude(zone, items, settings=settings, log=log)
+        from app.core.llm import arbitrate_geocode
+        picks = await arbitrate_geocode(zone, items, settings=settings, log=log)
     except Exception as e:
-        log(f"départage Haiku: échec ({type(e).__name__}: {str(e)[:80]}) — repli EEZ")
+        log(f"départage GPS: échec ({type(e).__name__}: {str(e)[:80]}) — repli EEZ")
         return {}
     await emit(rec, "geocode_tiebreak", n=len(items), picks=picks)
     return picks or {}
@@ -2030,10 +2036,10 @@ async def _haiku_tiebreak_zone(zone, rows, settings, log, rec) -> dict:
 async def _extract_and_geocode(zone: dict, context: str, used_sources: list[dict], log,
                                rec=None, run=None, catalog_text: str | None = None,
                                settings: dict | None = None) -> list[dict]:
-    """Étape 4 — Extraction parallèle (OpenRouter ∥ Claude ∥ NER) puis géocodage.
+    """Étape 4 — Extraction parallèle (NIM → OR → Claude ∥ NER) puis géocodage.
 
     Coords déjà dans la source (table ou LLM recopié) → pas de Nominatim.
-    Nom non toponyme → pas de géocode. Désaccord dual → un Haiku / zone.
+    Nom non toponyme → pas de géocode. Désaccord dual → NIM / OR / Claude.
     Un point n'est gardé que s'il est dans cette ZEE, sur son bord terrestre
     (≤ 15 km), ou — exception rivière — un port de CE pays à ≤ 400 km.
     Pas de tampon 300 km, pas de snap_to_ocean.

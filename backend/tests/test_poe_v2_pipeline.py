@@ -192,7 +192,9 @@ class TestExtractionCompare:
             raise RuntimeError("no key")
 
         import app.core.ml as ml
+        import app.core.claude as claude_mod
         monkeypatch.setattr(poe, "extract_ports", broken_llm)
+        monkeypatch.setattr(claude_mod, "claude_enabled", lambda s=None: False)
         monkeypatch.setattr(ml, "extract_entities",
                             lambda text: [{"text": "Gamma Wharf", "label": "PORT_NAME"}])
         ports = asyncio.run(poe.extract_ports_llm("ctx", {"name": "Testland"},
@@ -1211,8 +1213,8 @@ class TestGeocodePolicy:
 
         monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
         monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
-        import app.core.claude as claude_mod
-        monkeypatch.setattr(claude_mod, "arbitrate_geocode_claude", fake_arb)
+        import app.core.llm as llm_mod
+        monkeypatch.setattr(llm_mod, "arbitrate_geocode", fake_arb)
         docs = asyncio.run(poe._extract_and_geocode(
             self._zone(), "ctx", [], lambda m: None))
         assert docs[0]["geocode_source"] == "geonames"
@@ -1234,8 +1236,8 @@ class TestGeocodePolicy:
 
         monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
         monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
-        import app.core.claude as claude_mod
-        monkeypatch.setattr(claude_mod, "arbitrate_geocode_claude", fake_arb)
+        import app.core.llm as llm_mod
+        monkeypatch.setattr(llm_mod, "arbitrate_geocode", fake_arb)
         docs = asyncio.run(poe._extract_and_geocode(
             self._zone(), "ctx", [], lambda m: None))
         assert docs[0]["lat"] is None
