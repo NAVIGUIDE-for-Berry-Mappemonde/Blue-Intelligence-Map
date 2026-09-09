@@ -118,8 +118,13 @@ ANCHORAGE_BUILD_STATE = BuildState()
 
 
 async def _all_marinas(q: dict | None = None, projection: dict | None = None) -> list[dict]:
-    cur = db.marinas.find(q or {}, projection or SLIM_PROJECTION).sort("name", 1)
-    return [doc async for doc in cur]
+    # Tri en Python (0.01 s) plutôt que Mongo : sur Atlas M0 le débit est le
+    # facteur limitant, et batch_size réduit borne la durée de chaque lecture
+    # socket (un batch 16 Mo par défaut peut dépasser le socketTimeoutMS).
+    cur = db.marinas.find(q or {}, projection or SLIM_PROJECTION).batch_size(4000)
+    docs = [doc async for doc in cur]
+    docs.sort(key=lambda d: (d.get("name") or ""))
+    return docs
 
 
 @router.get("/marinas")
@@ -904,3 +909,25 @@ async def marinas_run_detail(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     return {**doc, "wrote_marinas": False}
+
+
+@router.get("/marinas/runs/{run_id}/geojson")
+async def marinas_run_geojson(run_id: str):
+    """FeatureCollection du run — sélecteur de run de la carte.
+
+    Les dumps live historiques (`wrote_marinas=true`) n'ont pas d'items
+    isolés : on sert alors la collection live, qu'ils ont écrite.
+    """
+    meta = await db.marina_runs.find_one({"_id": run_id})
+    if not meta:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    docs = await db.marina_run_marinas.find(
+        {"run_id": run_id}, SLIM_PROJECTION).to_list(50000)
+    live_fallback = False
+    if not docs and meta.get("wrote_marinas"):
+        docs = await _all_marinas()
+        live_fallback = True
+    fc = marinas_to_slim_geojson(docs)
+    fc["run_id"] = run_id
+    fc["live_fallback"] = live_fallback
+    return fc

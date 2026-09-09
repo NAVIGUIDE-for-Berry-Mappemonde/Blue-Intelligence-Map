@@ -1,9 +1,11 @@
 import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Sun, Waves } from "lucide-react";
+import RunSelector from "./RunSelector";
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
   status, t, basemap, setBasemap,
   mode, setMode,
+  mapRun, onSelectMapRun,
 }) {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-5 border-b border-line bg-surface z-[1200]">
@@ -97,6 +99,13 @@ export default function Header({
           >
             <MapIcon size={13} /> {t("map")}
           </button>
+          {/* " > " — sélecteur du run affiché sur la carte (par mode) */}
+          <RunSelector
+            mode={mode}
+            mapRun={mapRun}
+            t={t}
+            onSelect={(run) => { onSelectMapRun(run); setView("map"); }}
+          />
           <button
             data-testid="view-toggle-audit"
             onClick={() => setView("audit")}

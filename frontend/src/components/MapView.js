@@ -37,6 +37,7 @@ export default function MapView({
   flyToZone,
   flyToPoe,
   flyToAmp,
+  ampRunId,
   onAmpSites,
   zoneFiche,
   funderFilter,
@@ -301,6 +302,7 @@ export default function MapView({
   });
   useAmpLayer({
     mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites: onAmpSites, flyToAmp,
+    runId: ampRunId,
     showReview,
   });
 

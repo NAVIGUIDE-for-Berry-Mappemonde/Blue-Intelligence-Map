@@ -23,7 +23,18 @@ router = APIRouter(prefix="/api")
 
 @router.get("/")
 async def health():
-    return {"service": "Blue Intelligence", "status": "operational", "ts": now_iso()}
+    # `mongo` : cible de persistance ("atlas" = durable, "local" = pod
+    # éphémère — les runs y seraient perdus à l'arrêt de l'environnement).
+    import os
+    url = (os.environ.get("MONGO_URL") or "").lower()
+    if "mongodb+srv" in url or "mongodb.net" in url:
+        mongo = "atlas"
+    elif "localhost" in url or "127.0.0.1" in url:
+        mongo = "local"
+    else:
+        mongo = "other"
+    return {"service": "Blue Intelligence", "status": "operational",
+            "mongo": mongo, "ts": now_iso()}
 
 
 @router.get("/run-rules")

@@ -132,6 +132,15 @@ async def project_run_projects(run_id: str, verdict: str | None = None, limit: i
     }
 
 
+@router.get("/projects/runs/{run_id}/geojson")
+async def project_run_geojson(run_id: str):
+    """FeatureCollection du run — pour l'affichage carte (sélecteur de run)."""
+    if not await db.project_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    docs = await db.project_run_projects.find({"run_id": run_id}).to_list(20000)
+    return project_runs.run_projects_to_geojson(run_id, docs)
+
+
 @router.get("/projects/runs/{run_id}/events")
 async def project_run_events(run_id: str, step: str | None = None,
                              skip: int = 0, limit: int = 500):
