@@ -13,6 +13,7 @@ stocké dans ``amp_sites`` (pas l'ancienne ``mpa_cache``).
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Iterable
@@ -31,6 +32,8 @@ AMP_OUT_FIELDS = (
     "category_name,wdpa_id,iucn_cat,purpose,lfp,other_helpful_links,"
     "gov_level,year_est"
 )
+ATTR_OUT_FIELDS = "SITE_ID,site_name,url,other_helpful_links,purpose"
+ATTR_REFRESH_BATCH = 80
 
 VISIT_STATUSES = (
     "none",
@@ -49,6 +52,17 @@ _VISIT_HINT = (
     r"turismo|tourisme|nautism\w*|zoning|regulat\w*"
 )
 VISIT_HINT_RE = re.compile(rf"(?:^|[\W_])(?:{_VISIT_HINT})(?:$|[\W_])", re.I)
+_NAME_TOKEN_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]{4,}")
+_NAME_STOP = frozenset({
+    "area", "aire", "amp", "mpa", "zone", "zona", "park", "parc", "marine",
+    "marin", "natural", "naturel", "naturelle", "national", "nacional",
+    "reserve", "reserva", "protected", "site", "sites", "gulf", "golfe",
+    "golf", "port", "ports", "isla", "isle", "illes", "islas", "cape",
+    "cabo", "west", "east", "north", "south", "nord", "sud", "ouest",
+    "france", "french", "spain", "spanish", "italia", "italy", "waters",
+    "mediterranean", "mediterranee", "special", "integral", "partial",
+    "partiale", "protection", "protegida", "this", "that", "with", "from",
+})
 
 SLIM_PROJECTION = {
     "_id": 1,
@@ -160,6 +174,32 @@ def is_manager_suburl(url: str | None, manager_url: str | None) -> bool:
     return bool(hu and hm and hu == hm)
 
 
+def fold_text(value: str | None) -> str:
+    raw = unicodedata.normalize("NFD", value or "")
+    return "".join(ch for ch in raw if unicodedata.category(ch) != "Mn").lower()
+
+
+def name_tokens(name: str | None) -> set[str]:
+    return {
+        tok for tok in _NAME_TOKEN_RE.findall(fold_text(name))
+        if tok not in _NAME_STOP
+    }
+
+
+def name_matches(name: str | None, blob: str | None) -> bool:
+    """Le nom du site doit apparaître dans l'URL / le titre (recherche hors hôte)."""
+    toks = name_tokens(name)
+    if not toks:
+        return False
+    hay = fold_text(blob)
+    long_toks = {tok for tok in toks if len(tok) >= 5}
+    if long_toks:
+        return any(tok in hay for tok in long_toks)
+    if len(toks) >= 2:
+        return sum(1 for tok in toks if tok in hay) >= 2
+    return next(iter(toks)) in hay
+
+
 def split_protectedseas_website(raw: str | None) -> tuple[str | None, list[str]]:
     """Champ Website PS : parfois ``Label|https://a; Autre|https://b``."""
     urls = extract_urls(raw)
@@ -184,6 +224,8 @@ def rank_visit_candidate(
     curated: bool = False,
     title: str = "",
     snippet: str = "",
+    name: str = "",
+    require_name: bool = False,
 ) -> int:
     """Score > 0 = candidat. 0 = homepage, pub, ou hors sujet."""
     if not normalize_url(url) or urls_equivalent(url, manager_url):
@@ -193,6 +235,10 @@ def rank_visit_candidate(
     hint_path = bool(VISIT_HINT_RE.search(path))
     hint_blob = bool(VISIT_HINT_RE.search(blob))
     same = is_manager_suburl(url, manager_url)
+    if require_name and not same and not name_matches(name, blob):
+        return 0
+    if require_name and not same and not path.strip("/"):
+        return 0
     score = 0
     if hint_path:
         score += 4
@@ -207,6 +253,8 @@ def rank_visit_candidate(
     if curated and not same and not hint_path and not hint_blob:
         # Lien extra PS hors hôte, sans mot-clé : brochure / dive-map souvent utile.
         score += 2
+    if not same and name_matches(name, blob):
+        score += 2
     return score
 
 
@@ -218,7 +266,8 @@ def pick_visit_url(
 ) -> tuple[str | None, str]:
     """Choisit une URL de visite distincte du gestionnaire.
 
-    Privilegie une sous-URL du même hôte déjà présente dans ProtectedSeas.
+    Privilegie une sous-URL du même hôte si elle existe, mais accepte
+    un autre domaine déjà présent dans ProtectedSeas ou découvert.
     Retourne ``(url, status)``. ``status`` ∈ VISIT_STATUSES.
     """
     if discovered:
@@ -254,12 +303,8 @@ def pick_visit_url(
         _consider(raw, curated=True, count_manager_copy=True)
     for blob in extra_blobs or []:
         for raw in extract_urls(blob):
-            # Sous-URL du Website PS = curée ; le 2e label (OFB, etc.) reste strict.
-            _consider(
-                raw,
-                curated=is_manager_suburl(raw, manager_url),
-                count_manager_copy=False,
-            )
+            # Tout lien distinct déjà écrit par ProtectedSeas compte, même hors hôte.
+            _consider(raw, curated=True, count_manager_copy=False)
 
     if ranked:
         ranked.sort(key=lambda item: (-item[0], -len(urlparse(item[1]).path or "")))
@@ -539,6 +584,107 @@ async def fetch_arcgis(bbox: tuple[float, float, float, float], *,
             continue
         docs.append(doc)
     return docs
+
+
+def _sql_site_ids(site_ids: list[str]) -> str:
+    parts = []
+    for sid in site_ids:
+        safe = str(sid).replace("'", "''")
+        if safe:
+            parts.append(f"'{safe}'")
+    return f"SITE_ID IN ({','.join(parts)})"
+
+
+async def fetch_arcgis_attrs(site_ids: list[str]) -> dict[str, dict]:
+    """Attributs ProtectedSeas sans géométrie — extras Website / Other Helpful Links."""
+    out: dict[str, dict] = {}
+    ids = [str(s).strip() for s in site_ids if str(s).strip()]
+    if not ids:
+        return out
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        for i in range(0, len(ids), ATTR_REFRESH_BATCH):
+            chunk = ids[i:i + ATTR_REFRESH_BATCH]
+            params = {
+                "where": _sql_site_ids(chunk),
+                "outFields": ATTR_OUT_FIELDS,
+                "returnGeometry": "false",
+                "f": "json",
+            }
+            r = await client.get(ARCGIS_AMP_URL, params=params)
+            r.raise_for_status()
+            data = r.json()
+            for feat in data.get("features") or []:
+                attrs = feat.get("attributes") or feat.get("properties") or {}
+                sid = str(attrs.get("SITE_ID") or attrs.get("site_id") or "").strip()
+                if sid:
+                    out[sid] = attrs
+    return out
+
+
+def apply_protectedseas_attrs(doc: dict, attrs: dict | None) -> dict:
+    """Réécrit manager_url / extras depuis une fiche ArcGIS (sans polygone)."""
+    if not attrs:
+        return doc
+    website_raw = attrs.get("url") or ""
+    helpful = attrs.get("other_helpful_links")
+    purpose = attrs.get("purpose")
+    if website_raw:
+        doc["ps_website_raw"] = website_raw
+        manager, _extras = split_protectedseas_website(website_raw)
+        if manager:
+            doc["manager_url"] = manager
+    if helpful is not None:
+        doc["other_helpful_links"] = helpful
+    if purpose:
+        doc["purpose"] = purpose
+    return doc
+
+
+async def refresh_protectedseas_attrs(
+    db, docs: list[dict], *, fetch_fn=None, log=None,
+) -> int:
+    """Recharge les extras ProtectedSeas du cache (comme les tags OSM Capitaineries)."""
+    ids = [str(d.get("site_id") or d.get("_id") or "").strip() for d in docs]
+    ids = [i for i in ids if i]
+    if not ids:
+        return 0
+    fetch = fetch_fn or fetch_arcgis_attrs
+    try:
+        remote = await fetch(ids)
+    except Exception as exc:
+        if log:
+            log(f"ProtectedSeas attributs : {type(exc).__name__}: {str(exc)[:80]}")
+        return 0
+    n = 0
+    for doc in docs:
+        sid = str(doc.get("site_id") or doc.get("_id") or "").strip()
+        attrs = remote.get(sid)
+        if not attrs:
+            continue
+        apply_protectedseas_attrs(doc, attrs)
+        if doc.get("visit_url") and urls_equivalent(doc.get("visit_url"), doc.get("manager_url")):
+            doc["visit_url"] = None
+            doc["visit_url_status"] = "not_found"
+            doc["visit_url_source"] = None
+            doc["visit_url_judge"] = None
+        n += 1
+        if db is not None and doc.get("_id") is not None:
+            await db.amp_sites.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "manager_url": doc.get("manager_url"),
+                    "ps_website_raw": doc.get("ps_website_raw"),
+                    "other_helpful_links": doc.get("other_helpful_links"),
+                    "purpose": doc.get("purpose"),
+                    "visit_url": doc.get("visit_url"),
+                    "visit_url_status": doc.get("visit_url_status"),
+                    "visit_url_source": doc.get("visit_url_source"),
+                    "visit_url_judge": doc.get("visit_url_judge"),
+                }},
+            )
+    if log:
+        log(f"ProtectedSeas attributs : {n}/{len(ids)} fiche(s) mises à jour")
+    return n
 
 
 async def ensure_amp_indexes(db) -> None:

@@ -113,7 +113,7 @@ async def amp_resolve_visit_urls(limit: int = 500):
 
 @router.post("/amp/discover-visit-urls")
 async def amp_discover_visit_start(body: DiscoverBody | None = None):
-    """Job de fond : liens extra → TinyFish Fetch → TinyFish Search (comme Marinas)."""
+    """Job de fond : extras ProtectedSeas → Fetch → Search → juge Muse."""
     if VISIT_DISCOVER_STATE.running:
         raise HTTPException(409, "A visit-URL discover is already running")
     body = body or DiscoverBody()
