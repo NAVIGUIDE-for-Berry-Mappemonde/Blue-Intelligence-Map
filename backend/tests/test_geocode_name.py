@@ -1,6 +1,7 @@
 """Porte unique geocode_name — Nominatim ∥ GeoNames, deux tests d'espace. Aucun réseau."""
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
 import sys
@@ -307,3 +308,34 @@ class TestWiring:
         from app.services.run_fingerprint import build_code_fingerprint
         fp = build_code_fingerprint({})
         assert fp["features"]["geocode_name"] is True
+
+    def test_poe_llm_geocode_is_port_prompt_not_conservation(self):
+        from app.core import llm as llm_mod
+        port_src = inspect.getsource(llm_mod.llm_geocode_port)
+        proj_src = inspect.getsource(llm_mod.llm_geocode)
+        assert "port of entry" in port_src
+        assert "mrgid" in port_src
+        assert "reef" not in port_src.lower()
+        assert "MPA" not in port_src
+        assert "conservation" in proj_src.lower()
+        assert "mrgid" not in proj_src
+        assert "VLIZ" not in proj_src
+
+    def test_pipelines_keep_distinct_llm_geocode(self):
+        from app.core import project_geo as pgeo_mod
+        from app.services import poe_pipeline, poe_seed_enrich
+        p_src = inspect.getsource(pgeo_mod.geocode_project_site)
+        assert "llm_geocode_port" not in p_src
+        assert "llm_geocode(" in p_src
+        assert "from app.core.llm import llm_geocode" in p_src
+        for path in (poe_pipeline.__file__, poe_seed_enrich.__file__):
+            tree = ast.parse(Path(path).read_text())
+            imported, called = set(), set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "app.core.llm":
+                    imported.update(a.name for a in node.names)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    called.add(node.func.id)
+            assert "llm_geocode_port" in imported | called
+            assert "llm_geocode" not in imported
+            assert "llm_geocode" not in called

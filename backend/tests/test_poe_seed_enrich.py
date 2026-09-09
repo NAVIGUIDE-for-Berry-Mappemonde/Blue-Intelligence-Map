@@ -516,12 +516,76 @@ class TestGeocodeAlias:
         assert out["lat"] == -22.27
 
 
+class TestLlmGeocodePortMute:
+    def test_mute_directories_accept_llm_in_polygon(self, monkeypatch):
+        from shapely.geometry import box
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": None, "geonames": None, "agree": None}
+
+        async def fake_llm(port, zone, settings=None, log=None):
+            assert "conservation" not in (port.get("name") or "").lower()
+            return 43.3, 5.4
+
+        monkeypatch.setattr(enr, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr("app.core.llm.llm_geocode_port", fake_llm)
+        geom = box(-5.0, 42.0, 8.0, 51.5)
+        out = _run(enr.geocode_one(
+            {"name": "Marseille", "seed_sources": ["listing"]},
+            {"name": "France", "iso2": "FR", "mrgid": 5677,
+             "_geom": geom, "_prep": None},
+            lambda m: None, settings={}))
+        assert out["has_coords"] is True
+        assert out["geocode_source"] == "llm"
+        assert out["geocode_arbitration"] == "llm"
+        assert out["lat"] == 43.3
+
+    def test_mute_llm_mayotte_rejected_on_hexagone(self, monkeypatch):
+        from shapely.geometry import box
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": None, "geonames": None, "agree": None}
+
+        async def fake_llm(port, zone, settings=None, log=None):
+            return -12.78, 45.30
+
+        monkeypatch.setattr(enr, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr("app.core.llm.llm_geocode_port", fake_llm)
+        geom = box(-5.0, 42.0, 8.0, 51.5)
+        out = _run(enr.geocode_one(
+            {"name": "Dzaoudzi"},
+            {"name": "France", "iso2": "FR", "mrgid": 5677,
+             "_geom": geom, "_prep": None},
+            lambda m: None, settings={}))
+        assert out.get("has_coords") is False
+        assert out["geocode_arbitration"] == "llm_spatial_rejected"
+        assert out.get("lat") is None
+        assert out["geocode_rejected_lat"] == -12.78
+
+    def test_hit_skips_llm(self, monkeypatch):
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": [-22.27, 166.44], "geonames": None,
+                    "nominatim_meta": {}, "agree": None}
+
+        async def boom(*a, **k):
+            raise AssertionError("llm_geocode_port must not run")
+
+        monkeypatch.setattr(enr, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr("app.core.llm.llm_geocode_port", boom)
+        out = _run(enr.geocode_one(
+            {"name": "Nouméa", "seed_sources": ["listing"]},
+            {"name": "NC", "_geom": None, "_prep": None},
+            lambda m: None, settings={}))
+        assert out["lat"] == -22.27
+        assert out["geocode_source"] != "llm"
+
+
 class TestExecuteEnrich:
     def test_does_not_write_poe_ports(self, monkeypatch):
         db = _FakeDB()
         db.poe_ports = _FakeColl([{"_id": "v1", "name": "keep"}])
 
-        async def fake_geo(doc, zone, log):
+        async def fake_geo(doc, zone, log, settings=None):
             return {"lat": -22.27, "lon": 166.44, "has_coords": True,
                     "geocoded_at": "t", "validated": True}
 
@@ -555,7 +619,7 @@ class TestExecuteEnrich:
             "search_query": "Nouméa official port of entry",
         }])
 
-        async def fake_geo(doc, zone, log):
+        async def fake_geo(doc, zone, log, settings=None):
             return {"lat": -22.27, "lon": 166.44, "has_coords": True,
                     "geocoded_at": "t", "validated": True}
 
@@ -592,7 +656,7 @@ class TestExecuteEnrich:
         ])
         judged = []
 
-        async def fake_geo(doc, zone, log):
+        async def fake_geo(doc, zone, log, settings=None):
             return {"lat": -22.27, "lon": 166.44, "has_coords": True,
                     "geocoded_at": "t", "validated": True}
 

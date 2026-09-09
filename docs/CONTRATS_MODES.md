@@ -88,8 +88,8 @@ ME et CE sont le jumeau « JSON sur du texte de page » (`page`). P et TD sont l
 | Job | Phrase | Outils aujourd’hui |
 | --- | --- | --- |
 | P | GPS du lieu d’action | **`geocode_name`** Nominatim **∥** GeoNames ; départage LLM si désaccord ; havre ≤ 15 km (`site_publishable`) |
-| TD | Coller le port dans **ce** polygone | **`geocode_port_dual`** (même appel parallèle) ; départage LLM ; in-EEZ / 15 km / rivière 400 km |
-| BU | Géocoder les noms sans point | **Le même** `geocode_port_dual` + filtre polygone |
+| TD | Coller le port dans **ce** polygone | **`geocode_port_dual`** (même appel parallèle) ; départage LLM ; si les deux annuaires sont muets : **`llm_geocode_port`** puis in-EEZ / 15 km / rivière 400 km |
+| BU | Géocoder les noms sans point | **Le même** `geocode_port_dual` + `llm_geocode_port` si muets + filtre polygone |
 | MM / dumps / AMP | — | GPS déjà dans OSM / SHOM / NOAA / ProtectedSeas |
 
 P et PoE partagent `geocode_dual` (Nominatim ∥ GeoNames). Les tests d’espace restent distincts : havre (`site_publishable`) vs polygone VLIZ (`classify_poe_point`).
@@ -173,7 +173,7 @@ Les Projets et les ports d’entrée demandent tous les deux à Nominatim et à 
 
 Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le même : c’est pour cela qu’un seul appel « demande aux deux, départage s’il le faut » est justifié. Ce qui ne doit pas fusionner, c’est le **test d’espace** ensuite. Un projet n’a pas à entrer dans un polygone VLIZ. Un port d’entrée n’a pas le droit d’être collé sur Mayotte alors qu’on fiche l’hexagone. On unifierait l’outil de géocodage, pas la géographie du produit.
 
-**Fait.** Porte `app.core.geo.geocode_name` / `geocode_dual`. Nominatim ∥ GeoNames, départage `arbitrate_geocode` si désaccord, aucune troisième coordonnée. `geocode_port_dual` réutilise `pack_geocode_dual`. Projets : `site_publishable` (havre ≤ 15 km) dans `apply_havre`, bascule sur l’autre annuaire si le choisi est inland. PoE : polygone VLIZ inchangé. `llm_geocode` seulement si les deux annuaires sont muets. Pas de `classify_poe_point` sur un projet.
+**Fait.** Porte `app.core.geo.geocode_name` / `geocode_dual`. Nominatim ∥ GeoNames, départage `arbitrate_geocode` si désaccord, aucune troisième coordonnée. `geocode_port_dual` réutilise `pack_geocode_dual`. Projets : `site_publishable` (havre ≤ 15 km) dans `apply_havre` ; `llm_geocode` (site de conservation) seulement si les deux annuaires sont muets. PoE : polygone VLIZ inchangé ; si les deux annuaires sont muets, `llm_geocode_port` (prompt port d’entrée, pas récif/AMP) puis le même test VLIZ. Un GPS inventé hors de *ce* polygone n’est pas écrit. Pas de `classify_poe_point` sur un projet. Pas de `llm_geocode` Projet sur un port.
 
 ### Dans quel ordre, et pourquoi
 

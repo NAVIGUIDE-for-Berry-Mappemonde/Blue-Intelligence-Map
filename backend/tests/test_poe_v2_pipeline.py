@@ -1153,8 +1153,12 @@ class TestGeocodePolicy:
             return {"nominatim": [52.0, 5.0], "geonames": [52.0, 5.0],
                     "agree": True, "agreement_km": 0.1, "geonames_available": True}
 
+        async def boom_llm(*a, **k):
+            raise AssertionError("llm_geocode_port must not run on junk names")
+
         monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
         monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", boom_llm)
         docs = asyncio.run(poe._extract_and_geocode(
             self._zone(), "ctx", [], lambda m: None))
         assert called == []
@@ -1172,8 +1176,12 @@ class TestGeocodePolicy:
         async def fake_dual(port, zone, log=None):
             raise AssertionError("geocode_port_dual should be deferred")
 
+        async def boom_llm(*a, **k):
+            raise AssertionError("llm_geocode_port must not run on deferred catalog")
+
         monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
         monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", boom_llm)
         docs = asyncio.run(poe._extract_and_geocode(
             self._zone(), "ctx", [], lambda m: None))
         assert len(docs) == 8
@@ -1243,6 +1251,104 @@ class TestGeocodePolicy:
             self._zone(), "ctx", [], lambda m: None))
         assert docs[0]["lat"] is None
         assert docs[0]["geocode_arbitration"] == "haiku_none"
+
+    def test_mute_directories_llm_gps_kept_without_polygon(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Port Alpha", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": None, "geonames": None, "agree": None,
+                    "geonames_available": True}
+
+        async def fake_llm(port, zone, settings=None, log=None):
+            assert port["name"] == "Port Alpha"
+            assert zone.get("mrgid") == 1
+            return 10.5, 20.5
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", fake_llm)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None, settings={}))
+        assert docs[0]["lat"] == 10.5
+        assert docs[0]["lon"] == 20.5
+        assert docs[0]["geocode_source"] == "llm"
+        assert docs[0]["geocode_arbitration"] == "llm"
+
+    def test_mute_llm_outside_this_polygon_keeps_name_without_gps(self, monkeypatch):
+        from shapely.geometry import mapping, box
+        zone = {
+            "mrgid": 5677, "name": "France", "iso2": "FR", "sovereign": "France",
+            "geometry": mapping(box(-5.0, 42.0, 8.0, 51.5)),
+        }
+
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Dzaoudzi", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": None, "geonames": None, "agree": None,
+                    "geonames_available": True}
+
+        async def fake_llm(port, zone, settings=None, log=None):
+            return -12.78, 45.30  # Mayotte, pas l'hexagone
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", fake_llm)
+        docs = asyncio.run(poe._extract_and_geocode(
+            zone, "ctx", [], lambda m: None, settings={}))
+        assert [d["name"] for d in docs] == ["Dzaoudzi"]
+        assert docs[0]["lat"] is None
+        assert docs[0]["geocode_arbitration"] == "llm_spatial_rejected"
+        assert docs[0]["geocode_source"] is None
+
+    def test_disagreement_does_not_call_llm_geocode_port(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Port Alpha", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": [10.0, 20.0], "geonames": [50.0, 5.0],
+                    "agree": False, "agreement_km": 4000,
+                    "geonames_available": True}
+
+        async def fake_arb(zone, items, settings=None, log=None):
+            return {"Port Alpha": "nominatim", "port alpha": "nominatim"}
+
+        async def boom_llm(*a, **k):
+            raise AssertionError("désaccord n'est pas muet — pas de GPS inventé")
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", boom_llm)
+        import app.core.llm as llm_mod
+        monkeypatch.setattr(llm_mod, "arbitrate_geocode", fake_arb)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None, settings={}))
+        assert docs[0]["geocode_source"] == "nominatim"
+        assert docs[0]["lat"] == 10.0
+
+    def test_directories_hit_skips_llm_geocode_port(self, monkeypatch):
+        async def fake_extract(context, zone, log, rec=None, catalog_text=None,
+                              settings=None):
+            return [{"name": "Port Alpha", "extraction_engine": "claude"}]
+
+        async def fake_dual(port, zone, log=None):
+            return {"nominatim": [10.0, 20.0], "geonames": None, "agree": None,
+                    "geonames_available": True}
+
+        async def boom_llm(*a, **k):
+            raise AssertionError("annuaires pas muets — pas de GPS inventé")
+
+        monkeypatch.setattr(poe, "extract_ports_llm", fake_extract)
+        monkeypatch.setattr(poe, "geocode_port_dual", fake_dual)
+        monkeypatch.setattr(poe, "llm_geocode_port", boom_llm)
+        docs = asyncio.run(poe._extract_and_geocode(
+            self._zone(), "ctx", [], lambda m: None, settings={}))
+        assert docs[0]["geocode_source"] == "nominatim"
+        assert docs[0]["lat"] == 10.0
 
     def test_sibling_polygon_port_is_not_written_on_this_fiche(self, monkeypatch):
         from shapely.geometry import mapping, box

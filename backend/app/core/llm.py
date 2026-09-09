@@ -8,7 +8,8 @@ grounded_search reste OpenRouter (:online) — NIM n'a pas de recherche web.
   - gatekeeper_check           : filtre marin (ML local puis ask_yes_no)
   - extract_project            : extraction structurée d'un projet marin
   - extract_ports              : extraction stricte des Ports d'Entrée
-  - llm_geocode                : géocodage intelligent
+  - llm_geocode                : géocodage intelligent (site Projet)
+  - llm_geocode_port           : GPS au jugé d'un port d'entrée (annuaires muets)
   - grounded_search            : recherche web groundée (suffixe :online)
 
 Clés : NVIDIA_API_KEY / OPENROUTER_API_KEY (env) ou settings UI.
@@ -466,6 +467,7 @@ async def extract_ports(context: str, zone: dict, settings: dict | None = None, 
 # Géocodage intelligent par LLM
 # ---------------------------------------------------------------------------
 async def llm_geocode(location: str, title: str, settings: dict):
+    """GPS au jugé d'un *site de conservation* (récif, baie, AMP). Pas un port d'entrée."""
     if not has_llm(settings):
         return None
     prompt = f"""You are a maritime geocoding expert. Give the best-estimate GPS coordinates for this marine conservation project site.
@@ -474,6 +476,46 @@ Location description: {location or 'unknown'}
 
 Rules: prefer the actual project site (reef, bay, MPA, coastal zone) over any city or HQ. If the location is a coastal region, return a point in the adjacent waters.
 Return JSON: {{"latitude": <decimal>, "longitude": <decimal>, "confidence": <0.0-1.0>}}. If you truly cannot estimate, use confidence 0."""
+    return await _parse_llm_gps(prompt, settings)
+
+
+async def llm_geocode_port(port: dict, zone: dict | None = None,
+                           settings: dict | None = None, log=None):
+    """GPS au jugé d'un *port d'entrée*, si Nominatim et GeoNames sont muets.
+
+    Ce n'est pas ``llm_geocode`` (site Projet). Le caller doit encore exiger
+    que le point tombe dans CE polygone VLIZ — pas « en France ».
+    """
+    log = log or (lambda m: None)
+    if not has_llm(settings):
+        return None
+    zone = zone or {}
+    name = (port.get("name") or "").strip()
+    if not name:
+        return None
+    city = (port.get("city") or "").strip()
+    label = zone.get("name") or zone.get("geoname") or ""
+    prompt = f"""You estimate GPS for a yacht port of entry (customs / clearance harbour), not a conservation project.
+
+Port: {name}
+City: {city or "unknown"}
+THIS exclusive economic zone polygon: {label}
+VLIZ mrgid: {zone.get("mrgid")}
+iso2 of this polygon: {zone.get("iso2") or ""}
+sovereign: {zone.get("sovereign") or ""}
+
+Place the harbour or quay in THIS polygon only (or its coastal land, or a river port of this country).
+Do not place an overseas territory on a mainland fiche, or the reverse.
+If you cannot place this port in THIS polygon, use confidence 0.
+
+Return JSON: {{"latitude": <decimal>, "longitude": <decimal>, "confidence": <0.0-1.0>}}."""
+    hit = await _parse_llm_gps(prompt, settings)
+    if hit:
+        log(f"géocode LLM port: {name} → {hit[0]:.4f}, {hit[1]:.4f}")
+    return hit
+
+
+async def _parse_llm_gps(prompt: str, settings: dict | None) -> tuple[float, float] | None:
     try:
         out = await ask_json(prompt, settings=settings, max_tokens=300)
         lat, lon = float(out.get("latitude")), float(out.get("longitude"))

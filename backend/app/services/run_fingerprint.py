@@ -98,6 +98,7 @@ def build_code_fingerprint(settings: dict | None = None,
             "haiku_geocode_tiebreak": _module_has(
                 "app.core.claude", "arbitrate_geocode_claude"),
             "geocode_name": _module_has("app.core.geo", "geocode_name"),
+            "llm_geocode_port": _module_has("app.core.llm", "llm_geocode_port"),
             "seed_union": _module_has("app.services.poe_seeds", "build_seed_union"),
             "seed_verify": _module_has("app.services.poe_seeds", "verdict_for_seed"),
             "seed_osm": _module_has("app.services.osm_seeds", "refresh_osm_cache"),
