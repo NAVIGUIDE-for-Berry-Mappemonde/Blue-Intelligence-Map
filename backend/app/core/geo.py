@@ -608,6 +608,21 @@ PEER_FAR_KM = 500.0
 AMBIGUOUS_SCORE_GAP = 12.0
 INLAND_FAR_SCORE_KM = 30.0
 
+
+def _geocode_candidate_limit() -> int:
+    from app.core.run_rules import get_rule
+    return int(get_rule("formalities.geocode_candidate_limit", GEOCODE_CANDIDATE_LIMIT))
+
+
+def _peer_near_km() -> float:
+    from app.core.run_rules import get_rule
+    return float(get_rule("formalities.peer_near_km", PEER_NEAR_KM))
+
+
+def _basin_split_km() -> float:
+    from app.core.run_rules import get_rule
+    return float(get_rule("formalities.basin_split_km", BASIN_SPLIT_KM))
+
 _PAREN_HINT_RE = re.compile(r"\((.+)\)")
 _PAREN_HINT_STOP = {
     "island", "islands", "city", "port", "harbour", "harbor", "marina",
@@ -770,7 +785,7 @@ def _cand_harbour_meta(cand: dict) -> dict:
 def _has_decisive_hint(cand: dict, port: dict) -> bool:
     if cand.get("paren_hit"):
         return True
-    if cand.get("peer_km") is not None and cand["peer_km"] <= PEER_NEAR_KM:
+    if cand.get("peer_km") is not None and cand["peer_km"] <= _peer_near_km():
         return True
     if (cand.get("group_penalty") or 0) == 0 and (port.get("listing_group") or ""):
         if listing_group_penalty(
@@ -848,7 +863,7 @@ def score_geocode_candidate(
                 continue
         if ds:
             peer_km = min(ds)
-            if peer_km <= PEER_NEAR_KM:
+            if peer_km <= _peer_near_km():
                 score += 20
             elif peer_km > PEER_FAR_KM:
                 score -= 25
@@ -901,11 +916,11 @@ def select_geocode_candidate(
                 inland_named[0]["lat"], inland_named[0]["lon"])
         except (TypeError, ValueError):
             jump = 0.0
-        if jump > PEER_NEAR_KM and not _label_has_core(best):
+        if jump > _peer_near_km() and not _label_has_core(best):
             best = inland_named[0]
 
     # Pair listing trop loin : homonyme dans une ZEE immense (Kingston ON vs NL).
-    if (best.get("peer_km") is not None and best["peer_km"] >= BASIN_SPLIT_KM
+    if (best.get("peer_km") is not None and best["peer_km"] >= _basin_split_km()
             and not best.get("paren_hit")):
         status = "spatial_rejected"
         best = None
@@ -917,7 +932,7 @@ def select_geocode_candidate(
                 best["lat"], best["lon"], second["lat"], second["lon"])
         except (TypeError, ValueError):
             split = 0.0
-        if (split >= BASIN_SPLIT_KM and gap <= AMBIGUOUS_SCORE_GAP
+        if (split >= _basin_split_km() and gap <= AMBIGUOUS_SCORE_GAP
                 and second["score"] >= 0):
             if _has_decisive_hint(best, port) and not _has_decisive_hint(second, port):
                 status = "ok"
@@ -1000,18 +1015,19 @@ async def _collect_nominatim_candidates(port: dict, zone: dict) -> list[dict]:
     queries, _ctx = _port_queries(port, zone)
     cc = (zone.get("iso2") or "").lower() or None
     geom, prepared = _zone_geom(zone)
+    cap = _geocode_candidate_limit()
     pool: list[dict] = []
     for q in queries:
-        rows = await _nominatim_rows(q, cc, limit=GEOCODE_CANDIDATE_LIMIT)
+        rows = await _nominatim_rows(q, cc, limit=cap)
         for row in rows or []:
             _add_unique_cand(pool, _nominatim_cand(row))
-        if len(pool) >= GEOCODE_CANDIDATE_LIMIT:
+        if len(pool) >= cap:
             break
         if pool and _pool_has_coastal(pool, port, zone, geom, prepared):
             break
         if pool and geom is None:
             break
-    return pool[:GEOCODE_CANDIDATE_LIMIT]
+    return pool[:cap]
 
 
 async def _collect_geonames_candidates(port: dict, zone: dict) -> list[dict]:
@@ -1019,18 +1035,19 @@ async def _collect_geonames_candidates(port: dict, zone: dict) -> list[dict]:
     territory = zone.get("name") or ""
     cc = (zone.get("iso2") or "").upper() or None
     geom, prepared = _zone_geom(zone)
+    cap = _geocode_candidate_limit()
     pool: list[dict] = []
     for q, country in ((name, cc), (f"{name} {territory}", None)):
-        rows = await _geonames_rows(q, country, limit=GEOCODE_CANDIDATE_LIMIT)
+        rows = await _geonames_rows(q, country, limit=cap)
         for row in rows or []:
             _add_unique_cand(pool, _geonames_cand(row))
-        if len(pool) >= GEOCODE_CANDIDATE_LIMIT:
+        if len(pool) >= cap:
             break
         if pool and _pool_has_coastal(pool, port, zone, geom, prepared):
             break
         if pool and geom is None:
             break
-    return pool[:GEOCODE_CANDIDATE_LIMIT]
+    return pool[:cap]
 
 
 async def _geocode_port_nominatim(port: dict, zone: dict) -> dict | None:

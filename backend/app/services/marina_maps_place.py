@@ -176,7 +176,9 @@ def place_hit_matches(
         return False
     coords = place_coords(hit.get("url"))
     if coords is not None and lat is not None and lon is not None:
-        if haversine_m(float(lat), float(lon), coords[0], coords[1]) > MAX_PLACE_DISTANCE_M:
+        from app.core.run_rules import get_rule
+        max_m = float(get_rule("marinas.place_match_m", MAX_PLACE_DISTANCE_M))
+        if haversine_m(float(lat), float(lon), coords[0], coords[1]) > max_m:
             return False
     return True
 

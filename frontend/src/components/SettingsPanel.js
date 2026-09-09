@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Download, FileDown, Upload, X } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
-// Phase 6 — Extraction (project-swarm) section migrated to Audit → Projects card.
-// SettingsPanel now only hosts transverse concerns:
-//   - Documentation (manual EN/FR)
-//   - Data (import GeoJSON / contextual export / clear projects)
-//   - Marine filtering (coast distance, marine score)
-//   - Map (min zoom, max markers)
-//   - API keys (LLM + TinyFish)
-// The panel typography adopts the active mode's accent (cyan / red / amber / green).
+// Settings : docs, import/export, clés API, zoom / max markers.
+// Les seuils métier vivent dans Console → Règles (catalogue).
 
 function Field({ label, children }) {
   return (
@@ -69,11 +63,14 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
     ["claude_enabled", "claude_spend_usd", "claude_calls", "claude_cache_read_tokens",
      "claude_cache_write_tokens", "claude_stop_ratio", "claude_remaining_usd",
      "claude_allows_call", "claude_model"].forEach((k) => { delete body[k]; });
+    ["max_coast_km", "min_marine_score", "max_inland_km", "gatekeeper_accept",
+     "gatekeeper_reject", "tinyfish_agents", "extract_concurrency", "follow_the_money",
+     "max_partner_orgs", "saturation_limit", "rescan_after_days", "allow_tinyfish_agent",
+     "test_max_urls_per_seed", "full_max_urls_per_seed", "marina_search_radius_nm",
+     "marina_batch_concurrency", "openrouter_min_credits_usd", "enrich_stale_days",
+     "claude_budget_usd"].forEach((k) => { delete body[k]; });
     ["min_zoom", "max_markers"].forEach(
       (k) => { body[k] = parseInt(body[k], 10) || undefined; });
-    ["max_coast_km", "min_marine_score"].forEach((k) => { body[k] = parseFloat(body[k]); });
-    const budget = parseFloat(body.claude_budget_usd);
-    body.claude_budget_usd = Number.isFinite(budget) && budget > 0 ? budget : 0;
     await api.put("/settings", body);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -268,16 +265,9 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
               placeholder={t("leavePlaceholder")}
               onChange={(e) => set("anthropic_api_key", e.target.value)} onBlur={save} className={inputCls} />
           </Field>
-          <Field label={t("claudeBudget")}>
-            <input data-testid="claude-budget-input" type="number" min="0" step="0.5"
-              value={form.claude_budget_usd ?? 0}
-              onChange={(e) => set("claude_budget_usd", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("claudeBudgetHint")}</p>
           {form.anthropic_api_key_set && (
             <p data-testid="claude-spend-hint" className="font-mono text-[9px] text-slate-400">
               {t("claudeSpend")}: ${Number(form.claude_spend_usd || 0).toFixed(4)}
-              {form.claude_budget_usd > 0 ? ` / $${Number(form.claude_budget_usd).toFixed(2)}` : ""}
               {form.claude_calls ? ` · ${form.claude_calls} appels` : ""}
             </p>
           )}

@@ -55,7 +55,7 @@ from app.services.listing_control import (
     build_listing_control_report, compare_runs_to_listing, persist_review,
     suggest_canary_zones,
 )
-from app.core.run_rules import snapshot_for_run
+from app.core.run_rules import snapshot_for_run, snapshot_list_fields
 from app.services.run_fingerprint import build_code_fingerprint
 from app.services.listing_ref import project_listing
 from app.services.poe_bestof import compare_runs, synthesize_best_of
@@ -291,8 +291,14 @@ async def poe_searxng_health():
 @router.get("/poe/runs")
 async def poe_runs_list():
     docs = await _db.poe_runs.find({}).sort("created_at", -1).to_list(100)
-    return {"count": len(docs), "active_run_ids": _active_ids(),
-            "active_run_id": (_active_ids() or [None])[0], "items": docs}
+    items = []
+    for d in docs:
+        row = dict(d)
+        row["id"] = str(d.get("_id"))
+        row.update(snapshot_list_fields(d.get("params") or {}))
+        items.append(row)
+    return {"count": len(items), "active_run_ids": _active_ids(),
+            "active_run_id": (_active_ids() or [None])[0], "items": items}
 
 
 @router.get("/poe/listing-control/ref")
@@ -685,6 +691,28 @@ async def poe_run_status(run_id: str):
     if st is not None and st.running:
         out["live"] = st.status()
     return out
+
+
+@router.get("/poe/runs/{run_id}")
+async def poe_run_detail(run_id: str):
+    doc = await _db.poe_runs.find_one({"_id": run_id})
+    if not doc:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    rules = (doc.get("params") or {}).get("rules") or {}
+    fields = snapshot_list_fields(doc.get("params") or {})
+    return {
+        "id": str(doc.get("_id")),
+        "label": doc.get("label"),
+        "state": doc.get("state"),
+        "created_at": doc.get("created_at"),
+        "finished_at": doc.get("finished_at"),
+        "kind": (doc.get("params") or {}).get("variant") or "poe",
+        "error": doc.get("error"),
+        "summary": doc.get("summary"),
+        "chosen": rules.get("chosen") or {},
+        "params": {"rules": rules},
+        **fields,
+    }
 
 
 @router.post("/poe/runs/{run_id}/cancel")

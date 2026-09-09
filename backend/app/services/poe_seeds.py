@@ -145,7 +145,9 @@ def _match_seed(seed: dict, pool: list[dict]) -> dict | None:
         if _names_overlap(a, b):
             return other
         if seed.get("mrgid") is not None and seed.get("mrgid") == other.get("mrgid"):
-            if text_similarity(a, b) >= 0.82:
+            from app.core.run_rules import get_rule
+            mid = float(get_rule("formalities.listing_name_sim_mid", 0.82))
+            if text_similarity(a, b) >= mid:
                 return other
     return None
 

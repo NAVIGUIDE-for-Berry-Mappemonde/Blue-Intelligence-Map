@@ -175,9 +175,12 @@ def semantic_similarity(a: str, b: str) -> float:
         return difflib.SequenceMatcher(None, a[:3000], b[:3000]).ratio()
 
 
-def content_changed(old_text: str, new_text: str, threshold: float = 0.95) -> bool:
+def content_changed(old_text: str, new_text: str, threshold: float | None = None) -> bool:
     """Monitoring sémantique : True seulement si le contenu a réellement changé
     (évite une ré-extraction LLM pour un changement HTML mineur)."""
     if not old_text or not new_text:
         return True
+    if threshold is None:
+        from app.core.run_rules import get_rule
+        threshold = float(get_rule("shared.content_changed_sim", 0.95))
     return semantic_similarity(old_text, new_text) < threshold

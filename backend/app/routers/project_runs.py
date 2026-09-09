@@ -4,7 +4,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from app.core.tasks import TaskState
-from app.core.run_rules import RuleError
+from app.core.run_rules import RuleError, snapshot_list_fields
 from app.db import db, get_settings
 from app.services import project_runs
 from app.state import swarm
@@ -59,11 +59,40 @@ async def project_run_start(body: ProjectRunBody | None = None):
 @router.get("/projects/runs")
 async def project_runs_list():
     docs = await db.project_runs.find({}).sort("created_at", -1).to_list(100)
+    items = []
+    for d in docs:
+        row = dict(d)
+        row["id"] = str(d.get("_id"))
+        row.update(snapshot_list_fields(d.get("params") or {}))
+        items.append(row)
     return {
-        "count": len(docs),
+        "count": len(items),
         "active_run_id": swarm.run_id if swarm.running else None,
         "wrote_projects": False,
-        "items": docs,
+        "items": items,
+    }
+
+
+@router.get("/projects/runs/{run_id}")
+async def project_run_detail(run_id: str):
+    doc = await db.project_runs.find_one({"_id": run_id})
+    if not doc:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    rules = (doc.get("params") or {}).get("rules") or {}
+    fields = snapshot_list_fields(doc.get("params") or {})
+    return {
+        "id": str(doc.get("_id")),
+        "label": doc.get("label"),
+        "state": doc.get("state"),
+        "created_at": doc.get("created_at"),
+        "finished_at": doc.get("finished_at"),
+        "kind": doc.get("mode") or "projects",
+        "error": doc.get("error"),
+        "summary": doc.get("counters"),
+        "wrote_projects": False,
+        "chosen": rules.get("chosen") or {},
+        "params": {"rules": rules},
+        **fields,
     }
 
 

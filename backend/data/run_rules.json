@@ -22,11 +22,25 @@
   },
   "profiles": {
     "cdc_default": {
-      "label": "Défauts des cahiers des charges — point d'opération actuel.",
+      "label": {
+        "fr": "Défaut",
+        "en": "Default"
+      },
+      "hint": {
+        "fr": "Point d'opération des cahiers.",
+        "en": "Operating point of the specs."
+      },
       "overrides": {}
     },
     "strict": {
-      "label": "Rappel bas : on jette plus, on publie moins. Utile pour une carte « assez confiante ».",
+      "label": {
+        "fr": "Strict",
+        "en": "Strict"
+      },
+      "hint": {
+        "fr": "On jette plus, on publie moins.",
+        "en": "We discard more, we publish less."
+      },
       "overrides": {
         "projects.max_inland_km": 10,
         "projects.min_marine_score": 0.65,
@@ -38,11 +52,20 @@
         "formalities.listing_coverage_publish": 0.95,
         "formalities.catalog_min_coords": 4,
         "marinas.corridor_radius_nm": 15,
-        "marinas.waypoint_radius_nm": 6
+        "marinas.waypoint_radius_nm": 6,
+        "capitaineries.merge_km": 0.15,
+        "shared.dedup_dist_km": 0.35
       }
     },
     "recall": {
-      "label": "Rappel haut : on garde plus de candidats pour la revue. Utile en découverte, pas en publication.",
+      "label": {
+        "fr": "Rappel",
+        "en": "Recall"
+      },
+      "hint": {
+        "fr": "On garde plus pour la revue, pas pour la carte.",
+        "en": "We keep more for review, not for the map."
+      },
       "overrides": {
         "projects.max_inland_km": 22,
         "projects.min_marine_score": 0.35,
@@ -53,7 +76,9 @@
         "formalities.catalog_min_coords": 2,
         "formalities.listing_coverage_publish": 0.8,
         "marinas.corridor_radius_nm": 35,
-        "marinas.waypoint_radius_nm": 15
+        "marinas.waypoint_radius_nm": 15,
+        "capitaineries.merge_km": 0.4,
+        "shared.dedup_dist_km": 0.7
       }
     }
   },
@@ -67,7 +92,18 @@
       "vary": false,
       "principle": "Un GPS recalé vers la mer n'est plus le lieu d'action. Contrat des deux CDC.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.1 · CAHIER_DES_CHARGES_POE.md §7.3",
-      "code": ["app/core/geo.py:snap_to_ocean"]
+      "code": [
+        "app/core/geo.py:snap_to_ocean"
+      ],
+      "title": {
+        "fr": "Ne jamais recaler un GPS vers la mer",
+        "en": "Never snap a GPS point out to sea"
+      },
+      "help": {
+        "fr": "Un GPS recalé n'est plus le lieu d'action. Loi : pas de slider.",
+        "en": "A snapped GPS is no longer the place of action. Law: no slider."
+      },
+      "group": "contracts"
     },
     {
       "id": "shared.no_ocean_fallback",
@@ -78,7 +114,18 @@
       "vary": false,
       "principle": "Un centroïde de bassin n'est pas un site visitable ni un PoE.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §4",
-      "code": ["app/core/geo.py:ocean_fallback_coords"]
+      "code": [
+        "app/core/geo.py:ocean_fallback_coords"
+      ],
+      "title": {
+        "fr": "Pas de centroïde de bassin comme site",
+        "en": "No basin centroid as a site"
+      },
+      "help": {
+        "fr": "Le centre d'une ZEE n'est ni un quai ni un projet visitable. Loi.",
+        "en": "An EEZ centroid is neither a quay nor a visitable project. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "shared.no_purge",
@@ -89,7 +136,19 @@
       "vary": false,
       "principle": "La v1 est un trésor d'entraînement. Aucune purge, aucun rebuild destructif.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §11 · CAHIER_DES_CHARGES_POE.md §11",
-      "code": ["app/routers/projects.py", "app/routers/formalities.py"]
+      "code": [
+        "app/routers/projects.py",
+        "app/routers/formalities.py"
+      ],
+      "title": {
+        "fr": "Aucune purge destructive",
+        "en": "No destructive purge"
+      },
+      "help": {
+        "fr": "La v1 est un trésor d'entraînement. Rebuild interdit. Loi.",
+        "en": "v1 is training treasure. Rebuilds are forbidden. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "shared.no_invented_names",
@@ -99,7 +158,16 @@
       "unit": "bool",
       "vary": false,
       "principle": "On n'invente ni titre de projet, ni nom de port, ni financeur hors extraits.",
-      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §4 · CAHIER_DES_CHARGES_POE.md §4"
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §4 · CAHIER_DES_CHARGES_POE.md §4",
+      "title": {
+        "fr": "Ne pas inventer de noms",
+        "en": "Do not invent names"
+      },
+      "help": {
+        "fr": "Titre, port ou financeur uniquement s'ils sont dans les extraits. Loi.",
+        "en": "Title, port or funder only if they appear in excerpts. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "shared.dedup_dist_km",
@@ -107,11 +175,26 @@
       "kind": "geometrie",
       "value": 0.5,
       "unit": "km",
-      "interval": [0.3, 1.0],
+      "interval": [
+        0.3,
+        1.0
+      ],
       "vary": true,
       "principle": "Deux noms pour le même site d'action : un havre de plaisance tient typiquement dans 300–800 m. En dessous de 300 m on dédouble « Port of X » / « X Harbour ». Au-delà de 1 km on fusionne deux sites distincts (baies voisines). Ce n'est pas le calque capitainerie (250 m, distance seule).",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §17 · CAHIER_DES_CHARGES_POE.md §17.2",
-      "code": ["app/core/dedup.py:DIST_THRESHOLD_KM", "app/core/identity.py"]
+      "code": [
+        "app/core/dedup.py:DIST_THRESHOLD_KM",
+        "app/core/identity.py"
+      ],
+      "title": {
+        "fr": "Distance pour fusionner deux sites",
+        "en": "Distance to merge two sites"
+      },
+      "help": {
+        "fr": "En dessous, on enrichit une seule fiche (même quai). Au-delà, deux lieux. Pas le calque capitainerie.",
+        "en": "Below, one record is enriched (same quay). Beyond, two places. Not the harbour-master overlay."
+      },
+      "group": "identity"
     },
     {
       "id": "shared.dedup_sim_low",
@@ -119,11 +202,25 @@
       "kind": "score",
       "value": 0.6,
       "unit": "ratio",
-      "interval": [0.5, 0.75],
+      "interval": [
+        0.5,
+        0.75
+      ],
       "vary": true,
       "principle": "Seuil bas : avec proximité spatiale, une similarité 60 % suffit (« Port de Papeete » vs « Papeete »). Recalibrer sur un échantillon de paires vraies/fausses, pas à l'œil.",
       "cdc": "ARCHITECTURE.md §dedup_core",
-      "code": ["app/core/dedup.py:SIM_THRESHOLD_LOW"]
+      "code": [
+        "app/core/dedup.py:SIM_THRESHOLD_LOW"
+      ],
+      "title": {
+        "fr": "Ressemblance de nom, avec GPS",
+        "en": "Name likeness, with GPS"
+      },
+      "help": {
+        "fr": "60 % + proximité = « Port de Papeete » / « Papeete ». Plus bas, on refuse des alias ; plus haut, on rate des variantes.",
+        "en": "60% + proximity = “Port de Papeete” / “Papeete”. Lower refuses aliases; higher misses variants."
+      },
+      "group": "identity"
     },
     {
       "id": "shared.dedup_sim_high",
@@ -131,11 +228,104 @@
       "kind": "score",
       "value": 0.9,
       "unit": "ratio",
-      "interval": [0.8, 0.97],
+      "interval": [
+        0.8,
+        0.97
+      ],
       "vary": true,
       "principle": "Seuil haut : sans GPS, 90 % de similarité = quasi la même chaîne. En dessous on fusionne des homonymes lointains.",
       "cdc": "ARCHITECTURE.md §dedup_core",
-      "code": ["app/core/dedup.py:SIM_THRESHOLD_HIGH"]
+      "code": [
+        "app/core/dedup.py:SIM_THRESHOLD_HIGH"
+      ],
+      "title": {
+        "fr": "Ressemblance de nom, sans GPS",
+        "en": "Name likeness, without GPS"
+      },
+      "help": {
+        "fr": "90 % seul, quand un point n'a pas de coordonnées. Plus bas, on fusionne des homonymes lointains.",
+        "en": "90% alone when a point has no coordinates. Lower merges distant homonyms."
+      },
+      "group": "identity"
+    },
+    {
+      "id": "shared.extract_agree_sim",
+      "mode": "shared",
+      "kind": "score",
+      "value": 0.55,
+      "unit": "ratio",
+      "interval": [
+        0.4,
+        0.75
+      ],
+      "vary": true,
+      "principle": "Deux parseurs (Trafilatura ∥ Readability) visent le même texte. 0,55 = encore la même page. En dessous on accepte des extraits divergents ; au-dessus on jette trop de pages utiles.",
+      "cdc": "ARCHITECTURE.md §extract_core",
+      "code": [
+        "app/core/extract.py"
+      ],
+      "title": {
+        "fr": "Accord entre deux lectures de la même page",
+        "en": "Agreement between two readings of the same page"
+      },
+      "help": {
+        "fr": "Trafilatura et Readability visent le même texte. Plus bas, on accepte des extraits divergents ; plus haut, on jette trop de pages utiles.",
+        "en": "Trafilatura and Readability should match. Lower accepts divergent extracts; higher discards useful pages."
+      },
+      "group": "reading"
+    },
+    {
+      "id": "shared.llm_geocode_min_confidence",
+      "mode": "shared",
+      "kind": "score",
+      "value": 0.4,
+      "unit": "ratio",
+      "interval": [
+        0.2,
+        0.7
+      ],
+      "vary": true,
+      "principle": "Un GPS LLM n'est retenu que si le modèle s'avoue assez sûr. 0,40 = encore un lieu, plus un point au jugé. Recalibrer sur les annuaires muets du Gold.",
+      "cdc": "CAHIER_DES_CHARGES_POE.md §8.2",
+      "code": [
+        "app/core/llm.py:_parse_llm_gps"
+      ],
+      "title": {
+        "fr": "Confiance minimale d'un GPS proposé par le LLM",
+        "en": "Minimum confidence for an LLM-proposed GPS"
+      },
+      "help": {
+        "fr": "En dessous, le modèle avoue qu'il place au jugé. Plus bas, on accepte des points inventés ; plus haut, on n'a plus de GPS quand les annuaires sont muets.",
+        "en": "Below, the model is guessing. Lower accepts invented points; higher leaves ports unlocated when directories are silent."
+      },
+      "group": "geocode"
+    },
+    {
+      "id": "shared.content_changed_sim",
+      "mode": "shared",
+      "kind": "score",
+      "value": 0.95,
+      "unit": "ratio",
+      "interval": [
+        0.85,
+        0.99
+      ],
+      "vary": true,
+      "principle": "MD5 différent mais similarité ≥ 0,95 = HTML cosmétique, pas un nouveau décret. Plus bas on ré-extrait trop ; plus haut on rate un amendement.",
+      "cdc": "CAHIER_DES_CHARGES_POE.md §17.2",
+      "code": [
+        "app/core/rag.py:content_changed",
+        "app/services/poe_pipeline.py:_skip_if_unchanged"
+      ],
+      "title": {
+        "fr": "La page a-t-elle vraiment changé ?",
+        "en": "Has the page really changed?"
+      },
+      "help": {
+        "fr": "95 % = même décret, HTML cosmétique. Plus bas, on ré-extrait trop souvent ; plus haut, on rate un vrai amendement.",
+        "en": "95% = same decree, cosmetic HTML. Lower re-extracts too often; higher misses a real amendment."
+      },
+      "group": "reading"
     },
     {
       "id": "shared.claude_stop_ratio",
@@ -143,12 +333,26 @@
       "kind": "budget",
       "value": 0.9,
       "unit": "ratio",
-      "interval": [0.8, 0.95],
+      "interval": [
+        0.8,
+        0.95
+      ],
       "vary": true,
       "principle": "On s'arrête à 90 % du budget pour garder 10 % de marge (un juge Sonnet en cours ne doit pas casser le plafond). Ce n'est pas un seuil de qualité.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.1 · §11",
-      "code": ["app/core/claude.py:STOP_RATIO"],
-      "settings_key": null
+      "code": [
+        "app/core/claude.py:STOP_RATIO"
+      ],
+      "settings_key": null,
+      "title": {
+        "fr": "Marge avant d'éteindre Claude",
+        "en": "Headroom before turning Claude off"
+      },
+      "help": {
+        "fr": "On s'arrête à 90 % du budget pour qu'un juge en cours ne casse pas le plafond. Plus bas, on coupe trop tôt.",
+        "en": "Stop at 90% of budget so an in-flight judge cannot break the cap. Lower cuts too early."
+      },
+      "group": "budget"
     },
     {
       "id": "shared.claude_budget_usd",
@@ -156,11 +360,23 @@
       "kind": "budget",
       "value": 0.0,
       "unit": "USD",
-      "interval": [0.0, 500.0],
+      "interval": [
+        0.0,
+        500.0
+      ],
       "vary": true,
       "settings_key": "claude_budget_usd",
       "principle": "0 = Claude éteint. Choix opérateur, pas une vérité métier. Toujours consigné.",
-      "cdc": "CAHIER_DES_CHARGES_POE.md §8.1"
+      "cdc": "CAHIER_DES_CHARGES_POE.md §8.1",
+      "title": {
+        "fr": "Plafond Claude pour ce run",
+        "en": "Claude cap for this run"
+      },
+      "help": {
+        "fr": "0 = Claude éteint. Ce n'est pas une vérité métier, c'est de l'argent. Un run passé ne bouge pas.",
+        "en": "0 = Claude off. This is money, not a domain truth. A past run does not change."
+      },
+      "group": "budget"
     },
     {
       "id": "shared.nominatim_interval_s",
@@ -168,11 +384,25 @@
       "kind": "budget",
       "value": 1.1,
       "unit": "s",
-      "interval": [1.1, 3.0],
+      "interval": [
+        1.1,
+        3.0
+      ],
       "vary": false,
       "principle": "ToS Nominatim : ~1 req/s. Le plancher 1,1 s n'est pas négociable. On peut seulement ralentir.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.2",
-      "code": ["app/core/geo.py:NOMINATIM_INTERVAL_S"]
+      "code": [
+        "app/core/geo.py:NOMINATIM_INTERVAL_S"
+      ],
+      "title": {
+        "fr": "Pause minimale entre deux Nominatim",
+        "en": "Minimum pause between Nominatim calls"
+      },
+      "help": {
+        "fr": "ToS : ~1 req/s. Le plancher 1,1 s n'est pas négociable. On peut seulement ralentir.",
+        "en": "ToS: ~1 req/s. The 1.1 s floor is not negotiable. You may only slow down."
+      },
+      "group": "budget"
     },
     {
       "id": "shared.tinyfish_search_rpm",
@@ -180,11 +410,25 @@
       "kind": "budget",
       "value": 30,
       "unit": "req/min",
-      "interval": [5, 30],
+      "interval": [
+        5,
+        30
+      ],
       "vary": false,
       "principle": "Quota public TinyFish Search PAYG. On peut descendre, pas monter au-delà du contrat fournisseur.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.1",
-      "code": ["app/core/tinyfish.py:SEARCH_RPM"]
+      "code": [
+        "app/core/tinyfish.py:SEARCH_RPM"
+      ],
+      "title": {
+        "fr": "Quota Search TinyFish",
+        "en": "TinyFish Search quota"
+      },
+      "help": {
+        "fr": "Plafond public PAYG. On peut descendre, pas monter au-delà du contrat.",
+        "en": "Public PAYG cap. You may lower it, not raise it past the contract."
+      },
+      "group": "budget"
     },
     {
       "id": "shared.tinyfish_fetch_rpm",
@@ -192,11 +436,25 @@
       "kind": "budget",
       "value": 150,
       "unit": "url/min",
-      "interval": [20, 150],
+      "interval": [
+        20,
+        150
+      ],
       "vary": false,
       "principle": "Quota public TinyFish Fetch PAYG.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.1",
-      "code": ["app/core/tinyfish.py:FETCH_RPM"]
+      "code": [
+        "app/core/tinyfish.py:FETCH_RPM"
+      ],
+      "title": {
+        "fr": "Quota Fetch TinyFish",
+        "en": "TinyFish Fetch quota"
+      },
+      "help": {
+        "fr": "Plafond public PAYG. Ralentir évite le 429, ça n'améliore pas la carte.",
+        "en": "Public PAYG cap. Slowing avoids 429s; it does not improve the map."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.no_hq_as_site",
@@ -206,7 +464,16 @@
       "unit": "bool",
       "vary": false,
       "principle": "Le siège d'une ONG n'est jamais un site visitable.",
-      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.1"
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.1",
+      "title": {
+        "fr": "Le siège n'est jamais un site visitable",
+        "en": "HQ is never a visitable site"
+      },
+      "help": {
+        "fr": "Le bureau d'une ONG n'est pas le projet en mer. Loi.",
+        "en": "An NGO office is not the project at sea. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "projects.max_inland_km",
@@ -214,12 +481,27 @@
       "kind": "geometrie",
       "value": 15.0,
       "unit": "km",
-      "interval": [8.0, 25.0],
+      "interval": [
+        8.0,
+        25.0
+      ],
       "vary": true,
       "settings_key": "max_inland_km",
       "principle": "Hinterland d'une ville-havre : un skipper peut s'y rendre. En dessous de 8 km on jette des estuaires / mangroves un peu en retrait. Au-delà de 25 km on commence à accepter des sièges (Paris, Washington).",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.3 · §14 A3",
-      "code": ["app/core/project_geo.py", "app/config.py"]
+      "code": [
+        "app/core/project_geo.py",
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Hinterland encore accessible en bateau",
+        "en": "Hinterland still reachable by boat"
+      },
+      "help": {
+        "fr": "15 km = ville-havre. Plus loin, on colle des sièges (Paris). Plus serré, on jette des estuaires.",
+        "en": "15 km = harbour town. Farther pins HQs (Paris). Tighter drops estuaries."
+      },
+      "group": "space"
     },
     {
       "id": "projects.max_coast_km",
@@ -227,13 +509,27 @@
       "kind": "geometrie",
       "value": 50.0,
       "unit": "km",
-      "interval": [15.0, 50.0],
+      "interval": [
+        15.0,
+        50.0
+      ],
       "vary": true,
       "settings_key": "max_coast_km",
       "legacy": true,
       "principle": "Reliquat du snap côtier v1. Le CDC a tranché : plus de snap. Gardé pour ne pas casser l'UI Settings ; ne doit plus piloter une publication. Cible : retirer.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §14 (snap borné refusé)",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Ancienne distance de snap côtier (inactif)",
+        "en": "Former coastal-snap distance (inactive)"
+      },
+      "help": {
+        "fr": "Ne pilote plus la publication. Reliquat v1, affiché grisé. Le CDC a tranché : plus de snap.",
+        "en": "No longer drives publication. v1 leftover, shown greyed out. The spec forbids snapping."
+      },
+      "group": "space"
     },
     {
       "id": "projects.min_marine_score",
@@ -241,12 +537,26 @@
       "kind": "score",
       "value": 0.5,
       "unit": "ratio",
-      "interval": [0.3, 0.8],
+      "interval": [
+        0.3,
+        0.8
+      ],
       "vary": true,
       "settings_key": "min_marine_score",
       "principle": "Coupe à l'entrée du faisceau S_ocean 0–1. 0,5 = majorité de signaux marins. Recalibrer sur le Gold (phase D), pas avant.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §10 · §23",
-      "code": ["app/core/llm.py"]
+      "code": [
+        "app/core/llm.py"
+      ],
+      "title": {
+        "fr": "Score marin minimum (S_ocean)",
+        "en": "Minimum marine score (S_ocean)"
+      },
+      "help": {
+        "fr": "Coupe le faisceau. Recalibrer sur le Gold, pas au feeling. Plus haut, on publie moins.",
+        "en": "Cuts the beam. Recalibrate on Gold, not by feel. Higher publishes less."
+      },
+      "group": "qualification"
     },
     {
       "id": "projects.gatekeeper_accept",
@@ -254,12 +564,27 @@
       "kind": "score",
       "value": 0.85,
       "unit": "ratio",
-      "interval": [0.7, 0.95],
+      "interval": [
+        0.7,
+        0.95
+      ],
       "vary": true,
       "settings_key": "gatekeeper_accept",
       "principle": "Seuil haut d'un classifieur à deux bornes : accepter seulement si la précision est haute (peu de pages terrestres). Valeur historique v1. Recalibrer sur Gold via courbe précision-rappel.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.5 · §23",
-      "code": ["app/core/llm.py", "app/core/ml.py"]
+      "code": [
+        "app/core/llm.py",
+        "app/core/ml.py"
+      ],
+      "title": {
+        "fr": "Seuil « c'est marin », sans appeler le LLM",
+        "en": "“This is marine” threshold, without calling the LLM"
+      },
+      "help": {
+        "fr": "Au-dessus, le modèle local suffit. Plus haut, on envoie plus de pages au LLM (coût).",
+        "en": "Above, the local model is enough. Higher sends more pages to the LLM (cost)."
+      },
+      "group": "qualification"
     },
     {
       "id": "projects.gatekeeper_reject",
@@ -267,12 +592,27 @@
       "kind": "score",
       "value": 0.12,
       "unit": "ratio",
-      "interval": [0.05, 0.25],
+      "interval": [
+        0.05,
+        0.25
+      ],
       "vary": true,
       "settings_key": "gatekeeper_reject",
       "principle": "Seuil bas : rejeter seulement si le modèle est sûr que ce n'est pas marin. Trop haut = on jette de vrais projets. Historique v1, à recalibrer sur Gold.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §7.5 · §23",
-      "code": ["app/core/llm.py", "app/core/ml.py"]
+      "code": [
+        "app/core/llm.py",
+        "app/core/ml.py"
+      ],
+      "title": {
+        "fr": "Seuil « ce n'est pas marin », sans LLM",
+        "en": "“This is not marine” threshold, without LLM"
+      },
+      "help": {
+        "fr": "En dessous, on jette sans appel. Plus haut, on jette de vrais projets ; plus bas, on paie du bruit terrestre.",
+        "en": "Below, we discard with no call. Higher drops real projects; lower pays for terrestrial noise."
+      },
+      "group": "qualification"
     },
     {
       "id": "projects.max_partner_orgs",
@@ -280,12 +620,26 @@
       "kind": "budget",
       "value": 5,
       "unit": "orgs",
-      "interval": [3, 50],
+      "interval": [
+        3,
+        50
+      ],
       "vary": true,
       "settings_key": "max_partner_orgs",
       "principle": "Plafond Follow the Money pour éviter la dérive, pas pour exclure une fondation déjà vue en v1. Le CDC dit : plus de plafond 5 en dur — settings.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §14 C5 · §18",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Nombre max d'organismes partenaires",
+        "en": "Max partner organisations"
+      },
+      "help": {
+        "fr": "Plafond Follow the Money. Plus bas, on s'arrête tôt ; plus haut, on dérive hors listing.",
+        "en": "Follow-the-Money cap. Lower stops early; higher drifts off the listing."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.test_max_urls_per_seed",
@@ -293,12 +647,26 @@
       "kind": "budget",
       "value": 6,
       "unit": "urls",
-      "interval": [3, 15],
+      "interval": [
+        3,
+        15
+      ],
       "vary": true,
       "settings_key": "test_max_urls_per_seed",
       "principle": "Run test : assez pour voir un listing, trop peu pour un crawl mondial. Choix opérateur.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §21",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "URLs par graine, run test",
+        "en": "URLs per seed, test run"
+      },
+      "help": {
+        "fr": "Assez pour voir un listing, trop peu pour un crawl mondial.",
+        "en": "Enough to see a listing, too few for a world crawl."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.full_max_urls_per_seed",
@@ -306,12 +674,26 @@
       "kind": "budget",
       "value": 20,
       "unit": "urls",
-      "interval": [10, 80],
+      "interval": [
+        10,
+        80
+      ],
       "vary": true,
       "settings_key": "full_max_urls_per_seed",
       "principle": "Run full : assez pour un portail, pas un site entier. Au-delà on paie du bruit (homes, news).",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8.1",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "URLs par graine, run full",
+        "en": "URLs per seed, full run"
+      },
+      "help": {
+        "fr": "Assez pour un portail, pas un site entier. Au-delà on paie des homes et des news.",
+        "en": "Enough for a portal, not a whole site. Beyond that you pay for homes and news."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.saturation_limit",
@@ -319,12 +701,26 @@
       "kind": "budget",
       "value": 50,
       "unit": "empty_extracts",
-      "interval": [10, 200],
+      "interval": [
+        10,
+        200
+      ],
       "vary": true,
       "settings_key": "saturation_limit",
       "principle": "Arrêt quand N extractions d'affilée n'ajoutent rien : le listing est épuisé. Trop bas = on s'arrête trop tôt ; trop haut = on brûle des crédits.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §13",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Arrêt après N extraits vides d'affilée",
+        "en": "Stop after N empty extracts in a row"
+      },
+      "help": {
+        "fr": "Le listing est épuisé. Trop bas = on s'arrête trop tôt ; trop haut = on brûle des crédits.",
+        "en": "The listing is exhausted. Too low stops early; too high burns credits."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.rescan_after_days",
@@ -332,12 +728,26 @@
       "kind": "budget",
       "value": 7,
       "unit": "days",
-      "interval": [1, 30],
+      "interval": [
+        1,
+        30
+      ],
       "vary": true,
       "settings_key": "rescan_after_days",
       "principle": "Les listings fondations bougent à l'échelle de la semaine, pas de l'heure. Aligné sur le retry Formalités (7 j).",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md · CAHIER_DES_CHARGES_POE.md §21",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Délai avant de rescanner une page",
+        "en": "Delay before rescanning a page"
+      },
+      "help": {
+        "fr": "Les listings fondations bougent à la semaine. Plus court, on paie du déjà-vu.",
+        "en": "Foundation listings move weekly. Shorter pays for déjà vu."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.allow_tinyfish_agent",
@@ -350,7 +760,18 @@
       "settings_key": "allow_tinyfish_agent",
       "principle": "Agent = scalpel, pas moteur. On peut l'éteindre. Search/Fetch d'abord.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8.1 · §11",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Autoriser l'agent TinyFish",
+        "en": "Allow the TinyFish agent"
+      },
+      "help": {
+        "fr": "Agent = scalpel, pas moteur. Search/Fetch d'abord. On peut l'éteindre.",
+        "en": "Agent is a scalpel, not the engine. Search/Fetch first. You can turn it off."
+      },
+      "group": "budget"
     },
     {
       "id": "projects.extract_concurrency",
@@ -358,12 +779,54 @@
       "kind": "budget",
       "value": 6,
       "unit": "workers",
-      "interval": [1, 16],
+      "interval": [
+        1,
+        16
+      ],
       "vary": true,
       "settings_key": "extract_concurrency",
       "principle": "Parallélisme d'extraction. Borné par Nominatim 1 req/s et les quotas LLM.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Workers d'extraction en parallèle",
+        "en": "Parallel extraction workers"
+      },
+      "help": {
+        "fr": "Borné par Nominatim 1 req/s et les quotas LLM. Plus haut n'accélère pas le géocode.",
+        "en": "Bounded by Nominatim 1 req/s and LLM quotas. Higher does not speed up geocoding."
+      },
+      "group": "budget"
+    },
+    {
+      "id": "projects.tinyfish_agents",
+      "mode": "projects",
+      "kind": "budget",
+      "value": 2,
+      "unit": "agents",
+      "interval": [
+        1,
+        2
+      ],
+      "vary": true,
+      "settings_key": "tinyfish_agents",
+      "principle": "1 ou 2 agents Search en parallèle. Plus sature le quota TinyFish. Choix opérateur, consigné.",
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8.1",
+      "code": [
+        "app/services/swarm_pipeline.py",
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Agents TinyFish en parallèle",
+        "en": "Parallel TinyFish agents"
+      },
+      "help": {
+        "fr": "1 ou 2. Plus, on sature le quota Search. Moins, le swarm test rentre plus tard.",
+        "en": "1 or 2. More saturates the Search quota. Fewer makes the test swarm finish later."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.official_sources_only",
@@ -373,7 +836,16 @@
       "unit": "bool",
       "vary": false,
       "principle": "Le statut juridique PoE ne se prouve que par une page d'État.",
-      "cdc": "CAHIER_DES_CHARGES_POE.md §7.2 · §11"
+      "cdc": "CAHIER_DES_CHARGES_POE.md §7.2 · §11",
+      "title": {
+        "fr": "Le statut PoE ne se prouve que par l'État",
+        "en": "PoE status is proven only by the State"
+      },
+      "help": {
+        "fr": "Une page d'État, pas un blog. Loi.",
+        "en": "A State page, not a blog. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "formalities.noonsite_blacklist",
@@ -383,7 +855,16 @@
       "unit": "bool",
       "vary": false,
       "principle": "Noonsite est un signal de couverture, jamais une source officielle ni une URL de crawl.",
-      "cdc": "CAHIER_DES_CHARGES_POE.md §7.2 · §8.3"
+      "cdc": "CAHIER_DES_CHARGES_POE.md §7.2 · §8.3",
+      "title": {
+        "fr": "Noonsite n'est jamais une source officielle",
+        "en": "Noonsite is never an official source"
+      },
+      "help": {
+        "fr": "Signal de couverture, jamais une URL de crawl. Loi.",
+        "en": "A coverage signal, never a crawl URL. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "formalities.wpi_first_port_ignored",
@@ -393,7 +874,16 @@
       "unit": "bool",
       "vary": false,
       "principle": "Le champ NGA « First Port of Entry » n'est pas une preuve de clearance yacht.",
-      "cdc": "CAHIER_DES_CHARGES_POE.md §23"
+      "cdc": "CAHIER_DES_CHARGES_POE.md §23",
+      "title": {
+        "fr": "Ignorer le champ NGA « First Port of Entry »",
+        "en": "Ignore the NGA “First Port of Entry” field"
+      },
+      "help": {
+        "fr": "Ce n'est pas une preuve de clearance yacht. Loi.",
+        "en": "It is not proof of yacht clearance. Law."
+      },
+      "group": "contracts"
     },
     {
       "id": "formalities.eez_sliver_km",
@@ -401,11 +891,25 @@
       "kind": "geometrie",
       "value": 2.2,
       "unit": "km",
-      "interval": [1.5, 4.0],
+      "interval": [
+        1.5,
+        4.0
+      ],
       "vary": true,
       "principle": "Le polygone VLIZ est en mer. Un quai est à terre. 0,02° × 111 km/° ≈ 2,2 km = sliver « encore cette ZEE ». Cassis (2,3 km) et Geelong (3,4 km) montrent qu'en dessous de ~2 km on jette de vrais ports. Au-delà de 4 km ce n'est plus un sliver, c'est une autre côte.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §7.3",
-      "code": ["app/core/geo.py:IN_EEZ_SLIVER_KM"]
+      "code": [
+        "app/core/geo.py:IN_EEZ_SLIVER_KM"
+      ],
+      "title": {
+        "fr": "Marge si le GPS tombe juste hors du polygone",
+        "en": "Slack if GPS falls just outside the polygon"
+      },
+      "help": {
+        "fr": "2,2 km = 0,02°. Plus serré, on perd Cassis. Plus large, c'est une autre côte.",
+        "en": "2.2 km = 0.02°. Tighter drops Cassis. Wider is another coast."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.coastal_land_km",
@@ -413,11 +917,25 @@
       "kind": "geometrie",
       "value": 15.0,
       "unit": "km",
-      "interval": [8.0, 25.0],
+      "interval": [
+        8.0,
+        25.0
+      ],
       "vary": true,
       "principle": "Bord terrestre d'une ZEE : ville-port, pas capitale intérieure. Même ordre de grandeur que projects.max_inland_km (même phénomène : hinterland de havre). 100 km (recette « ville intérieure ») est un contre-exemple, pas un seuil.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §7.3 · §22",
-      "code": ["app/core/geo.py:COASTAL_LAND_KM"]
+      "code": [
+        "app/core/geo.py:COASTAL_LAND_KM"
+      ],
+      "title": {
+        "fr": "Ville-port encore dans la ZEE, à terre",
+        "en": "Harbour town still in the EEZ, on land"
+      },
+      "help": {
+        "fr": "Même phénomène que le hinterland projets. Plus loin, on accepte des capitales intérieures.",
+        "en": "Same phenomenon as the projects hinterland. Farther accepts inland capitals."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.inland_river_max_km",
@@ -425,11 +943,25 @@
       "kind": "geometrie",
       "value": 400.0,
       "unit": "km",
-      "interval": [200.0, 600.0],
+      "interval": [
+        200.0,
+        600.0
+      ],
       "vary": true,
       "principle": "Exception rivière : ports désignés vraiment fluviaux. Rotterdam–Duisburg ~250 km, Seine jusqu'à Rouen ~120 km. 400 km couvre l'Europe avec marge (Amazonie / Yangtsé désignés). En dessous de 200 km on perd Duisburg ; au-delà de 600 km on accepte Paris comme « port ».",
       "cdc": "CAHIER_DES_CHARGES_POE.md §7.3",
-      "code": ["app/core/geo.py:INLAND_RIVER_MAX_KM"]
+      "code": [
+        "app/core/geo.py:INLAND_RIVER_MAX_KM"
+      ],
+      "title": {
+        "fr": "Exception rivière : jusqu'où un port fluvial compte",
+        "en": "River exception: how far a river port still counts"
+      },
+      "help": {
+        "fr": "400 km couvre Rotterdam–Duisburg. Plus serré, on perd Duisburg ; plus large, Paris devient un « port ».",
+        "en": "400 km covers Rotterdam–Duisburg. Tighter drops Duisburg; wider makes Paris a “port”."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.geocode_agree_km",
@@ -437,11 +969,26 @@
       "kind": "geometrie",
       "value": 2.0,
       "unit": "km",
-      "interval": [1.0, 3.0],
+      "interval": [
+        1.0,
+        3.0
+      ],
       "vary": true,
       "principle": "Deux géocodeurs (Nominatim ∩ GeoNames) visent le même lieu s'ils tombent dans le même complexe portuaire (~1–3 km). En dessous de 1 km on exige le même quai ; au-dessus de 3 km on accepte une autre ville.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.2",
-      "code": ["app/core/geo.py", "app/services/poe_diff.py:MOVED_KM_DEFAULT"]
+      "code": [
+        "app/core/geo.py",
+        "app/services/poe_diff.py:MOVED_KM_DEFAULT"
+      ],
+      "title": {
+        "fr": "Nominatim et GeoNames visent le même lieu",
+        "en": "Nominatim and GeoNames aim at the same place"
+      },
+      "help": {
+        "fr": "1–3 km = même complexe portuaire. Plus serré, on exige le même quai ; plus large, une autre ville.",
+        "en": "1–3 km = same port complex. Tighter demands the same quay; wider accepts another town."
+      },
+      "group": "geocode"
     },
     {
       "id": "formalities.marina_control_m",
@@ -449,11 +996,26 @@
       "kind": "geometrie",
       "value": 800,
       "unit": "m",
-      "interval": [400, 1500],
+      "interval": [
+        400,
+        1500
+      ],
       "vary": true,
       "principle": "Distance à pied douane / border_control / port_of_entry → marina. 800 m ≈ 10 min de marche, typique d'un port où la capitanía est à l'entrée. 400 m = même bassin ; 1 500 m = encore le même complexe, plus la ville. Au-delà on prend des marinas sans formalité.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §13 · §22",
-      "code": ["app/services/osm_seeds.py:MARINA_CONTROL_RADIUS_M", "app/services/poe_seeds.py:OSM_PROXIMITY_KM"]
+      "code": [
+        "app/services/osm_seeds.py:MARINA_CONTROL_RADIUS_M",
+        "app/services/poe_seeds.py:OSM_PROXIMITY_KM"
+      ],
+      "title": {
+        "fr": "Marche douane → marina",
+        "en": "Walk from customs to marina"
+      },
+      "help": {
+        "fr": "~10 min à pied. Contrôle OSM, pas un merge de fiches. Plus large, on prend des marinas sans formalité.",
+        "en": "~10 min on foot. OSM control, not a record merge. Wider picks marinas with no formalities."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.wpi_proximity_km",
@@ -461,11 +1023,25 @@
       "kind": "geometrie",
       "value": 1.0,
       "unit": "km",
-      "interval": [0.5, 2.0],
+      "interval": [
+        0.5,
+        2.0
+      ],
       "vary": true,
       "principle": "Appariement WPI ↔ graine : même complexe portuaire, pas une ville voisine. 1 km = un terminal. Pas de graine WPI orpheline.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §23",
-      "code": ["app/services/wpi_ports.py:WPI_PROXIMITY_KM"]
+      "code": [
+        "app/services/wpi_ports.py:WPI_PROXIMITY_KM"
+      ],
+      "title": {
+        "fr": "Même complexe qu'une fiche WPI",
+        "en": "Same complex as a WPI record"
+      },
+      "help": {
+        "fr": "1 km = un terminal, pas une ville voisine. Pas de graine WPI orpheline.",
+        "en": "1 km = one terminal, not a neighbouring town. No orphan WPI seed."
+      },
+      "group": "identity"
     },
     {
       "id": "formalities.osm_validate_radius_m",
@@ -473,11 +1049,25 @@
       "kind": "geometrie",
       "value": 3000,
       "unit": "m",
-      "interval": [1000, 5000],
+      "interval": [
+        1000,
+        5000
+      ],
       "vary": true,
       "principle": "Autour d'un PoE déjà en carte : havre + douane adjacente. 3 km couvre un grand port sans aller chercher l'aéroport. N'écrit pas le GPS.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §22",
-      "code": ["app/services/osm_validate.py"]
+      "code": [
+        "app/services/osm_validate.py"
+      ],
+      "title": {
+        "fr": "Rayon OSM autour d'un PoE déjà en carte",
+        "en": "OSM radius around a PoE already on the map"
+      },
+      "help": {
+        "fr": "3 km = havre + douane adjacente, pas l'aéroport. N'écrit pas le GPS.",
+        "en": "3 km = harbour + adjacent customs, not the airport. Does not write GPS."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.catalog_min_coords",
@@ -485,11 +1075,25 @@
       "kind": "geometrie",
       "value": 3,
       "unit": "ports",
-      "interval": [2, 5],
+      "interval": [
+        2,
+        5
+      ],
       "vary": true,
       "principle": "Une liste n'est pas une mention. 1 port = une phrase de loi ; 2 = une comparaison ; 3+ = un catalogue (type SCT). C'est le critère « vraie liste » du bus TD∥BU.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §6.3",
-      "code": ["app/core/extract.py:catalog_is_sufficient"]
+      "code": [
+        "app/core/extract.py:catalog_is_sufficient"
+      ],
+      "title": {
+        "fr": "Combien de ports coordonnés font une vraie liste",
+        "en": "How many coordinated ports make a real list"
+      },
+      "help": {
+        "fr": "3+ = un catalogue (type SCT). 1 port = une phrase de loi. Plus haut, on appelle le LLM pour rien.",
+        "en": "3+ = a catalogue (SCT-like). 1 port = a sentence of law. Higher calls the LLM for nothing."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.catalog_looks_like_min_coords",
@@ -497,11 +1101,25 @@
       "kind": "geometrie",
       "value": 1,
       "unit": "ports",
-      "interval": [1, 2],
+      "interval": [
+        1,
+        2
+      ],
       "vary": true,
       "principle": "Si le texte a déjà l'allure d'un catalogue (marqueurs + latitudes), un seul port coordonné suffit pour arrêter la recherche de listes.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §6.3",
-      "code": ["app/core/extract.py:catalog_is_sufficient"]
+      "code": [
+        "app/core/extract.py:catalog_is_sufficient"
+      ],
+      "title": {
+        "fr": "Un seul port suffit si le texte a déjà l'allure d'un catalogue",
+        "en": "One port is enough if the text already looks like a catalogue"
+      },
+      "help": {
+        "fr": "Marqueurs + latitudes : on arrête de chercher d'autres listes.",
+        "en": "Markers + latitudes: stop hunting for more lists."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.catalog_lat_hits",
@@ -509,11 +1127,25 @@
       "kind": "geometrie",
       "value": 8,
       "unit": "hits",
-      "interval": [5, 12],
+      "interval": [
+        5,
+        12
+      ],
       "vary": true,
       "principle": "Un décret SCT-like répète « latitud: » pour chaque ligne. 8 hits = table, pas un préambule. Ajuster si un pays numérote autrement.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §6.3",
-      "code": ["app/core/extract.py:looks_like_port_catalog"]
+      "code": [
+        "app/core/extract.py:looks_like_port_catalog"
+      ],
+      "title": {
+        "fr": "Répétitions « latitud: » qui trahissent une table",
+        "en": "“latitud:” repeats that betray a table"
+      },
+      "help": {
+        "fr": "8 hits = décret SCT, pas un préambule. Ajuster si un pays numérote autrement.",
+        "en": "8 hits = SCT-like decree, not a preamble. Adjust if a country numbers differently."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.max_ports_per_zone",
@@ -521,11 +1153,25 @@
       "kind": "budget",
       "value": 150,
       "unit": "ports",
-      "interval": [50, 400],
+      "interval": [
+        50,
+        400
+      ],
       "vary": true,
       "principle": "Plafond de sécurité contre une hallucination LLM, pas un cap métier. Les grands États maritimes dépassent 25 ; 150 laisse de la marge. Au-delà = bruit d'extracteur.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §7.2",
-      "code": ["app/core/llm.py"]
+      "code": [
+        "app/core/llm.py"
+      ],
+      "title": {
+        "fr": "Plafond de ports par ZEE (anti-hallucination)",
+        "en": "Port cap per EEZ (anti-hallucination)"
+      },
+      "help": {
+        "fr": "Pas un cap métier. Au-delà = bruit d'extracteur, pas un grand État.",
+        "en": "Not a domain cap. Beyond = extractor noise, not a large State."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.inland_far_km",
@@ -533,11 +1179,25 @@
       "kind": "geometrie",
       "value": 30.0,
       "unit": "km",
-      "interval": [20.0, 50.0],
+      "interval": [
+        20.0,
+        50.0
+      ],
       "vary": true,
       "principle": "Audit GPS : au-delà du hinterland côtier (15 km) + marge, le point n'est plus un havre. 30 km flagge Mtwara/Tanga inland sans jeter Rouen.",
       "cdc": "docs/poe-confirmed-gps-audit.md",
-      "code": ["app/services/poe_confirmed_gps_audit.py:INLAND_FAR_KM"]
+      "code": [
+        "app/services/poe_confirmed_gps_audit.py:INLAND_FAR_KM"
+      ],
+      "title": {
+        "fr": "GPS trop loin dans les terres pour un havre",
+        "en": "GPS too far inland for a harbour"
+      },
+      "help": {
+        "fr": "30 km flagge Mtwara inland sans jeter Rouen. Plus serré, on flagge trop.",
+        "en": "30 km flags inland Mtwara without dropping Rouen. Tighter over-flags."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.other_water_far_km",
@@ -545,35 +1205,79 @@
       "kind": "geometrie",
       "value": 8.0,
       "unit": "km",
-      "interval": [4.0, 15.0],
+      "interval": [
+        4.0,
+        15.0
+      ],
       "vary": true,
       "principle": "Mer hors polygone : 8 km dépasse le sliver (2,2) et Cassis/Geelong (2–3 km). Au-delà c'est une autre ZEE ou un GPS inventé.",
       "cdc": "docs/poe-confirmed-gps-audit.md",
-      "code": ["app/services/poe_confirmed_gps_audit.py:OTHER_WATER_FAR_KM"]
+      "code": [
+        "app/services/poe_confirmed_gps_audit.py:OTHER_WATER_FAR_KM"
+      ],
+      "title": {
+        "fr": "Mer hors polygone : encore ce pays ?",
+        "en": "Sea outside the polygon: still this country?"
+      },
+      "help": {
+        "fr": "8 km dépasse le sliver et Cassis. Au-delà, autre ZEE ou GPS inventé.",
+        "en": "8 km is past the sliver and Cassis. Beyond: another EEZ or invented GPS."
+      },
+      "group": "space"
     },
     {
-      "id": "formalities.group_outlier_km",
+      "id": "formalities.peer_near_km",
       "mode": "formalities",
       "kind": "geometrie",
       "value": 300.0,
       "unit": "km",
-      "interval": [150.0, 500.0],
+      "interval": [
+        150.0,
+        500.0
+      ],
       "vary": true,
-      "principle": "Un listing pays forme un cluster côtier. 300 km = encore le même littoral (Golfe du Mexique). En dessous on flagge trop ; au-dessus on rate un homonyme.",
+      "principle": "300 km = encore le même littoral (Golfe du Mexique), pas l'autre façade. Sert au score de géocode (pair listing) et à l'audit de cluster. En dessous on flagge trop ; au-dessus on rate un homonyme.",
       "cdc": "docs/poe-confirmed-gps-audit.md",
-      "code": ["app/core/geo.py:PEER_NEAR_KM"]
+      "code": [
+        "app/core/geo.py:PEER_NEAR_KM",
+        "app/services/poe_confirmed_gps_audit.py:GROUP_OUTLIER_KM"
+      ],
+      "title": {
+        "fr": "Même littoral qu'un port jumeau",
+        "en": "Same seaboard as a twin port"
+      },
+      "help": {
+        "fr": "300 km = encore le Golfe, pas l'autre façade. Sert au géocode et à l'audit listing. Plus serré, on flagge trop.",
+        "en": "300 km = still the Gulf, not the other seaboard. Used in geocode and listing audit. Tighter over-flags."
+      },
+      "group": "space"
     },
     {
-      "id": "formalities.group_outlier_in_eez_km",
+      "id": "formalities.basin_split_km",
       "mode": "formalities",
       "kind": "geometrie",
       "value": 1500.0,
       "unit": "km",
-      "interval": [800.0, 2500.0],
+      "interval": [
+        800.0,
+        2500.0
+      ],
       "vary": true,
-      "principle": "Même dans le polygone, 1 500 km = autre façade (Astoria vs côte ouest, bassin océanique). C'est un split de bassin, pas un sliver.",
+      "principle": "1 500 km dans le même polygone = autre façade (Astoria vs côte est). Split de bassin, pas un sliver. Plus serré, on déclare ambigu trop tôt.",
       "cdc": "docs/poe-confirmed-gps-audit.md",
-      "code": ["app/core/geo.py:BASIN_SPLIT_KM"]
+      "code": [
+        "app/core/geo.py:BASIN_SPLIT_KM",
+        "app/services/poe_confirmed_gps_audit.py:GROUP_OUTLIER_IN_EEZ_KM"
+      ],
+      "title": {
+        "fr": "Autre façade, même polygone",
+        "en": "Other seaboard, same polygon"
+      },
+      "help": {
+        "fr": "1 500 km = Astoria vs côte est. Split de bassin, pas un sliver. Plus serré, on déclare ambigu trop tôt.",
+        "en": "1 500 km = Astoria vs East Coast. Basin split, not a sliver. Tighter calls ambiguous too soon."
+      },
+      "group": "space"
     },
     {
       "id": "formalities.listing_sim_high",
@@ -581,11 +1285,25 @@
       "kind": "score",
       "value": 0.9,
       "unit": "ratio",
-      "interval": [0.8, 0.97],
+      "interval": [
+        0.8,
+        0.97
+      ],
       "vary": true,
       "principle": "Appariement listing ↔ run : même logique que la dédup haute. Recalibrer sur un échantillon de paires Noonsite.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/listing_control.py:SIM_HIGH"]
+      "code": [
+        "app/services/listing_control.py:SIM_HIGH"
+      ],
+      "title": {
+        "fr": "Même nom listing, sans doute",
+        "en": "Same listing name, high confidence"
+      },
+      "help": {
+        "fr": "Appariement listing ↔ run. Recalibrer sur des paires Noonsite, pas à l'œil.",
+        "en": "Listing ↔ run match. Recalibrate on Noonsite pairs, not by eye."
+      },
+      "group": "identity"
     },
     {
       "id": "formalities.listing_sim_low",
@@ -593,11 +1311,51 @@
       "kind": "score",
       "value": 0.6,
       "unit": "ratio",
-      "interval": [0.5, 0.75],
+      "interval": [
+        0.5,
+        0.75
+      ],
       "vary": true,
       "principle": "Seuil bas d'ambiguïté listing. En dessous = pas le même nom.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/listing_control.py:SIM_LOW"]
+      "code": [
+        "app/services/listing_control.py:SIM_LOW"
+      ],
+      "title": {
+        "fr": "Nom listing trop différent",
+        "en": "Listing name too different"
+      },
+      "help": {
+        "fr": "En dessous, ce n'est pas le même nom. Plus haut, on laisse trop d'ambiguïté.",
+        "en": "Below, it is not the same name. Higher leaves too much ambiguity."
+      },
+      "group": "identity"
+    },
+    {
+      "id": "formalities.listing_name_sim_mid",
+      "mode": "formalities",
+      "kind": "score",
+      "value": 0.82,
+      "unit": "ratio",
+      "interval": [
+        0.7,
+        0.88
+      ],
+      "vary": true,
+      "principle": "Alias dans la même ZEE (« Fort Bay » / « Fort Bay (Fort Baai) »). Entre sim_low et sim_high. Recalibrer sur des paires listing.",
+      "cdc": "CAHIER_DES_CHARGES_POE.md §17.2",
+      "code": [
+        "app/services/poe_seeds.py"
+      ],
+      "title": {
+        "fr": "Alias du même port, même ZEE",
+        "en": "Alias of the same port, same EEZ"
+      },
+      "help": {
+        "fr": "82 % dans la même ZEE : « Fort Bay » / « Fort Bay (Fort Baai) ». Plus bas, on fusionne des voisins ; plus haut, on dédouble des alias.",
+        "en": "82% in the same EEZ: “Fort Bay” / “Fort Bay (Fort Baai)”. Lower merges neighbours; higher duplicates aliases."
+      },
+      "group": "identity"
     },
     {
       "id": "formalities.listing_auto_threshold",
@@ -605,11 +1363,25 @@
       "kind": "score",
       "value": 0.86,
       "unit": "ratio",
-      "interval": [0.75, 0.95],
+      "interval": [
+        0.75,
+        0.95
+      ],
       "vary": true,
       "principle": "Jointure slug → mrgid automatique. Assez haut pour ne pas coller « France » sur un DOM par erreur. Recalibrer sur slug_overrides.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §9.3",
-      "code": ["app/services/listing_ref.py:AUTO_THRESHOLD"]
+      "code": [
+        "app/services/listing_ref.py:AUTO_THRESHOLD"
+      ],
+      "title": {
+        "fr": "Coller un slug listing sur une ZEE, tout seul",
+        "en": "Attach a listing slug to an EEZ, automatically"
+      },
+      "help": {
+        "fr": "Assez haut pour ne pas coller « France » sur un DOM. Recalibrer sur slug_overrides.",
+        "en": "High enough not to glue “France” onto an overseas territory. Recalibrate on slug_overrides."
+      },
+      "group": "identity"
     },
     {
       "id": "formalities.listing_role_sim",
@@ -617,11 +1389,25 @@
       "kind": "score",
       "value": 0.72,
       "unit": "ratio",
-      "interval": [0.6, 0.85],
+      "interval": [
+        0.6,
+        0.85
+      ],
       "vary": true,
       "principle": "Attribuer le rôle listing (poe/other) à un nom extrait. 0,72 est entre sim_low et sim_high : assez pour « Port of X » / « X », pas pour un homonyme.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/poe_confidence.py"]
+      "code": [
+        "app/services/poe_confidence.py"
+      ],
+      "title": {
+        "fr": "Ce nom extrait a-t-il le rôle listing (poe / other)",
+        "en": "Does this extracted name have the listing role (poe / other)"
+      },
+      "help": {
+        "fr": "Entre sim_low et sim_high : « Port of X » / « X », pas un homonyme.",
+        "en": "Between sim_low and sim_high: “Port of X” / “X”, not a homonym."
+      },
+      "group": "identity"
     },
     {
       "id": "formalities.listing_coverage_publish",
@@ -629,11 +1415,25 @@
       "kind": "score",
       "value": 0.9,
       "unit": "ratio",
-      "interval": [0.8, 0.95],
+      "interval": [
+        0.8,
+        0.95
+      ],
       "vary": true,
       "principle": "Le CDC dit « écrasante majorité » sans chiffre — c'est précisément un nombre arbitraire à figer. 90 % = 9 PoE listing sur 10 sont dans la carte candidate. Le listing n'est pas Gold : le résidu listing_only reste assumé. En dessous de 80 % on publie trop tôt ; au-dessus de 95 % on attend un listing parfait.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §12",
-      "code": ["app/services/listing_control.py"]
+      "code": [
+        "app/services/listing_control.py"
+      ],
+      "title": {
+        "fr": "Couverture listing avant de publier la carte",
+        "en": "Listing coverage before publishing the map"
+      },
+      "help": {
+        "fr": "90 % = 9 PoE listing sur 10 sont dans la carte. Plus bas, on publie trop tôt ; plus haut, on attend un listing parfait.",
+        "en": "90% = 9 listing PoEs out of 10 are on the map. Lower publishes too soon; higher waits for a perfect listing."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.osm_confidence_hi",
@@ -641,11 +1441,25 @@
       "kind": "score",
       "value": 0.5,
       "unit": "ratio",
-      "interval": [0.35, 0.7],
+      "interval": [
+        0.35,
+        0.7
+      ],
       "vary": true,
       "principle": "Badge OSM « haute confiance » : au moins un tag havre/douane dans le rayon. 0,5 est le milieu de l'échelle 0–1, pas une calibration. Recalibrer quand on aura un Gold (v1 : 678/1171 ≥ 0,5).",
       "cdc": "CAHIER_DES_CHARGES_POE.md §22",
-      "code": ["app/services/osm_validate.py"]
+      "code": [
+        "app/services/osm_validate.py"
+      ],
+      "title": {
+        "fr": "Badge OSM « haute confiance »",
+        "en": "OSM “high confidence” badge"
+      },
+      "help": {
+        "fr": "Un tag havre/douane dans le rayon. Recalibrer quand on aura un Gold.",
+        "en": "A harbour/customs tag in the radius. Recalibrate once Gold exists."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.confidence_source_max",
@@ -653,11 +1467,25 @@
       "kind": "score",
       "value": 30,
       "unit": "points",
-      "interval": [20, 40],
+      "interval": [
+        20,
+        40
+      ],
       "vary": true,
       "principle": "Faisceau 0–100 : la preuve d'État pèse le plus (30). Les poids sont une politique de score, pas une physique. Les faire varier pour comparer des cartes, puis figer après revue.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/poe_confidence.py"]
+      "code": [
+        "app/services/poe_confidence.py"
+      ],
+      "title": {
+        "fr": "Poids de la preuve d'État dans le score",
+        "en": "Weight of State evidence in the score"
+      },
+      "help": {
+        "fr": "Sur 100. Plus bas, Noonsite pèse trop ; plus haut, un décret mal géocodé a l'air sûr.",
+        "en": "Out of 100. Lower lets Noonsite weigh too much; higher makes a badly geocoded decree look safe."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.confidence_reading_max",
@@ -665,11 +1493,25 @@
       "kind": "score",
       "value": 25,
       "unit": "points",
-      "interval": [15, 35],
+      "interval": [
+        15,
+        35
+      ],
       "vary": true,
       "principle": "Lecture (catalogue / LLM ∩ NER / Claude) : second poids. Somme des 4 briques = 100.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/poe_confidence.py"]
+      "code": [
+        "app/services/poe_confidence.py"
+      ],
+      "title": {
+        "fr": "Poids de la lecture (catalogue / LLM)",
+        "en": "Weight of the reading (catalogue / LLM)"
+      },
+      "help": {
+        "fr": "Second poids. Somme des 4 briques = 100.",
+        "en": "Second weight. The four bricks sum to 100."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.confidence_map_max",
@@ -677,11 +1519,25 @@
       "kind": "score",
       "value": 25,
       "unit": "points",
-      "interval": [15, 35],
+      "interval": [
+        15,
+        35
+      ],
       "vary": true,
       "principle": "Carte (ZEE + accord géocodeurs). Même poids que la lecture : un décret mal géocodé ne doit pas sembler « sûr ».",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/poe_confidence.py"]
+      "code": [
+        "app/services/poe_confidence.py"
+      ],
+      "title": {
+        "fr": "Poids de la carte (ZEE + géocodeurs)",
+        "en": "Weight of the map (EEZ + geocoders)"
+      },
+      "help": {
+        "fr": "Même poids que la lecture : un décret mal placé ne doit pas sembler sûr.",
+        "en": "Same weight as reading: a misplaced decree must not look safe."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.confidence_external_max",
@@ -689,11 +1545,25 @@
       "kind": "score",
       "value": 20,
       "unit": "points",
-      "interval": [10, 30],
+      "interval": [
+        10,
+        30
+      ],
       "vary": true,
       "principle": "Signaux externes (listing, OSM, multi-run) : le plus faible, pour ne pas goldiser Noonsite.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §10",
-      "code": ["app/services/poe_confidence.py"]
+      "code": [
+        "app/services/poe_confidence.py"
+      ],
+      "title": {
+        "fr": "Poids des signaux externes (listing, OSM)",
+        "en": "Weight of external signals (listing, OSM)"
+      },
+      "help": {
+        "fr": "Le plus faible, pour ne pas goldiser Noonsite.",
+        "en": "The weakest, so Noonsite is not goldised."
+      },
+      "group": "qualification"
     },
     {
       "id": "formalities.zone_timeout_s",
@@ -701,11 +1571,25 @@
       "kind": "budget",
       "value": 900,
       "unit": "s",
-      "interval": [300, 1800],
+      "interval": [
+        300,
+        1800
+      ],
       "vary": true,
       "principle": "Le pipeline v2 (rendu + double géocodage) dépasse souvent 5 min. 900 s = 3× un run « normal » pour tuer un hang sans couper une ZEE lente.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §9.2",
-      "code": ["app/services/poe_runs.py:ZONE_TIMEOUT_S"]
+      "code": [
+        "app/services/poe_runs.py:ZONE_TIMEOUT_S"
+      ],
+      "title": {
+        "fr": "Temps max pour une ZEE",
+        "en": "Max time for one EEZ"
+      },
+      "help": {
+        "fr": "900 s = 3× un run normal, pour tuer un hang sans couper une ZEE lente.",
+        "en": "900 s = 3× a normal run, to kill a hang without cutting a slow EEZ."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.stale_days",
@@ -713,11 +1597,25 @@
       "kind": "budget",
       "value": 180,
       "unit": "days",
-      "interval": [60, 365],
+      "interval": [
+        60,
+        365
+      ],
       "vary": true,
       "principle": "Affichage « source pas revue ». Les décrets bougent à l'échelle du semestre, pas du mois. Le refresh auto (30 j) est plus agressif que ce badge.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §17.2",
-      "code": ["app/services/poe_pipeline.py:STALE_DAYS"]
+      "code": [
+        "app/services/poe_pipeline.py:STALE_DAYS"
+      ],
+      "title": {
+        "fr": "Badge « source pas revue »",
+        "en": "“Source not reviewed” badge"
+      },
+      "help": {
+        "fr": "Les décrets bougent au semestre. Plus court, le badge clignote pour rien.",
+        "en": "Decrees move on a semester. Shorter makes the badge blink for nothing."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.refresh_after_days",
@@ -725,11 +1623,25 @@
       "kind": "budget",
       "value": 30,
       "unit": "days",
-      "interval": [7, 90],
+      "interval": [
+        7,
+        90
+      ],
       "vary": true,
       "principle": "Re-télécharger une source officielle une fois par mois. Assez souvent pour un décret qui change, assez rare pour ne pas brûler les quotas.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §21",
-      "code": ["app/routers/formalities.py:REFRESH_AFTER_DAYS"]
+      "code": [
+        "app/routers/formalities.py:REFRESH_AFTER_DAYS"
+      ],
+      "title": {
+        "fr": "Re-télécharger une source officielle",
+        "en": "Re-download an official source"
+      },
+      "help": {
+        "fr": "Une fois par mois. Plus souvent brûle les quotas ; plus rare rate un décret.",
+        "en": "Once a month. More often burns quotas; rarer misses a decree."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.error_retry_days",
@@ -737,11 +1649,25 @@
       "kind": "budget",
       "value": 7,
       "unit": "days",
-      "interval": [1, 21],
+      "interval": [
+        1,
+        21
+      ],
       "vary": true,
       "principle": "Un anti-bot ou un 500 dure souvent quelques jours. Réessayer à la semaine, pas toutes les 12 h.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §21",
-      "code": ["app/routers/formalities.py:ERROR_RETRY_DAYS"]
+      "code": [
+        "app/routers/formalities.py:ERROR_RETRY_DAYS"
+      ],
+      "title": {
+        "fr": "Réessayer une source en erreur",
+        "en": "Retry a source in error"
+      },
+      "help": {
+        "fr": "Un anti-bot dure souvent quelques jours. Pas toutes les 12 h.",
+        "en": "An anti-bot often lasts a few days. Not every 12 h."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.cycle_every_h",
@@ -749,11 +1675,25 @@
       "kind": "budget",
       "value": 12,
       "unit": "h",
-      "interval": [6, 48],
+      "interval": [
+        6,
+        48
+      ],
       "vary": true,
       "principle": "Un cycle auto deux fois par jour. Assez pour rattraper une ZEE en erreur sans saturer Overpass / Nominatim.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §21",
-      "code": ["app/routers/formalities.py:CYCLE_EVERY_H"]
+      "code": [
+        "app/routers/formalities.py:CYCLE_EVERY_H"
+      ],
+      "title": {
+        "fr": "Fréquence du cycle auto",
+        "en": "Auto-cycle frequency"
+      },
+      "help": {
+        "fr": "Deux fois par jour. Assez pour rattraper une ZEE sans saturer Overpass.",
+        "en": "Twice a day. Enough to catch up an EEZ without saturating Overpass."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.max_per_cycle",
@@ -761,11 +1701,25 @@
       "kind": "budget",
       "value": 60,
       "unit": "zones",
-      "interval": [10, 120],
+      "interval": [
+        10,
+        120
+      ],
       "vary": true,
       "principle": "285 ZEE / 60 par cycle / 2 cycles par jour ≈ tout le monde en ~2,5 jours. C'est un débit, pas une géographie.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §21",
-      "code": ["app/routers/formalities.py:MAX_PER_CYCLE"]
+      "code": [
+        "app/routers/formalities.py:MAX_PER_CYCLE"
+      ],
+      "title": {
+        "fr": "ZEE traitées par cycle auto",
+        "en": "EEZs processed per auto cycle"
+      },
+      "help": {
+        "fr": "285 ZEE / 60 / 2 cycles/j ≈ 2,5 jours. C'est un débit, pas une géographie.",
+        "en": "285 EEZs / 60 / 2 cycles/day ≈ 2.5 days. Throughput, not geography."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.geocode_ttl_hit_days",
@@ -773,11 +1727,25 @@
       "kind": "budget",
       "value": 180,
       "unit": "days",
-      "interval": [30, 365],
+      "interval": [
+        30,
+        365
+      ],
       "vary": true,
       "principle": "Un GPS réussi vieillit comme une source (semestre). Aligné sur stale_days.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §20",
-      "code": ["app/core/geo.py:GEOCODE_TTL_HIT_S"]
+      "code": [
+        "app/core/geo.py:GEOCODE_TTL_HIT_S"
+      ],
+      "title": {
+        "fr": "Durée de vie d'un GPS réussi",
+        "en": "Time-to-live of a successful GPS"
+      },
+      "help": {
+        "fr": "Un semestre, comme une source. Plus court, on re-géocode pour rien.",
+        "en": "A semester, like a source. Shorter re-geocodes for nothing."
+      },
+      "group": "geocode"
     },
     {
       "id": "formalities.geocode_ttl_miss_days",
@@ -785,11 +1753,51 @@
       "kind": "budget",
       "value": 14,
       "unit": "days",
-      "interval": [3, 30],
+      "interval": [
+        3,
+        30
+      ],
       "vary": true,
       "principle": "Un miss Nominatim peut être transitoire (rate-limit, homonyme). On réessaie à 2 semaines, pas tout de suite.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §20",
-      "code": ["app/core/geo.py:GEOCODE_TTL_MISS_S"]
+      "code": [
+        "app/core/geo.py:GEOCODE_TTL_MISS_S"
+      ],
+      "title": {
+        "fr": "Durée de vie d'un miss Nominatim",
+        "en": "Time-to-live of a Nominatim miss"
+      },
+      "help": {
+        "fr": "Un miss peut être un rate-limit. On réessaie à 2 semaines, pas tout de suite.",
+        "en": "A miss can be a rate-limit. Retry in 2 weeks, not immediately."
+      },
+      "group": "geocode"
+    },
+    {
+      "id": "formalities.geocode_candidate_limit",
+      "mode": "formalities",
+      "kind": "budget",
+      "value": 10,
+      "unit": "hits",
+      "interval": [
+        5,
+        20
+      ],
+      "vary": true,
+      "principle": "Filet Nominatim/GeoNames : jusqu'à 10 hits. N n'est pas le système — parenthèses et listing_group arbitrent. Ne pas s'arrêter au 1er village.",
+      "cdc": "CAHIER_DES_CHARGES_POE.md §8.2",
+      "code": [
+        "app/core/geo.py:GEOCODE_CANDIDATE_LIMIT"
+      ],
+      "title": {
+        "fr": "Nombre de hits Nominatim / GeoNames à noter",
+        "en": "How many Nominatim / GeoNames hits to keep"
+      },
+      "help": {
+        "fr": "10 = filet, pas le premier village. Plus bas, on rate Bintan ; plus haut, on paie du bruit.",
+        "en": "10 = a net, not the first village. Lower misses Bintan; higher pays for noise."
+      },
+      "group": "geocode"
     },
     {
       "id": "formalities.enrich_limit",
@@ -797,11 +1805,25 @@
       "kind": "budget",
       "value": 200,
       "unit": "seeds",
-      "interval": [20, 500],
+      "interval": [
+        20,
+        500
+      ],
       "vary": true,
       "principle": "Lot Bottom-Up : assez pour avancer, assez petit pour survivre à un hang 900 s / quota Claude.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §26",
-      "code": ["app/services/poe_seed_enrich.py:DEFAULT_ENRICH_LIMIT"]
+      "code": [
+        "app/services/poe_seed_enrich.py:DEFAULT_ENRICH_LIMIT"
+      ],
+      "title": {
+        "fr": "Graines Bottom-Up par lot",
+        "en": "Bottom-up seeds per batch"
+      },
+      "help": {
+        "fr": "Assez pour avancer, assez petit pour survivre à un hang 900 s.",
+        "en": "Enough to move, small enough to survive a 900 s hang."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.whitelist_domain_cap",
@@ -809,11 +1831,25 @@
       "kind": "budget",
       "value": 15,
       "unit": "domains",
-      "interval": [5, 40],
+      "interval": [
+        5,
+        40
+      ],
       "vary": true,
       "principle": "Filet TinyFish include_domains : trop de domaines dilue le filet. 15 = motifs gov + exceptions mémorisées d'un pays.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §6.1",
-      "code": ["app/services/poe_seed_enrich.py:WHITELIST_DOMAIN_CAP"]
+      "code": [
+        "app/services/poe_seed_enrich.py:WHITELIST_DOMAIN_CAP"
+      ],
+      "title": {
+        "fr": "Domaines dans le filet TinyFish d'un pays",
+        "en": "Domains in a country’s TinyFish net"
+      },
+      "help": {
+        "fr": "Trop de domaines dilue le filet. 15 = motifs gov + exceptions mémorisées.",
+        "en": "Too many domains dilute the net. 15 = gov patterns + remembered exceptions."
+      },
+      "group": "budget"
     },
     {
       "id": "formalities.max_parallel_runs",
@@ -821,11 +1857,25 @@
       "kind": "budget",
       "value": 4,
       "unit": "runs",
-      "interval": [1, 8],
+      "interval": [
+        1,
+        8
+      ],
       "vary": true,
       "principle": "Plafond de runs simultanés pour ne pas saturer SearXNG / TinyFish / Nominatim. 4 = v1+v2+tinyfish + 1.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §9.2",
-      "code": ["app/routers/runs.py:MAX_PARALLEL_RUNS"]
+      "code": [
+        "app/routers/runs.py:MAX_PARALLEL_RUNS"
+      ],
+      "title": {
+        "fr": "Runs PoE simultanés",
+        "en": "Simultaneous PoE runs"
+      },
+      "help": {
+        "fr": "Pour ne pas saturer SearXNG / TinyFish / Nominatim. 4 = v1+v2+tinyfish + 1.",
+        "en": "So SearXNG / TinyFish / Nominatim are not saturated. 4 = v1+v2+tinyfish + 1."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.corridor_radius_nm",
@@ -833,11 +1883,26 @@
       "kind": "geometrie",
       "value": 25.0,
       "unit": "NM",
-      "interval": [15.0, 40.0],
+      "interval": [
+        15.0,
+        40.0
+      ],
       "vary": true,
       "principle": "Bande ±25 NM le long de la route = 50 NM au total. À 5–6 nœuds, 25 NM ≈ 4–5 h, soit un saut côtier / horizon de planification. En dessous de 15 NM on rate les abris un peu au large ; au-delà de 40 NM on aspire tout un golfe.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §27 (hors périmètre Formalités) · README modes",
-      "code": ["app/services/marina_build.py", "app/services/anchorage_build.py"]
+      "code": [
+        "app/services/marina_build.py",
+        "app/services/anchorage_build.py"
+      ],
+      "title": {
+        "fr": "Largeur du corridor de mouillages",
+        "en": "Width of the anchorage corridor"
+      },
+      "help": {
+        "fr": "4–5 h à 5–6 nœuds. Dump marinas : toutes, hors corridor. Plus serré, on rate les abris au large.",
+        "en": "4–5 h at 5–6 kn. Marina dump: all of them, outside the corridor. Tighter misses offshore shelters."
+      },
+      "group": "space"
     },
     {
       "id": "marinas.corridor_step_nm",
@@ -845,11 +1910,25 @@
       "kind": "geometrie",
       "value": 25.0,
       "unit": "NM",
-      "interval": [10.0, 40.0],
+      "interval": [
+        10.0,
+        40.0
+      ],
       "vary": true,
       "principle": "Échantillonnage du corridor. Le pas doit rester ≤ 2× le rayon pour que les disques se recouvrent (le code utilise sqrt(r²+(step/2)²)). Défaut : pas = rayon.",
       "cdc": "README · marina_build Phase 8",
-      "code": ["app/services/marina_build.py:sample_corridor"]
+      "code": [
+        "app/services/marina_build.py:sample_corridor"
+      ],
+      "title": {
+        "fr": "Pas d'échantillonnage du corridor",
+        "en": "Corridor sampling step"
+      },
+      "help": {
+        "fr": "Le pas doit rester ≤ 2× le rayon pour que les disques se recouvrent.",
+        "en": "The step must stay ≤ 2× the radius so the discs overlap."
+      },
+      "group": "space"
     },
     {
       "id": "marinas.waypoint_radius_nm",
@@ -857,12 +1936,27 @@
       "kind": "geometrie",
       "value": 10.0,
       "unit": "NM",
-      "interval": [5.0, 15.0],
+      "interval": [
+        5.0,
+        15.0
+      ],
       "vary": true,
       "settings_key": "marina_search_radius_nm",
       "principle": "Approches d'une escale : 10 NM ≈ 2 h à 5 nœuds, assez pour les marinas de la rade sans prendre la ville suivante.",
       "cdc": "README mode Marinas",
-      "code": ["app/config.py", "app/routers/marinas.py"]
+      "code": [
+        "app/config.py",
+        "app/routers/marinas.py"
+      ],
+      "title": {
+        "fr": "Marinas autour d'une escale",
+        "en": "Marinas around a waypoint"
+      },
+      "help": {
+        "fr": "10 NM ≈ 2 h à 5 nœuds, la rade, pas la ville suivante.",
+        "en": "10 NM ≈ 2 h at 5 kn: the roads, not the next town."
+      },
+      "group": "space"
     },
     {
       "id": "marinas.priority_escale_nm",
@@ -870,11 +1964,51 @@
       "kind": "geometrie",
       "value": 15.0,
       "unit": "NM",
-      "interval": [10.0, 20.0],
+      "interval": [
+        10.0,
+        20.0
+      ],
       "vary": true,
       "principle": "« Près de cette escale » pour la priorité 1/2. Un peu plus large que le rayon waypoint (10) pour ne pas classer corridor une marina de la rade voisine.",
       "cdc": "marina_build assign_priority",
-      "code": ["app/services/marina_build.py"]
+      "code": [
+        "app/services/marina_build.py"
+      ],
+      "title": {
+        "fr": "« Près de cette escale » (priorité 1/2)",
+        "en": "“Near this waypoint” (priority 1/2)"
+      },
+      "help": {
+        "fr": "Un peu plus large que le rayon waypoint pour ne pas classer corridor une marina de la rade.",
+        "en": "A bit wider than the waypoint radius so a roads marina is not classed as corridor."
+      },
+      "group": "space"
+    },
+    {
+      "id": "marinas.place_match_m",
+      "mode": "marinas",
+      "kind": "geometrie",
+      "value": 8000,
+      "unit": "m",
+      "interval": [
+        2000,
+        20000
+      ],
+      "vary": true,
+      "principle": "Une fiche Google /maps/place/ trop loin n'est plus cette marina. 8 km couvre un grand port sans voler le bassin d'à côté.",
+      "cdc": "README mode Marinas",
+      "code": [
+        "app/services/marina_maps_place.py:MAX_PLACE_DISTANCE_M"
+      ],
+      "title": {
+        "fr": "Éloignement max d'une fiche Google",
+        "en": "Max distance of a Google place page"
+      },
+      "help": {
+        "fr": "Au-delà, ce n'est plus cette marina. Un bassin nommé à côté n'hérite pas de la fiche du grand port.",
+        "en": "Beyond, it is no longer this marina. A named basin next door does not inherit the big port’s page."
+      },
+      "group": "identity"
     },
     {
       "id": "marinas.max_bbox_span_nm",
@@ -882,11 +2016,25 @@
       "kind": "budget",
       "value": 500.0,
       "unit": "NM",
-      "interval": [100.0, 800.0],
+      "interval": [
+        100.0,
+        800.0
+      ],
       "vary": true,
       "principle": "Taille max d'une bbox Overpass. Au-delà Overpass time-out. Ce n'est pas une géographie métier.",
       "cdc": "marina_build cluster_points_to_bboxes",
-      "code": ["app/services/marina_build.py"]
+      "code": [
+        "app/services/marina_build.py"
+      ],
+      "title": {
+        "fr": "Taille max d'une bbox Overpass",
+        "en": "Max Overpass bbox span"
+      },
+      "help": {
+        "fr": "Au-delà, Overpass time-out. Ce n'est pas une géographie métier.",
+        "en": "Beyond, Overpass times out. Not domain geography."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.enrich_stale_days",
@@ -894,12 +2042,26 @@
       "kind": "budget",
       "value": 365,
       "unit": "days",
-      "interval": [90, 730],
+      "interval": [
+        90,
+        730
+      ],
       "vary": true,
       "settings_key": "enrich_stale_days",
       "principle": "VHF / places visiteurs changent à l'année, pas au mois. Un an avant de ré-enrichir.",
       "cdc": "README enrichissement",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Ré-enrichir VHF / places visiteurs",
+        "en": "Re-enrich VHF / visitor berths"
+      },
+      "help": {
+        "fr": "Ça change à l'année, pas au mois.",
+        "en": "This changes yearly, not monthly."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.batch_concurrency",
@@ -907,12 +2069,26 @@
       "kind": "budget",
       "value": 2,
       "unit": "workers",
-      "interval": [1, 6],
+      "interval": [
+        1,
+        6
+      ],
       "vary": true,
       "settings_key": "marina_batch_concurrency",
       "principle": "Enrichissement LLM capé : 2 en parallèle pour ne pas brûler OpenRouter / TinyFish.",
       "cdc": "README",
-      "code": ["app/config.py"]
+      "code": [
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Enrichissements marina en parallèle",
+        "en": "Parallel marina enrichments"
+      },
+      "help": {
+        "fr": "2 pour ne pas brûler OpenRouter / TinyFish.",
+        "en": "2 so OpenRouter / TinyFish are not burned."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.openrouter_min_credits_usd",
@@ -920,12 +2096,26 @@
       "kind": "budget",
       "value": 0.5,
       "unit": "USD",
-      "interval": [0.1, 5.0],
+      "interval": [
+        0.1,
+        5.0
+      ],
       "vary": true,
       "settings_key": "openrouter_min_credits_usd",
       "principle": "Garde-fou : on n'enchaîne pas un batch si le solde est sous 0,50 $. Choix opérateur.",
       "cdc": "README",
-      "code": ["app/services/marina_enrich.py"]
+      "code": [
+        "app/services/marina_enrich.py"
+      ],
+      "title": {
+        "fr": "Solde OpenRouter minimum avant un lot",
+        "en": "Minimum OpenRouter balance before a batch"
+      },
+      "help": {
+        "fr": "Garde-fou opérateur. On n'enchaîne pas un batch à 0,10 $.",
+        "en": "Operator guardrail. Do not start a batch at $0.10."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.tinyfish_enrich_budget_s",
@@ -933,11 +2123,25 @@
       "kind": "budget",
       "value": 150.0,
       "unit": "s",
-      "interval": [30.0, 300.0],
+      "interval": [
+        30.0,
+        300.0
+      ],
       "vary": true,
       "principle": "Budget Agent TinyFish par marina. Assez pour un site JS, pas un crawl.",
       "cdc": "CAHIER_DES_CHARGES_POE.md §8.1 (Agent = scalpel)",
-      "code": ["app/services/marina_enrich.py"]
+      "code": [
+        "app/services/marina_enrich.py"
+      ],
+      "title": {
+        "fr": "Budget Agent TinyFish par marina",
+        "en": "TinyFish Agent budget per marina"
+      },
+      "help": {
+        "fr": "Assez pour un site JS, pas un crawl.",
+        "en": "Enough for a JS site, not a crawl."
+      },
+      "group": "budget"
     },
     {
       "id": "marinas.overpass_throttle_s",
@@ -945,11 +2149,25 @@
       "kind": "budget",
       "value": 3.0,
       "unit": "s",
-      "interval": [1.2, 8.0],
+      "interval": [
+        1.2,
+        8.0
+      ],
       "vary": true,
       "principle": "AUP Overpass : une tuile monde à la fois. 3 s = poli. Plancher 1,2 s = déjà utilisé par osm_seeds. Ce n'est pas une géographie métier.",
       "cdc": "wiki OSM API usage policy · marina_world",
-      "code": ["app/services/marina_world.py"]
+      "code": [
+        "app/services/marina_world.py"
+      ],
+      "title": {
+        "fr": "Pause entre tuiles Overpass (marinas)",
+        "en": "Pause between Overpass tiles (marinas)"
+      },
+      "help": {
+        "fr": "AUP : une tuile monde à la fois. 3 s = poli. Ce n'est pas une géographie.",
+        "en": "AUP: one world tile at a time. 3 s is polite. Not geography."
+      },
+      "group": "budget"
     },
     {
       "id": "capitaineries.overpass_throttle_s",
@@ -957,11 +2175,25 @@
       "kind": "budget",
       "value": 3.0,
       "unit": "s",
-      "interval": [1.2, 8.0],
+      "interval": [
+        1.2,
+        8.0
+      ],
       "vary": true,
       "principle": "AUP Overpass : une tuile harbour_master à la fois. Même poli que les marinas.",
       "cdc": "Mode Capitaineries",
-      "code": ["app/services/capitainerie_world.py"]
+      "code": [
+        "app/services/capitainerie_world.py"
+      ],
+      "title": {
+        "fr": "Pause entre tuiles Overpass (capitaineries)",
+        "en": "Pause between Overpass tiles (harbour masters)"
+      },
+      "help": {
+        "fr": "Même poli que les marinas. Une tuile harbour_master à la fois.",
+        "en": "Same politeness as marinas. One harbour_master tile at a time."
+      },
+      "group": "budget"
     },
     {
       "id": "capitaineries.merge_km",
@@ -969,11 +2201,26 @@
       "kind": "geometrie",
       "value": 0.25,
       "unit": "km",
-      "interval": [0.1, 0.8],
+      "interval": [
+        0.1,
+        0.8
+      ],
       "vary": true,
       "principle": "250 m : même bâtiment sur deux cartes officielles (OSM↔SHOM↔NOAA), distance seule, pas de nom. Ce n'est pas la dédup Projets/PoE (500 m + similarité). En dessous de 100 m on refuse un centroïde ENC légitime. Au-delà de 800 m on superpose deux bureaux.",
       "cdc": "Mode Capitaineries",
-      "code": ["app/core/identity.py:OVERLAY_RADIUS_KM", "app/services/capitainerie_world.py"]
+      "code": [
+        "app/core/identity.py:OVERLAY_RADIUS_KM",
+        "app/services/capitainerie_world.py"
+      ],
+      "title": {
+        "fr": "Distance pour superposer SHOM ou NOAA",
+        "en": "Distance to overlay SHOM or NOAA"
+      },
+      "help": {
+        "fr": "250 m, distance seule. Un OBJNAM différent n'empêche pas le calque. Pas la dédup Projets (500 m + nom).",
+        "en": "250 m, distance only. A different OBJNAM does not block the overlay. Not Projects dedup (500 m + name)."
+      },
+      "group": "identity"
     },
     {
       "id": "amp.visit_url_must_differ",
@@ -984,7 +2231,18 @@
       "vary": false,
       "principle": "L'URL de visite / d'entrée n'est jamais le champ Website / gestionnaire ProtectedSeas. Deux champs, deux pages.",
       "cdc": "Mode AMP — contrat skipper",
-      "code": ["app/services/amp.py:pick_visit_url"]
+      "code": [
+        "app/services/amp.py:pick_visit_url"
+      ],
+      "title": {
+        "fr": "La visite n'est jamais la homepage gestionnaire",
+        "en": "The visit URL is never the manager homepage"
+      },
+      "help": {
+        "fr": "Deux champs, deux pages. Loi. Pas de slider.",
+        "en": "Two fields, two pages. Law. No slider."
+      },
+      "group": "contracts"
     },
     {
       "id": "amp.min_zoom",
@@ -992,11 +2250,26 @@
       "kind": "budget",
       "value": 5,
       "unit": "zoom",
-      "interval": [4, 8],
+      "interval": [
+        4,
+        8
+      ],
       "vary": true,
       "principle": "ProtectedSeas est trop dense au niveau monde. Zoom 5 ≈ golfe / façade. En dessous on affiche l'invite, pas 20 000 polygones.",
       "cdc": "Mode AMP",
-      "code": ["app/services/amp.py", "frontend/src/components/map/useAmpLayer.js"]
+      "code": [
+        "app/services/amp.py",
+        "frontend/src/components/map/useAmpLayer.js"
+      ],
+      "title": {
+        "fr": "Zoom avant d'afficher les polygones",
+        "en": "Zoom before showing polygons"
+      },
+      "help": {
+        "fr": "ProtectedSeas est illisible au niveau monde. Plus bas, 20 000 polygones.",
+        "en": "ProtectedSeas is unreadable at world level. Lower dumps 20,000 polygons."
+      },
+      "group": "budget"
     },
     {
       "id": "amp.bbox_max_deg",
@@ -1004,11 +2277,25 @@
       "kind": "budget",
       "value": 8.0,
       "unit": "deg",
-      "interval": [2.0, 20.0],
+      "interval": [
+        2.0,
+        20.0
+      ],
       "vary": true,
       "principle": "Façade côtière, pas un continent. Au-delà ArcGIS tronque et la carte devient illisible.",
       "cdc": "Mode AMP",
-      "code": ["app/routers/amp.py"]
+      "code": [
+        "app/routers/amp.py"
+      ],
+      "title": {
+        "fr": "Emprise max d'une tuile AMP",
+        "en": "Max span of an MPA tile"
+      },
+      "help": {
+        "fr": "Façade côtière, pas un continent. Au-delà ArcGIS tronque.",
+        "en": "A coastal façade, not a continent. Beyond, ArcGIS truncates."
+      },
+      "group": "budget"
     },
     {
       "id": "amp.cache_ttl_days",
@@ -1016,11 +2303,25 @@
       "kind": "budget",
       "value": 30,
       "unit": "days",
-      "interval": [7, 180],
+      "interval": [
+        7,
+        180
+      ],
       "vary": true,
       "principle": "Les limites AMP changent à l'échelle du mois, pas du jour. Un mois avant de re-télécharger ProtectedSeas.",
       "cdc": "Mode AMP",
-      "code": ["app/services/amp.py"]
+      "code": [
+        "app/services/amp.py"
+      ],
+      "title": {
+        "fr": "Durée de vie du cache ProtectedSeas",
+        "en": "ProtectedSeas cache time-to-live"
+      },
+      "help": {
+        "fr": "Les limites changent au mois, pas au jour.",
+        "en": "Boundaries change monthly, not daily."
+      },
+      "group": "budget"
     },
     {
       "id": "amp.max_features",
@@ -1028,11 +2329,76 @@
       "kind": "budget",
       "value": 400,
       "unit": "features",
-      "interval": [50, 2000],
+      "interval": [
+        50,
+        2000
+      ],
       "vary": true,
       "principle": "Plafond d'une tuile carte. ArcGIS maxRecordCount = 2000 ; 400 garde le popup et le sidebar utilisables.",
       "cdc": "Mode AMP",
-      "code": ["app/services/amp.py:fetch_arcgis"]
+      "code": [
+        "app/services/amp.py:fetch_arcgis"
+      ],
+      "title": {
+        "fr": "Polygones max par tuile carte",
+        "en": "Max polygons per map tile"
+      },
+      "help": {
+        "fr": "400 garde le popup utilisable. ArcGIS accepte 2000.",
+        "en": "400 keeps the popup usable. ArcGIS allows 2000."
+      },
+      "group": "budget"
     }
-  ]
+  ],
+  "groups": [
+    {
+      "id": "identity",
+      "fr": "Identité",
+      "en": "Identity"
+    },
+    {
+      "id": "space",
+      "fr": "Espace",
+      "en": "Space"
+    },
+    {
+      "id": "qualification",
+      "fr": "Qualification",
+      "en": "Qualification"
+    },
+    {
+      "id": "geocode",
+      "fr": "Géocode",
+      "en": "Geocode"
+    },
+    {
+      "id": "reading",
+      "fr": "Lecture",
+      "en": "Reading"
+    },
+    {
+      "id": "budget",
+      "fr": "Budget",
+      "en": "Budget"
+    },
+    {
+      "id": "contracts",
+      "fr": "Contrats",
+      "en": "Contracts"
+    }
+  ],
+  "identity_banner": {
+    "merge_sites": {
+      "fr": "Fusionner deux fiches du même lieu",
+      "en": "Merge two records of the same place"
+    },
+    "overlay_office": {
+      "fr": "Superposer deux cartes du même bureau",
+      "en": "Overlay two charts of the same office"
+    },
+    "help": {
+      "fr": "Un nom proche à 400 m n'est pas un calque SHOM. Un calque à 200 m n'est pas deux projets.",
+      "en": "A similar name 400 m away is not a SHOM overlay. An overlay at 200 m is not two projects."
+    }
+  }
 }

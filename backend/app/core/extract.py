@@ -311,6 +311,11 @@ def _parse_similarity(a: str, b: str) -> float:
     return round(difflib.SequenceMatcher(None, na, nb).ratio(), 3)
 
 
+def _extract_agree_sim() -> float:
+    from app.core.run_rules import get_rule
+    return float(get_rule("shared.extract_agree_sim", 0.55))
+
+
 async def dual_parse_html(html: str) -> dict:
     """PARSING PARALLÈLE comparé : trafilatura ∥ Readability sur le même HTML.
     Le texte le plus riche gagne ; la similarité entre les deux est conservée
@@ -338,7 +343,7 @@ async def dual_parse_html(html: str) -> dict:
     return {
         "text": text, "level": level, "title": title2,
         "n1_chars": len(t1), "n2_chars": len(t2),
-        "similarity": sim, "agree": (sim >= 0.55) if (t1 and t2) else None,
+        "similarity": sim, "agree": (sim >= _extract_agree_sim()) if (t1 and t2) else None,
     }
 
 
@@ -1600,7 +1605,7 @@ def _arbitrate_mirror_texts(jina_text: str | None, tf_text: str | None) -> tuple
         compare["catalog"] = {"jina": j_cat, "tinyfish": t_cat}
         if j_cat != t_cat:
             winner, text = ("tinyfish", tf_text) if t_cat else ("jina", jina_text)
-        elif sim is not None and sim < 0.55 and (j_cat or t_cat):
+        elif sim is not None and sim < _extract_agree_sim() and (j_cat or t_cat):
             winner, text = ("tinyfish", tf_text) if t_cat else ("jina", jina_text)
         else:
             winner, text = (("tinyfish", tf_text)
