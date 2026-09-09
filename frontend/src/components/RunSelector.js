@@ -75,12 +75,14 @@ export default function RunSelector({ mode, mapRun, onSelect, t }) {
         data-testid="run-selector-btn"
         onClick={toggle}
         title={t("runSelectorTitle")}
-        className={`flex items-center gap-1 px-1.5 py-1.5 text-xs font-semibold border-l border-line transition-colors ${
+        className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border-l border-line transition-colors ${
           mapRun || open
             ? "bg-accent/15 text-accent"
             : "text-slate-400 hover:text-slate-200 hover:bg-raised"
         }`}
       >
+        {/* Libellé visible (le chevron seul passait inaperçu) */}
+        {!mapRun && <span>{t("runSelectorLabel")}</span>}
         <ChevronRight
           size={13}
           className={`transition-transform ${open ? "rotate-90" : ""}`}

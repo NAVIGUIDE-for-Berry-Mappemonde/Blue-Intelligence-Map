@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import api from "../../api";
 import { escH, LFP_COLORS } from "./constants";
 
-const MIN_ZOOM = 5;
 const DEBOUNCE_MS = 420;
 
 function hostLabel(url) {
@@ -79,14 +78,10 @@ export default function useAmpLayer({
         }
         return;
       }
+      // 2026-09 — plus de plancher de zoom : en vue dézoomée le backend
+      // répond avec les sites déjà en cache local (aucun appel ProtectedSeas),
+      // les polygones restent donc visibles au niveau monde.
       const zoom = map.getZoom();
-      if (zoom < MIN_ZOOM) {
-        layer.clearLayers();
-        if (ampLayersById?.current) ampLayersById.current.clear();
-        lastKeyRef.current = "";
-        if (onSites) onSites({ type: "FeatureCollection", features: [], hint: "zoom" });
-        return;
-      }
       const b = map.getBounds();
       const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
         .map((n) => n.toFixed(4)).join(",");
@@ -134,4 +129,4 @@ export default function useAmpLayer({
   }, [flyToAmp, mapObj, ampLayersById]);
 }
 
-export { popupHtml, MIN_ZOOM };
+export { popupHtml };
