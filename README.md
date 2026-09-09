@@ -35,7 +35,7 @@ blue-intelligence/
 │   └── models/         Modèles ML locaux entraînés (gatekeeper, classifieur SERP, NER)
 ├── frontend/           React (CRA) + Leaflet + Tailwind
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
-├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, règles/paramètres, architecture
+├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
 └── scripts/            Outillage d'exploitation (restauration de sauvegardes)
 ```
 
