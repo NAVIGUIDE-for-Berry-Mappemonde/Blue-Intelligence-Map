@@ -247,6 +247,42 @@ def report_to_markdown(rep: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def run_projects_to_geojson(run_id: str, docs: list[dict]) -> dict:
+    """FeatureCollection d'un run (mêmes propriétés que la carte live)."""
+    feats = []
+    for d in docs:
+        lat, lon = d.get("lat"), d.get("lon")
+        if lat is None or lon is None:
+            continue
+        funders = d.get("funders")
+        funder = ", ".join(funders) if funders else (d.get("funder") or "")
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "id": d.get("_id"),
+                "run_id": run_id,
+                "title": d.get("title"),
+                "url": d.get("url"),
+                "description": d.get("description", ""),
+                "funder": funder,
+                "location": d.get("location"),
+                "s_ocean": d.get("s_ocean"),
+                "snapped": d.get("snapped", False),
+                "image": d.get("image"),
+                "category": d.get("category"),
+                "category_group": d.get("category_group"),
+                "verdict": d.get("verdict"),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "run_id": run_id,
+        "wrote_projects": False,
+        "features": feats,
+    }
+
+
 def project_to_public(d: dict) -> dict:
     return {
         "id": d.get("_id"),
