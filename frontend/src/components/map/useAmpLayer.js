@@ -51,6 +51,7 @@ function popupHtml(p, t) {
  */
 export default function useAmpLayer({
   mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites, flyToAmp,
+  runId = null,
 }) {
   const timerRef = useRef(null);
   const lastKeyRef = useRef("");
@@ -61,6 +62,23 @@ export default function useAmpLayer({
     if (!map || !layer || mode !== "amp") return undefined;
 
     const load = async () => {
+      // Run sélectionné (bouton " > " de l'onglet Map) : toutes les AMP du
+      // run, quel que soit le zoom / la bbox.
+      if (runId) {
+        const key = `run:${runId}`;
+        if (key === lastKeyRef.current) return;
+        lastKeyRef.current = key;
+        try {
+          const { data } = await api.get(`/amp/runs/${runId}/geojson`);
+          layer.clearLayers();
+          if (ampLayersById?.current) ampLayersById.current.clear();
+          if (data?.features?.length) layer.addData(data);
+          if (onSites) onSites(data);
+        } catch (_) {
+          lastKeyRef.current = "";
+        }
+        return;
+      }
       const zoom = map.getZoom();
       if (zoom < MIN_ZOOM) {
         layer.clearLayers();
@@ -100,7 +118,7 @@ export default function useAmpLayer({
       map.off("zoomend", schedule);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef]);
+  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef, runId]);
 
   useEffect(() => {
     if (!flyToAmp) return;

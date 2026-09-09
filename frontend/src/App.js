@@ -64,6 +64,11 @@ export default function App() {
   const [flyToPoe, setFlyToPoe] = useState(null);
   const [ampSites, setAmpSites] = useState({ type: "FeatureCollection", features: [] });
   const [flyToAmp, setFlyToAmp] = useState(null);
+  // Sélecteur de run (bouton " > " de l'onglet Map) — { [mode]: {id,label} | null }.
+  // Quand un run est sélectionné, la carte affiche ses données au lieu du live.
+  const [mapRuns, setMapRuns] = useState({});
+  const mapRunsRef = useRef(mapRuns);
+  mapRunsRef.current = mapRuns;
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
   // creates a fresh `t` → MapView props change → the formalities marker
@@ -93,6 +98,13 @@ export default function App() {
 
   const fetchProjects = useCallback(async (force = false) => {
     try {
+      const run = mapRunsRef.current.projects;
+      if (run?.id) {
+        const p = await api.get(`/projects/runs/${run.id}/geojson`);
+        setProjects(p.data);
+        lastTotalRef.current = -1;   // retour au live => refetch complet
+        return;
+      }
       const f = await api.get("/funders", { params: { visible: 1 } });
       setFunders(f.data);
       if (force || f.data.total !== lastTotalRef.current) {
@@ -119,14 +131,20 @@ export default function App() {
 
   const fetchMarinas = useCallback(async () => {
     try {
-      const { data } = await api.get("/marinas", { params: { visible: 1 } });
+      const run = mapRunsRef.current.marinas;
+      const { data } = run?.id
+        ? await api.get(`/marinas/runs/${run.id}/geojson`)
+        : await api.get("/marinas", { params: { visible: 1 } });
       setMarinas(data);
     } catch (e) { /* transient */ }
   }, []);
 
   const fetchCapitaineries = useCallback(async () => {
     try {
-      const { data } = await api.get("/capitaineries");
+      const run = mapRunsRef.current.capitaineries;
+      const { data } = run?.id
+        ? await api.get(`/capitaineries/runs/${run.id}/geojson`)
+        : await api.get("/capitaineries");
       setCapitaineries(data);
     } catch (e) { /* transient */ }
   }, []);
@@ -149,7 +167,10 @@ export default function App() {
 
   const fetchPoePorts = useCallback(async () => {
     try {
-      const { data } = await api.get("/poe/ports", { params: { visible: 1 } });
+      const run = mapRunsRef.current.formalities;
+      const { data } = run?.id
+        ? await api.get(`/poe/runs/${run.id}/ports`)
+        : await api.get("/poe/ports", { params: { visible: 1 } });
       setPoePorts(data);
     } catch (e) { /* transient */ }
   }, []);
@@ -313,6 +334,19 @@ export default function App() {
     return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(z); clearInterval(pp); };
   }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
 
+  // Sélection d'un run à afficher (null = carte live) pour le mode courant.
+  const handleSelectMapRun = useCallback((run) => {
+    setMapRuns((prev) => ({ ...prev, [mode]: run || null }));
+  }, [mode]);
+
+  // Changement de run sélectionné => re-fetch immédiat des datasets carte.
+  useEffect(() => {
+    fetchProjects(true);
+    fetchMarinas();
+    fetchCapitaineries();
+    fetchPoePorts();
+  }, [mapRuns, fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoePorts]);
+
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
   const handleFlyToMarina = useCallback((id, lat, lon) => {
     setFlyToMarina({ id, lat, lon, ts: Date.now() });
@@ -363,6 +397,8 @@ export default function App() {
         showSettings={showSettings} setShowSettings={setShowSettings}
         status={status} t={t} basemap={basemap} setBasemap={setBasemap}
         mode={mode} setMode={setMode}
+        mapRun={mapRuns[mode] || null}
+        onSelectMapRun={handleSelectMapRun}
       />
       <div className="flex flex-1 min-h-0">
         {view !== "review" && mode === "projects" && (
@@ -427,6 +463,7 @@ export default function App() {
               flyToZone={flyToZone}
               flyToPoe={flyToPoe}
               flyToAmp={flyToAmp}
+              ampRunId={mapRuns.amp?.id || null}
               onAmpSites={setAmpSites}
               zoneFiche={zoneFiche}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
