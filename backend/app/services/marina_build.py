@@ -384,16 +384,24 @@ async def flush_docs_incremental(
     """
     for doc in docs:
         try:
-            existing = await coll.find_one({"dedup_key": doc["dedup_key"]})
+            from app.services.isolated_runs import current_run_id, stamp
+            rid = current_run_id()
+            payload = stamp(doc, source_id=doc.get("dedup_key"), wrote_flag="wrote_marinas")
+            q = {"dedup_key": payload["dedup_key"]}
+            if rid:
+                q["run_id"] = rid
+            existing = await coll.find_one(q)
             if existing:
-                d2 = dict(doc)
+                d2 = dict(payload)
                 d2["_id"] = existing["_id"]
                 for f in preserve_fields:
                     if existing.get(f):
                         d2[f] = existing[f]
                 await coll.replace_one({"_id": existing["_id"]}, d2)
             else:
-                await coll.insert_one(doc)
+                if rid:
+                    payload["_id"] = f"{rid}:{payload['dedup_key']}"
+                await coll.insert_one(payload)
         except Exception:
             pass
 

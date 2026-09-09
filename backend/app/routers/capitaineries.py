@@ -138,19 +138,44 @@ async def capitaineries_build_start(body: BuildBody | None = None):
     if body.clear_before:
         raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
 
+    settings = await get_settings()
+    from app.core.run_rules import bind_rules, reset_rules, snapshot_for_run
+    from app.services import isolated_runs
+    rules = snapshot_for_run(mode="capitaineries", settings=settings)
+    opened = await isolated_runs.open_run(
+        db, "capitaineries", kind="world_harbour_master",
+        label="capitaineries-world", settings=settings,
+        extra_params={"resume": body.resume},
+        resume=body.resume,
+    )
+    run_id = opened["run_id"]
+    BUILD_STATE.run_id = run_id
+    isolated_runs.reset_run(opened["token"])
+
     async def _runner():
+        rules_token = bind_rules(rules)
         try:
             await run_build(
-                coll=db.capitaineries,
-                cursor_coll=db.capitainerie_world_cursor,
+                coll=db.capitainerie_run_sites,
+                cursor_coll=db.capitainerie_run_cursors,
                 state=BUILD_STATE,
                 resume=body.resume,
+                run_id=run_id,
             )
+            await isolated_runs.finalize_run(
+                db, "capitaineries", run_id, extra=BUILD_STATE.summary)
         except Exception as exc:
             BUILD_STATE.log(f"build crashed: {type(exc).__name__}: {exc}")
+            await isolated_runs.finalize_run(
+                db, "capitaineries", run_id, error=str(exc)[:200])
+        finally:
+            reset_rules(rules_token)
 
     asyncio.create_task(_runner())
-    return {"started": True, "kind": "world_harbour_master", "resume": body.resume}
+    return {
+        "started": True, "kind": "world_harbour_master", "resume": body.resume,
+        "run_id": run_id, "wrote_capitaineries": False,
+    }
 
 
 @router.get("/capitaineries/build/status")
@@ -166,6 +191,8 @@ async def capitaineries_build_status():
         "error": s.error,
         "logs_tail": s.logs[-40:],
         "cancelling": s.cancel and s.running,
+        "run_id": s.run_id,
+        "wrote_capitaineries": False,
     }
 
 
@@ -223,7 +250,8 @@ async def _telemetry(doc: dict, status: str, duration_ms: float, engine: str, re
     })
 
 
-async def _run_enrich_one(doc: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
+async def _run_enrich_one(doc: dict, min_credit_usd: float, log_fn,
+                         skip_tinyfish: bool = False, run_id: str | None = None) -> dict:
     settings = await get_settings()
     tf_key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip() or None
     or_key = get_llm_key(settings) or None
@@ -248,7 +276,14 @@ async def _run_enrich_one(doc: dict, min_credit_usd: float, log_fn, skip_tinyfis
               "enrich_attempts": int(doc.get("enrich_attempts") or 0) + 1}
     if tf_attempted and result.get("enrichment_source") != "tinyfish":
         update["tinyfish_failed"] = True
-    await db.capitaineries.update_one({"_id": doc["_id"]}, {"$set": update})
+    if run_id:
+        from app.services.isolated_runs import write_item
+        await write_item(
+            db, "capitaineries", run_id, {**doc, **update},
+            source_id=doc.get("source_id") or doc.get("osm_id") or doc.get("_id"),
+        )
+    else:
+        await db.capitaineries.update_one({"_id": doc["_id"]}, {"$set": update})
     src = result.get("enrichment_source") or ""
     filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
     await _telemetry(
@@ -336,6 +371,18 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
     limit = int(body.limit or 0)
     candidates = ranked[:limit] if limit > 0 else ranked
 
+    from app.core.run_rules import snapshot_for_run
+    from app.services import isolated_runs
+    rules = snapshot_for_run(mode="capitaineries", settings=settings)
+    opened = await isolated_runs.open_run(
+        db, "capitaineries", kind="enrich",
+        label="capitaineries-enrich", settings=settings,
+        extra_params={"limit": body.limit},
+    )
+    run_id = opened["run_id"]
+    ENRICH_BATCH_STATE.run_id = run_id
+    isolated_runs.reset_run(opened["token"])
+
     ENRICH_BATCH_STATE.running = True
     ENRICH_BATCH_STATE.started_at = time.time()
     ENRICH_BATCH_STATE.finished_at = None
@@ -369,6 +416,7 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
                             m, min_credit,
                             lambda s: ENRICH_BATCH_STATE.log(f"  {s}"),
                             skip_tinyfish=body.skip_tinyfish,
+                            run_id=run_id,
                         )
                         ENRICH_BATCH_STATE.results.append({
                             "id": m["_id"], "name": m.get("name"),
@@ -393,11 +441,21 @@ async def enrich_batch(body: EnrichBatchBody | None = None):
             ENRICH_BATCH_STATE.error = f"{type(e).__name__}: {e}"
             ENRICH_BATCH_STATE.log(f"FATAL {ENRICH_BATCH_STATE.error}")
         finally:
+            from app.services import isolated_runs
+            await isolated_runs.finalize_run(
+                db, "capitaineries", run_id,
+                cancelled=ENRICH_BATCH_STATE.cancel,
+                error=ENRICH_BATCH_STATE.error,
+                extra={"results": len(ENRICH_BATCH_STATE.results)},
+            )
             ENRICH_BATCH_STATE.finished_at = time.time()
             ENRICH_BATCH_STATE.running = False
 
     asyncio.create_task(_runner())
-    return {"started": True, "selected": len(candidates), "concurrency": concurrency}
+    return {
+        "started": True, "selected": len(candidates), "concurrency": concurrency,
+        "run_id": run_id, "wrote_capitaineries": False,
+    }
 
 
 @router.post("/capitaineries/enrich-batch/cancel")
@@ -417,4 +475,16 @@ async def enrich_batch_status():
         "started_at": s.started_at, "finished_at": s.finished_at,
         "progress": s.progress, "total": s.total,
         "results": s.results, "logs_tail": s.logs[-60:], "error": s.error,
+        "run_id": s.run_id, "wrote_capitaineries": False,
+    }
+
+
+@router.get("/capitaineries/runs")
+async def capitaineries_runs_list():
+    from app.services import isolated_runs
+    items = await isolated_runs.list_meta_runs(db, "capitaineries")
+    return {
+        "count": len(items),
+        "wrote_capitaineries": False,
+        "items": items,
     }

@@ -48,6 +48,7 @@ def test_cdc_numbers_are_catalogued():
         "formalities.listing_coverage_publish", "formalities.zone_timeout_s",
         "marinas.corridor_radius_nm", "marinas.waypoint_radius_nm",
         "marinas.overpass_throttle_s",
+        "capitaineries.overpass_throttle_s", "capitaineries.merge_km",
         "amp.visit_url_must_differ", "amp.min_zoom", "amp.bbox_max_deg",
         "shared.dedup_dist_km", "shared.no_snap",
     ):
@@ -65,6 +66,9 @@ def test_defaults_match_code_constants():
     assert catalog_default("formalities.marina_control_m") == osm_seeds.MARINA_CONTROL_RADIUS_M
     assert catalog_default("formalities.zone_timeout_s") == poe_runs.ZONE_TIMEOUT_S
     assert catalog_default("marinas.overpass_throttle_s") == marina_world.OVERPASS_THROTTLE_S
+    from app.services import capitainerie_world
+    assert catalog_default("capitaineries.overpass_throttle_s") == capitainerie_world.OVERPASS_THROTTLE_S
+    assert catalog_default("capitaineries.merge_km") == capitainerie_world.SHOM_MERGE_KM
 
 
 def test_loi_cannot_be_overridden():
@@ -114,6 +118,8 @@ def test_snapshot_hash_stable():
     amp = snapshot_for_run(mode="amp")
     assert amp["chosen"]["amp.visit_url_must_differ"]["value"] is True
     assert amp["chosen"]["amp.visit_url_must_differ"]["source"] == "loi"
+    cap = snapshot_for_run(mode="capitaineries")
+    assert cap["chosen"]["capitaineries.merge_km"]["value"] == 0.25
     assert a["hash"] == rules_hash(a["chosen"])
     assert a["counts"]["total"] == len(a["chosen"])
 

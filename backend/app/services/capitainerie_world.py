@@ -630,10 +630,11 @@ def nearest_osm(lat: float, lon: float, osm_pts: list[dict], radius_km: float = 
 
 
 async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
+    from app.services.isolated_runs import identity_query, run_doc_id, stamp
     osm_id = cand["osm_id"]
-    existing = await coll.find_one({"osm_id": osm_id})
+    existing = await coll.find_one(identity_query("osm_id", osm_id))
     if existing is None:
-        existing = await coll.find_one({"_id": osm_id})
+        existing = await coll.find_one(identity_query("_id", osm_id))
     website, status, wsrc = merge_website(existing, cand.get("website"))
     sources = _merge_sources(
         (existing or {}).get("sources"),
@@ -659,9 +660,11 @@ async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+        patch = stamp(patch, source_id=osm_id, wrote_flag="wrote_capitaineries")
         await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
         return "updated"
-    patch["_id"] = osm_id
+    patch = stamp(patch, source_id=osm_id, wrote_flag="wrote_capitaineries")
+    patch["_id"] = run_doc_id(osm_id)
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
@@ -692,11 +695,16 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
             patch["telephone"] = cand["telephone"]
         if not hit.get("canal_vhf") and cand.get("canal_vhf"):
             patch["canal_vhf"] = cand["canal_vhf"]
+        from app.services.isolated_runs import stamp
+        patch = stamp(patch, source_id=hit.get("source_id") or hit.get("osm_id") or hit.get("_id"),
+                      wrote_flag="wrote_capitaineries")
         await coll.update_one({"_id": hit["_id"]}, {"$set": patch})
         hit.update(patch)
         return "merged"
     shom_id = cand["shom_id"]
-    existing = await coll.find_one({"_id": shom_id}) or await coll.find_one({"shom_id": shom_id})
+    from app.services.isolated_runs import identity_query, run_doc_id, stamp
+    existing = (await coll.find_one(identity_query("_id", shom_id))
+                or await coll.find_one(identity_query("shom_id", shom_id)))
     patch = {
         "name": cand.get("name") or "",
         "lat": cand["lat"],
@@ -714,12 +722,14 @@ async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> st
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+        patch = stamp(patch, source_id=shom_id, wrote_flag="wrote_capitaineries")
         await coll.update_one(
             {"_id": existing["_id"]},
             {"$set": patch, "$unset": {"osm_id": ""}},
         )
         return "updated"
-    patch["_id"] = shom_id
+    patch = stamp(patch, source_id=shom_id, wrote_flag="wrote_capitaineries")
+    patch["_id"] = run_doc_id(shom_id)
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
@@ -750,11 +760,16 @@ async def upsert_noaa(coll, cand: dict, now_iso: str, pts: list[dict]) -> str:
             patch["telephone"] = cand["telephone"]
         if not hit.get("canal_vhf") and cand.get("canal_vhf"):
             patch["canal_vhf"] = cand["canal_vhf"]
+        from app.services.isolated_runs import stamp
+        patch = stamp(patch, source_id=hit.get("source_id") or hit.get("osm_id") or hit.get("_id"),
+                      wrote_flag="wrote_capitaineries")
         await coll.update_one({"_id": hit["_id"]}, {"$set": patch})
         hit.update(patch)
         return "merged"
     noaa_id = cand["noaa_id"]
-    existing = await coll.find_one({"_id": noaa_id}) or await coll.find_one({"noaa_id": noaa_id})
+    from app.services.isolated_runs import identity_query, run_doc_id, stamp
+    existing = (await coll.find_one(identity_query("_id", noaa_id))
+                or await coll.find_one(identity_query("noaa_id", noaa_id)))
     patch = {
         "name": cand.get("name") or "",
         "lat": cand["lat"],
@@ -772,12 +787,14 @@ async def upsert_noaa(coll, cand: dict, now_iso: str, pts: list[dict]) -> str:
             if existing.get(field) not in (None, "", [], {}):
                 patch[field] = existing[field]
         fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
+        patch = stamp(patch, source_id=noaa_id, wrote_flag="wrote_capitaineries")
         await coll.update_one(
             {"_id": existing["_id"]},
             {"$set": patch, "$unset": {"osm_id": ""}},
         )
         return "updated"
-    patch["_id"] = noaa_id
+    patch = stamp(patch, source_id=noaa_id, wrote_flag="wrote_capitaineries")
+    patch["_id"] = run_doc_id(noaa_id)
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
@@ -786,34 +803,54 @@ async def upsert_noaa(coll, cand: dict, now_iso: str, pts: list[dict]) -> str:
     return "inserted"
 
 
+def _cursor_key() -> str:
+    from app.services.isolated_runs import cursor_id
+    return cursor_id(CURSOR_ID)
+
+
 async def load_done_tiles(cursor_coll) -> list[str]:
-    doc = await cursor_coll.find_one({"_id": CURSOR_ID}) or {}
+    cid = _cursor_key()
+    doc = await cursor_coll.find_one({"_id": cid}) or {}
     return list(doc.get("done_tiles") or [])
 
 
 async def mark_tile_done(cursor_coll, key: str, now_iso: str) -> None:
+    from app.services.isolated_runs import current_run_id
+    cid = _cursor_key()
     done = await load_done_tiles(cursor_coll)
     if key not in done:
         done.append(key)
-    payload = {"_id": CURSOR_ID, "done_tiles": done, "updated_at": now_iso, "schema": SCHEMA}
-    existing = await cursor_coll.find_one({"_id": CURSOR_ID})
+    payload = {"_id": cid, "done_tiles": done, "updated_at": now_iso, "schema": SCHEMA}
+    rid = current_run_id()
+    if rid:
+        payload["run_id"] = rid
+    existing = await cursor_coll.find_one({"_id": cid})
     if existing:
-        await cursor_coll.replace_one({"_id": CURSOR_ID}, payload)
+        await cursor_coll.replace_one({"_id": cid}, payload)
     else:
         await cursor_coll.insert_one(payload)
 
 
 async def reset_cursor(cursor_coll) -> None:
-    existing = await cursor_coll.find_one({"_id": CURSOR_ID})
+    cid = _cursor_key()
+    existing = await cursor_coll.find_one({"_id": cid})
     if existing:
         await cursor_coll.replace_one(
-            {"_id": CURSOR_ID},
-            {"_id": CURSOR_ID, "done_tiles": [], "updated_at": None, "schema": SCHEMA},
+            {"_id": cid},
+            {"_id": cid, "done_tiles": [], "updated_at": None, "schema": SCHEMA},
         )
 
 
-async def ensure_indexes(coll) -> None:
+async def ensure_indexes(coll, *, isolated: bool = False) -> None:
     try:
+        if isolated:
+            await coll.create_index([("run_id", 1), ("osm_id", 1)], unique=True, sparse=True)
+            await coll.create_index([("run_id", 1), ("shom_id", 1)], unique=True, sparse=True)
+            await coll.create_index([("run_id", 1), ("noaa_id", 1)], unique=True, sparse=True)
+            await coll.create_index("run_id")
+            await coll.create_index("name")
+            await coll.create_index("source")
+            return
         # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
         if hasattr(coll, "update_many"):
             await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
@@ -833,7 +870,7 @@ def _throttle_s(explicit: float | None) -> float:
         return float(explicit)
     try:
         from app.core.run_rules import get_rule
-        return float(get_rule("marinas.overpass_throttle_s", OVERPASS_THROTTLE_S))
+        return float(get_rule("capitaineries.overpass_throttle_s", OVERPASS_THROTTLE_S))
     except Exception:
         return OVERPASS_THROTTLE_S
 
@@ -1099,10 +1136,16 @@ async def noaa_fetch_harbour_offices(
 
 
 async def _all_docs(coll) -> list[dict]:
+    from app.services.isolated_runs import current_run_id
+    rid = current_run_id()
     fake = getattr(coll, "docs", None)
     if isinstance(fake, list):
-        return list(fake)
-    cur = coll.find({})
+        docs = list(fake)
+        if rid:
+            docs = [d for d in docs if d.get("run_id") == rid]
+        return docs
+    q = {"run_id": rid} if rid else {}
+    cur = coll.find(q)
     if hasattr(cur, "to_list"):
         return await cur.to_list(50000)
     return [doc async for doc in cur]
@@ -1223,8 +1266,12 @@ async def build_world_capitaineries(
     shom_bboxes: tuple[tuple[float, float, float, float], ...] | None = None,
     skip_shom: bool = False,
     skip_noaa: bool = False,
+    run_id: str | None = None,
 ) -> dict:
     """Dump OSM harbour_master (tuiles), overlay SHOM, overlay NOAA ENC."""
+    from app.services.isolated_runs import bind_run, reset_run
+
+    token = bind_run(run_id) if run_id else None
     state.running = True
     state.started_at = time.time()
     state.finished_at = None
@@ -1232,13 +1279,14 @@ async def build_world_capitaineries(
     state.logs = []
     state.summary = None
     state.cancel = False
+    state.run_id = run_id
 
     grid = tiles or WORLD_TILES
     pause = _throttle_s(throttle_s)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     try:
-        await ensure_indexes(coll)
+        await ensure_indexes(coll, isolated=bool(run_id))
         if not resume:
             await reset_cursor(cursor_coll)
             state.log("Reprise désactivée — curseur tuiles remis à zéro (pas de purge)")
@@ -1364,3 +1412,5 @@ async def build_world_capitaineries(
     finally:
         state.finished_at = time.time()
         state.running = False
+        if token is not None:
+            reset_run(token)

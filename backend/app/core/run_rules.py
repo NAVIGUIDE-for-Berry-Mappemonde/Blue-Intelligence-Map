@@ -25,7 +25,7 @@ CATALOG_FILE = DATA_DIR / "run_rules.json"
 _catalog_cache: dict | None = None
 _current: ContextVar[dict | None] = ContextVar("run_rules_snapshot", default=None)
 
-MODES = ("projects", "formalities", "marinas", "amp", "shared")
+MODES = ("projects", "formalities", "marinas", "capitaineries", "amp", "shared")
 KINDS = ("loi", "geometrie", "score", "budget")
 
 
@@ -88,7 +88,7 @@ def catalog_default(rule_id: str, fallback: Any = None) -> Any:
 
 def rules_for_mode(mode: str | None = None, *, include_shared: bool = True) -> list[dict]:
     """Règles d'un mode (+ shared). `mode=None` → tout le catalogue."""
-    if mode and mode not in ("projects", "formalities", "marinas", "amp"):
+    if mode and mode not in ("projects", "formalities", "marinas", "capitaineries", "amp"):
         raise RuleError(f"mode inconnu: {mode}")
     out = []
     for rule in all_rules():

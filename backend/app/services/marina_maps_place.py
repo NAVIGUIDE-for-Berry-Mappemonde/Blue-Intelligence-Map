@@ -384,7 +384,15 @@ def stored_place_still_valid(marina: dict) -> bool:
     )
 
 
-async def apply_maps_place(coll, marina: dict, patch: dict) -> None:
+async def apply_maps_place(coll, marina: dict, patch: dict, *,
+                           run_id: str | None = None, dest_db=None) -> None:
+    if run_id and dest_db is not None:
+        from app.services.isolated_runs import write_item
+        await write_item(
+            dest_db, "marinas", run_id, {**marina, **patch},
+            source_id=marina.get("source_id") or marina.get("osm_id") or marina.get("_id"),
+        )
+        return
     await coll.update_one({"_id": marina["_id"]}, {"$set": patch})
 
 
@@ -406,8 +414,9 @@ def _patch_from_hits(marina: dict, hits: list[dict], *, source: str, now_iso: st
     }
 
 
-async def _apply_result(coll, state, marina: dict, patch: dict, counters: dict) -> None:
-    await apply_maps_place(coll, marina, patch)
+async def _apply_result(coll, state, marina: dict, patch: dict, counters: dict,
+                       *, run_id: str | None = None, dest_db=None) -> None:
+    await apply_maps_place(coll, marina, patch, run_id=run_id, dest_db=dest_db)
     if patch["maps_place_status"] == "found":
         counters["found"] += 1
         state.log(f"✓ {marina.get('name')} → {patch['maps_place_url']}")
@@ -495,6 +504,9 @@ async def resolve_maps_places(
     fetch_fn: FetchFn | None = None,
     fetch_many_fn: FetchManyFn | None = None,
     batch_size: int = FETCH_BATCH,
+    extra_filter: dict | None = None,
+    run_id: str | None = None,
+    dest_db=None,
 ) -> dict:
     """
     Reprenable (ignore les fiches déjà statusées). Monde : skip Search
@@ -509,9 +521,12 @@ async def resolve_maps_places(
     state.progress = 0
     state.total = 0
     state.cancel = False
+    state.run_id = run_id
     state.log("Job /place/ démarré — curseur Mongo par lots (sans to_list)")
 
     q: dict[str, Any] = {"name": {"$nin": ["", None]}}
+    if extra_filter:
+        q.update(extra_filter)
     if not force:
         q["$or"] = [
             {"maps_place_status": {"$exists": False}},
@@ -544,7 +559,8 @@ async def resolve_maps_places(
                     patch = await resolve_google_place(
                         marina, search_fn=search_fn, fetch_fn=fetch_fn, now_iso=now,
                     )
-                    await _apply_result(marinas_coll, state, marina, patch, counters)
+                    await _apply_result(marinas_coll, state, marina, patch, counters,
+                                       run_id=run_id, dest_db=dest_db)
                     if patch.get("maps_place_source") == "osm_tag":
                         counters["osm_tag"] += 1
                 except Exception as exc:
@@ -583,7 +599,8 @@ async def resolve_maps_places(
                             marina, place_hits_from_fetch(rec),
                             source="tinyfish_fetch", now_iso=now,
                         )
-                        await _apply_result(marinas_coll, state, marina, patch, counters)
+                        await _apply_result(marinas_coll, state, marina, patch, counters,
+                                       run_id=run_id, dest_db=dest_db)
                     except Exception as exc:
                         counters["errors"] += 1
                         state.log(
@@ -607,7 +624,8 @@ async def resolve_maps_places(
                         "maps_place_source": "osm_tag",
                         "maps_place_checked_at": now,
                     }
-                    await _apply_result(marinas_coll, state, marina, patch, counters)
+                    await _apply_result(marinas_coll, state, marina, patch, counters,
+                                       run_id=run_id, dest_db=dest_db)
                     counters["osm_tag"] += 1
                     continue
                 pending.append(marina)

@@ -201,20 +201,15 @@ async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | 
     return rules, radius_nm, step, rad
 
 
-async def _persist_marina_run(kind: str, rules: dict, radii: dict) -> str:
-    from app.services.project_runs import new_run_id
-    from app.services.swarm_pipeline import now_iso
-    rid = new_run_id()
-    await db.marina_runs.insert_one({
-        "_id": rid,
-        "kind": kind,
-        "state": "running",
-        "params": {"rules": rules, **radii},
-        "created_at": now_iso(),
-        "wrote_marinas": kind in ("marinas", "marinas_world"),
-        "wrote_anchorages": kind == "anchorages",
-    })
-    return rid
+async def _persist_marina_run(kind: str, rules: dict, extra: dict, *,
+                              resume: bool = False, settings: dict | None = None) -> dict:
+    from app.services import isolated_runs
+    opened = await isolated_runs.open_run(
+        db, "marinas", kind=kind, label=f"marinas-{kind}",
+        settings=settings or {}, extra_params=extra,
+        profile=rules.get("profile"), resume=resume,
+    )
+    return opened
 
 
 @router.post("/marinas/build")
@@ -228,34 +223,45 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     if body.clear_before:
         raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
 
-    run_id = await _persist_marina_run("marinas_world", rules, {
+    opened = await _persist_marina_run("marinas_world", rules, {
         "resume": body.resume,
         "profile": rules.get("profile"),
         "kind": "world_leisure_marina",
-    })
+    }, resume=body.resume, settings=settings)
+    run_id = opened["run_id"]
+    MARINA_BUILD_STATE.run_id = run_id
+    from app.services.isolated_runs import reset_run as _reset_iso
+    from app.core.run_rules import bind_rules, reset_rules
+    _reset_iso(opened["token"])
 
     async def _runner():
+        from app.services import isolated_runs
+        rules_token = bind_rules(rules)
         try:
             await run_build_world_marinas(
-                marinas_coll=db.marinas,
-                cursor_coll=db.marina_world_cursor,
+                marinas_coll=db.marina_run_marinas,
+                cursor_coll=db.marina_run_cursors,
                 state=MARINA_BUILD_STATE,
                 resume=body.resume,
+                run_id=run_id,
             )
-            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
-                "state": "done", "summary": MARINA_BUILD_STATE.summary,
-            }})
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, extra=MARINA_BUILD_STATE.summary)
             if body.maps_place_after and not MAPS_PLACE_STATE.running:
                 MARINA_BUILD_STATE.log("Dump terminé — résolution des fiches Google /place/")
                 await resolve_maps_places(
-                    marinas_coll=db.marinas,
+                    marinas_coll=db.marina_run_marinas,
                     state=MAPS_PLACE_STATE,
                     skip_search=True,
+                    extra_filter={"run_id": run_id},
+                    run_id=run_id,
+                    dest_db=db,
                 )
         except Exception as e:
-            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
-                "state": "failed", "error": str(e)[:200],
-            }})
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, error=str(e)[:200])
+        finally:
+            reset_rules(rules_token)
 
     asyncio.create_task(_runner())
     return {
@@ -266,6 +272,7 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         "maps_place_after": body.maps_place_after,
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
+        "wrote_marinas": False,
     }
 
 
@@ -281,6 +288,8 @@ async def marinas_build_status():
         "summary": s.summary,
         "error": s.error,
         "logs_tail": s.logs[-40:],
+        "run_id": s.run_id,
+        "wrote_marinas": False,
     }
 
 
@@ -374,34 +383,42 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
     rules, radius_nm, step, rad = await _marina_rules_and_radii(body, settings, extra)
 
     if body.clear_before:
-        await db.anchorages.delete_many({})
+        raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
 
-    run_id = await _persist_marina_run("anchorages", rules, {
+    opened = await _persist_marina_run("anchorages", rules, {
         "radius_nm": radius_nm,
         "include_corridor": body.include_corridor,
         "corridor_step_nm": step,
         "corridor_radius_nm": rad,
         "profile": rules.get("profile"),
-    })
+    }, settings=settings)
+    run_id = opened["run_id"]
+    ANCHORAGE_BUILD_STATE.run_id = run_id
+    from app.services.isolated_runs import reset_run as _reset_iso
+    from app.core.run_rules import bind_rules, reset_rules
+    _reset_iso(opened["token"])
 
     async def _runner():
+        from app.services import isolated_runs
+        rules_token = bind_rules(rules)
         try:
             await run_build_anchorages(
-                anchorages_coll=db.anchorages,
+                anchorages_coll=db.marina_run_anchorages,
                 route_path=ROUTE_FILE,
                 radius_nm=radius_nm,
                 state=ANCHORAGE_BUILD_STATE,
                 include_corridor=body.include_corridor,
                 corridor_step_nm=step,
                 corridor_radius_nm=rad,
+                run_id=run_id,
             )
-            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
-                "state": "done", "summary": ANCHORAGE_BUILD_STATE.summary,
-            }})
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, extra=ANCHORAGE_BUILD_STATE.summary)
         except Exception as e:
-            await db.marina_runs.update_one({"_id": run_id}, {"$set": {
-                "state": "failed", "error": str(e)[:200],
-            }})
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, error=str(e)[:200])
+        finally:
+            reset_rules(rules_token)
 
     asyncio.create_task(_runner())
     return {
@@ -414,6 +431,8 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
         "corridor_band_nm": rad * 2,
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
+        "wrote_marinas": False,
+        "wrote_anchorages": False,
     }
 
 
@@ -429,6 +448,8 @@ async def anchorages_build_status():
         "summary": s.summary,
         "error": s.error,
         "logs_tail": s.logs[-40:],
+        "run_id": s.run_id,
+        "wrote_marinas": False,
     }
 
 
@@ -494,8 +515,9 @@ async def _marina_telemetry(marina: dict, status: str, duration_ms: float, engin
     })
 
 
-async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, skip_tinyfish: bool = False) -> dict:
-    """Run the enrichment chain and upsert the enriched fields on the marina doc."""
+async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn,
+                                skip_tinyfish: bool = False, run_id: str | None = None) -> dict:
+    """Run the enrichment chain. `run_id` → marina_run_marinas ; sinon carte live (fiche unitaire)."""
     settings = await get_settings()
     tf_key = (settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip() or None
     or_key = get_llm_key(settings) or None
@@ -520,7 +542,14 @@ async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn, sk
               "enrich_attempts": int(marina.get("enrich_attempts") or 0) + 1}
     if tf_attempted and result.get("enrichment_source") != "tinyfish":
         update["tinyfish_failed"] = True
-    await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+    if run_id:
+        from app.services.isolated_runs import write_item
+        await write_item(
+            db, "marinas", run_id, {**marina, **update},
+            source_id=marina.get("source_id") or marina.get("osm_id") or marina.get("_id"),
+        )
+    else:
+        await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
     src = result.get("enrichment_source") or ""
     filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
     await _marina_telemetry(
@@ -630,6 +659,16 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
     limit = int(body.limit or 0)
     candidates = await db.marinas.find(q).sort([("priority", 1), ("name", 1)]).to_list(limit if limit > 0 else None)
 
+    from app.core.run_rules import snapshot_for_run
+    rules = snapshot_for_run(mode="marinas", settings=settings)
+    opened = await _persist_marina_run(
+        "enrich", rules, {"limit": body.limit, "priority": body.priority},
+        settings=settings)
+    run_id = opened["run_id"]
+    ENRICH_BATCH_STATE.run_id = run_id
+    from app.services.isolated_runs import reset_run as _reset_iso
+    _reset_iso(opened["token"])
+
     ENRICH_BATCH_STATE.running = True
     ENRICH_BATCH_STATE.started_at = time.time()
     ENRICH_BATCH_STATE.finished_at = None
@@ -664,6 +703,7 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
                         result = await _run_marina_enrich_one(
                             m, min_credit,
                             lambda s: (per_logs.append(s), ENRICH_BATCH_STATE.log(f"  {s}")),
+                            run_id=run_id,
                         )
                         ENRICH_BATCH_STATE.results.append({
                             "id": m["_id"], "name": m["name"],
@@ -692,11 +732,21 @@ async def marina_enrich_batch(body: MarinaEnrichBatchBody | None = None):
             ENRICH_BATCH_STATE.error = f"{type(e).__name__}: {e}"
             ENRICH_BATCH_STATE.log(f"FATAL {ENRICH_BATCH_STATE.error}")
         finally:
+            from app.services import isolated_runs
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id,
+                cancelled=ENRICH_BATCH_STATE.cancel,
+                error=ENRICH_BATCH_STATE.error,
+                extra={"results": len(ENRICH_BATCH_STATE.results)},
+            )
             ENRICH_BATCH_STATE.finished_at = time.time()
             ENRICH_BATCH_STATE.running = False
 
     asyncio.create_task(_runner())
-    return {"started": True, "selected": len(candidates), "concurrency": concurrency}
+    return {
+        "started": True, "selected": len(candidates), "concurrency": concurrency,
+        "run_id": run_id, "wrote_marinas": False,
+    }
 
 
 @router.post("/marinas/enrich-batch/cancel")
@@ -722,6 +772,8 @@ async def marina_enrich_batch_status():
         "results": s.results,
         "logs_tail": s.logs[-60:],
         "error": s.error,
+        "run_id": s.run_id,
+        "wrote_marinas": False,
     }
 
 
@@ -730,8 +782,20 @@ async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
     if MAPS_PLACE_STATE.running:
         raise HTTPException(409, "A Google-place resolve is already running")
     body = body or MapsPlaceBody()
+    settings = await get_settings()
+    from app.core.run_rules import snapshot_for_run
+    rules = snapshot_for_run(mode="marinas", settings=settings)
+    opened = await _persist_marina_run(
+        "maps_place", rules,
+        {"limit": body.limit, "force": body.force, "skip_search": body.skip_search},
+        settings=settings)
+    run_id = opened["run_id"]
+    MAPS_PLACE_STATE.run_id = run_id
+    from app.services.isolated_runs import reset_run as _reset_iso
+    _reset_iso(opened["token"])
 
     async def _runner():
+        from app.services import isolated_runs
         try:
             await resolve_maps_places(
                 marinas_coll=db.marinas,
@@ -739,9 +803,15 @@ async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
                 limit=int(body.limit or 0),
                 force=bool(body.force),
                 skip_search=bool(body.skip_search),
+                run_id=run_id,
+                dest_db=db,
             )
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, extra=MAPS_PLACE_STATE.summary)
         except Exception as exc:
             MAPS_PLACE_STATE.error = f"{type(exc).__name__}: {exc}"
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, error=MAPS_PLACE_STATE.error)
 
     asyncio.create_task(_runner())
     return {
@@ -749,6 +819,8 @@ async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
         "limit": body.limit,
         "force": body.force,
         "skip_search": body.skip_search,
+        "run_id": run_id,
+        "wrote_marinas": False,
     }
 
 
@@ -774,4 +846,17 @@ async def marinas_maps_place_status():
         "summary": s.summary,
         "error": s.error,
         "logs_tail": s.logs[-40:],
+        "run_id": s.run_id,
+        "wrote_marinas": False,
+    }
+
+
+@router.get("/marinas/runs")
+async def marinas_runs_list():
+    from app.services import isolated_runs
+    items = await isolated_runs.list_meta_runs(db, "marinas")
+    return {
+        "count": len(items),
+        "wrote_marinas": False,
+        "items": items,
     }

@@ -188,6 +188,28 @@ async def list_runs(db, kind: str) -> dict:
                 "dataset": kind,
                 "recommended": bool(kind == "eez" and recommended and rid == recommended),
             })
+    elif kind in ("marina", "capitainerie", "amp"):
+        from app.services import isolated_runs
+        dataset = {"marina": "marinas", "capitainerie": "capitaineries", "amp": "amp"}[kind]
+        extra = await isolated_runs.list_meta_runs(db, dataset)
+        meta = getattr(db, isolated_runs.spec_for(dataset).meta_coll)
+        for row in extra:
+            try:
+                doc = await meta.find_one({"_id": row["id"]})
+            except Exception:
+                doc = None
+            if review_gold.is_test_run(doc):
+                continue
+            items.append({
+                "id": row["id"],
+                "label": row.get("label") or row["id"],
+                "state": row.get("state"),
+                "created_at": row.get("created_at"),
+                "count": row.get("count") or 0,
+                "dataset": kind,
+                "recommended": False,
+                "wrote_live": bool(row.get("wrote_live")),
+            })
     return {"kind": kind, "count": len(items), "items": items,
             "recommended_id": recommended if kind == "eez" else None}
 
@@ -392,10 +414,15 @@ async def list_queue(db, kind: str, run_id: str | None = None,
 
     elif kind == "capitainerie":
         filt = _title_filter("name", q)
-        docs = await (db.capitaineries.find(filt, _CAPITAINERIE_QUEUE_PROJ)
-                      .sort("name", 1).to_list(50000))
+        if is_published(rid):
+            docs = await (db.capitaineries.find(filt, _CAPITAINERIE_QUEUE_PROJ)
+                          .sort("name", 1).to_list(50000))
+        else:
+            filt = {"run_id": rid, **filt}
+            docs = await (db.capitainerie_run_sites.find(filt, _CAPITAINERIE_QUEUE_PROJ)
+                          .sort("name", 1).to_list(50000))
         for d in docs:
-            eid = _sid(d.get("_id"))
+            eid = _sid(d.get("source_id") or d.get("_id"))
             if not eid:
                 continue
             items.append(_queue_item(
@@ -407,10 +434,15 @@ async def list_queue(db, kind: str, run_id: str | None = None,
 
     elif kind == "amp":
         filt = _title_filter("name", q)
-        docs = await (db.amp_sites.find(filt, _AMP_QUEUE_PROJ)
-                      .sort("name", 1).to_list(20000))
+        if is_published(rid):
+            docs = await (db.amp_sites.find(filt, _AMP_QUEUE_PROJ)
+                          .sort("name", 1).to_list(20000))
+        else:
+            filt = {"run_id": rid, **filt}
+            docs = await (db.amp_run_sites.find(filt, _AMP_QUEUE_PROJ)
+                          .sort("name", 1).to_list(20000))
         for d in docs:
-            eid = _sid(d.get("site_id") or d.get("_id"))
+            eid = _sid(d.get("source_id") or d.get("site_id") or d.get("_id"))
             if not eid:
                 continue
             items.append(_queue_item(
@@ -428,10 +460,15 @@ async def list_queue(db, kind: str, run_id: str | None = None,
 
     else:
         filt = _title_filter("name", q)
-        docs = await (db.marinas.find(filt, _MARINA_QUEUE_PROJ)
-                      .sort("name", 1).to_list(50000))
+        if is_published(rid):
+            docs = await (db.marinas.find(filt, _MARINA_QUEUE_PROJ)
+                          .sort("name", 1).to_list(50000))
+        else:
+            filt = {"run_id": rid, **filt}
+            docs = await (db.marina_run_marinas.find(filt, _MARINA_QUEUE_PROJ)
+                          .sort("name", 1).to_list(50000))
         for d in docs:
-            eid = _sid(d.get("_id"))
+            eid = _sid(d.get("source_id") or d.get("osm_id") or d.get("_id"))
             if not eid:
                 continue
             pre = review_gold.is_pre_gold_marina(d)
@@ -695,21 +732,33 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         fiche = await _poe_fiche(db, doc, rid)
 
     elif kind == "capitainerie":
-        doc = await db.capitaineries.find_one({"_id": eid})
+        if is_published(rid):
+            doc = await db.capitaineries.find_one({"_id": eid})
+        else:
+            from app.services.isolated_runs import find_item
+            doc = await find_item(db, "capitaineries", rid, eid)
         if not doc:
             return None
         fiche = _capitainerie_fiche(doc)
 
     elif kind == "amp":
-        doc = await db.amp_sites.find_one({"_id": eid})
-        if not doc:
-            doc = await db.amp_sites.find_one({"site_id": eid})
+        if is_published(rid):
+            doc = await db.amp_sites.find_one({"_id": eid})
+            if not doc:
+                doc = await db.amp_sites.find_one({"site_id": eid})
+        else:
+            from app.services.isolated_runs import find_item
+            doc = await find_item(db, "amp", rid, eid)
         if not doc:
             return None
         fiche = _amp_fiche(doc)
 
     else:
-        doc = await db.marinas.find_one({"_id": eid})
+        if is_published(rid):
+            doc = await db.marinas.find_one({"_id": eid})
+        else:
+            from app.services.isolated_runs import find_item
+            doc = await find_item(db, "marinas", rid, eid)
         if not doc:
             return None
         fiche = _marina_fiche(doc)

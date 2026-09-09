@@ -61,6 +61,14 @@ export default function AmpCard({ t }) {
       <CardShell title={t("modeAmp")} icon={<Shield size={13} className="text-[#4ade80]" />} borderCls="border-[#4ade80]/40">
         <p className="text-[11px] text-slate-400 leading-relaxed">{t("ampAuditHint")}</p>
         <p className="text-[11px] text-slate-500 leading-relaxed">{t("ampDiscoverHint")}</p>
+        <p className="font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
+          {t("isolatedRunHintLive")}
+        </p>
+        {job?.run_id && (
+          <p className="font-mono text-[10px] text-[#4ade80]/80" data-testid="amp-run-id">
+            {t("currentRun")} {job.run_id} · {t("wroteAmpSitesFalse")}
+          </p>
+        )}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-slate-300" data-testid="amp-audit-stats">
           <dt className="text-slate-500">{t("ampCached")}</dt>
           <dd className="font-mono">{stats?.total ?? "—"}</dd>
