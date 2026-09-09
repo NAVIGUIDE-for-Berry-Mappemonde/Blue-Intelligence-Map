@@ -1,7 +1,8 @@
 """
 poe_seed_enrich — Géocode les name_only, juge les autres graines.
 
-Search paginé (quota PAYG), Fetch de tous les hits whitelistés (cap 10),
+Search paginé via ``search_named`` (TinyFish, ``serp_filter``, DuckDuckGo si
+pas de clé), Fetch de tous les hits whitelistés (cap 10),
 juge NVIDIA (Pro → gpt-oss → Muse → Flash) si clé NIM, sinon OpenRouter,
 puis Claude Haiku → Sonnet en dernier.
 reuse_paid_sources=True : Fetch des judge_sources déjà payés, 0 Search.
@@ -35,9 +36,9 @@ from app.core.geo import (
 )
 from app.services.poe_gps_registry import accepted_by_key
 from app.core.llm import _json_openrouter, get_llm_key
+from app.core.search import search_named
 from app.core.tinyfish import (
     FETCH_URL_CAP, SEARCH_PAGE_CAP, tf_api_key, tf_fetch, tf_poe_agent,
-    tf_search_pages,
 )
 from app.services.poe_pipeline import (
     OFFICIAL_TOKENS, build_whitelist, domain_of, list_url_bonus,
@@ -648,16 +649,16 @@ async def _search_hits(doc: dict, zone: dict, whitelist: list[str], key: str, lo
         return sum(1 for h in kept if url_allowed(h.get("url") or "", whitelist)) >= FETCH_URL_CAP
 
     domains = whitelist[:WHITELIST_DOMAIN_CAP] or None
-    hits = await tf_search_pages(
-        query, key, location=iso, language="en",
+    hits = await search_named(
+        query, key=key or "", location=iso, language="en",
         include_domains=domains, exclude_domains=SEARCH_EXCLUDE_DOMAINS,
         max_pages=SEARCH_PAGE_CAP, stop_when=enough, log=log)
     official_n = sum(
         1 for h in drop_excluded_hits(hits)
         if url_allowed(h.get("url") or "", whitelist))
     if official_n == 0:
-        extra = await tf_search_pages(
-            query, key, location=iso, language="en",
+        extra = await search_named(
+            query, key=key or "", location=iso, language="en",
             exclude_domains=SEARCH_EXCLUDE_DOMAINS,
             max_pages=SEARCH_PAGE_CAP, stop_when=enough, log=log)
         seen = {h.get("url") for h in hits}
@@ -923,7 +924,7 @@ async def judge_one(doc: dict, zone: dict, settings: dict, log,
         if key and missing:
             fetched.update(await tf_fetch(missing, key, log=log) or {})
     else:
-        hits = await _search_hits(doc, zone, whitelist, key, log) if key else []
+        hits = await _search_hits(doc, zone, whitelist, key, log)
         urls = select_fetch_urls(hits, whitelist, FETCH_URL_CAP)
         if key and urls:
             fetched = await tf_fetch(urls, key, log=log) or {}

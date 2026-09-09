@@ -246,7 +246,7 @@ def test_discover_search_accepts_named_offhost_visit_page():
     assert out["from_search"] == 1
 
 
-def test_discover_without_tinyfish_key_keeps_heuristic_only():
+def test_discover_without_tinyfish_key_still_searches():
     docs = [{
         "_id": "E", "site_id": "E", "name": "Parc E",
         "manager_url": "https://parc-e.fr",
@@ -255,14 +255,21 @@ def test_discover_without_tinyfish_key_keeps_heuristic_only():
     }]
     db = _FakeDB(docs)
     state = TaskState()
+
+    async def fetch_many(urls):
+        return {u: {"links": [], "text": ""} for u in urls}
+
+    async def search(query, include_domains=None):
+        return [{"url": "https://parc-e.fr/visite-plaisance", "title": "Visite Parc E"}]
+
     out = asyncio.run(amp_visit.discover_visit_urls(
         db, state=state, limit=10, tf_key="",
-        fetch_many_fn=lambda urls: (_ for _ in ()).throw(AssertionError("no fetch")),
+        fetch_many_fn=fetch_many, search_fn=search,
         refresh_attrs=False, use_llm_judge=False,
     ))
     assert out["no_tinyfish_key"] is True
-    assert out["from_fetch"] == 0
-    assert db.amp_sites.docs[0]["visit_url"] is None or not db.amp_sites.docs[0].get("visit_url")
+    assert out["from_search"] == 1
+    assert db.amp_sites.docs[0]["visit_url"] == "https://parc-e.fr/visite-plaisance"
 
 
 def test_parse_visit_judge_only_accepts_listed_url():

@@ -2,7 +2,7 @@
 
 Chaîne (coût croissant) :
   1. tags OSM/SHOM/NOAA
-  2. TinyFish Search (nom distinct ou « capitainerie » + GPS)
+  2. ``search_named`` (TinyFish Search, DuckDuckGo si pas de clé)
   3. TinyFish Fetch, puis cascade locale (PDF / JS) si le texte manque — stop si tél et VHF
   4. NVIDIA NIM chaîne `page` (Pro → gpt-oss → Muse) sur le texte de page
   5. OpenRouter sur le même texte
@@ -19,6 +19,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.core.extract import serp_drop_reason
+from app.core.search import search_named
 from app.services.capitainerie_world import (
     GENERIC_OFFICE_NAMES,
     contact_from_tags,
@@ -26,7 +28,6 @@ from app.services.capitainerie_world import (
     fill_contact,
 )
 from app.services.marina_enrich import (
-    duckduckgo_html_search,
     openrouter_check_credit,
 )
 from app.services.marina_world import official_website
@@ -51,11 +52,6 @@ CAPITAINERIE_PURPOSE = (
 CONTACT_SYSTEM = (
     "You extract harbour-master contact from the given source text. "
     "Reply ONLY with a single JSON object. Never invent a phone number or VHF channel."
-)
-
-SEARCH_EXCLUDE_SNIPS = (
-    "facebook.", "instagram.", "twitter.", "x.com/", "tiktok.",
-    "tripadvisor.", "booking.com", "airbnb.", "pinterest.",
 )
 
 
@@ -163,10 +159,8 @@ def contact_search_query(doc: dict) -> str:
 
 
 def _url_ok(url: str) -> bool:
-    u = (url or "").strip().lower()
-    if not u.startswith("http"):
-        return False
-    return not any(snip in u for snip in SEARCH_EXCLUDE_SNIPS)
+    """Même couperet SERP que le top-down / AMP (plus la petite liste maison)."""
+    return serp_drop_reason(url) is None
 
 
 def _url_rank(url: str, official: str | None) -> tuple:
@@ -234,7 +228,7 @@ async def discover_contact_urls(
     tinyfish_key: Optional[str] = None,
     logger: Optional[Callable[[str], None]] = None,
 ) -> list[str]:
-    """URL officielle d'abord, puis TinyFish Search (DDG si pas de clé)."""
+    """URL officielle d'abord, puis ``search_named`` (TinyFish, DDG si pas de clé)."""
     urls: list[str] = []
     seen: set[str] = set()
 
@@ -248,29 +242,13 @@ async def discover_contact_urls(
     _add(official_website(doc))
     _add((doc.get("tags") or {}).get("website"))
     query = contact_search_query(doc)
-    hits: list[dict] = []
-    if tinyfish_key:
-        from app.core.tinyfish import tf_search
-        try:
-            hits = await tf_search(
-                query, tinyfish_key, purpose=CAPITAINERIE_PURPOSE, log=logger,
-            )
-            if logger:
-                logger(f"[search] TinyFish {len(hits)} hit(s) for {query[:80]}")
-        except Exception as e:
-            if logger:
-                logger(f"[search] TinyFish {type(e).__name__}: {str(e)[:80]}")
-            hits = []
-    if not hits:
-        try:
-            async with httpx.AsyncClient() as client:
-                hits = await duckduckgo_html_search(query, client, max_results=5)
-            if logger and hits:
-                logger(f"[search] DDG {len(hits)} hit(s)")
-        except Exception as e:
-            if logger:
-                logger(f"[search] DDG {type(e).__name__}: {str(e)[:80]}")
-            hits = []
+    hits = await search_named(
+        query,
+        key=tinyfish_key,
+        purpose=CAPITAINERIE_PURPOSE,
+        max_results=MAX_FETCH_URLS,
+        log=logger,
+    )
     official = official_website(doc)
     ranked = sorted(
         [h for h in hits if _url_ok((h or {}).get("url") or "")],

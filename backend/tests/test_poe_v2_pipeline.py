@@ -44,6 +44,7 @@ class TestSerpFilterInterstitials:
     def test_regressions_still_filtered(self):
         results = [
             {"url": "https://www.tripadvisor.com/Attractions-g147-Fiji.html"},
+            {"url": "https://www.tiktok.com/@port"},
             {"url": "https://customs.gov.fj/ports-of-entry"},
         ]
         kept = [r["url"] for r in serp_filter(results)]

@@ -26,11 +26,11 @@ Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’ench
 | --- | --- | --- |
 | P | Découvrir les URL de projets sur chaque listing | Crawler httpx + BeautifulSoup sur un **MasterSeed déjà connu** ; TinyFish **Agent** si 0 URL |
 | TD | Chercher l’URL d’État qui porte la liste | SearXNG + Serper ; TinyFish Search selon variante ; OpenRouter `:online` en dernier |
-| BU | Chercher la page d’État de ce nom | TinyFish Search paginé (`tf_search_pages`) seulement |
+| BU | Chercher la page d’État de ce nom | **`search_named`** : TinyFish Search paginé ; `serp_filter` ; DuckDuckGo si pas de clé |
 | MM | Ouvrir le lien Maps et ramasser `/place/` | TinyFish **Fetch** d’une URL Maps **déjà construite** ; Search sauté |
-| ME | Trouver un site s’il n’y a pas de tag OSM | DuckDuckGo HTML (pas TinyFish Search) |
-| CE | Trouver des pages de contact | TinyFish Search, puis DuckDuckGo HTML si vide |
-| AV | Chercher visite `site:` puis web ouvert | TinyFish Search seulement (pas DDG, pas SearXNG) |
+| ME | Trouver un site s’il n’y a pas de tag OSM | **`search_named`** : TinyFish Search ; `serp_filter` ; DuckDuckGo si pas de clé |
+| CE | Trouver des pages de contact | **`search_named`** (même outillage) ; ranking métier ensuite |
+| AV | Chercher visite `site:` puis web ouvert | **`search_named`** ; DuckDuckGo si pas de clé ; pas SearXNG |
 
 ## 2. Filtre de source — cette URL a-t-elle le droit d’être lue ?
 
@@ -38,9 +38,9 @@ Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’ench
 | --- | --- | --- |
 | P | Écarter contact / dons / news du listing | Liste noire de chemins **dans le crawler**, pas `serp_filter` |
 | TD | Domaines d’État + jeter forums / OTA | Whitelist ISO2 + `serp_filter` + classifieur ML SERP |
-| BU | Whitelist d’abord, puis sans si 0 hit | `include_domains` dans Search ; `url_allowed` ; **pas** `serp_filter` |
+| BU | Whitelist d’abord, puis sans si 0 hit | `include_domains` dans Search ; `url_allowed` ; **`serp_filter`** |
 | MM | Une fiche marina proche, pas un resto | Nom / slug + 8 km |
-| CE | Ignorer réseaux / OTA | `SEARCH_EXCLUDE_SNIPS` maison + `_url_ok` ; **pas** `serp_filter` |
+| CE | Ignorer réseaux / OTA | **`serp_filter`** ; ranking `_url_rank` |
 | AV | Homepage interdite ; hits Search jugés | `serp_filter` **puis** score local **puis** juge NIM JSON |
 
 ## 3. Lecture — quel texte a-t-on ?
@@ -135,6 +135,8 @@ Ce n’est pas la question du bras top-down des ports d’entrée. Celui-là ne 
 
 Le changement proposé n’aligne que les recherches **nommées**. On commencerait par TinyFish Search, on passerait les résultats dans le même filtre déjà utilisé par le top-down et les AMP pour écarter forums et sites d’annonces, et on garderait DuckDuckGo uniquement comme filet quand la clé TinyFish manque — exactement ce que les capitaineries font déjà, et que le bottom-up et les AMP n’ont pas. Les requêtes et les listes de domaines resteraient propres à chaque mode : un port d’entrée n’est pas une page de permis d’aire protégée. On changerait l’outillage, pas la question métier. On n’installerait pas SearXNG sur l’enrichissement marina, capitainerie ou AMP.
 
+**Fait.** Porte `app.core.search.search_named`. TinyFish Search d’abord (paginé si le caller le demande), puis `serp_filter`. DuckDuckGo HTML seulement si la clé TinyFish manque — pas un second avis après un TinyFish vide. Requêtes, `include_domains` / `exclude_domains` et ranking restent propres à BU / CE / AV / ME. Pas de SearXNG sur ces jobs. Filet DDG : opérateur `site:` + filtre d’hôte pour que la whitelist survive sans API TinyFish.
+
 ### 3. Enrichir une marina ou une capitainerie : le même ordre des étapes, pas le même formulaire
 
 Les deux jobs d’enrichissement font le travail le plus proche du dépôt : extraire un téléphone, un canal VHF, parfois des services, **sans jamais inventer** un champ. Ils partagent déjà le même modèle NVIDIA pour lire une page, OpenRouter avec un contrôle de crédit, DuckDuckGo, et la petite fonction de lecture HTML. L’Agent TinyFish est le dernier recours des deux.
@@ -167,7 +169,7 @@ Les fournisseurs sont les mêmes, et le désaccord Nominatim / GeoNames est le m
 
 ### Dans quel ordre, et pourquoi
 
-On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée**, pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
+On commence par la **lecture** (jumeau n°1 : **fait**), parce que c’est là que bottom-up, marinas et capitaineries perdent aujourd’hui des PDF et des pages JavaScript, et parce que tout le reste — enrichissement, juge — s’appuie sur un texte déjà là. Ensuite la **recherche nommée** (jumeau n°2 : **fait**), pour que capitaineries, AMP, marinas sans site et bottom-up cessent de réinventer le filet (TinyFish, le filtre de résultats, DuckDuckGo si la clé manque). Ensuite l’**ordre d’enrichissement** marina / capitainerie, qui devient simple une fois lecture et recherche stables. Le **géocode** des Projets peut alors réutiliser l’appel parallèle des ports d’entrée, sans toucher à la règle du havre. Le **juge** commun vient en dernier : c’est du câblage de modèle, pas un nouveau métier, et ça n’aide que si le texte et les URL candidates sont déjà fiables.
 
 On ne met pas SearXNG dans l’enrichissement marina ou capitainerie : ce n’est pas une liste d’État par zone économique. On ne remplace pas Overpass par une recherche web pour les dumps. On ne traite pas le cache de tuiles AMP comme une fusion de fiches. On ne lance pas le navigateur local sur chaque TinyFish Fetch qui a déjà renvoyé du HTML.
 
