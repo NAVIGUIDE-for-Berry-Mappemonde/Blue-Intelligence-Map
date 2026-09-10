@@ -1,0 +1,40 @@
+name: CI
+
+# Tests rapides et hermétiques (aucun secret, aucun service) :
+#   - jest verrouille l'ordre des couches carte et le registre des fonds ;
+#   - le build CRA attrape les régressions de bundling (maplibre chargé à la demande) ;
+#   - le script d'audit des tags tourne en mode GeoJSON sur les seeds (stdlib pur).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+        env:
+          CI: "true"
+      - run: npm run build
+
+  audit-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit des tags (mode GeoJSON, sans Mongo)
+        run: python3 scripts/audit_tags.py --geojson seed/projects.geojson seed/ports_of_entry.geojson
