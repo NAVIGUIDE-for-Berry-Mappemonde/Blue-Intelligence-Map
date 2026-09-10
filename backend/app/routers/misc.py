@@ -309,13 +309,14 @@ async def manual(lang: str = "en"):
 
 @router.get("/export/route.geojson")
 async def export_route():
+    from app.core.export_meta import export_response
     if not ROUTE_FILE.exists():
         raise HTTPException(404, "route.geojson not found")
     import json as _json
     data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
-    return JSONResponse(
-        data,
-        headers={"Content-Disposition": "attachment; filename=route.geojson"},
+    return export_response(
+        data, "route", "route.geojson",
+        license_note="Naviguide — Berry-Mappemonde (route officielle)",
     )
 
 @router.get("/route")

@@ -148,12 +148,21 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  const fetchMarinas = useCallback(async () => {
+  const marinasRef = useRef(marinas);
+  marinasRef.current = marinas;
+
+  const fetchMarinas = useCallback(async (force = false) => {
     try {
       const run = mapRunsRef.current.marinas;
+      if (!force && !run?.id && !showReview
+          && (marinasRef.current?.features?.length || 0) > 1000) {
+        return;
+      }
+      // Dump mondial (~32 000 features) : sur un Mongo distant lent, la
+      // requête peut dépasser les 120 s du timeout axios par défaut.
       const { data } = run?.id
-        ? await api.get(`/marinas/runs/${run.id}/geojson`)
-        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {} });
+        ? await api.get(`/marinas/runs/${run.id}/geojson`, { timeout: 300000 })
+        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {}, timeout: 300000 });
       setMarinas(data);
     } catch (e) { /* transient */ }
   }, [showReview]);
@@ -196,7 +205,7 @@ export default function App() {
 
   const refreshMapData = useCallback(() => {
     fetchProjects(true);
-    fetchMarinas();
+    fetchMarinas(true);
     fetchCapitaineries();
     fetchPoeZones();
     fetchPoePorts();
@@ -240,7 +249,7 @@ export default function App() {
         await pollUntilDone(
           `/marinas/${marinaId}/enrich/status`,
           async (data) => {
-            await fetchMarinas();
+            await fetchMarinas(true);
             const m = data.result || {};
             setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
           },
@@ -255,7 +264,7 @@ export default function App() {
           await pollUntilDone(
             `/marinas/${marinaId}/enrich/status`,
             async (data) => {
-              await fetchMarinas();
+              await fetchMarinas(true);
               const m = data.result || {};
               setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
             },
@@ -321,18 +330,23 @@ export default function App() {
     fetchStatus();
     fetchProjects();
     fetchSettings();
-    fetchCategories();
     fetchMarinas();
-    fetchCapitaineries();
-    fetchAnchorages();
-    fetchPoeZones();
-    fetchPoePorts();
+    // Les 6 connexions HTTP/1.1 de Chrome vers cette origine saturent si
+    // on lance tous les dumps en parallèle (marinas ~15 Mo + chunks maplibre).
+    const later = setTimeout(() => {
+      fetchCategories();
+      fetchCapitaineries();
+      fetchAnchorages();
+      fetchPoeZones();
+      fetchPoePorts();
+    }, 2500);
     const unlessReview = (fn) => () => {
       if (viewRef.current === "review") return;
       fn();
     };
     const fetchMarinasIfIdle = async () => {
       if (viewRef.current === "review") return;
+      if ((marinasRef.current?.features?.length || 0) > 1000) return;
       try {
         const { data } = await api.get("/marinas/build/status", { timeout: 5000 });
         if (data?.running) return;
@@ -350,7 +364,11 @@ export default function App() {
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(z); clearInterval(pp); };
+    return () => {
+      clearTimeout(later);
+      clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m);
+      clearInterval(cap); clearInterval(a); clearInterval(z); clearInterval(pp);
+    };
   }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
 
   // Sélection d'un run à afficher (null = carte live) pour le mode courant.
@@ -361,7 +379,7 @@ export default function App() {
   // Changement de run sélectionné => re-fetch immédiat des datasets carte.
   useEffect(() => {
     fetchProjects(true);
-    fetchMarinas();
+    fetchMarinas(true);
     fetchCapitaineries();
     fetchPoePorts();
   }, [mapRuns, fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoePorts]);
@@ -509,7 +527,7 @@ export default function App() {
             // that was actually imported so we only refresh the affected
             // dataset (never both, to avoid unnecessary re-fetches).
             onImported={(importedMode) => {
-              if (importedMode === "marinas") fetchMarinas();
+              if (importedMode === "marinas") fetchMarinas(true);
               else if (importedMode === "capitaineries") fetchCapitaineries();
               else fetchProjects(true);
             }}

@@ -30,7 +30,14 @@ ENV
 fi
 
 cd "$APP/frontend"
-printf 'REACT_APP_BACKEND_URL=\n' > .env
+{
+  printf 'REACT_APP_BACKEND_URL=\n'
+  # Miroir carte marine auto-hébergé (infra/vps/seamap) : si présent, le build
+  # pointe dessus au lieu du service communautaire tiles.openwaters.io.
+  if [ -f /srv/tiles/seamap/public/style.json ]; then
+    printf 'REACT_APP_SEAMAP_STYLE_URL=https://blueintelligence.online/tiles/seamap/style.json\n'
+  fi
+} > .env
 npm install --no-audit --no-fund
 CI=true npm run build
 

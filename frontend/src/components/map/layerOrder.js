@@ -1,0 +1,36 @@
+/**
+ * Ordre vertical unique des panes de la carte — source de vérité verrouillée.
+ *
+ * Inspiration Open Waters: Seamap : l'ordre de dessin est charge utile, un test
+ * (`__tests__/layerOrder.test.js`) fige la liste pour qu'aucun remaniement ne
+ * puisse l'altérer par accident. Repères Leaflet (non modifiables) :
+ * tilePane 200 < overlayPane 400 < shadowPane 500 < markerPane 600 <
+ * tooltipPane 650 < popupPane 700.
+ */
+export const LEAFLET_BUILTIN_PANES = {
+  tilePane: 200,
+  overlayPane: 400,
+  shadowPane: 500,
+  markerPane: 600,
+  tooltipPane: 650,
+  popupPane: 700,
+};
+
+export const PANES = [
+  // Fond vectoriel « Carte marine » (MapLibre GL) — sous les tuiles raster.
+  { name: "basemap-gl", zIndex: 190 },
+  // Route NAVIGUIDE — sous les clusters et marqueurs.
+  { name: "route", zIndex: 380 },
+  // Polygones AMP — au-dessus de l'overlayPane, sous les escales.
+  { name: "amp", zIndex: 420 },
+  // Escales Formalités — au-dessus de tout sauf les marqueurs.
+  { name: "formalities-escales", zIndex: 500 },
+];
+
+/** Crée tous les panes personnalisés sur la carte, dans l'ordre verrouillé. */
+export function createPanes(map) {
+  PANES.forEach(({ name, zIndex }) => {
+    map.createPane(name);
+    map.getPane(name).style.zIndex = String(zIndex);
+  });
+}

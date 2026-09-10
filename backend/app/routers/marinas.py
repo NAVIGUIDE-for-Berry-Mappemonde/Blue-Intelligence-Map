@@ -1,9 +1,11 @@
 """app.routers.marinas — Marinas & mouillages : build (OSM/SHOM), imports/exports,
 enrichissement IA à l'unité et par lot."""
 import asyncio
+import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
@@ -108,6 +110,8 @@ async def import_marinas_geojson(fc: dict = Body(...)):
         except Exception:
             invalid += 1
     total = await db.marinas.count_documents({})
+    if imported or updated:
+        mark_marinas_fc_stale()
     swarm.log(f"Marinas GeoJSON import: {imported} imported, {updated} updated, {invalid} invalid", "success")
     return {"imported": imported, "merged": updated, "skipped_existing": 0, "invalid": invalid, "total_marinas": total}
 
@@ -127,6 +131,103 @@ async def _all_marinas(q: dict | None = None, projection: dict | None = None) ->
     return docs
 
 
+# ---------------------------------------------------------------------------
+# Cache du dump GeoJSON mondial (GET /api/marinas sans filtre).
+# Sur un Mongo distant (Atlas M0), reconstruire les ~32 000 features prend
+# plusieurs minutes : on sert le dernier GeoJSON construit et on reconstruit
+# en arrière-plan (stale-while-revalidate). Les exports et snapshots, eux,
+# relisent toujours la base (fraîcheur garantie pour les archives).
+# ---------------------------------------------------------------------------
+_MARINAS_FC_CACHE: dict = {"fc": None, "built_at": 0.0}
+_MARINAS_FC_TTL_S = 300.0
+# Persistance locale : un redémarrage du process sert le dernier dump
+# (15 Mo) sans attendre Atlas. Reconstruit ensuite en arrière-plan.
+_MARINAS_FC_DISK = Path(os.environ.get(
+    "MARINAS_FC_CACHE_PATH",
+    str(Path(__file__).resolve().parents[2] / "data" / ".marinas_fc_cache.json"),
+))
+_marinas_fc_task: asyncio.Task | None = None
+
+
+def _load_marinas_fc_disk() -> dict | None:
+    try:
+        if not _MARINAS_FC_DISK.is_file():
+            return None
+        data = json.loads(_MARINAS_FC_DISK.read_text(encoding="utf-8"))
+        feats = data.get("features")
+        if data.get("type") != "FeatureCollection" or not isinstance(feats, list):
+            return None
+        return data
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
+def _write_marinas_fc_disk(fc: dict) -> None:
+    try:
+        _MARINAS_FC_DISK.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _MARINAS_FC_DISK.with_name(_MARINAS_FC_DISK.name + ".tmp")
+        tmp.write_text(json.dumps(fc, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(_MARINAS_FC_DISK)
+    except OSError as exc:
+        print(f"[marinas] écriture cache disque échouée : {exc}")
+
+
+async def _rebuild_marinas_fc() -> dict:
+    docs = await _all_marinas({})
+    fc = marinas_to_slim_geojson(docs)
+    _MARINAS_FC_CACHE["fc"] = fc
+    _MARINAS_FC_CACHE["built_at"] = time.monotonic()
+    await asyncio.to_thread(_write_marinas_fc_disk, fc)
+    return fc
+
+
+def _log_marinas_fc_result(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        print(f"[marinas] rafraîchissement du cache GeoJSON échoué : {exc}")
+
+
+def _schedule_marinas_fc_refresh() -> asyncio.Task:
+    """Une seule reconstruction à la fois ; renvoie la tâche en cours."""
+    global _marinas_fc_task
+    if _marinas_fc_task is None or _marinas_fc_task.done():
+        # Vérifie la boucle AVANT de créer la coroutine, sinon un appel hors
+        # asyncio laisse une coroutine jamais attendue (RuntimeWarning).
+        asyncio.get_running_loop()
+        _marinas_fc_task = asyncio.create_task(_rebuild_marinas_fc())
+        _marinas_fc_task.add_done_callback(_log_marinas_fc_result)
+    return _marinas_fc_task
+
+
+def mark_marinas_fc_stale() -> None:
+    """À appeler après toute écriture dans db.marinas : l'ancien cache reste
+    servi pendant qu'une reconstruction part en arrière-plan."""
+    _MARINAS_FC_CACHE["built_at"] = 0.0
+    try:
+        _schedule_marinas_fc_refresh()
+    except RuntimeError:
+        pass  # pas de boucle asyncio (contexte de test)
+
+
+def start_marinas_fc_warmup() -> None:
+    """Préchauffage au démarrage du serveur (appelé par app.main).
+
+    Charge d'abord le dernier dump écrit sur disque (réponse immédiate),
+    puis relit Mongo en arrière-plan.
+    """
+    if _MARINAS_FC_CACHE["fc"] is None:
+        disk = _load_marinas_fc_disk()
+        if disk is not None:
+            _MARINAS_FC_CACHE["fc"] = disk
+            # 0 = considéré périmé : une reconstruction Mongo part tout de suite.
+            _MARINAS_FC_CACHE["built_at"] = 0.0
+            n = len(disk.get("features") or [])
+            print(f"[marinas] cache disque chargé ({n} fiches)")
+    _schedule_marinas_fc_refresh()
+
+
 @router.get("/marinas")
 async def list_marinas(
     priority: int | None = None,
@@ -143,6 +244,14 @@ async def list_marinas(
             503,
             "marina dump running — skip full GeoJSON until the tile job finishes",
         )
+    if priority is None and not source and not visible:
+        fc = _MARINAS_FC_CACHE["fc"]
+        if fc is not None:
+            if time.monotonic() - _MARINAS_FC_CACHE["built_at"] > _MARINAS_FC_TTL_S:
+                _schedule_marinas_fc_refresh()
+            return fc
+        # Cache froid : tous les clients attendent la même reconstruction.
+        return await _schedule_marinas_fc_refresh()
     docs = await _all_marinas(q)
     if visible:
         from app.services.review_gold import filter_visible
@@ -152,12 +261,11 @@ async def list_marinas(
 
 @router.get("/export/marinas.geojson")
 async def export_marinas():
+    from app.core.export_meta import export_response
     docs = await _all_marinas({})
     fc = marinas_to_slim_geojson(docs)
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
-    )
+    return export_response(fc, "marinas", "marinas.geojson",
+                           license_note="© OpenStreetMap contributors (ODbL)")
 
 class MarinasBuildBody(BaseModel):
     clear_before: bool = False
@@ -367,12 +475,11 @@ async def list_anchorages(
 
 @router.get("/export/anchorages.geojson")
 async def export_anchorages():
+    from app.core.export_meta import export_response
     docs = await db.anchorages.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
     fc = anchorages_to_geojson(docs)
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=anchorages.geojson"},
-    )
+    return export_response(fc, "anchorages", "anchorages.geojson",
+                           license_note="© OpenStreetMap contributors (ODbL)")
 
 
 @router.post("/anchorages/build")
@@ -569,6 +676,7 @@ async def _run_marina_enrich_one(marina: dict, min_credit_usd: float, log_fn,
         )
     else:
         await db.marinas.update_one({"_id": marina["_id"]}, {"$set": update})
+        mark_marinas_fc_stale()
     src = result.get("enrichment_source") or ""
     filled = [k for k in ENRICH_FIELDS if result.get(k) is not None]
     await _marina_telemetry(
@@ -842,6 +950,7 @@ async def marinas_maps_place_start(body: MapsPlaceBody | None = None):
                 run_id=run_id,
                 dest_db=db,
             )
+            mark_marinas_fc_stale()
             await isolated_runs.finalize_run(
                 db, "marinas", run_id, extra=MAPS_PLACE_STATE.summary)
         except Exception as exc:

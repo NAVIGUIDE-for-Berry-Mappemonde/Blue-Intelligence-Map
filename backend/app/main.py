@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import amp, capitaineries, formalities, marinas, misc, ml, project_runs, projects, review, runs, swarm
+from app.routers import amp, capitaineries, exports, formalities, marinas, misc, ml, project_runs, projects, review, runs, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -70,7 +70,7 @@ async def _admin_gate(request, call_next):
     return await call_next(request)
 
 
-for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc):
+for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc, exports):
     app.include_router(module.router)
 
 
@@ -146,6 +146,11 @@ async def _startup():
     formalities.start_auto_refresh()
     # Reprise automatique des tâches de fond interrompues (validation OSM)
     formalities.schedule_job_resume()
+    # Préchauffage du dump GeoJSON marinas (plusieurs minutes sur Mongo distant).
+    try:
+        marinas.start_marinas_fc_warmup()
+    except Exception as e:
+        print(f"[startup] marinas cache warmup failed (non-fatal): {e}")
 
 
 @app.on_event("shutdown")
@@ -158,16 +163,33 @@ async def _shutdown():
 if _SERVE_FRONTEND:
     _RESERVED_ROOT = {"api", "docs", "redoc", "openapi.json"}
 
+    def _spa_index_response() -> FileResponse:
+        # no-cache : le navigateur revalide index.html à chaque déploiement,
+        # sinon il peut garder un vieux bundle qui référence des chunks disparus.
+        return FileResponse(
+            _FRONTEND_BUILD / "index.html",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @app.get("/", include_in_schema=False)
     async def spa_index():
-        return FileResponse(_FRONTEND_BUILD / "index.html")
+        return _spa_index_response()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_assets(full_path: str):
         head = full_path.split("/", 1)[0] if full_path else ""
         if head in _RESERVED_ROOT:
             raise HTTPException(404, detail="Not Found")
-        candidate = _FRONTEND_BUILD / full_path
+        try:
+            candidate = (_FRONTEND_BUILD / full_path).resolve()
+        except (OSError, ValueError):
+            raise HTTPException(404, detail="Not Found")
+        if not candidate.is_relative_to(_FRONTEND_BUILD):
+            raise HTTPException(404, detail="Not Found")
         if candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(_FRONTEND_BUILD / "index.html")
+        if head == "static":
+            # Asset fingerprinté absent = bundle client périmé : un 404 franc
+            # vaut mieux qu'index.html servi à la place d'un fichier JS.
+            raise HTTPException(404, detail="Not Found")
+        return _spa_index_response()
