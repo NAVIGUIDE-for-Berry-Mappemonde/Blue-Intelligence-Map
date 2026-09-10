@@ -129,16 +129,33 @@ async def _shutdown():
 if _SERVE_FRONTEND:
     _RESERVED_ROOT = {"api", "docs", "redoc", "openapi.json"}
 
+    def _spa_index_response() -> FileResponse:
+        # no-cache : le navigateur revalide index.html à chaque déploiement,
+        # sinon il peut garder un vieux bundle qui référence des chunks disparus.
+        return FileResponse(
+            _FRONTEND_BUILD / "index.html",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @app.get("/", include_in_schema=False)
     async def spa_index():
-        return FileResponse(_FRONTEND_BUILD / "index.html")
+        return _spa_index_response()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_assets(full_path: str):
         head = full_path.split("/", 1)[0] if full_path else ""
         if head in _RESERVED_ROOT:
             raise HTTPException(404, detail="Not Found")
-        candidate = _FRONTEND_BUILD / full_path
+        try:
+            candidate = (_FRONTEND_BUILD / full_path).resolve()
+        except (OSError, ValueError):
+            raise HTTPException(404, detail="Not Found")
+        if not candidate.is_relative_to(_FRONTEND_BUILD):
+            raise HTTPException(404, detail="Not Found")
         if candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(_FRONTEND_BUILD / "index.html")
+        if head == "static":
+            # Asset fingerprinté absent = bundle client périmé : un 404 franc
+            # vaut mieux qu'index.html servi à la place d'un fichier JS.
+            raise HTTPException(404, detail="Not Found")
+        return _spa_index_response()
