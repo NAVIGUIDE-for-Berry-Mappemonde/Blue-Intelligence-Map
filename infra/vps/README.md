@@ -69,16 +69,25 @@ mongorestore --uri "$MONGO_URL_LOCAL" --gzip \
   --archive=$HOME/backups/mongodb/blue-AAAA-MM-JJ.archive.gz --drop
 ```
 
-## Bascule Cloudflare (dernière étape)
+## Bascule Cloudflare (effectuée le 2026-09-10)
 
-1. Dashboard Cloudflare → zone `blueintelligence.online` → **DNS**.
-2. Éditer l'enregistrement du domaine racine (et `www`) pour pointer vers
-   **135.125.226.16** (A), nuage orange (proxy) conservé.
-3. SSL/TLS → mode **Full (strict)** (le certificat Let's Encrypt du VPS est
-   valide).
-4. Vérifier `https://blueintelligence.online/api/` → `"mongo": "local"`.
-5. Retour arrière : remettre l'ancienne cible DNS (propagation quasi immédiate,
-   Atlas n'est pas touché).
+Le domaine (registrar OVH) pointait vers le Cloudflare de l'ancienne
+plateforme ; il a été rapatrié dans le compte Cloudflare du propriétaire :
+
+1. Cloudflare → **Connect a domain** → `blueintelligence.online`, plan Free.
+   Zone importée depuis OVH puis corrigée : **A `@` → 135.125.226.16**
+   (proxied), CNAME `www` → racine (proxied), MX/TXT conservés tels quels.
+2. OVH (manager → Web Cloud → Noms de domaine → onglet Serveurs DNS) :
+   serveurs remplacés par `coby.ns.cloudflare.com` / `eve.ns.cloudflare.com`.
+   **DNSSEC désactivé** au préalable (indispensable), protection contre le
+   transfert laissée activée.
+3. Certificat edge « Universal SSL » émis à l'activation ; SSL/TLS en mode
+   **Full (strict)** (le certificat Let's Encrypt du VPS couvre racine + www).
+4. Vérifié : `https://blueintelligence.online/api/` → `"mongo": "local"`,
+   HTTP 200 via edge Cloudflare, garde admin 401/200, marinas 15 Mo en ~3 s.
+5. Retour arrière : chez OVH, remettre les serveurs `ns14.ovh.net` /
+   `dns14.ovh.net` (la zone OVH d'origine, intacte, redevient autoritaire et
+   re-pointe vers l'ancienne plateforme).
 
 Après bascule, vérifier le renouvellement du certificat : `sudo certbot renew
 --dry-run` (le challenge HTTP passe par Cloudflare ; si « Always Use HTTPS »
