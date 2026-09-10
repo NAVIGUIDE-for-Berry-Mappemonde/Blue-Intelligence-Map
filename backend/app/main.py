@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import amp, capitaineries, formalities, marinas, misc, ml, project_runs, projects, review, runs, swarm
+from app.routers import amp, capitaineries, exports, formalities, marinas, misc, ml, project_runs, projects, review, runs, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -41,7 +41,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _SERVE_FRONTEND else "/openapi.json",
 )
 
-for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc):
+for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc, exports):
     app.include_router(module.router)
 
 

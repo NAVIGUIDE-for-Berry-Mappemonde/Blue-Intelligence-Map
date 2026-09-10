@@ -242,8 +242,13 @@ async def amp_run_geojson(run_id: str):
 
 @router.get("/export/amp.geojson")
 async def export_amp_geojson():
+    from app.core.export_meta import export_response
     docs = await db.amp_sites.find({}, amp_svc.SLIM_PROJECTION).to_list(20000)
-    return amp_svc.to_feature_collection(docs, geometry=False, extra={
+    fc = amp_svc.to_feature_collection(docs, geometry=False, extra={
         "name": "amp_sites",
         "note": "centroids + manager_url / visit_url — not official boundaries",
     })
+    return export_response(
+        fc, "amp", "amp.geojson",
+        license_note="ProtectedSeas Navigator — centroïdes et métadonnées, pas les limites officielles",
+    )

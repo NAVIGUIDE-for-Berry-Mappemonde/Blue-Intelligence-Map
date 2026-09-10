@@ -152,12 +152,11 @@ async def list_marinas(
 
 @router.get("/export/marinas.geojson")
 async def export_marinas():
+    from app.core.export_meta import export_response
     docs = await _all_marinas({})
     fc = marinas_to_slim_geojson(docs)
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=marinas.geojson"},
-    )
+    return export_response(fc, "marinas", "marinas.geojson",
+                           license_note="© OpenStreetMap contributors (ODbL)")
 
 class MarinasBuildBody(BaseModel):
     clear_before: bool = False
@@ -367,12 +366,11 @@ async def list_anchorages(
 
 @router.get("/export/anchorages.geojson")
 async def export_anchorages():
+    from app.core.export_meta import export_response
     docs = await db.anchorages.find({}).sort([("priority", 1), ("name", 1)]).to_list(20000)
     fc = anchorages_to_geojson(docs)
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=anchorages.geojson"},
-    )
+    return export_response(fc, "anchorages", "anchorages.geojson",
+                           license_note="© OpenStreetMap contributors (ODbL)")
 
 
 @router.post("/anchorages/build")
