@@ -30,7 +30,13 @@ jobs:
       - run: npm test
         env:
           CI: "true"
+      # maplibre-gl charge ses workers via import(url) dynamique. Webpack émet
+      # « Critical dependency: the request of a dependency is an expression ».
+      # CRA, quand CI=true (défaut GitHub Actions), transforme ce warning en
+      # erreur alors que le bundle est valide. Les tests restent en CI=true.
       - run: npm run build
+        env:
+          CI: "false"
 
   audit-tags:
     runs-on: ubuntu-latest
