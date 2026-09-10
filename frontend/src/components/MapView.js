@@ -390,8 +390,22 @@ export default function MapView({
     const map = mapObj.current;
     if (!map || flyToScience.lat == null || flyToScience.lon == null) return;
     const m = scienceMarkersById.current.get(flyToScience.id);
-    map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
-    setTimeout(() => { if (m) m.openPopup(); }, 1100);
+    const cluster = scienceClusterRef.current;
+    map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
+    // Les fiches d'une même station partagent souvent le même centre : après
+    // le vol, le marqueur peut rester agrégé. zoomToShowLayer décluster
+    // (spiderfy au besoin) avant d'ouvrir le popup — openPopup seul serait
+    // silencieux sur un marqueur encore absorbé par son cluster.
+    setTimeout(() => {
+      if (!m) return;
+      if (cluster && typeof cluster.zoomToShowLayer === "function" && cluster.hasLayer(m)) {
+        try {
+          cluster.zoomToShowLayer(m, () => m.openPopup());
+          return;
+        } catch (_) { /* marqueur détaché pendant le vol — fallback direct */ }
+      }
+      m.openPopup();
+    }, 1100);
   }, [flyToScience]);
 
   useEffect(() => {
