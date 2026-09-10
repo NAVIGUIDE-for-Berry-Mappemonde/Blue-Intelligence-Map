@@ -56,9 +56,9 @@ Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les 
 
 Le dossier `naviguide/` héberge **NAVIGUIDE**, le planificateur de route de l'expédition Berry-Mappemonde (React Vite + MapLibre GL ; services FastAPI : routage avec évitement des terres, données Copernicus, orchestrateur multi-agents LangGraph, polaires). Le dépôt `naviguide-berry-mappemonde` a été fusionné ici avec son historique complet, nettoyé au passage (`naviguide-api/venv` retiré de tout l'historique).
 
-- **Application autonome** : démarrage, dépendances et déploiement séparés de Blue Intelligence — voir `naviguide/README.md` (`naviguide/start-all.sh` pour tout lancer en local).
-- **Déploiement indépendant** : NAVIGUIDE n'est pas servi par blueintelligence.online.
-- **Point d'intégration prévu** : les couches de NAVIGUIDE (`MaritimeLayers.jsx`) consommeront les exports GeoJSON de Blue Intelligence (`GET /api/export/{geojson|marinas.geojson|capitaineries.geojson|poe.geojson}`).
+- **Application autonome** : démarrage, dépendances et déploiement séparés de Blue Intelligence — voir `naviguide/README.md` (`naviguide/naviguide_workspace/start_local.sh` pour tout lancer en local).
+- **Production** : [www.naviguide.fr](https://www.naviguide.fr), hébergé sur le même VPS OVH que blueintelligence.online — voir `infra/vps/README.md` et `infra/vps/naviguide/`.
+- **Couches Blue Intelligence** : la carte NAVIGUIDE affiche les 5 modes (Projets, Marinas, Capitaineries, Ports d'Entrée, AMP) via les exports GeoJSON `GET /api/export/*`, consommés en même-origine par le chemin `/bi/*` (proxy Vite en dev, nginx en production).
 
 ## Démarrage local
 
