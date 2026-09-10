@@ -14,6 +14,12 @@ export default defineConfig({
     allowedHosts: ["j19hah46.run.complete.dev", "all"],
     proxy: {
       "/proxy": { target: "http://localhost:8000", changeOrigin: true },
+      // Exports Blue Intelligence — backend BI local (monorepo : backend/ sur :8001)
+      "/bi": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/bi/, "/api"),
+      },
     },
     // Local dev: use default HMR over localhost
     // Deployed: use WSS over production domain

@@ -142,6 +142,19 @@ export default {
   layersApiHint:   "EEZ and Ports require naviguide-api (port 8000)",
   layersStartHint: "Run ./naviguide_workspace/start_local.sh",
 
+  // ── Blue Intelligence layers (Sidebar) ──────────────────────────────────────
+  biLayersLabel:             "Blue Intelligence",
+  layerBiProjects:           "Projects",
+  layerBiProjectsTitle:      "Blue Intelligence — Marine conservation projects",
+  layerBiMarinas:            "Marinas",
+  layerBiMarinasTitle:       "Blue Intelligence — Marinas (OpenStreetMap)",
+  layerBiCapitaineries:      "Harb. off.",
+  layerBiCapitaineriesTitle: "Blue Intelligence — Harbour master offices",
+  layerBiPoe:                "PoE",
+  layerBiPoeTitle:           "Blue Intelligence — Official Ports of Entry (formalities)",
+  layerBiAmp:                "MPA",
+  layerBiAmpTitle:           "Blue Intelligence — Marine Protected Areas (centroids)",
+
   // ── Polar Chat (Sidebar) ───────────────────────────────────────────────────
   polarChatLoadPrompt:     "Load polars (right panel) to enable chat.",
   polarChatAskPlaceholder: "Ask about polars…",

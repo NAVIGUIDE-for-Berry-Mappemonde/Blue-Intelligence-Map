@@ -1,15 +1,19 @@
 /**
- * MaritimeLayers — 3 couches de données maritimes pour MapLibre GL JS
+ * MaritimeLayers — couches de données maritimes pour MapLibre GL JS
  *
  *  1. ZEE         — Zones Économiques Exclusives (VLIZ / Marine Regions, via WFS proxy)
  *  2. Ports WPI   — World Port Index (NGA/MSI REST, via proxy, coords DMS→decimal)
  *  3. Balisage    — Balisage maritime via OpenSeaMap raster tiles (public, no auth)
  *                   NOTE: SHOM WFS remplacé car nécessite authentification (401).
+ *  4. Blue Intelligence — les 5 modes de blueintelligence.online en points GeoJSON
+ *     (Projets, Marinas, Capitaineries, Ports d'Entrée, AMP), chargés à la demande
+ *     via le proxy même-origine « /bi » → API Blue Intelligence /api/export/*.
  *
  * Exports:
  *  - useMaritimeLayers()        → hook (state + data fetching)
  *  - MaritimeLayers(props)      → Sources/Layers à placer DANS <Map>
  *  - MaritimeLayersPanel(props) → Panneau flottant de bascule (HORS <Map>)
+ *  - BI_LAYER_CONFIG            → config des toggles Blue Intelligence (Sidebar)
  */
 
 import { useEffect, useState } from "react";
@@ -18,6 +22,9 @@ import { useLang } from "../i18n/LangContext.jsx";
 
 // Toujours URL absolue pour les tuiles (évite les problèmes de proxy Vite / preview).
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Exports Blue Intelligence — même-origine par défaut : vite proxy en dev,
+// nginx (VPS) ou proxy_server.py (complete.dev) en production.
+const BI_BASE = import.meta.env.VITE_BI_API_URL || "/bi";
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
 // ── Layer paint styles ────────────────────────────────────────────────────────
@@ -34,6 +41,24 @@ const PORTS_CIRCLE_PAINT = {
   "circle-stroke-color": "#fff",
   "circle-opacity": 0.85,
 };
+
+// Couleurs des modes Blue Intelligence (cf. README Blue Intelligence)
+export const BI_COLORS = {
+  biProjects:      "#06b6d4", // cyan  — Projets de conservation marine
+  biMarinas:       "#ef4444", // rouge — Marinas OSM
+  biCapitaineries: "#7dd3fc", // ciel  — Capitaineries
+  biPoe:           "#d97706", // ambre — Ports d'Entrée (formalités)
+  biAmp:           "#22c55e", // vert  — Aires Marines Protégées (centroïdes)
+};
+
+// Couches denses (marinas ≈ dizaines de milliers de points) → cercles plus fins
+const biCirclePaint = (color) => ({
+  "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 1.5, 6, 3.5, 10, 6.5],
+  "circle-color": color,
+  "circle-stroke-width": 1,
+  "circle-stroke-color": "#fff",
+  "circle-opacity": 0.85,
+});
 // OpenSeaMap tiles — raster overlay, opacity controlled via show flag
 const OPENSEAMAP_RASTER_PAINT = {
   "raster-opacity": 0.85,
@@ -51,9 +76,36 @@ async function fetchPorts() {
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
+ * useBiLayer — une couche Blue Intelligence : OFF par défaut,
+ * fetch au premier passage à ON (les exports peuvent être volumineux).
+ */
+function useBiLayer(path) {
+  const [show, setShow] = useState(false);
+  const [data, setData] = useState(EMPTY_FC);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!show || data.features.length > 0) return;
+    setLoading(true);
+    setError(null);
+    fetch(`${BI_BASE}${path}`)
+      .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+      .then((fc) => setData(fc?.type === "FeatureCollection" ? fc : EMPTY_FC))
+      .catch((e) => {
+        console.warn("[MaritimeLayers] Blue Intelligence", path, e.message || e);
+        setError(e.message || String(e));
+      })
+      .finally(() => setLoading(false));
+  }, [show]);
+
+  return { show, setShow, data, loading, error };
+}
+
+/**
  * useMaritimeLayers
  * Gère l'état ON/OFF, les données GeoJSON et les états de chargement
- * pour les 3 couches maritimes.
+ * pour les couches maritimes et les couches Blue Intelligence.
  */
 export function useMaritimeLayers() {
   // Couches actives par défaut — chargement différé pour ne pas bloquer le rendu initial
@@ -78,6 +130,13 @@ export function useMaritimeLayers() {
       .finally(() => setLoadingPorts(false));
   }, [showPorts]);
 
+  // Couches Blue Intelligence — les 5 modes de blueintelligence.online
+  const biProjects      = useBiLayer("/export/geojson");
+  const biMarinas       = useBiLayer("/export/marinas.geojson");
+  const biCapitaineries = useBiLayer("/export/capitaineries.geojson");
+  const biPoe           = useBiLayer("/export/poe.geojson");
+  const biAmp           = useBiLayer("/export/amp.geojson");
+
   return {
     // Toggles
     showZee,      setShowZee,
@@ -93,6 +152,26 @@ export function useMaritimeLayers() {
     errorZee: null,
     errorPorts,
     errorBalisage: null,
+    // Blue Intelligence — Projets
+    showBiProjects: biProjects.show,           setShowBiProjects: biProjects.setShow,
+    biProjectsData: biProjects.data,
+    loadingBiProjects: biProjects.loading,     errorBiProjects: biProjects.error,
+    // Blue Intelligence — Marinas
+    showBiMarinas: biMarinas.show,             setShowBiMarinas: biMarinas.setShow,
+    biMarinasData: biMarinas.data,
+    loadingBiMarinas: biMarinas.loading,       errorBiMarinas: biMarinas.error,
+    // Blue Intelligence — Capitaineries
+    showBiCapitaineries: biCapitaineries.show, setShowBiCapitaineries: biCapitaineries.setShow,
+    biCapitaineriesData: biCapitaineries.data,
+    loadingBiCapitaineries: biCapitaineries.loading, errorBiCapitaineries: biCapitaineries.error,
+    // Blue Intelligence — Ports d'Entrée (formalités)
+    showBiPoe: biPoe.show,                     setShowBiPoe: biPoe.setShow,
+    biPoeData: biPoe.data,
+    loadingBiPoe: biPoe.loading,               errorBiPoe: biPoe.error,
+    // Blue Intelligence — AMP
+    showBiAmp: biAmp.show,                     setShowBiAmp: biAmp.setShow,
+    biAmpData: biAmp.data,
+    loadingBiAmp: biAmp.loading,               errorBiAmp: biAmp.error,
   };
 }
 
@@ -114,6 +193,11 @@ export function MaritimeLayers({
   showZee,
   showPorts, portsData,
   showBalisage,
+  showBiProjects,      biProjectsData,
+  showBiMarinas,       biMarinasData,
+  showBiCapitaineries, biCapitaineriesData,
+  showBiPoe,           biPoeData,
+  showBiAmp,           biAmpData,
 }) {
   const vis = (flag) => ({ visibility: flag ? "visible" : "none" });
 
@@ -143,6 +227,23 @@ export function MaritimeLayers({
       {/* ── WPI ports circles ───────────────────────────────────────────── */}
       <Source id="ports-source" type="geojson" data={portsData}>
         <Layer id="ports-circle" type="circle" layout={vis(showPorts)} paint={PORTS_CIRCLE_PAINT} />
+      </Source>
+
+      {/* ── Blue Intelligence — 5 modes en points (couleurs du site BI) ──── */}
+      <Source id="bi-amp-source" type="geojson" data={biAmpData ?? EMPTY_FC}>
+        <Layer id="bi-amp-circle" type="circle" layout={vis(showBiAmp)} paint={biCirclePaint(BI_COLORS.biAmp)} />
+      </Source>
+      <Source id="bi-projects-source" type="geojson" data={biProjectsData ?? EMPTY_FC}>
+        <Layer id="bi-projects-circle" type="circle" layout={vis(showBiProjects)} paint={biCirclePaint(BI_COLORS.biProjects)} />
+      </Source>
+      <Source id="bi-marinas-source" type="geojson" data={biMarinasData ?? EMPTY_FC}>
+        <Layer id="bi-marinas-circle" type="circle" layout={vis(showBiMarinas)} paint={biCirclePaint(BI_COLORS.biMarinas)} />
+      </Source>
+      <Source id="bi-capitaineries-source" type="geojson" data={biCapitaineriesData ?? EMPTY_FC}>
+        <Layer id="bi-capitaineries-circle" type="circle" layout={vis(showBiCapitaineries)} paint={biCirclePaint(BI_COLORS.biCapitaineries)} />
+      </Source>
+      <Source id="bi-poe-source" type="geojson" data={biPoeData ?? EMPTY_FC}>
+        <Layer id="bi-poe-circle" type="circle" layout={vis(showBiPoe)} paint={biCirclePaint(BI_COLORS.biPoe)} />
       </Source>
     </>
   );
@@ -184,6 +285,15 @@ const LAYER_CONFIG = [
   { key: "zee",      labelKey: "layerZee",      titleKey: "layerZeeTitle",      color: "#0e7490", showKey: "showZee",      toggleKey: "setShowZee",      loadingKey: "loadingZee",      errorKey: "errorZee" },
   { key: "ports",    labelKey: "layerPorts",    titleKey: "layerPortsTitle",    color: "#f59e0b", showKey: "showPorts",    toggleKey: "setShowPorts",    loadingKey: "loadingPorts",    errorKey: "errorPorts" },
   { key: "balisage", labelKey: "layerBalisage", titleKey: "layerBalisageTitle", color: "#10b981", showKey: "showBalisage", toggleKey: "setShowBalisage", loadingKey: "loadingBalisage", errorKey: "errorBalisage" },
+];
+
+/** Toggles Blue Intelligence — consommés par la Sidebar (mêmes conventions que LAYER_CONFIG). */
+export const BI_LAYER_CONFIG = [
+  { key: "biProjects",      labelKey: "layerBiProjects",      titleKey: "layerBiProjectsTitle",      color: BI_COLORS.biProjects,      showKey: "showBiProjects",      toggleKey: "setShowBiProjects",      loadingKey: "loadingBiProjects",      errorKey: "errorBiProjects" },
+  { key: "biMarinas",       labelKey: "layerBiMarinas",       titleKey: "layerBiMarinasTitle",       color: BI_COLORS.biMarinas,       showKey: "showBiMarinas",       toggleKey: "setShowBiMarinas",       loadingKey: "loadingBiMarinas",       errorKey: "errorBiMarinas" },
+  { key: "biCapitaineries", labelKey: "layerBiCapitaineries", titleKey: "layerBiCapitaineriesTitle", color: BI_COLORS.biCapitaineries, showKey: "showBiCapitaineries", toggleKey: "setShowBiCapitaineries", loadingKey: "loadingBiCapitaineries", errorKey: "errorBiCapitaineries" },
+  { key: "biPoe",           labelKey: "layerBiPoe",           titleKey: "layerBiPoeTitle",           color: BI_COLORS.biPoe,           showKey: "showBiPoe",           toggleKey: "setShowBiPoe",           loadingKey: "loadingBiPoe",           errorKey: "errorBiPoe" },
+  { key: "biAmp",           labelKey: "layerBiAmp",           titleKey: "layerBiAmpTitle",           color: BI_COLORS.biAmp,           showKey: "showBiAmp",           toggleKey: "setShowBiAmp",           loadingKey: "loadingBiAmp",           errorKey: "errorBiAmp" },
 ];
 
 /**

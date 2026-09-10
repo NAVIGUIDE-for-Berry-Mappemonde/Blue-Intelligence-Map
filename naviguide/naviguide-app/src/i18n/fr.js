@@ -143,6 +143,19 @@ export default {
   layersApiHint:   "ZEE et Ports nécessitent naviguide-api (port 8000)",
   layersStartHint: "Lancer ./naviguide_workspace/start_local.sh",
 
+  // ── Couches Blue Intelligence (Sidebar) ─────────────────────────────────────
+  biLayersLabel:             "Blue Intelligence",
+  layerBiProjects:           "Projets",
+  layerBiProjectsTitle:      "Blue Intelligence — Projets de conservation marine",
+  layerBiMarinas:            "Marinas",
+  layerBiMarinasTitle:       "Blue Intelligence — Marinas (OpenStreetMap)",
+  layerBiCapitaineries:      "Capit.",
+  layerBiCapitaineriesTitle: "Blue Intelligence — Capitaineries",
+  layerBiPoe:                "PoE",
+  layerBiPoeTitle:           "Blue Intelligence — Ports d'Entrée officiels (formalités)",
+  layerBiAmp:                "AMP",
+  layerBiAmpTitle:           "Blue Intelligence — Aires Marines Protégées (centroïdes)",
+
   // ── Polar Chat (Sidebar) ───────────────────────────────────────────────────
   polarChatLoadPrompt:     "Chargez les polaires (panneau droit) pour activer le chat.",
   polarChatAskPlaceholder: "Question sur les polaires…",

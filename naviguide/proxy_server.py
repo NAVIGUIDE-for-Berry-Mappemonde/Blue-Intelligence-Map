@@ -59,6 +59,9 @@ API_BACKEND             = "http://localhost:8001"
 ORCHESTRATOR_BACKEND    = "http://localhost:3008"
 WEATHER_ROUTING_BACKEND = "http://localhost:3010"
 POLAR_API_BACKEND       = "http://localhost:8004"
+# API Blue Intelligence (exports GeoJSON des 5 modes) — surchargeable si BI
+# tourne sur la même machine (ex. http://127.0.0.1:8001/api sur le VPS).
+BI_API_BASE             = os.environ.get("BI_API_BASE", "https://blueintelligence.online/api")
 
 STATIC_DIR = Path(__file__).resolve().parent / "naviguide-app" / "dist"
 
@@ -130,6 +133,11 @@ async def proxy_weather_routing(request: Request, path: str):
 @app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_orchestrator(request: Request, path: str):
     return await proxy_request(request, ORCHESTRATOR_BACKEND, f"api/v1/{path}")
+
+# ── Blue Intelligence routes (exports GeoJSON des 5 modes) ────────────────────
+@app.api_route("/bi/{path:path}", methods=["GET"])
+async def proxy_blue_intelligence(request: Request, path: str):
+    return await proxy_request(request, BI_API_BASE, path)
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")

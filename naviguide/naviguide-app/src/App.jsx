@@ -866,12 +866,7 @@ export default function App() {
         }}
       >
         {/* ── Maritime data layers (ZEE / Ports / Balisage) — AVANT les routes pour être en dessous ── */}
-        <MaritimeLayers
-          showZee={maritimeLayers.showZee}
-          showPorts={maritimeLayers.showPorts}
-          portsData={maritimeLayers.portsData}
-          showBalisage={maritimeLayers.showBalisage}
-        />
+        <MaritimeLayers {...maritimeLayers} />
 
         {/* Lignes maritimes */}
         <Source id="maritime" type="geojson" data={maritimeLines}>

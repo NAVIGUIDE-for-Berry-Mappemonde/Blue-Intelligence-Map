@@ -9,6 +9,7 @@ import { riskBadgeClass } from "../utils/riskColors";
 import { useLang } from "../i18n/LangContext.jsx";
 import { SimulationPanel } from "./SimulationPanel";
 import { AgentPanel } from "./AgentPanel";
+import { BI_LAYER_CONFIG } from "./MaritimeLayers";
 
 const POLAR_API_URL = import.meta.env.VITE_POLAR_API_URL ?? "http://localhost:8004";
 
@@ -630,6 +631,42 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
                 );
               })}
               </div>
+
+              {/* ── Couches Blue Intelligence — blueintelligence.online ────── */}
+              <div className="text-[8px] uppercase tracking-widest text-white/25 px-1 mt-1 select-none">
+                {t("biLayersLabel")}
+              </div>
+              <div className="flex items-center gap-1">
+              {BI_LAYER_CONFIG.map(({ key, labelKey, titleKey, color, showKey, toggleKey, loadingKey, errorKey }) => {
+                const active  = maritimeLayers[showKey];
+                const loading = maritimeLayers[loadingKey];
+                const error   = maritimeLayers[errorKey];
+                const label   = t(labelKey);
+                const title   = error ? `${t(titleKey)} : ${error}` : t(titleKey);
+                return (
+                  <button
+                    key={key}
+                    onClick={() => maritimeLayers[toggleKey]((v) => !v)}
+                    title={title}
+                    className={[
+                      "flex items-center justify-center gap-1 flex-1 px-1.5 py-1 rounded-full",
+                      "text-[10px] font-semibold transition-all duration-150 select-none",
+                      active
+                        ? "bg-slate-700/80 text-white border border-white/10"
+                        : "bg-slate-800/30 text-white/35 border border-white/5 hover:text-white/60",
+                    ].join(" ")}
+                  >
+                    {loading
+                      ? <div className="w-1.5 h-1.5 rounded-full border border-white/30 border-t-white animate-spin flex-shrink-0" />
+                      : <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: active ? color : "transparent", border: `1.5px solid ${error ? "#ef4444" : color}` }} />
+                    }
+                    {label}
+                    {error && !loading && <span className="text-red-400 text-[9px]">⚠</span>}
+                  </button>
+                );
+              })}
+              </div>
+
               {(maritimeLayers.errorZee || maritimeLayers.errorPorts) && (
                 <div className="text-[9px] text-amber-400/90 px-2" title={t("layersApiHint")}>
                   {t("layersStartHint")}
