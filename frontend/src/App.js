@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import api from "./api";
+import api, { clearAdminKey, hasAdminKey } from "./api";
 import { makeT } from "./i18n";
 import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
@@ -27,6 +27,17 @@ const readInitialMode = () => {
 export default function App() {
   const [lang, setLang] = useState("en");
   const [view, setView] = useState("map");
+  // Mode admin — Console et Review ne sont visibles qu'après validation de la
+  // clé (?admin=<clé> dans l'URL, mémorisée par api.js) par le backend.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!hasAdminKey()) return;
+    api.get("/admin/check")
+      .then(() => setIsAdmin(true))
+      .catch((e) => {
+        if (e?.response?.status === 401) clearAdminKey();
+      });
+  }, []);
   const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
@@ -79,6 +90,11 @@ export default function App() {
   const lastTotalRef = useRef(-1);
   const viewRef = useRef(view);
   viewRef.current = view;
+
+  // Sans droits admin, les vues Console (audit) et Review sont inaccessibles.
+  useEffect(() => {
+    if (!isAdmin && (view === "audit" || view === "review")) setView("map");
+  }, [isAdmin, view]);
 
   // Persist mode + reflect on <html> for CSS var switching
   const setMode = useCallback((m) => {
@@ -402,6 +418,7 @@ export default function App() {
         mode={mode} setMode={setMode}
         mapRun={mapRuns[mode] || null}
         onSelectMapRun={handleSelectMapRun}
+        isAdmin={isAdmin}
       />
       <div className="flex flex-1 min-h-0">
         {view !== "review" && mode === "projects" && (
@@ -486,6 +503,7 @@ export default function App() {
         </main>
           {showSettings && (
           <SettingsPanel t={t} lang={lang} mode={mode} settings={settings}
+            isAdmin={isAdmin}
             onSaved={fetchSettings}
             // 2026-08-24 bug-fix — import router-callback receives the mode
             // that was actually imported so we only refresh the affected

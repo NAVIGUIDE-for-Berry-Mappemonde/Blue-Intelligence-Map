@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Download, FileDown, Upload, X } from "lucide-react";
 import api, { BACKEND_URL } from "../api";
 
-// Settings : docs, import/export, clés API, zoom / max markers.
+// Settings : docs, import/export, zoom / max markers.
 // Les seuils métier vivent dans Console → Règles (catalogue).
+// Les clés API vivent dans Console → Clés API (admin uniquement, 2026-09).
+// Pour les visiteurs non admin : téléchargements + export seulement.
 
 function Field({ label, children }) {
   return (
@@ -39,14 +41,14 @@ const IMPORT_TOTAL_KEY = {
   capitaineries: "total_capitaineries",
 };
 
-export default function SettingsPanel({ t, mode, settings, onSaved, onImported, onProjectsCleared, onClose }) {
+export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSaved, onImported, onProjectsCleared, onClose }) {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (settings) setForm({ ...settings, openrouter_api_key: "", tinyfish_api_key: "", serper_api_key: "", anthropic_api_key: "", nvidia_api_key: "" });
+    if (settings) setForm({ ...settings });
   }, [settings]);
 
   if (!form) return null;
@@ -54,24 +56,11 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const save = async () => {
-    const body = { ...form };
-    delete body.openrouter_api_key_set;
-    delete body.tinyfish_api_key_set;
-    delete body.serper_api_key_set;
-    delete body.anthropic_api_key_set;
-    delete body.nvidia_api_key_set;
-    ["claude_enabled", "claude_spend_usd", "claude_calls", "claude_cache_read_tokens",
-     "claude_cache_write_tokens", "claude_stop_ratio", "claude_remaining_usd",
-     "claude_allows_call", "claude_model"].forEach((k) => { delete body[k]; });
-    ["max_coast_km", "min_marine_score", "max_inland_km", "gatekeeper_accept",
-     "gatekeeper_reject", "tinyfish_agents", "extract_concurrency", "follow_the_money",
-     "max_partner_orgs", "saturation_limit", "rescan_after_days", "allow_tinyfish_agent",
-     "test_max_urls_per_seed", "full_max_urls_per_seed", "marina_search_radius_nm",
-     "marina_batch_concurrency", "openrouter_min_credits_usd", "enrich_stale_days",
-     "claude_budget_usd"].forEach((k) => { delete body[k]; });
-    ["min_zoom", "max_markers"].forEach(
-      (k) => { body[k] = parseInt(body[k], 10) || undefined; });
-    await api.put("/settings", body);
+    // Seuls les réglages carte restent éditables ici — envoi ciblé.
+    await api.put("/settings", {
+      min_zoom: parseInt(form.min_zoom, 10) || undefined,
+      max_markers: parseInt(form.max_markers, 10) || undefined,
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     onSaved();
@@ -161,19 +150,23 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
           </div>
         </section>
 
-        {/* Data import + contextual export */}
+        {/* Data import (admin) + contextual export (public) */}
         <section>
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70 mb-2">{t("dataSection")}</p>
-          <input ref={fileRef} data-testid="import-geojson-input" type="file" accept=".geojson,.json,application/geo+json,application/json"
-            className="hidden" onChange={importFile} />
-          <button data-testid="import-geojson-btn" onClick={() => fileRef.current?.click()} disabled={importing}
-            className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
-            title={t("importGeojson") + " → " + t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}>
-            <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
-          </button>
-          <p data-testid="settings-import-context-hint" className="mt-1 font-mono text-[9px] uppercase tracking-wide text-slate-500">
-            {t("settingsImportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
-          </p>
+          {isAdmin && (
+            <>
+              <input ref={fileRef} data-testid="import-geojson-input" type="file" accept=".geojson,.json,application/geo+json,application/json"
+                className="hidden" onChange={importFile} />
+              <button data-testid="import-geojson-btn" onClick={() => fileRef.current?.click()} disabled={importing}
+                className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10 disabled:opacity-40"
+                title={t("importGeojson") + " → " + t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}>
+                <Upload size={12} /> {importing ? t("importing") : t("importGeojson")}
+              </button>
+              <p data-testid="settings-import-context-hint" className="mt-1 font-mono text-[9px] uppercase tracking-wide text-slate-500">
+                {t("settingsImportContextHint")} <span className="text-accent">· {t("mode" + currentMode.charAt(0).toUpperCase() + currentMode.slice(1))}</span>
+              </p>
+            </>
+          )}
           {/* Phase 6 — single contextual export button. URL follows the active mode. */}
           <button data-testid="settings-export-btn"
             onClick={() => window.open(`${BACKEND_URL}${exportUrl}`, "_blank")}
@@ -190,88 +183,20 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
 
         {/* Phase 7 — Marine filtering block migrated to Audit → Projects card. */}
 
-        {/* Map — transverse */}
-        <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("mapSettings")}</p>
-          <Field label={t("minZoom")}>
-            <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <Field label={t("maxMarkers")}>
-            <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-        </section>
+        {/* Map — transverse (écriture protégée par la clé admin) */}
+        {isAdmin && (
+          <section className="space-y-2.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("mapSettings")}</p>
+            <Field label={t("minZoom")}>
+              <input data-testid="min-zoom-input" type="number" min="1" max="8" value={form.min_zoom} onChange={(e) => set("min_zoom", e.target.value)} onBlur={save} className={inputCls} />
+            </Field>
+            <Field label={t("maxMarkers")}>
+              <input data-testid="max-markers-input" type="number" min="50" max="5000" value={form.max_markers} onChange={(e) => set("max_markers", e.target.value)} onBlur={save} className={inputCls} />
+            </Field>
+          </section>
+        )}
 
-        {/* API keys — transverse */}
-        <section className="space-y-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/70">{t("apiKeys")}</p>
-          <Field label={
-            <>
-              {t("nvidiaKey")}{" "}
-              <span className={form.nvidia_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.nvidia_api_key_set ? t("keySet") : t("keyNotSet")})
-              </span>
-            </>
-          }>
-            <input data-testid="nvidia-key-input" type="password" value={form.nvidia_api_key || ""}
-              placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("nvidia_api_key", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("nvidiaKeyHint")}</p>
-          <Field label={
-            <>
-              {t("openrouterKey")}{" "}
-              <span className={form.openrouter_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.openrouter_api_key_set ? t("keySet") : t("keyNotSet")})
-              </span>
-            </>
-          }>
-            <input data-testid="openrouter-key-input" type="password" value={form.openrouter_api_key}
-              placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("openrouter_api_key", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <Field label={
-            <>
-              {t("tinyfishKey")}{" "}
-              <span className={form.tinyfish_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.tinyfish_api_key_set ? t("keySet") : t("keyNotSet")})
-              </span>
-            </>
-          }>
-            <input data-testid="tinyfish-key-input" type="password" value={form.tinyfish_api_key}
-              placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("tinyfish_api_key", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <Field label={
-            <>
-              {t("serperKey")}{" "}
-              <span className={form.serper_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.serper_api_key_set ? t("keySet") : t("keyNotSet")})
-              </span>
-            </>
-          }>
-            <input data-testid="serper-key-input" type="password" value={form.serper_api_key || ""}
-              placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("serper_api_key", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          <Field label={
-            <>
-              {t("anthropicKey")}{" "}
-              <span className={form.anthropic_api_key_set ? "text-bio" : "text-amberx"}>
-                ({form.anthropic_api_key_set ? t("keySet") : t("keyNotSet")})
-              </span>
-            </>
-          }>
-            <input data-testid="anthropic-key-input" type="password" value={form.anthropic_api_key || ""}
-              placeholder={t("leavePlaceholder")}
-              onChange={(e) => set("anthropic_api_key", e.target.value)} onBlur={save} className={inputCls} />
-          </Field>
-          {form.anthropic_api_key_set && (
-            <p data-testid="claude-spend-hint" className="font-mono text-[9px] text-slate-400">
-              {t("claudeSpend")}: ${Number(form.claude_spend_usd || 0).toFixed(4)}
-              {form.claude_calls ? ` · ${form.claude_calls} appels` : ""}
-            </p>
-          )}
-        </section>
+        {/* API keys — déplacées dans Console → Clés API (2026-09). */}
 
         {/* Save button removed 2026-06 — settings now auto-save on field blur
             (see the onBlur={save} handlers above). */}

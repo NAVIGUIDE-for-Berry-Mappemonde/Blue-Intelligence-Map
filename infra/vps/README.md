@@ -47,15 +47,17 @@ cd ~/blue-intelligence-map
 bash infra/vps/deploy-app.sh
 ```
 
-## Resynchroniser les données depuis Atlas
+## Resynchroniser les données depuis Atlas — ⛔ NE PLUS JAMAIS FAIRE
 
-À faire une dernière fois **juste avant la bascule DNS Cloudflare** (tant
-qu'Atlas reste la base « vivante »), puis plus jamais :
+**Depuis la bascule DNS du 2026-09-10, le VPS est la base vivante.** Atlas est
+figé à l'état d'avant-bascule : relancer `sync-from-atlas.sh` écraserait les
+données récentes (nouveaux runs, enrichissements, review…) avec cet état
+périmé. Le script contient désormais un verrou et refuse de s'exécuter ;
+il n'existe plus de raison légitime de le forcer, sauf récupération après
+sinistre décidée en connaissance de cause (`FORCE_RESYNC=oui-ecraser-la-base`).
 
-```bash
-bash infra/vps/sync-from-atlas.sh
-sudo systemctl restart blue-intelligence
-```
+En cas de besoin de restauration, utiliser les **sauvegardes locales
+quotidiennes** (voir section Sauvegardes), jamais Atlas.
 
 ## Sauvegardes
 
@@ -69,21 +71,46 @@ mongorestore --uri "$MONGO_URL_LOCAL" --gzip \
   --archive=$HOME/backups/mongodb/blue-AAAA-MM-JJ.archive.gz --drop
 ```
 
-## Bascule Cloudflare (dernière étape)
+## Bascule Cloudflare (effectuée le 2026-09-10)
 
-1. Dashboard Cloudflare → zone `blueintelligence.online` → **DNS**.
-2. Éditer l'enregistrement du domaine racine (et `www`) pour pointer vers
-   **135.125.226.16** (A), nuage orange (proxy) conservé.
-3. SSL/TLS → mode **Full (strict)** (le certificat Let's Encrypt du VPS est
-   valide).
-4. Vérifier `https://blueintelligence.online/api/` → `"mongo": "local"`.
-5. Retour arrière : remettre l'ancienne cible DNS (propagation quasi immédiate,
-   Atlas n'est pas touché).
+Le domaine (registrar OVH) pointait vers le Cloudflare de l'ancienne
+plateforme ; il a été rapatrié dans le compte Cloudflare du propriétaire :
+
+1. Cloudflare → **Connect a domain** → `blueintelligence.online`, plan Free.
+   Zone importée depuis OVH puis corrigée : **A `@` → 135.125.226.16**
+   (proxied), CNAME `www` → racine (proxied), MX/TXT conservés tels quels.
+2. OVH (manager → Web Cloud → Noms de domaine → onglet Serveurs DNS) :
+   serveurs remplacés par `coby.ns.cloudflare.com` / `eve.ns.cloudflare.com`.
+   **DNSSEC désactivé** au préalable (indispensable), protection contre le
+   transfert laissée activée.
+3. Certificat edge « Universal SSL » émis à l'activation ; SSL/TLS en mode
+   **Full (strict)** (le certificat Let's Encrypt du VPS couvre racine + www).
+4. Vérifié : `https://blueintelligence.online/api/` → `"mongo": "local"`,
+   HTTP 200 via edge Cloudflare, garde admin 401/200, marinas 15 Mo en ~3 s.
+5. Retour arrière : chez OVH, remettre les serveurs `ns14.ovh.net` /
+   `dns14.ovh.net` (la zone OVH d'origine, intacte, redevient autoritaire et
+   re-pointe vers l'ancienne plateforme).
 
 Après bascule, vérifier le renouvellement du certificat : `sudo certbot renew
 --dry-run` (le challenge HTTP passe par Cloudflare ; si « Always Use HTTPS »
 bloque `/.well-known/acme-challenge/`, créer une exception ou utiliser un
 certificat Origin Cloudflare).
+
+## Accès admin (Console / Review)
+
+Les onglets Console et Review, ainsi que toutes les écritures de l'API
+(`POST/PUT/PATCH/DELETE /api/*`, sauf le signalement public de projets) sont
+protégés par une clé admin :
+
+- La clé vit dans `~/blue-intelligence-map/backend/.env` sur le VPS
+  (`ADMIN_KEY=...`). Sans cette variable (dev local), tout reste ouvert.
+- Pour débloquer l'interface : ouvrir une fois
+  `https://blueintelligence.online/?admin=<clé>`. La clé est mémorisée dans le
+  navigateur (localStorage) et envoyée ensuite via le header `X-Admin-Key`.
+- Pour verrouiller un navigateur : `https://blueintelligence.online/?admin=off`.
+- Régénérer la clé : `openssl rand -hex 24`, remplacer la valeur dans
+  `backend/.env`, puis `sudo systemctl restart blue-intelligence` (les anciens
+  navigateurs admin devront re-saisir la nouvelle clé).
 
 ## Sécurité / accès
 
