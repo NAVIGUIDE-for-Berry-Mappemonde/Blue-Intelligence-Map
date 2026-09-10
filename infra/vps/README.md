@@ -47,15 +47,17 @@ cd ~/blue-intelligence-map
 bash infra/vps/deploy-app.sh
 ```
 
-## Resynchroniser les données depuis Atlas
+## Resynchroniser les données depuis Atlas — ⛔ NE PLUS JAMAIS FAIRE
 
-À faire une dernière fois **juste avant la bascule DNS Cloudflare** (tant
-qu'Atlas reste la base « vivante »), puis plus jamais :
+**Depuis la bascule DNS du 2026-09-10, le VPS est la base vivante.** Atlas est
+figé à l'état d'avant-bascule : relancer `sync-from-atlas.sh` écraserait les
+données récentes (nouveaux runs, enrichissements, review…) avec cet état
+périmé. Le script contient désormais un verrou et refuse de s'exécuter ;
+il n'existe plus de raison légitime de le forcer, sauf récupération après
+sinistre décidée en connaissance de cause (`FORCE_RESYNC=oui-ecraser-la-base`).
 
-```bash
-bash infra/vps/sync-from-atlas.sh
-sudo systemctl restart blue-intelligence
-```
+En cas de besoin de restauration, utiliser les **sauvegardes locales
+quotidiennes** (voir section Sauvegardes), jamais Atlas.
 
 ## Sauvegardes
 

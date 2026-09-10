@@ -127,6 +127,7 @@ complète, scripts idempotents et runbook dans **`infra/vps/README.md`** :
 
 1. **Application** : uvicorn (`SERVE_FRONTEND=1`, port local 8001) sert l'UI buildée **et** l'API, derrière le nginx du VPS (TLS Let's Encrypt). Service systemd `blue-intelligence`.
 2. **MongoDB** : MongoDB Community 8.0 auto-hébergé sur le VPS (`127.0.0.1` uniquement, authentification activée) — fin du throttling Atlas M0. Les index sont créés automatiquement au démarrage. Sauvegardes quotidiennes `mongodump` (rotation 14 j).
+   ⚠️ **Le VPS est la base vivante depuis la bascule DNS du 2026-09-10** : ne jamais relancer `infra/vps/sync-from-atlas.sh` (Atlas est figé à l'état d'avant-bascule ; le script est verrouillé). Restauration = sauvegardes locales uniquement.
 3. Un hébergement alternatif (build statique + reverse proxy `/api/*` + Atlas) reste possible : voir les variables d'environnement ci-dessus.
 
 ## API (aperçu)
