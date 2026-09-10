@@ -14,6 +14,28 @@ import ReviewView from "./components/ReviewView";
 import SettingsPanel from "./components/SettingsPanel";
 import ReportModal from "./components/ReportModal";
 
+const RUNS_LIST_EP = {
+  projects: "/projects/runs",
+  marinas: "/marinas/runs",
+  capitaineries: "/capitaineries/runs",
+  amp: "/amp/runs",
+};
+
+function latLngsFromFc(fc) {
+  const pts = [];
+  const pushPos = (c) => {
+    if (Array.isArray(c) && typeof c[0] === "number" && typeof c[1] === "number") {
+      pts.push([c[1], c[0]]);
+      return;
+    }
+    if (Array.isArray(c)) c.forEach(pushPos);
+  };
+  for (const f of fc?.features || []) {
+    if (f?.geometry?.coordinates) pushPos(f.geometry.coordinates);
+  }
+  return pts;
+}
+
 // Read the persisted mode on boot. Default = "projects". (6 modes)
 const readInitialMode = () => {
   try {
@@ -102,6 +124,9 @@ export default function App() {
   const [mapRuns, setMapRuns] = useState({});
   const mapRunsRef = useRef(mapRuns);
   mapRunsRef.current = mapRuns;
+  const userPickedRunRef = useRef({});
+  const lastFitKeyRef = useRef("");
+  const [fitRunBounds, setFitRunBounds] = useState(null);
   // Phase 7bis stabilisation — memoise `t` so its reference stays stable
   // across selection setStates. Otherwise every `handleSelectEscale` call
   // creates a fresh `t` → MapView props change → the formalities marker
@@ -141,6 +166,13 @@ export default function App() {
         const p = await api.get(`/projects/runs/${run.id}/geojson`);
         setProjects(p.data);
         lastTotalRef.current = -1;   // retour au live => refetch complet
+        const n = p.data?.features?.length || 0;
+        const key = `projects:${run.id}:${n}`;
+        if (n && lastFitKeyRef.current !== key) {
+          lastFitKeyRef.current = key;
+          const points = latLngsFromFc(p.data);
+          if (points.length) setFitRunBounds({ ts: Date.now(), points });
+        }
         return;
       }
       const params = showReview ? { visible: 1 } : {};
@@ -184,6 +216,15 @@ export default function App() {
         ? await api.get(`/marinas/runs/${run.id}/geojson`, { timeout: 300000 })
         : await api.get("/marinas", { params: showReview ? { visible: 1 } : {}, timeout: 300000 });
       setMarinas(data);
+      if (run?.id) {
+        const n = data?.features?.length || 0;
+        const key = `marinas:${run.id}:${n}`;
+        if (n && lastFitKeyRef.current !== key) {
+          lastFitKeyRef.current = key;
+          const points = latLngsFromFc(data);
+          if (points.length) setFitRunBounds({ ts: Date.now(), points });
+        }
+      }
     } catch (e) { /* transient */ }
   }, [showReview]);
 
@@ -194,6 +235,15 @@ export default function App() {
         ? await api.get(`/capitaineries/runs/${run.id}/geojson`)
         : await api.get("/capitaineries", { params: showReview ? { visible: 1 } : {} });
       setCapitaineries(data);
+      if (run?.id) {
+        const n = data?.features?.length || 0;
+        const key = `capitaineries:${run.id}:${n}`;
+        if (n && lastFitKeyRef.current !== key) {
+          lastFitKeyRef.current = key;
+          const points = latLngsFromFc(data);
+          if (points.length) setFitRunBounds({ ts: Date.now(), points });
+        }
+      }
     } catch (e) { /* transient */ }
   }, [showReview]);
 
@@ -376,6 +426,10 @@ export default function App() {
     };
     const fetchMarinasIfIdle = async () => {
       if (viewRef.current === "review") return;
+      if (mapRunsRef.current.marinas?.id) {
+        await fetchMarinas(true);
+        return;
+      }
       if ((marinasRef.current?.features?.length || 0) > 1000) return;
       try {
         const { data } = await api.get("/marinas/build/status", { timeout: 5000 });
@@ -389,7 +443,7 @@ export default function App() {
     const p = setInterval(unlessReview(() => fetchProjects()), 5000);
     const c = setInterval(fetchCategories, 15000);
     // Full GeoJSON is expensive; MarinasPanel already refreshes when a dump ends.
-    const m = setInterval(fetchMarinasIfIdle, 60000);
+    const m = setInterval(fetchMarinasIfIdle, 8000);
     const cap = setInterval(unlessReview(fetchCapitaineries), 8000);
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
     // La moisson Science est manuelle et le GeoJSON volumineux (~7 Mo) —
@@ -407,8 +461,66 @@ export default function App() {
 
   // Sélection d'un run à afficher (null = carte live) pour le mode courant.
   const handleSelectMapRun = useCallback((run) => {
+    userPickedRunRef.current[mode] = true;
+    lastFitKeyRef.current = "";
     setMapRuns((prev) => ({ ...prev, [mode]: run || null }));
   }, [mode]);
+
+  // Couche Map par défaut = run isolé du mode (contrat §8). Formalités inchangée.
+  useEffect(() => {
+    if (mode === "formalities" || mode === "science") return undefined;
+    const ep = RUNS_LIST_EP[mode];
+    if (!ep) return undefined;
+    let alive = true;
+    const sync = async () => {
+      try {
+        let runningId = null;
+        if (mode === "marinas") {
+          const { data } = await api.get("/marinas/build/status", { timeout: 5000 });
+          if (data?.run_id) runningId = data.run_id;
+        } else if (mode === "capitaineries") {
+          const { data } = await api.get("/capitaineries/build/status", { timeout: 5000 });
+          if (data?.run_id) runningId = data.run_id;
+        } else if (mode === "amp") {
+          const { data } = await api.get("/amp/discover-visit-urls/status", { timeout: 5000 });
+          if (data?.run_id) runningId = data.run_id;
+        } else if (mode === "projects") {
+          const { data } = await api.get("/swarm/status", { timeout: 5000 });
+          if (data?.run_id) runningId = data.run_id;
+        }
+        const { data } = await api.get(ep);
+        const items = (data?.items || []).filter((r) => !r.wrote_live);
+        const testItems = items.filter((r) => String(r.label || "").startsWith("test-map-30"));
+        const pool = testItems.length ? testItems : items;
+        const running = runningId && pool.find((r) => r.id === runningId);
+        const pick = running || pool.find((r) => r.state === "running") || pool[0];
+        if (!alive) return;
+        setMapRuns((prev) => {
+          if (runningId && prev[mode]?.id !== runningId) {
+            return { ...prev, [mode]: { id: runningId, label: running?.label || runningId } };
+          }
+          if (mode in prev) return prev;
+          if (!pick) return prev;
+          return { ...prev, [mode]: { id: pick.id, label: pick.label || pick.id } };
+        });
+      } catch (_) { /* transient */ }
+    };
+    sync();
+    const tmr = setInterval(sync, 4000);
+    return () => { alive = false; clearInterval(tmr); };
+  }, [mode]);
+
+  useEffect(() => {
+    const run = mapRuns.amp;
+    if (!run?.id) return;
+    const n = ampSites?.features?.length || 0;
+    const key = `amp:${run.id}:${n}`;
+    if (n && lastFitKeyRef.current !== key) {
+      lastFitKeyRef.current = key;
+      const points = latLngsFromFc(ampSites);
+      if (points.length) setFitRunBounds({ ts: Date.now(), points });
+    }
+  }, [ampSites, mapRuns]);
 
   // Changement de run sélectionné => re-fetch immédiat des datasets carte.
   useEffect(() => {
@@ -554,6 +666,7 @@ export default function App() {
               flyToZone={flyToZone}
               flyToPoe={flyToPoe}
               flyToAmp={flyToAmp}
+              fitRunBounds={fitRunBounds}
               ampRunId={mapRuns.amp?.id || null}
               onAmpSites={setAmpSites}
               zoneFiche={zoneFiche}

@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.run_rules import catalog_default
-from app.core.tasks import TaskState
+from app.core.tasks import TaskState, LOGS_TAIL_N
 from app.db import db
 from app.services import amp as amp_svc
 from app.services import amp_visit
@@ -28,6 +28,9 @@ class DiscoverBody(BaseModel):
     skip_search: bool = False
     profile: str | None = None
     rules: dict | None = None
+    bbox: str | None = None
+    label: str | None = None
+    resume: bool = False
 
 
 def _parse_bbox(raw: str, **caps):
@@ -145,6 +148,9 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         raise HTTPException(409, "A visit-URL discover is already running")
     body = body or DiscoverBody()
     limit = min(max(int(body.limit or 200), 1), 2000)
+    bbox = None
+    if body.bbox:
+        bbox = _parse_bbox(body.bbox, max_w=360.0, max_h=180.0)
     from app.core.run_rules import RuleError, bind_rules, reset_rules, snapshot_for_run
     from app.db import get_settings
     from app.services import isolated_runs
@@ -157,12 +163,15 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         raise HTTPException(400, str(e)) from e
     opened = await isolated_runs.open_run(
         db, "amp", kind="discover_visit",
-        label="amp-visit", settings=settings,
+        label=body.label or "amp-visit", settings=settings,
         extra_params={"limit": limit, "skip_search": bool(body.skip_search),
-                      "profile": rules.get("profile")},
+                      "profile": rules.get("profile"),
+                      "bbox": body.bbox},
         rules_overrides=body.rules, profile=body.profile,
+        resume=body.resume,
     )
     run_id = opened["run_id"]
+    recorder = opened["recorder"]
     VISIT_DISCOVER_STATE.run_id = run_id
     isolated_runs.reset_run(opened["token"])
 
@@ -175,9 +184,12 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
                 limit=limit,
                 skip_search=bool(body.skip_search),
                 run_id=run_id,
+                recorder=recorder,
+                bbox=bbox,
             )
             await isolated_runs.finalize_run(
-                db, "amp", run_id, extra=VISIT_DISCOVER_STATE.summary)
+                db, "amp", run_id, extra=VISIT_DISCOVER_STATE.summary,
+                cancelled=bool(VISIT_DISCOVER_STATE.cancel))
         except Exception as exc:
             VISIT_DISCOVER_STATE.error = f"{type(exc).__name__}: {exc}"
             await isolated_runs.finalize_run(
@@ -190,6 +202,7 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         "started": True, "limit": limit, "skip_search": bool(body.skip_search),
         "run_id": run_id, "wrote_amp_sites": False,
         "profile": rules.get("profile"), "rules_hash": rules.get("hash"),
+        "bbox": body.bbox, "label": body.label,
     }
 
 
@@ -214,7 +227,7 @@ async def amp_discover_visit_status():
         "total": s.total,
         "summary": s.summary,
         "error": s.error,
-        "logs_tail": s.logs[-40:],
+        "logs_tail": s.logs[-LOGS_TAIL_N:],
         "run_id": s.run_id,
         "wrote_amp_sites": False,
     }
@@ -238,6 +251,16 @@ async def amp_run_detail(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     return {**doc, "wrote_amp_sites": False}
+
+
+@router.get("/amp/runs/{run_id}/events")
+async def amp_run_events(run_id: str, step: str | None = None,
+                         skip: int = 0, limit: int = 500):
+    from app.services import isolated_runs
+    if not await db.amp_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    return await isolated_runs.list_run_events(
+        db, "amp", run_id, step=step, skip=skip, limit=limit)
 
 
 @router.get("/amp/runs/{run_id}/geojson")
