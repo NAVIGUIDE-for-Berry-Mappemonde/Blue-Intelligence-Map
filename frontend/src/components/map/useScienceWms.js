@@ -2,16 +2,19 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 
 /**
- * Couches WMS EMODnet. Panes séparés : la bathymétrie est un aplat opaque
- * qui masquait câbles et substrat quand tout partageait le même pane.
- * Ordre : bathymétrie (sous) → substrat → câbles (dessus).
+ * Trois étages WMS distincts (du bas vers le haut) :
+ *   1. bathymétrie  — aplat de profondeur
+ *   2. nature des fonds
+ *   3. câbles sous-marins
+ * Chaque couche a son propre pane Leaflet : elles ne peuvent plus
+ * s'écraser l'une l'autre.
  */
 export const SCIENCE_WMS_LAYERS = [
   {
     id: "bathymetry",
     url: "https://ows.emodnet-bathymetry.eu/wms",
     layers: "mean_multicolour",
-    opacity: 0.45,
+    opacity: 0.5,
     pane: "science-wms-bathy",
     attribution: "EMODnet Bathymetry",
   },
@@ -33,34 +36,40 @@ export const SCIENCE_WMS_LAYERS = [
   },
 ];
 
+/** z-index : plus le chiffre est haut, plus la couche est devant. */
 export const SCIENCE_WMS_PANES = {
-  "science-wms-bathy": 350,
-  "science-wms-substrate": 356,
-  "science-wms-cables": 365,
+  "science-wms-bathy": 250,
+  "science-wms-substrate": 310,
+  "science-wms-cables": 370,
 };
 
-function ensureWmsPanes(map) {
+export function ensureWmsPanes(map) {
+  if (!map) return;
   Object.entries(SCIENCE_WMS_PANES).forEach(([name, z]) => {
     if (!map.getPane(name)) map.createPane(name);
     const pane = map.getPane(name);
     pane.style.zIndex = String(z);
     pane.style.pointerEvents = "none";
+    pane.setAttribute("data-wms-floor", name.replace("science-wms-", ""));
   });
 }
 
+function parkLayerInPane(map, lyr, paneName) {
+  const pane = map.getPane(paneName);
+  const el = lyr && lyr._container;
+  if (!pane || !el) return;
+  if (el.parentNode !== pane) pane.appendChild(el);
+}
+
 function wmsDebug() {
-  if (typeof window === "undefined") return { errors: [], loads: {} };
+  if (typeof window === "undefined") return { errors: [], loads: {}, floors: {} };
   window.__biDebug = window.__biDebug || {};
   if (!window.__biDebug.wms) {
-    window.__biDebug.wms = { errors: [], loads: {}, enabled: {} };
+    window.__biDebug.wms = { errors: [], loads: {}, enabled: {}, floors: {} };
   }
   return window.__biDebug.wms;
 }
 
-/**
- * Couches de fond WMS du mode Science.
- * Visible uniquement en mode science.
- */
 export default function useScienceWms({ mapObj, mode, enabled }) {
   const layersRef = useRef({});
   const bathy = !!(enabled && enabled.bathymetry);
@@ -73,10 +82,18 @@ export default function useScienceWms({ mapObj, mode, enabled }) {
     ensureWmsPanes(map);
     const dbg = wmsDebug();
     dbg.enabled = { bathymetry: bathy, substrate, cables };
+    dbg.floors = {};
 
     SCIENCE_WMS_LAYERS.forEach((spec) => {
       const on = mode === "science" && !!(enabled && enabled[spec.id]);
       let lyr = layersRef.current[spec.id];
+
+      if (lyr && lyr.options.pane !== spec.pane) {
+        if (map.hasLayer(lyr)) map.removeLayer(lyr);
+        layersRef.current[spec.id] = null;
+        lyr = null;
+      }
+
       if (on) {
         if (!lyr) {
           lyr = L.tileLayer.wms(spec.url, {
@@ -102,7 +119,9 @@ export default function useScienceWms({ mapObj, mode, enabled }) {
           layersRef.current[spec.id] = lyr;
         }
         if (!map.hasLayer(lyr)) map.addLayer(lyr);
-        try { lyr.bringToFront(); } catch (_) { /* pane gère le z-order */ }
+        parkLayerInPane(map, lyr, spec.pane);
+        const parent = lyr._container && lyr._container.parentNode;
+        dbg.floors[spec.id] = parent ? parent.getAttribute("data-wms-floor") : null;
       } else if (lyr && map.hasLayer(lyr)) {
         map.removeLayer(lyr);
       }

@@ -12,7 +12,7 @@ import useMarinasLayer from "./map/useMarinasLayer";
 import useProjectsLayer from "./map/useProjectsLayer";
 import useRouteLayer from "./map/useRouteLayer";
 import useScienceLayer from "./map/useScienceLayer";
-import useScienceWms from "./map/useScienceWms";
+import useScienceWms, { ensureWmsPanes } from "./map/useScienceWms";
 import { attachDepthOnPopup } from "./map/depthRow";
 
 /**
@@ -130,15 +130,7 @@ export default function MapView({
     map.getPane("formalities-escales").style.zIndex = 500;
     map.createPane("amp");
     map.getPane("amp").style.zIndex = 420;
-    map.createPane("science-wms-bathy");
-    map.getPane("science-wms-bathy").style.zIndex = 350;
-    map.getPane("science-wms-bathy").style.pointerEvents = "none";
-    map.createPane("science-wms-substrate");
-    map.getPane("science-wms-substrate").style.zIndex = 356;
-    map.getPane("science-wms-substrate").style.pointerEvents = "none";
-    map.createPane("science-wms-cables");
-    map.getPane("science-wms-cables").style.zIndex = 365;
-    map.getPane("science-wms-cables").style.pointerEvents = "none";
+    ensureWmsPanes(map);
     map.createPane("science-tracks");
     map.getPane("science-tracks").style.zIndex = 450;
 
