@@ -135,9 +135,11 @@ export default function App() {
   const fetchMarinas = useCallback(async () => {
     try {
       const run = mapRunsRef.current.marinas;
+      // Dump mondial (~32 000 features) : sur un Mongo distant lent, la
+      // requête peut dépasser les 120 s du timeout axios par défaut.
       const { data } = run?.id
-        ? await api.get(`/marinas/runs/${run.id}/geojson`)
-        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {} });
+        ? await api.get(`/marinas/runs/${run.id}/geojson`, { timeout: 300000 })
+        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {}, timeout: 300000 });
       setMarinas(data);
     } catch (e) { /* transient */ }
   }, [showReview]);

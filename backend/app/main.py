@@ -117,6 +117,11 @@ async def _startup():
     formalities.start_auto_refresh()
     # Reprise automatique des tâches de fond interrompues (validation OSM)
     formalities.schedule_job_resume()
+    # Préchauffage du dump GeoJSON marinas (plusieurs minutes sur Mongo distant).
+    try:
+        marinas.start_marinas_fc_warmup()
+    except Exception as e:
+        print(f"[startup] marinas cache warmup failed (non-fatal): {e}")
 
 
 @app.on_event("shutdown")
