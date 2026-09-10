@@ -4,7 +4,8 @@
 # certbot déjà installés (déploiement Blue Intelligence). Idempotent.
 #
 # Premier déploiement — après ce script :
-#   1. renseigner ~/.config/naviguide/naviguide.env (ANTHROPIC_API_KEY, COPERNICUS_*)
+#   1. renseigner ~/.config/naviguide/naviguide.env (NVIDIA_API_KEY /
+#      OPENROUTER_API_KEY / ANTHROPIC_API_KEY — cascade LLM —, COPERNICUS_*)
 #   2. sudo systemctl restart naviguide-api naviguide-orchestrator naviguide-polar
 #   3. TLS : le certificat Let's Encrypt live/naviguide.fr (SAN apex + www) existe
 #      déjà et est référencé par nginx-naviguide.conf ; sur un VPS vierge :
@@ -32,7 +33,7 @@ mkdir -p "$CONF_DIR"
 if [ ! -f "$CONF_DIR/naviguide.env" ]; then
   umask 077
   cp "$APP/infra/vps/naviguide/naviguide.env.example" "$CONF_DIR/naviguide.env"
-  echo "⚠  $CONF_DIR/naviguide.env créé — renseigner ANTHROPIC_API_KEY et COPERNICUS_*"
+  echo "⚠  $CONF_DIR/naviguide.env créé — renseigner les clés LLM (NVIDIA/OpenRouter/Anthropic) et COPERNICUS_*"
 fi
 
 # ── Frontend : build production (VITE_* → https://www.naviguide.fr) ───────────

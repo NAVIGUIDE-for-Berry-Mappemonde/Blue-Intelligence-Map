@@ -75,17 +75,22 @@ cat > "$API_DIR/.env" <<'ENVEOF'
 COPERNICUS_USERNAME=
 COPERNICUS_PASSWORD=
 PORT=8000
-# ── Agents IA simulation — Anthropic Claude (obligatoire pour les agents) ─
-# Renseigner ANTHROPIC_API_KEY pour activer les 4 agents IA en mode simulation.
-# Sans cette clé, les agents affichent un contenu de fallback statique.
+# ── Agents IA simulation — cascade LLM NIM → OpenRouter → Claude ──────────
+# Renseigner au moins une clé pour activer les 4 agents IA en mode simulation.
+# Ordre de cascade : NVIDIA NIM, puis OpenRouter, puis Anthropic Claude.
+# Sans aucune clé, les agents affichent un contenu de fallback statique.
+NVIDIA_API_KEY=
+OPENROUTER_API_KEY=
 ANTHROPIC_API_KEY=
-# Modèle optionnel (défaut : claude-opus-4-5)
-ANTHROPIC_MODEL=claude-opus-4-5
+# Modèles optionnels (défauts : deepseek-v4-pro / gpt-4o-mini / claude-opus-4-5)
+#NVIDIA_MODEL=
+#OPENROUTER_MODEL=
+#ANTHROPIC_MODEL=
 # ── Agent météo — StormGlass (optionnel) ──────────────────────────────────
 # Données météo live. Sans clé, l'agent météo utilise la climatologie LLM.
 STORMGLASS_API_KEY=
 ENVEOF
-warn "naviguide-api/.env créé — renseigner COPERNICUS_USERNAME/PASSWORD et ANTHROPIC_API_KEY"
+warn "naviguide-api/.env créé — renseigner COPERNICUS_USERNAME/PASSWORD et une clé LLM (NVIDIA_API_KEY…)"
 fi
 API_LOG="$LOG_DIR/naviguide-api.log"
 (cd "$API_DIR" && nohup $PYTHON main.py > "$API_LOG" 2>&1) &
