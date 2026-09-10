@@ -346,9 +346,10 @@ export default function App() {
     const m = setInterval(fetchMarinasIfIdle, 60000);
     const cap = setInterval(unlessReview(fetchCapitaineries), 8000);
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
-    // La moisson Science est manuelle et volumineuse — poll léger (30s) ;
-    // SciencePanel force un refresh dès qu'un build se termine.
-    const sci = setInterval(unlessReview(fetchScience), 30000);
+    // La moisson Science est manuelle et le GeoJSON volumineux (~7 Mo) —
+    // poll espacé (60s, comme marinas) ; SciencePanel force un refresh
+    // dès qu'un build se termine.
+    const sci = setInterval(unlessReview(fetchScience), 60000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);
     return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(sci); clearInterval(z); clearInterval(pp); };
