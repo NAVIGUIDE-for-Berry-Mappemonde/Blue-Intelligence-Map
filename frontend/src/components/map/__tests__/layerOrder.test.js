@@ -7,6 +7,7 @@
  */
 import { LEAFLET_BUILTIN_PANES, PANES, createPanes } from "../layerOrder";
 import { BASEMAPS, BASEMAP_CYCLE, nextBasemap, stripUnavailableSources } from "../basemaps";
+import { maplibreWorkerUrl } from "../maplibreWorker";
 
 describe("ordre des panes (verrouillé)", () => {
   test("la liste exacte des panes ne bouge pas sans casser ce test", () => {
@@ -96,5 +97,11 @@ describe("registre des fonds de carte (verrouillé)", () => {
     expect(out.sources.seamap).toEqual({ type: "vector" });
     expect(out.layers.map((l) => l.id)).toEqual(["sea"]);
     expect(style.sources.elevation).toBeDefined();
+  });
+
+  test("le worker MapLibre est servi en statique, pas via le chunk webpack", () => {
+    expect(maplibreWorkerUrl("")).toBe("/maplibre/maplibre-gl-worker.mjs");
+    expect(maplibreWorkerUrl("/app")).toBe("/app/maplibre/maplibre-gl-worker.mjs");
+    expect(maplibreWorkerUrl("/app/")).toBe("/app/maplibre/maplibre-gl-worker.mjs");
   });
 });

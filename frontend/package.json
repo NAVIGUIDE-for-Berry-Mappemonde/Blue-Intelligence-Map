@@ -20,8 +20,11 @@
     "tailwindcss": "^3.4.17"
   },
   "scripts": {
+    "postinstall": "node scripts/copy-maplibre-worker.js",
+    "prestart": "node scripts/copy-maplibre-worker.js",
+    "prebuild": "node scripts/copy-maplibre-worker.js",
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "node scripts/build.js",
     "test": "react-scripts test --watchAll=false"
   },
   "browserslist": {

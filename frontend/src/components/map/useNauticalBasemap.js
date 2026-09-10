@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 
 import { BASEMAPS, stripUnavailableSources } from "./basemaps";
+import { maplibreWorkerUrl } from "./maplibreWorker";
 
 /**
  * Charge MapLibre GL + le protocole pmtiles:// une seule fois, à la demande
@@ -23,6 +24,10 @@ function loadGl() {
       ]);
       // maplibre-gl v6 est un module ESM à exports nommés, sans default.
       const maplibregl = maplibreModule.default ?? maplibreModule;
+      // Avant le premier Map : le worker n'est pas dans le chunk webpack.
+      if (typeof maplibregl.setWorkerUrl === "function") {
+        maplibregl.setWorkerUrl(maplibreWorkerUrl());
+      }
       const protocol = new pmtilesModule.Protocol();
       maplibregl.addProtocol("pmtiles", protocol.tile);
       return maplibregl;
