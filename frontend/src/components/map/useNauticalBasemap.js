@@ -117,10 +117,8 @@ export default function useNauticalBasemap({ mapObj, tileRef, basemap }) {
             throw err;
           }
           const glMap = glRef.current.getMaplibreMap?.() || glRef.current._glMap;
+          setNauticalActive(true);
           if (glMap && typeof glMap.on === "function") {
-            glMap.once("load", () => {
-              if (!cancelled) setNauticalActive(true);
-            });
             glMap.on("error", (ev) => {
               const err = ev?.error || ev;
               if (!isWebGlFailure(err)) return;
@@ -129,8 +127,6 @@ export default function useNauticalBasemap({ mapObj, tileRef, basemap }) {
               restoreRaster(m, tileRef);
               setNauticalActive(false);
             });
-          } else {
-            setNauticalActive(true);
           }
         })
         .catch((err) => {

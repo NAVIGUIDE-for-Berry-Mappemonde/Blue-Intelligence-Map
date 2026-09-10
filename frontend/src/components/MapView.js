@@ -342,8 +342,8 @@ export default function MapView({
     const map = mapObj.current;
     if (!map) return;
     const m = marinaMarkersById.current.get(flyToMarina.id);
-    map.flyTo([flyToMarina.lat, flyToMarina.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
-    setTimeout(() => { if (m) m.openPopup(); }, 1100);
+    map.flyTo([flyToMarina.lat, flyToMarina.lon], Math.max(map.getZoom(), 14), { duration: 0.8 });
+    setTimeout(() => { if (m) m.openPopup(); }, 900);
   }, [flyToMarina]);
 
   useEffect(() => {
