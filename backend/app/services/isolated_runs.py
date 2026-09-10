@@ -275,6 +275,7 @@ async def finalize_run(db, dataset: str, run_id: str, *, cancelled: bool = False
         return
     spec = spec_for(dataset)
     rec = RunRecorder(run_id, db=db, events_coll=spec.events_coll)
+    await rec.resume_seq()
     n = 0
     try:
         n = await coll(db, spec.items_coll).count_documents({"run_id": run_id})

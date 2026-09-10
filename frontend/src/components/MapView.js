@@ -447,6 +447,10 @@ export default function MapView({
     const map = mapObj.current;
     if (!map) return;
     try {
+      if (fitRunBounds.points.length === 1) {
+        map.setView(fitRunBounds.points[0], 11, { animate: true });
+        return;
+      }
       const b = L.latLngBounds(fitRunBounds.points);
       if (b.isValid()) {
         map.fitBounds(b, { padding: [48, 48], maxZoom: 12, animate: true });

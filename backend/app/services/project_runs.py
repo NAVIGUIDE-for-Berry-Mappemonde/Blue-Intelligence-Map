@@ -138,6 +138,7 @@ async def finalize_run(db, run_id: str, *, cancelled: bool = False, error: str |
     if not run_id:
         return
     rec = RunRecorder(run_id, db=db, events_coll="project_run_events")
+    await rec.resume_seq()
     doc = await db.project_runs.find_one({"_id": run_id}) or {}
     counters = doc.get("counters") or empty_counters()
     n_sites = await db.project_run_projects.count_documents({"run_id": run_id, "verdict": "site"})

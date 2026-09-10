@@ -100,6 +100,22 @@ class RunRecorder:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
+    async def resume_seq(self):
+        """Reprend le seq Mongo pour ne pas réémettre un `run_done` en seq=1."""
+        if self.db is None:
+            return
+        try:
+            cur = getattr(self.db, self.events_coll).find({"run_id": self.run_id})
+            if hasattr(cur, "sort"):
+                cur = cur.sort("seq", -1)
+            docs = await cur.to_list(1)
+            if docs:
+                self._seq = max(self._seq, int(docs[0].get("seq") or 0))
+        except Exception as exc:
+            logger.warning(
+                "RunRecorder resume_seq failed run_id=%s: %s", self.run_id, exc,
+            )
+
 
 class ZoneRecorder:
     """Recorder lié à une zone : mrgid/zone renseignés automatiquement."""

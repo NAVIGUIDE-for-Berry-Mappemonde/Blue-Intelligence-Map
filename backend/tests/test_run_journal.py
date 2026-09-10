@@ -228,5 +228,38 @@ def test_routers_expose_events_and_marina_cancel():
     assert "/api/amp/runs/{run_id}/events" in amp_paths
 
 
+def test_resume_seq_continues_after_max():
+    stored = []
+
+    class _Cur:
+        def __init__(self, docs):
+            self.docs = list(docs)
+
+        def sort(self, *a, **k):
+            self.docs.sort(key=lambda d: d.get("seq") or 0, reverse=True)
+            return self
+
+        async def to_list(self, n):
+            return self.docs[:n]
+
+    class _Coll:
+        def find(self, q=None):
+            return _Cur([{"seq": 8, "run_id": "r-seq"}, {"seq": 3, "run_id": "r-seq"}])
+
+        async def insert_one(self, doc):
+            stored.append(doc)
+
+    class _DB:
+        def __getattr__(self, name):
+            return _Coll()
+
+    rec = RunRecorder("r-seq", db=_DB(), to_file=False, events_coll="e")
+    asyncio.run(rec.resume_seq())
+    asyncio.run(rec.event("run_done"))
+    assert rec._seq == 9
+    assert stored and stored[-1]["seq"] == 9
+    assert stored[-1]["step"] == "run_done"
+
+
 def test_emit_noop_without_recorder():
     asyncio.run(emit(None, "tile_start", tile="x"))

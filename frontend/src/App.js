@@ -143,6 +143,7 @@ export default function App() {
 
   // Persist mode + reflect on <html> for CSS var switching
   const setMode = useCallback((m) => {
+    lastFitKeyRef.current = "";
     setModeRaw(m);
     try { localStorage.setItem("bi.mode", m); } catch (_) { /* ignore */ }
   }, []);
