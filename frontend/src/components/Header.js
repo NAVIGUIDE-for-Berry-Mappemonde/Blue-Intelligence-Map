@@ -1,4 +1,4 @@
-import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, FlaskConical, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Sun, Waves } from "lucide-react";
 import RunSelector from "./RunSelector";
 
 export default function Header({
@@ -29,7 +29,7 @@ export default function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* Five-mode switch — projects / marinas / capitaineries / formalities / amp */}
+        {/* Six-mode switch — projects / marinas / capitaineries / formalities / amp / science */}
         <div
           className="flex border border-line rounded-sm overflow-hidden"
           title={t("modeSwitchTitle")}
@@ -82,13 +82,24 @@ export default function Header({
           <button
             data-testid="mode-toggle-amp"
             onClick={() => setMode("amp")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
               mode === "amp"
                 ? "bg-[#4ade80]/15 text-[#4ade80]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
             <Shield size={13} /> {t("modeAmp")}
+          </button>
+          <button
+            data-testid="mode-toggle-science"
+            onClick={() => setMode("science")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+              mode === "science"
+                ? "bg-[#a78bfa]/15 text-[#a78bfa]"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <FlaskConical size={13} /> {t("modeScience")}
           </button>
         </div>
         <div className="flex border border-line rounded-sm overflow-hidden">
@@ -99,13 +110,17 @@ export default function Header({
           >
             <MapIcon size={13} /> {t("map")}
           </button>
-          {/* " > " — sélecteur du run affiché sur la carte (par mode) */}
-          <RunSelector
-            mode={mode}
-            mapRun={mapRun}
-            t={t}
-            onSelect={(run) => { onSelectMapRun(run); setView("map"); }}
-          />
+          {/* " > " — sélecteur du run affiché sur la carte (par mode).
+              Masqué en mode Science : la moisson écrit directement la carte
+              live (pas de geojson par run). */}
+          {mode !== "science" && (
+            <RunSelector
+              mode={mode}
+              mapRun={mapRun}
+              t={t}
+              onSelect={(run) => { onSelectMapRun(run); setView("map"); }}
+            />
+          )}
           <button
             data-testid="view-toggle-audit"
             onClick={() => setView("audit")}

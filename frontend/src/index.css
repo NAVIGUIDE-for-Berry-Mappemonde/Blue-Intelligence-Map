@@ -70,6 +70,17 @@
   --marker-fill: #4ade80;
   --marker-stroke: #0f172a;
 }
+[data-mode="science"] {
+  --accent-rgb: 167 139 250;       /* #a78bfa — violet-400 */
+  --accent-glow: rgba(167, 139, 250, 0.35);
+  --accent-tint: rgba(167, 139, 250, 0.05);
+  --accent-tint-strong: rgba(167, 139, 250, 0.10);
+  --surface-rgb: 20 17 32;         /* slate-900 tinted violet */
+  --raised-rgb: 33 28 52;
+  --line-rgb: 58 50 90;
+  --marker-fill: #a78bfa;
+  --marker-stroke: #0f172a;
+}
 
 html, body, #root {
   height: 100%;
@@ -210,6 +221,19 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 18px rgba(56, 189, 248, 0.35);
+}
+/* Science mode cluster (violet) — datasets + Argo floats */
+.bi-cluster-science {
+  background: rgba(167, 139, 250, 0.15);
+  border: 2px solid #a78bfa;
+  border-radius: 9999px;
+  color: #a78bfa;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 18px rgba(167, 139, 250, 0.35);
 }
 /* Phase 7bis — Formalities status marker.
    Explicitly override the default `.leaflet-div-icon` styles (white bg +

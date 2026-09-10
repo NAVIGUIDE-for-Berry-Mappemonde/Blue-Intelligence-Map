@@ -9,6 +9,7 @@ import FormalitiesCard from "./FormalitiesCard";
 import MarinasCard from "./MarinasCard";
 import CapitaineriesCard from "./CapitaineriesCard";
 import ProjectsCard from "./ProjectsCard";
+import ScienceCard from "./ScienceCard";
 import { buildLaunchPayload, matchingProfile } from "../../lib/runRules";
 
 const BORDER = {
@@ -17,6 +18,7 @@ const BORDER = {
   capitaineries: "border-accent/40",
   formalities: "border-amberx/40",
   amp: "border-[#4ade80]/40",
+  science: "border-[#a78bfa]/40",
 };
 
 const TABS = [
@@ -125,6 +127,8 @@ export default function ConsoleShell({
       <FormalitiesCard t={t} onPoeRefresh={onPoeRefresh} rulesPayload={rulesPayload} />
     ) : mode === "amp" ? (
       <AmpCard t={t} rulesPayload={rulesPayload} />
+    ) : mode === "science" ? (
+      <ScienceCard t={t} rulesPayload={rulesPayload} />
     ) : (
       <ProjectsCard t={t} status={status} refresh={refresh} rulesPayload={rulesPayload} />
     )

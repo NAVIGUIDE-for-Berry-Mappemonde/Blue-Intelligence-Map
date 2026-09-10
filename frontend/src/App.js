@@ -7,17 +7,18 @@ import MarinasPanel from "./components/MarinasPanel";
 import CapitaineriesPanel from "./components/CapitaineriesPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
 import AmpPanel from "./components/AmpPanel";
+import SciencePanel from "./components/SciencePanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import ReviewView from "./components/ReviewView";
 import SettingsPanel from "./components/SettingsPanel";
 import ReportModal from "./components/ReportModal";
 
-// Read the persisted mode on boot. Default = "projects". (5 modes)
+// Read the persisted mode on boot. Default = "projects". (6 modes)
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries" || v === "amp") return v;
+    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries" || v === "amp" || v === "science") return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -27,7 +28,7 @@ const readInitialMode = () => {
 export default function App() {
   const [lang, setLang] = useState("en");
   const [view, setView] = useState("map");
-  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp'
+  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp' | 'science'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
   const [projects, setProjects] = useState({ type: "FeatureCollection", features: [] });
@@ -43,6 +44,9 @@ export default function App() {
   const [flyToMarina, setFlyToMarina] = useState(null); // {id, lat, lon} used as a one-shot signal
   const [capitaineries, setCapitaineries] = useState({ type: "FeatureCollection", features: [] });
   const [flyToCapitainerie, setFlyToCapitainerie] = useState(null);
+  // Mode Science — catalogues océano + flotteurs Argo
+  const [science, setScience] = useState({ type: "FeatureCollection", features: [] });
+  const [flyToScience, setFlyToScience] = useState(null);
   // Phase 8 — Anchorages (mouillages) layer
   const [anchorages, setAnchorages] = useState({ type: "FeatureCollection", features: [] });
   const [showAnchorages, setShowAnchoragesRaw] = useState(() => {
@@ -157,6 +161,15 @@ export default function App() {
     try {
       const { data } = await api.get("/anchorages");
       setAnchorages(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  // Mode Science — le GeoJSON vient de la collection live science_items
+  // (moisson non destructive) ; pas de variante par run ni de filtre review.
+  const fetchScience = useCallback(async () => {
+    try {
+      const { data } = await api.get("/science");
+      setScience(data);
     } catch (e) { /* transient */ }
   }, []);
 
@@ -309,6 +322,7 @@ export default function App() {
     fetchMarinas();
     fetchCapitaineries();
     fetchAnchorages();
+    fetchScience();
     fetchPoeZones();
     fetchPoePorts();
     const unlessReview = (fn) => () => {
@@ -332,10 +346,13 @@ export default function App() {
     const m = setInterval(fetchMarinasIfIdle, 60000);
     const cap = setInterval(unlessReview(fetchCapitaineries), 8000);
     const a = setInterval(unlessReview(fetchAnchorages), 10000);
+    // La moisson Science est manuelle et volumineuse — poll léger (30s) ;
+    // SciencePanel force un refresh dès qu'un build se termine.
+    const sci = setInterval(unlessReview(fetchScience), 30000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(z); clearInterval(pp); };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchPoeZones, fetchPoePorts]);
+    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(sci); clearInterval(z); clearInterval(pp); };
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchScience, fetchPoeZones, fetchPoePorts]);
 
   // Sélection d'un run à afficher (null = carte live) pour le mode courant.
   const handleSelectMapRun = useCallback((run) => {
@@ -357,6 +374,10 @@ export default function App() {
 
   const handleFlyToCapitainerie = useCallback((id, lat, lon) => {
     setFlyToCapitainerie({ id, lat, lon, ts: Date.now() });
+  }, []);
+
+  const handleFlyToScience = useCallback((id, lat, lon) => {
+    setFlyToScience({ id, lat, lon, ts: Date.now() });
   }, []);
 
   // Refactor 2026-06 — Handler wired to the sidebar rows and the EEZ polygons:
@@ -449,6 +470,14 @@ export default function App() {
             onFlyTo={handleFlyToAmp}
           />
         )}
+        {view !== "review" && mode === "science" && (
+          <SciencePanel
+            t={t}
+            science={science}
+            onFlyTo={handleFlyToScience}
+            onRefresh={fetchScience}
+          />
+        )}
         <main className="flex-1 relative min-w-0">
           {view === "map" ? (
             <MapView
@@ -457,6 +486,8 @@ export default function App() {
               marinas={marinas}
               capitaineries={capitaineries}
               flyToCapitainerie={flyToCapitainerie}
+              science={science}
+              flyToScience={flyToScience}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
               showReview={showReview}
@@ -480,6 +511,14 @@ export default function App() {
               onPoeRefresh={() => { fetchPoeZones(); fetchPoePorts(); }}
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
+          ) : mode === "science" ? (
+            // La Review n'est pas branchée sur Science : les fiches viennent
+            // telles quelles des catalogues officiels (pas de pipeline LLM).
+            <div className="h-full flex items-center justify-center p-8" data-testid="review-science-placeholder">
+              <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
+                {t("reviewScienceUnavailable")}
+              </p>
+            </div>
           ) : (
             <ReviewView t={t} mode={mode} onMapDirty={refreshMapData} />
           )}
@@ -493,6 +532,7 @@ export default function App() {
             onImported={(importedMode) => {
               if (importedMode === "marinas") fetchMarinas();
               else if (importedMode === "capitaineries") fetchCapitaineries();
+              else if (importedMode === "science") fetchScience();
               else fetchProjects(true);
             }}
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
