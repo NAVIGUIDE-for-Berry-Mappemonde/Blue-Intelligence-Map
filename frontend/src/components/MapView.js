@@ -3,12 +3,14 @@ import L from "leaflet";
 import "leaflet.markercluster";
 
 import { FALLBACK_COLORS, TILE_URLS, ampStyle, zoneStyle } from "./map/constants";
+import { createPanes } from "./map/layerOrder";
 import { zonePopupHtml } from "./map/zonePopup";
 import useAmpLayer, { popupHtml as ampPopupHtml } from "./map/useAmpLayer";
 import useAnchoragesLayer from "./map/useAnchoragesLayer";
 import useCapitaineriesLayer from "./map/useCapitaineriesLayer";
 import useFormalitiesLayers from "./map/useFormalitiesLayers";
 import useMarinasLayer from "./map/useMarinasLayer";
+import useNauticalBasemap from "./map/useNauticalBasemap";
 import useProjectsLayer from "./map/useProjectsLayer";
 import useRouteLayer from "./map/useRouteLayer";
 
@@ -114,13 +116,10 @@ export default function MapView({
     fitMinZoom();
     map.on("resize", fitMinZoom);
 
-    // Dedicated Leaflet pane for the route, drawn UNDER the clusters and markers.
-    map.createPane("route");
-    map.getPane("route").style.zIndex = 380;   // < markerPane (600) & tilePane (200 default)
-    map.createPane("formalities-escales");
-    map.getPane("formalities-escales").style.zIndex = 500;
-    map.createPane("amp");
-    map.getPane("amp").style.zIndex = 420;
+    // Panes personnalisés — l'ordre vertical vit dans map/layerOrder.js et il
+    // est verrouillé par test (inspiration seamap : l'ordre de dessin est
+    // charge utile, un remaniement accidentel doit casser un test).
+    createPanes(map);
 
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 50,
@@ -278,9 +277,8 @@ export default function MapView({
     // eslint-disable-next-line
   }, [minZoom]);
 
-  useEffect(() => {
-    if (tileRef.current) tileRef.current.setUrl(TILE_URLS[basemap] || TILE_URLS.dark);
-  }, [basemap]);
+  // ---------- Fond de carte : raster Esri ou carte marine vectorielle ----------
+  const nauticalActive = useNauticalBasemap({ mapObj, tileRef, basemap });
 
   // ---------- Couches déléguées aux hooks dédiés ----------
   useRouteLayer(mapObj, tRef, t);
@@ -382,6 +380,16 @@ export default function MapView({
   return (
     <div className="w-full h-full relative">
       <div ref={mapRef} data-testid="map-container" className="w-full h-full" />
+      {nauticalActive ? (
+        <div
+          data-testid="nautical-disclaimer"
+          className="absolute z-[1000] bottom-6 left-3 max-w-xs px-3 py-2 text-[11px] leading-snug bg-surface/95 border border-amber-400/50 text-amber-200 rounded-sm shadow-md pointer-events-none"
+        >
+          <span className="font-bold uppercase tracking-wide">{t("seaMapDisclaimerTitle")}</span>
+          {" — "}
+          {t("seaMapDisclaimerBody")}
+        </div>
+      ) : null}
       {typeof setShowReview === "function" ? (
         <button
           type="button"

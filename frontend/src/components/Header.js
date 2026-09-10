@@ -1,5 +1,13 @@
-import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Ship, Sun, Waves } from "lucide-react";
 import RunSelector from "./RunSelector";
+import { nextBasemap } from "./map/basemaps";
+
+// Icône et libellé du PROCHAIN fond de carte (le bouton annonce sa destination).
+const BASEMAP_NEXT_UI = {
+  dark: { Icon: Moon, titleKey: "darkMap" },
+  light: { Icon: Sun, titleKey: "lightMap" },
+  sea: { Icon: Ship, titleKey: "seaMap" },
+};
 
 export default function Header({
   lang, setLang, view, setView, showSettings, setShowSettings,
@@ -133,14 +141,20 @@ export default function Header({
             className={`px-2.5 py-1.5 border-l border-line ${lang === "fr" ? "bg-accent/15 text-accent" : "text-slate-400 hover:bg-raised"}`}
           >FR</button>
         </div>
-        <button
-          data-testid="basemap-toggle-btn"
-          onClick={() => setBasemap(basemap === "dark" ? "light" : "dark")}
-          className="p-2 border border-line rounded-sm text-slate-400 hover:text-slate-200 hover:bg-raised"
-          title={basemap === "dark" ? t("lightMap") : t("darkMap")}
-        >
-          {basemap === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+        {(() => {
+          const next = nextBasemap(basemap);
+          const { Icon, titleKey } = BASEMAP_NEXT_UI[next] || BASEMAP_NEXT_UI.dark;
+          return (
+            <button
+              data-testid="basemap-toggle-btn"
+              onClick={() => setBasemap(next)}
+              className="p-2 border border-line rounded-sm text-slate-400 hover:text-slate-200 hover:bg-raised"
+              title={t(titleKey)}
+            >
+              <Icon size={15} />
+            </button>
+          );
+        })()}
         <button
           data-testid="settings-toggle-btn"
           onClick={() => setShowSettings(!showSettings)}
