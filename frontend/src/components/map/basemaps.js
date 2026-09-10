@@ -43,3 +43,24 @@ export function nextBasemap(current) {
   const idx = BASEMAP_CYCLE.indexOf(current);
   return BASEMAP_CYCLE[(idx + 1) % BASEMAP_CYCLE.length];
 }
+
+/**
+ * Le style Seamap référence une source `elevation` (hillshade Versatiles)
+ * souvent absente : chaque tuile 404 pollue la console sans rien dessiner.
+ * On retire source + couches, le reste du style est inchangé.
+ */
+export const SEAMAP_OPTIONAL_SOURCES = ["elevation"];
+
+export function stripUnavailableSources(style, drop = SEAMAP_OPTIONAL_SOURCES) {
+  if (!style || typeof style !== "object") return style;
+  const skip = new Set(drop);
+  const next = { ...style };
+  if (style.sources) {
+    next.sources = { ...style.sources };
+    skip.forEach((id) => { delete next.sources[id]; });
+  }
+  if (Array.isArray(style.layers)) {
+    next.layers = style.layers.filter((l) => !skip.has(l.source));
+  }
+  return next;
+}

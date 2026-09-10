@@ -6,7 +6,7 @@
  * passer inaperçu en revue.
  */
 import { LEAFLET_BUILTIN_PANES, PANES, createPanes } from "../layerOrder";
-import { BASEMAPS, BASEMAP_CYCLE, nextBasemap } from "../basemaps";
+import { BASEMAPS, BASEMAP_CYCLE, nextBasemap, stripUnavailableSources } from "../basemaps";
 
 describe("ordre des panes (verrouillé)", () => {
   test("la liste exacte des panes ne bouge pas sans casser ce test", () => {
@@ -81,5 +81,20 @@ describe("registre des fonds de carte (verrouillé)", () => {
     expect(nextBasemap("sea")).toBe("dark");
     // valeur inconnue → premier fond du cycle (jamais d'undefined)
     expect(nextBasemap("banana")).toBe("dark");
+  });
+
+  test("stripUnavailableSources retire elevation sans toucher aux autres sources", () => {
+    const style = {
+      sources: { seamap: { type: "vector" }, elevation: { type: "raster-dem" } },
+      layers: [
+        { id: "sea", source: "seamap" },
+        { id: "hill", source: "elevation" },
+      ],
+    };
+    const out = stripUnavailableSources(style);
+    expect(out.sources.elevation).toBeUndefined();
+    expect(out.sources.seamap).toEqual({ type: "vector" });
+    expect(out.layers.map((l) => l.id)).toEqual(["sea"]);
+    expect(style.sources.elevation).toBeDefined();
   });
 });

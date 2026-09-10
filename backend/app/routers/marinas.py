@@ -1,9 +1,11 @@
 """app.routers.marinas — Marinas & mouillages : build (OSM/SHOM), imports/exports,
 enrichissement IA à l'unité et par lot."""
 import asyncio
+import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
@@ -138,7 +140,36 @@ async def _all_marinas(q: dict | None = None, projection: dict | None = None) ->
 # ---------------------------------------------------------------------------
 _MARINAS_FC_CACHE: dict = {"fc": None, "built_at": 0.0}
 _MARINAS_FC_TTL_S = 300.0
+# Persistance locale : un redémarrage du process sert le dernier dump
+# (15 Mo) sans attendre Atlas. Reconstruit ensuite en arrière-plan.
+_MARINAS_FC_DISK = Path(os.environ.get(
+    "MARINAS_FC_CACHE_PATH",
+    str(Path(__file__).resolve().parents[2] / "data" / ".marinas_fc_cache.json"),
+))
 _marinas_fc_task: asyncio.Task | None = None
+
+
+def _load_marinas_fc_disk() -> dict | None:
+    try:
+        if not _MARINAS_FC_DISK.is_file():
+            return None
+        data = json.loads(_MARINAS_FC_DISK.read_text(encoding="utf-8"))
+        feats = data.get("features")
+        if data.get("type") != "FeatureCollection" or not isinstance(feats, list):
+            return None
+        return data
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
+def _write_marinas_fc_disk(fc: dict) -> None:
+    try:
+        _MARINAS_FC_DISK.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _MARINAS_FC_DISK.with_name(_MARINAS_FC_DISK.name + ".tmp")
+        tmp.write_text(json.dumps(fc, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(_MARINAS_FC_DISK)
+    except OSError as exc:
+        print(f"[marinas] écriture cache disque échouée : {exc}")
 
 
 async def _rebuild_marinas_fc() -> dict:
@@ -146,6 +177,7 @@ async def _rebuild_marinas_fc() -> dict:
     fc = marinas_to_slim_geojson(docs)
     _MARINAS_FC_CACHE["fc"] = fc
     _MARINAS_FC_CACHE["built_at"] = time.monotonic()
+    await asyncio.to_thread(_write_marinas_fc_disk, fc)
     return fc
 
 
@@ -180,7 +212,19 @@ def mark_marinas_fc_stale() -> None:
 
 
 def start_marinas_fc_warmup() -> None:
-    """Préchauffage au démarrage du serveur (appelé par app.main)."""
+    """Préchauffage au démarrage du serveur (appelé par app.main).
+
+    Charge d'abord le dernier dump écrit sur disque (réponse immédiate),
+    puis relit Mongo en arrière-plan.
+    """
+    if _MARINAS_FC_CACHE["fc"] is None:
+        disk = _load_marinas_fc_disk()
+        if disk is not None:
+            _MARINAS_FC_CACHE["fc"] = disk
+            # 0 = considéré périmé : une reconstruction Mongo part tout de suite.
+            _MARINAS_FC_CACHE["built_at"] = 0.0
+            n = len(disk.get("features") or [])
+            print(f"[marinas] cache disque chargé ({n} fiches)")
     _schedule_marinas_fc_refresh()
 
 

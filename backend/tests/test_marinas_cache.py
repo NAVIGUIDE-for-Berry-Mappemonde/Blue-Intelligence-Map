@@ -8,14 +8,22 @@ et une invalidation qui ne casse jamais un contexte sans boucle asyncio.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
 from app.routers import marinas as marinas_router
+
+
+@pytest.fixture(autouse=True)
+def _isolate_disk_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(marinas_router, "_MARINAS_FC_DISK", tmp_path / "marinas.json")
 
 
 def _fake_docs(tag: str, n: int = 2) -> list[dict]:
@@ -94,3 +102,41 @@ def test_mark_stale_sans_boucle_asyncio_ne_leve_pas(monkeypatch):
                  built_at=time.monotonic())
     marinas_router.mark_marinas_fc_stale()  # hors event loop : ne doit pas lever
     assert marinas_router._MARINAS_FC_CACHE["built_at"] == 0.0
+
+
+def test_warmup_sert_le_disque_sans_attendre_mongo(monkeypatch, tmp_path):
+    disk_fc = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {"name": "Disque"}}],
+    }
+    (tmp_path / "marinas.json").write_text(json.dumps(disk_fc), encoding="utf-8")
+    calls = {"n": 0}
+
+    async def fake_all(q=None, projection=None):
+        calls["n"] += 1
+        await asyncio.sleep(0.05)
+        return _fake_docs("mongo")
+
+    monkeypatch.setattr(marinas_router, "_all_marinas", fake_all)
+    _reset_cache(monkeypatch)
+
+    async def scenario():
+        marinas_router.start_marinas_fc_warmup()
+        served = await marinas_router.list_marinas()
+        await marinas_router._marinas_fc_task
+        return served
+
+    served = asyncio.run(scenario())
+    assert served["features"][0]["properties"]["name"] == "Disque"
+    assert calls["n"] == 1, "Mongo part en arrière-plan au warmup"
+
+
+def test_rebuild_ecrit_le_cache_disque(monkeypatch, tmp_path):
+    calls = {"n": 0}
+    monkeypatch.setattr(marinas_router, "_all_marinas", _fake_all(calls))
+    _reset_cache(monkeypatch)
+
+    asyncio.run(marinas_router.list_marinas())
+    saved = json.loads((tmp_path / "marinas.json").read_text(encoding="utf-8"))
+    assert len(saved["features"]) == 2
+    assert saved["features"][0]["properties"]["name"] == "Marina a0"

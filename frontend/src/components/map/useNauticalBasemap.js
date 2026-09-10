@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 
-import { BASEMAPS } from "./basemaps";
+import { BASEMAPS, stripUnavailableSources } from "./basemaps";
 
 /**
  * Charge MapLibre GL + le protocole pmtiles:// une seule fois, à la demande
@@ -33,6 +33,41 @@ function loadGl() {
   return glLoader;
 }
 
+let seaStyleLoader = null;
+function loadSeaStyle(styleUrl) {
+  if (!seaStyleLoader) {
+    seaStyleLoader = fetch(styleUrl)
+      .then((r) => {
+        if (!r.ok) throw new Error(`style ${r.status}`);
+        return r.json();
+      })
+      .then((style) => stripUnavailableSources(style))
+      .catch((err) => {
+        seaStyleLoader = null;
+        throw err;
+      });
+  }
+  return seaStyleLoader;
+}
+
+function restoreRaster(map, tileRef) {
+  if (!map || !tileRef.current) return;
+  if (!map.hasLayer(tileRef.current)) tileRef.current.addTo(map);
+}
+
+function dropGlLayer(map, glRef) {
+  if (!glRef.current) return;
+  try {
+    if (map && map.hasLayer(glRef.current)) map.removeLayer(glRef.current);
+  } catch (_) { /* couche déjà détruite */ }
+  glRef.current = null;
+}
+
+function isWebGlFailure(err) {
+  const msg = String(err?.message || err || "");
+  return /WebGL|GPUInitialization|Failed to initialize/i.test(msg);
+}
+
 /**
  * Bascule fond raster (Esri) ↔ carte marine vectorielle (Open Waters: Seamap).
  * Retourne `true` quand la carte marine est affichée — l'appelant montre alors
@@ -57,13 +92,16 @@ export default function useNauticalBasemap({ mapObj, tileRef, basemap }) {
     let cancelled = false;
 
     if (conf.kind === "gl") {
-      loadGl()
-        .then(() => {
+      Promise.all([
+        loadGl(),
+        loadSeaStyle(conf.styleUrl).catch(() => conf.styleUrl),
+      ])
+        .then(([, style]) => {
           if (cancelled || !mapObj.current) return;
           const m = mapObj.current;
           if (!glRef.current) {
             glRef.current = L.maplibreGL({
-              style: conf.styleUrl,
+              style,
               pane: "basemap-gl",
               attribution: conf.attribution,
             });
@@ -71,22 +109,41 @@ export default function useNauticalBasemap({ mapObj, tileRef, basemap }) {
           if (tileRef.current && m.hasLayer(tileRef.current)) {
             m.removeLayer(tileRef.current);
           }
-          if (!m.hasLayer(glRef.current)) glRef.current.addTo(m);
-          setNauticalActive(true);
+          try {
+            if (!m.hasLayer(glRef.current)) glRef.current.addTo(m);
+          } catch (err) {
+            dropGlLayer(m, glRef);
+            restoreRaster(m, tileRef);
+            throw err;
+          }
+          const glMap = glRef.current.getMaplibreMap?.() || glRef.current._glMap;
+          if (glMap && typeof glMap.on === "function") {
+            glMap.once("load", () => {
+              if (!cancelled) setNauticalActive(true);
+            });
+            glMap.on("error", (ev) => {
+              const err = ev?.error || ev;
+              if (!isWebGlFailure(err)) return;
+              console.error("[carte marine] chargement impossible :", err);
+              dropGlLayer(m, glRef);
+              restoreRaster(m, tileRef);
+              setNauticalActive(false);
+            });
+          } else {
+            setNauticalActive(true);
+          }
         })
         .catch((err) => {
-          // maplibre indisponible (offline…) : on reste sur le raster courant.
+          // maplibre indisponible (offline, WebGL absent…) : raster courant.
           console.error("[carte marine] chargement impossible :", err);
+          dropGlLayer(mapObj.current, glRef);
+          restoreRaster(mapObj.current, tileRef);
           setNauticalActive(false);
         });
     } else {
-      if (glRef.current && map.hasLayer(glRef.current)) {
-        map.removeLayer(glRef.current);
-      }
-      if (tileRef.current) {
-        tileRef.current.setUrl(conf.url);
-        if (!map.hasLayer(tileRef.current)) tileRef.current.addTo(map);
-      }
+      dropGlLayer(map, glRef);
+      restoreRaster(map, tileRef);
+      if (tileRef.current) tileRef.current.setUrl(conf.url);
       setNauticalActive(false);
     }
     return () => { cancelled = true; };
