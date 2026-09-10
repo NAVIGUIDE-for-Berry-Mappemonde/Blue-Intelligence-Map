@@ -92,6 +92,14 @@ class SettingsBody(BaseModel):
     anthropic_api_key: str | None = None
     claude_budget_usd: float | None = None
 
+@router.get("/admin/check")
+async def admin_check():
+    """Valide la clé admin : le middleware `_admin_gate` renvoie 401 avant
+    d'arriver ici si ADMIN_KEY est définie et que le header est absent/faux."""
+    return {"ok": True,
+            "admin_required": bool(os.environ.get("ADMIN_KEY", "").strip())}
+
+
 @router.get("/settings")
 async def read_settings():
     s = await get_settings()
@@ -301,13 +309,14 @@ async def manual(lang: str = "en"):
 
 @router.get("/export/route.geojson")
 async def export_route():
+    from app.core.export_meta import export_response
     if not ROUTE_FILE.exists():
         raise HTTPException(404, "route.geojson not found")
     import json as _json
     data = _json.loads(ROUTE_FILE.read_text(encoding="utf-8"))
-    return JSONResponse(
-        data,
-        headers={"Content-Disposition": "attachment; filename=route.geojson"},
+    return export_response(
+        data, "route", "route.geojson",
+        license_note="Naviguide — Berry-Mappemonde (route officielle)",
     )
 
 @router.get("/route")

@@ -3,6 +3,7 @@ build/
 dist/
 coverage/
 .venv/
+venv/
 __pycache__/
 *.pyc
 .DS_Store
@@ -10,6 +11,11 @@ __pycache__/
 
 # Caches runtime du backend
 backend/data/.tld_cache/
+# Snapshots datés des exports (archives locales, jamais commitées)
+backend/exports/
+# Dump GeoJSON marinas mis en cache (15 Mo, régénéré au runtime)
+backend/data/.marinas_fc_cache.json
+backend/data/.marinas_fc_cache.json.tmp
 # CSV brut NGA Pub 150 (snapshot slim = backend/data/wpi_ports.json)
 UpdatedPub150.csv
 **/UpdatedPub150.csv

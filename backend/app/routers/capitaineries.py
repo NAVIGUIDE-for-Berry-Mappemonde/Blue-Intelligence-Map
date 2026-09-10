@@ -122,11 +122,13 @@ async def list_capitaineries(source: str | None = None, visible: bool = False,
 
 @router.get("/export/capitaineries.geojson")
 async def export_capitaineries():
+    from app.core.export_meta import export_response
     docs = await _all_docs({})
     fc = to_slim_geojson(docs)
-    return JSONResponse(
-        fc,
-        headers={"Content-Disposition": "attachment; filename=capitaineries.geojson"},
+    return export_response(
+        fc, "capitaineries", "capitaineries.geojson",
+        license_note=("© OpenStreetMap contributors (ODbL) · SHOM INFORMATIONS_PORTUAIRES "
+                      "(Licence Ouverte Etalab) · NOAA ENC Direct to GIS"),
     )
 
 

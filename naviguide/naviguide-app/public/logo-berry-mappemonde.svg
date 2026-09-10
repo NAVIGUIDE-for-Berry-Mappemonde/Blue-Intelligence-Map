@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 52">
+  <!-- Globe icon (left side) -->
+  <circle cx="26" cy="26" r="22" fill="#0f172a" stroke="#3b82f6" stroke-width="2"/>
+  <!-- Equator -->
+  <ellipse cx="26" cy="26" rx="22" ry="9" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity="0.55"/>
+  <!-- Horizontal axis -->
+  <line x1="4" y1="26" x2="48" y2="26" stroke="#3b82f6" stroke-width="1.5" opacity="0.55"/>
+  <!-- Meridian -->
+  <ellipse cx="26" cy="26" rx="10" ry="22" fill="none" stroke="#60a5fa" stroke-width="1" opacity="0.35"/>
+  <!-- Polar dots -->
+  <circle cx="26" cy="4"  r="1.5" fill="#60a5fa" opacity="0.6"/>
+  <circle cx="26" cy="48" r="1.5" fill="#60a5fa" opacity="0.6"/>
+
+  <!-- Text (right side) -->
+  <text x="84" y="23" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="bold" fill="#93c5fd" letter-spacing="0.5">BERRY</text>
+  <text x="84" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="8" fill="#64748b" letter-spacing="1">MAPPEMONDE</text>
+</svg>

@@ -462,8 +462,10 @@ async def poe_ports(mrgid: int | None = None, country: str | None = None,
 
 @router.get("/export/poe.geojson")
 async def export_poe_geojson():
+    from app.core.export_meta import export_response
     docs = await _db.poe_ports.find({}).to_list(10000)
-    return JSONResponse(
-        poe.ports_to_geojson(docs),
-        headers={"Content-Disposition": "attachment; filename=ports_of_entry.geojson"},
+    return export_response(
+        poe.ports_to_geojson(docs), "poe", "ports_of_entry.geojson",
+        license_note=("Extraction Blue Intelligence de sources gouvernementales — "
+                      "chaque port cite sa source ; statuts à vérifier avant escale"),
     )

@@ -1,0 +1,97 @@
+name: Build hebdo des données
+
+# Reconstruction hebdomadaire automatisée (inspiration Open Waters: Seamap,
+# qui reconstruit sa carte planétaire chaque lundi 03:00 UTC) : on archive
+# chaque semaine les sept exports GeoJSON de l'API de production, on audite la
+# couverture des champs, on construit une archive PMTiles overlay (tippecanoe),
+# puis on publie le tout dans une RELEASE DATÉE IMMUABLE `data-<AAAA-MM-JJ>` —
+# `gh release create` échoue si le tag existe déjà : l'immuabilité est
+# structurelle, pas une convention.
+#
+# Aucun secret requis : l'API est publique, GITHUB_TOKEN publie la release.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # lundis 05:00 UTC — après le build planète seamap (03:00)
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "URL de l'API Blue Intelligence à archiver"
+        default: "https://blueintelligence.online"
+
+permissions:
+  contents: write
+
+env:
+  BASE_URL: ${{ inputs.base_url || 'https://blueintelligence.online' }}
+
+concurrency:
+  group: weekly-data-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Date du build
+        run: echo "STAMP=$(date -u +%F)" >> "$GITHUB_ENV"
+
+      - name: Télécharger les sept exports GeoJSON
+        run: |
+          mkdir -p dist
+          set -euo pipefail
+          while read -r endpoint filename; do
+            echo "→ $endpoint"
+            curl -fsSL --retry 4 --retry-delay 5 --max-time 600 \
+              "$BASE_URL/api/export/$endpoint" -o "dist/$filename"
+            python3 -c "import json,sys; fc=json.load(open('dist/$filename')); print('  ', '$filename', len(fc.get('features',[])), 'features, version', (fc.get('metadata') or {}).get('version'))"
+          done <<'EOF'
+          geojson projects.geojson
+          marinas.geojson marinas.geojson
+          anchorages.geojson anchorages.geojson
+          capitaineries.geojson capitaineries.geojson
+          amp.geojson amp.geojson
+          poe.geojson ports_of_entry.geojson
+          route.geojson route.geojson
+          EOF
+
+      - name: Audit des tags (couverture des exports)
+        run: |
+          python3 scripts/audit_tags.py --geojson dist/*.geojson \
+            --out "dist/audit-tags-$STAMP.md"
+
+      - name: Installer tippecanoe (épinglé)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libsqlite3-dev zlib1g-dev
+          git clone --depth 1 --branch 2.79.0 https://github.com/felt/tippecanoe /tmp/tippecanoe
+          make -C /tmp/tippecanoe -j"$(nproc)"
+          sudo make -C /tmp/tippecanoe install
+          tippecanoe --version
+
+      - name: Construire l'archive PMTiles overlay
+        run: |
+          tippecanoe -o "dist/blue-intelligence-$STAMP.pmtiles" --force \
+            -zg --drop-densest-as-needed --coalesce-densest-as-needed \
+            --name "Blue Intelligence $STAMP" \
+            --attribution "© Blue Intelligence — données © OpenStreetMap contributors (ODbL) et sources citées par jeu" \
+            -L projects:dist/projects.geojson \
+            -L marinas:dist/marinas.geojson \
+            -L anchorages:dist/anchorages.geojson \
+            -L capitaineries:dist/capitaineries.geojson \
+            -L amp:dist/amp.geojson \
+            -L poe:dist/ports_of_entry.geojson \
+            -L route:dist/route.geojson
+
+      - name: Sommes de contrôle
+        run: cd dist && sha256sum -- * > "SHA256SUMS-$STAMP.txt"
+
+      - name: Publier la release datée immuable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "data-$STAMP" dist/* \
+            --title "Données $STAMP" \
+            --notes "Archive hebdomadaire immuable des exports Blue Intelligence (GeoJSON versionnés + PMTiles overlay + audit des tags). Source : $BASE_URL. Ne convient pas à la navigation — vérifier les sources officielles."

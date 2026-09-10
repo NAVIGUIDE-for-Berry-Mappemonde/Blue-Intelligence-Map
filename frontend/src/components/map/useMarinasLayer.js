@@ -60,12 +60,30 @@ export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarker
           const placeBadge = hasPlace
             ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid #ff4a4a55;padding:2px 6px;border-radius:2px;">${esc(t("marinasGooglePlace"))}</span>`
             : "";
+          // Badges services (inspiration UX seamap) : la COULEUR répond à une
+          // question du plaisancier, l'infobulle liste les tags OSM qui l'attestent.
+          const svc = p.svc || {};
+          const SVC_UI = [
+            ["berth", "#38bdf8", t("marinasSvcBerth")],
+            ["supply", "#fbbf24", t("marinasSvcSupply")],
+            ["tech", "#c084fc", t("marinasSvcTech")],
+            ["shore", "#34d399", t("marinasSvcShore")],
+          ];
+          const svcBadges = SVC_UI
+            .filter(([q]) => Array.isArray(svc[q]) && svc[q].length)
+            .map(([q, color, label]) =>
+              `<span title="${esc(svc[q].join(", "))}" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${color};border:1px solid ${color}55;background:${color}14;padding:2px 6px;border-radius:2px;cursor:help;">${esc(label)}</span>`)
+            .join("");
+          const svcRow = svcBadges
+            ? `<div data-testid="marina-svc-badges" style="margin:6px 0 0;display:flex;gap:5px;flex-wrap:wrap;">${svcBadges}</div>`
+            : "";
           return `<div style="min-width:220px;max-width:300px;">
             <div style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:13px;color:#fff;line-height:1.3;">${esc(displayName)}</div>
             <div style="margin:6px 0;display:flex;gap:5px;flex-wrap:wrap;">
               <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${esc(t("marinasSourceOSM"))}</span>
               ${placeBadge}
             </div>
+            ${svcRow}
             ${siteRow}
             ${depthRowHtml(lat, lon, t)}
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">

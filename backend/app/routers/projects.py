@@ -75,9 +75,13 @@ async def clear_projects():
 
 @router.get("/export/geojson")
 async def export_geojson():
+    from app.core.export_meta import export_response
     docs = await db.projects.find({}).to_list(20000)
     fc = {"type": "FeatureCollection", "features": [project_to_feature(p) for p in docs]}
-    return JSONResponse(fc, headers={"Content-Disposition": "attachment; filename=blue_intelligence_projects.geojson"})
+    return export_response(
+        fc, "projects", "blue_intelligence_projects.geojson",
+        license_note="Extraction automatique de sources publiques (fondations) — vérifier la source de chaque fiche",
+    )
 
 @router.post("/import/geojson")
 async def import_geojson(fc: dict = Body(...)):

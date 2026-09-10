@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import quote_plus
@@ -246,31 +247,120 @@ def official_website(doc: dict) -> str | None:
     return osm_website_from_tags(doc.get("tags") or {})
 
 
+# ------------------------------------------------------------------------
+# Badges services — inspiration UX Open Waters: Seamap (« poi badges ») :
+# la couleur du badge répond à une question du plaisancier (puis-je m'amarrer ?
+# m'avitailler ? sortir le bateau ? trouver des services à terre ?), le détail
+# vient des tags OSM conservés par kept_tags(). Aucune invention : un badge
+# n'apparaît que si au moins un tag l'atteste.
+# ------------------------------------------------------------------------
+
+_FALSY_TAG_VALUES = frozenset({"no", "none", "0", "false"})
+
+# tag conservé → question (berth / supply / tech / shore)
+SERVICE_TAG_QUESTIONS = {
+    "mooring": "berth",
+    "capacity": "berth",
+    "seamark:harbour:capacity": "berth",
+    "max_depth": "berth",
+    "depth": "berth",
+    "seamark:harbour:draught": "berth",
+    "fuel": "supply",
+    "drinking_water": "supply",
+    "electricity": "supply",
+    "shop": "supply",
+    "pumpout": "tech",
+    "sanitary_dump_station": "tech",
+    "waste_disposal": "tech",
+    "shower": "shore",
+    "toilets": "shore",
+    "restaurant": "shore",
+    "wifi": "shore",
+    "internet_access": "shore",
+    "wheelchair": "shore",
+}
+
+# valeurs de seamark:small_craft_facility:category → question
+_SCF_QUESTIONS = {
+    "visitor_berth": "berth", "visitors_berth": "berth", "berth": "berth",
+    "fuel_station": "supply", "fuel": "supply", "chandler": "supply",
+    "water_tap": "supply", "electricity": "supply", "provisions": "supply",
+    "slipway": "tech", "boat_hoist": "tech", "crane": "tech",
+    "boatyard": "tech", "pump_out": "tech", "sewerage": "tech",
+    "toilets": "shore", "showers": "shore", "shower": "shore",
+    "laundrette": "shore", "laundry": "shore", "refuse_bin": "shore",
+}
+
+_SCF_KEY_RE = re.compile(r"^seamark:small_craft_facility(?::\d+)?:category$")
+
+SERVICE_QUESTIONS = ("berth", "supply", "tech", "shore")
+_MAX_EVIDENCE_PER_QUESTION = 6
+
+
+def marina_services(tags: dict | None) -> dict[str, list[str]]:
+    """Résume les tags OSM en quatre questions : berth / supply / tech / shore.
+
+    Retourne ``question → preuves « clé=valeur »`` (6 max par question) ;
+    les questions sans preuve sont omises. Un tag à valeur négative
+    (``no``/``none``/``0``) ne compte jamais.
+    """
+    tags = tags or {}
+    out: dict[str, list[str]] = {}
+
+    def add(question: str, key: str, value: str) -> None:
+        bucket = out.setdefault(question, [])
+        if len(bucket) >= _MAX_EVIDENCE_PER_QUESTION:
+            return
+        evidence = f"{key}={value[:40]}"
+        if evidence not in bucket:
+            bucket.append(evidence)
+
+    for key, raw in tags.items():
+        value = str(raw or "").strip()
+        if not value or value.lower() in _FALSY_TAG_VALUES:
+            continue
+        question = SERVICE_TAG_QUESTIONS.get(key)
+        if question:
+            add(question, key, value)
+            continue
+        if _SCF_KEY_RE.match(key):
+            for part in re.split(r"[;,]", value):
+                cat = part.strip().lower()
+                q = _SCF_QUESTIONS.get(cat)
+                if q:
+                    add(q, key, cat)
+    return {q: out[q] for q in SERVICE_QUESTIONS if q in out}
+
+
 def slim_feature(doc: dict) -> dict:
     lat = float(doc["lat"])
     lon = float(doc["lon"])
     name = doc.get("name") or ""
     website = official_website(doc)
+    props = {
+        "id": doc.get("_id"),
+        "name": name,
+        "osm_id": doc.get("osm_id"),
+        "source": doc.get("source") or "openstreetmap",
+        "website": website,
+        "website_status": doc.get("website_status"),
+        "website_source": doc.get("website_source"),
+        "image": doc.get("image"),
+        "maps_url": google_maps_url(name, lat, lon),
+        "maps_place_url": doc.get("maps_place_url") or None,
+        "has_google_place": bool(
+            doc.get("maps_place_url")
+            and "/maps/place/" in str(doc.get("maps_place_url"))
+        ),
+        "fetched_at": doc.get("fetched_at"),
+    }
+    svc = marina_services(doc.get("tags"))
+    if svc:
+        props["svc"] = svc
     return {
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [lon, lat]},
-        "properties": {
-            "id": doc.get("_id"),
-            "name": name,
-            "osm_id": doc.get("osm_id"),
-            "source": doc.get("source") or "openstreetmap",
-            "website": website,
-            "website_status": doc.get("website_status"),
-            "website_source": doc.get("website_source"),
-            "image": doc.get("image"),
-            "maps_url": google_maps_url(name, lat, lon),
-            "maps_place_url": doc.get("maps_place_url") or None,
-            "has_google_place": bool(
-                doc.get("maps_place_url")
-                and "/maps/place/" in str(doc.get("maps_place_url"))
-            ),
-            "fetched_at": doc.get("fetched_at"),
-        },
+        "properties": props,
     }
 
 

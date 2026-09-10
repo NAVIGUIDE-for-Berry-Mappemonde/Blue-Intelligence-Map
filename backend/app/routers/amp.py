@@ -30,9 +30,9 @@ class DiscoverBody(BaseModel):
     rules: dict | None = None
 
 
-def _parse_bbox(raw: str):
+def _parse_bbox(raw: str, **caps):
     try:
-        return amp_svc.parse_bbox(raw)
+        return amp_svc.parse_bbox(raw, **caps)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -43,11 +43,30 @@ async def list_amp(bbox: str = "", force: bool = False, visible: bool = False,
     """Polygones AMP dans la bbox (minx,miny,maxx,maxy, WGS84)."""
     if not bbox:
         raise HTTPException(400, "bbox required (minx,miny,maxx,maxy)")
-    box = _parse_bbox(bbox)
+    # Caps monde entier : la vue dézoomée est servie depuis le cache local,
+    # seul le rafraîchissement ProtectedSeas garde la limite stricte.
+    box = _parse_bbox(bbox, max_w=360.0, max_h=180.0)
     max_span = float(catalog_default("amp.bbox_max_deg", 8))
-    if amp_svc.bbox_span_deg(box) > max_span:
-        return amp_svc.to_feature_collection(
-            [], extra={"hint": "zoom", "source": "span", "truncated": False})
+    span = amp_svc.bbox_span_deg(box)
+    if span > max_span:
+        # Vue dézoomée : on sert les sites déjà en cache local (aucun appel
+        # ProtectedSeas). Au-delà de 60° un polygone bbox dépasse l'hémisphère
+        # que Mongo accepte pour $geoIntersects → on liste tout le cache.
+        if span >= 60:
+            docs = await db.amp_sites.find({}).limit(400).to_list(400)
+        else:
+            docs = await amp_svc.query_cache(db, box, limit=400)
+        if visible or review:
+            from app.services.review_gold import filter_visible
+            docs = await filter_visible(
+                db, "amp", docs,
+                lambda d: d.get("site_id") or d.get("_id"))
+        return amp_svc.to_feature_collection(docs, extra={
+            "hint": "zoom" if not docs else None,
+            "source": "cache",
+            "truncated": len(docs) >= 400,
+            "fetched": 0,
+        })
     docs, meta = await amp_svc.sites_in_bbox(db, box, force=force)
     if visible or review:
         from app.services.review_gold import filter_visible
@@ -242,8 +261,13 @@ async def amp_run_geojson(run_id: str):
 
 @router.get("/export/amp.geojson")
 async def export_amp_geojson():
+    from app.core.export_meta import export_response
     docs = await db.amp_sites.find({}, amp_svc.SLIM_PROJECTION).to_list(20000)
-    return amp_svc.to_feature_collection(docs, geometry=False, extra={
+    fc = amp_svc.to_feature_collection(docs, geometry=False, extra={
         "name": "amp_sites",
         "note": "centroids + manager_url / visit_url — not official boundaries",
     })
+    return export_response(
+        fc, "amp", "amp.geojson",
+        license_note="ProtectedSeas Navigator — centroïdes et métadonnées, pas les limites officielles",
+    )

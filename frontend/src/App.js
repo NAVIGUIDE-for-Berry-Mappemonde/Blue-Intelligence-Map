@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import api from "./api";
+import api, { clearAdminKey, hasAdminKey } from "./api";
 import { makeT } from "./i18n";
 import Header from "./components/Header";
 import SwarmPanel from "./components/SwarmPanel";
@@ -28,6 +28,17 @@ const readInitialMode = () => {
 export default function App() {
   const [lang, setLang] = useState("en");
   const [view, setView] = useState("map");
+  // Mode admin — Console et Review ne sont visibles qu'après validation de la
+  // clé (?admin=<clé> dans l'URL, mémorisée par api.js) par le backend.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!hasAdminKey()) return;
+    api.get("/admin/check")
+      .then(() => setIsAdmin(true))
+      .catch((e) => {
+        if (e?.response?.status === 401) clearAdminKey();
+      });
+  }, []);
   const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp' | 'science'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
@@ -100,6 +111,11 @@ export default function App() {
   const viewRef = useRef(view);
   viewRef.current = view;
 
+  // Sans droits admin, les vues Console (audit) et Review sont inaccessibles.
+  useEffect(() => {
+    if (!isAdmin && (view === "audit" || view === "review")) setView("map");
+  }, [isAdmin, view]);
+
   // Persist mode + reflect on <html> for CSS var switching
   const setMode = useCallback((m) => {
     setModeRaw(m);
@@ -152,12 +168,21 @@ export default function App() {
     } catch (e) { /* transient */ }
   }, []);
 
-  const fetchMarinas = useCallback(async () => {
+  const marinasRef = useRef(marinas);
+  marinasRef.current = marinas;
+
+  const fetchMarinas = useCallback(async (force = false) => {
     try {
       const run = mapRunsRef.current.marinas;
+      if (!force && !run?.id && !showReview
+          && (marinasRef.current?.features?.length || 0) > 1000) {
+        return;
+      }
+      // Dump mondial (~32 000 features) : sur un Mongo distant lent, la
+      // requête peut dépasser les 120 s du timeout axios par défaut.
       const { data } = run?.id
-        ? await api.get(`/marinas/runs/${run.id}/geojson`)
-        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {} });
+        ? await api.get(`/marinas/runs/${run.id}/geojson`, { timeout: 300000 })
+        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {}, timeout: 300000 });
       setMarinas(data);
     } catch (e) { /* transient */ }
   }, [showReview]);
@@ -209,7 +234,7 @@ export default function App() {
 
   const refreshMapData = useCallback(() => {
     fetchProjects(true);
-    fetchMarinas();
+    fetchMarinas(true);
     fetchCapitaineries();
     fetchPoeZones();
     fetchPoePorts();
@@ -253,7 +278,7 @@ export default function App() {
         await pollUntilDone(
           `/marinas/${marinaId}/enrich/status`,
           async (data) => {
-            await fetchMarinas();
+            await fetchMarinas(true);
             const m = data.result || {};
             setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
           },
@@ -268,7 +293,7 @@ export default function App() {
           await pollUntilDone(
             `/marinas/${marinaId}/enrich/status`,
             async (data) => {
-              await fetchMarinas();
+              await fetchMarinas(true);
               const m = data.result || {};
               setFlyToMarina({ id: marinaId, lat: m.lat, lon: m.lon, ts: Date.now() });
             },
@@ -334,19 +359,24 @@ export default function App() {
     fetchStatus();
     fetchProjects();
     fetchSettings();
-    fetchCategories();
     fetchMarinas();
-    fetchCapitaineries();
-    fetchAnchorages();
     fetchScience();
-    fetchPoeZones();
-    fetchPoePorts();
+    // Les 6 connexions HTTP/1.1 de Chrome vers cette origine saturent si
+    // on lance tous les dumps en parallèle (marinas ~15 Mo + chunks maplibre).
+    const later = setTimeout(() => {
+      fetchCategories();
+      fetchCapitaineries();
+      fetchAnchorages();
+      fetchPoeZones();
+      fetchPoePorts();
+    }, 2500);
     const unlessReview = (fn) => () => {
       if (viewRef.current === "review") return;
       fn();
     };
     const fetchMarinasIfIdle = async () => {
       if (viewRef.current === "review") return;
+      if ((marinasRef.current?.features?.length || 0) > 1000) return;
       try {
         const { data } = await api.get("/marinas/build/status", { timeout: 5000 });
         if (data?.running) return;
@@ -368,7 +398,11 @@ export default function App() {
     const sci = setInterval(unlessReview(fetchScience), 60000);
     const z = setInterval(unlessReview(fetchPoeZones), 12000);
     const pp = setInterval(unlessReview(fetchPoePorts), 12000);
-    return () => { clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m); clearInterval(cap); clearInterval(a); clearInterval(sci); clearInterval(z); clearInterval(pp); };
+    return () => {
+      clearTimeout(later);
+      clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m);
+      clearInterval(cap); clearInterval(a); clearInterval(sci); clearInterval(z); clearInterval(pp);
+    };
   }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchScience, fetchPoeZones, fetchPoePorts]);
 
   // Sélection d'un run à afficher (null = carte live) pour le mode courant.
@@ -379,7 +413,7 @@ export default function App() {
   // Changement de run sélectionné => re-fetch immédiat des datasets carte.
   useEffect(() => {
     fetchProjects(true);
-    fetchMarinas();
+    fetchMarinas(true);
     fetchCapitaineries();
     fetchPoePorts();
   }, [mapRuns, fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoePorts]);
@@ -440,6 +474,7 @@ export default function App() {
         mode={mode} setMode={setMode}
         mapRun={mapRuns[mode] || null}
         onSelectMapRun={handleSelectMapRun}
+        isAdmin={isAdmin}
       />
       <div className="flex flex-1 min-h-0">
         {view !== "review" && mode === "projects" && (
@@ -545,12 +580,13 @@ export default function App() {
         </main>
           {showSettings && (
           <SettingsPanel t={t} lang={lang} mode={mode} settings={settings}
+            isAdmin={isAdmin}
             onSaved={fetchSettings}
             // 2026-08-24 bug-fix — import router-callback receives the mode
             // that was actually imported so we only refresh the affected
             // dataset (never both, to avoid unnecessary re-fetches).
             onImported={(importedMode) => {
-              if (importedMode === "marinas") fetchMarinas();
+              if (importedMode === "marinas") fetchMarinas(true);
               else if (importedMode === "capitaineries") fetchCapitaineries();
               else if (importedMode === "science") fetchScience();
               else fetchProjects(true);

@@ -1,0 +1,38 @@
+# Dependencies
+naviguide-app/node_modules/
+naviguide-api/node_modules/
+naviguide-api/__pycache__/
+naviguide-api/*.pyc
+naviguide-api/.venv/
+naviguide-api/venv/
+venv/
+
+# Build outputs
+naviguide-app/dist/
+
+# Logs
+logs/
+naviguide-api/logs/
+*.log
+
+# Env files
+.env
+naviguide-app/.env.local
+naviguide-api/.env
+
+# OS
+.DS_Store
+Thumbs.db
+naviguide-app/.vite/
+naviguide_workspace/.env
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Polar data (runtime)
+naviguide_workspace/polar_data/
+
+# Vite build output
+naviguide-app/dist/

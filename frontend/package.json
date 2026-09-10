@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "axios": "^1.7.9",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^0.507.0",
+    "maplibre-gl": "^6.9.0",
+    "pmtiles": "^4.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-scripts": "5.0.1"
@@ -18,7 +21,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "test": "react-scripts test --watchAll=false"
   },
   "browserslist": {
     "production": [
