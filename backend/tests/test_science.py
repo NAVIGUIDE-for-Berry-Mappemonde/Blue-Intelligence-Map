@@ -18,7 +18,10 @@ class _FakeColl:
 
     def _match_one(self, doc, q):
         for k, v in (q or {}).items():
-            if doc.get(k) != v:
+            if isinstance(v, dict) and "$in" in v:
+                if doc.get(k) not in v["$in"]:
+                    return False
+            elif doc.get(k) != v:
                 return False
         return True
 
@@ -220,6 +223,39 @@ def test_upsert_science_non_destructive():
         assert coll.docs[0]["name"] == "Titre révisé"
         assert coll.docs[0]["fetched_at"] == "2026-09-10T01:00:00Z"
         assert coll.docs[0]["schema"] == sb.SCHEMA
+    asyncio.run(run())
+
+
+def test_upsert_merges_sextant_odatis_twins():
+    """Même uuid GeoNetwork via Sextant puis ODATIS → une seule fiche.
+
+    ODATIS est un sous-portail de Sextant : la fiche commune garde l'identité
+    (_id, source, url) du portail moissonné en premier, mais son contenu est
+    bien rafraîchi.
+    """
+    async def run():
+        coll = _FakeColl()
+        sx = sb.dataset_from_gn_hit(_gn_hit(), "sextant")
+        od = sb.dataset_from_gn_hit(_gn_hit(), "odatis")
+        assert sx["native_id"] == od["native_id"]
+
+        assert await sb.upsert_science(coll, sx, "2026-09-10T00:00:00Z") == "inserted"
+        assert await sb.upsert_science(coll, {**od, "name": "Titre ODATIS"},
+                                       "2026-09-10T01:00:00Z") == "updated"
+        assert len(coll.docs) == 1
+        kept = coll.docs[0]
+        assert kept["_id"] == "sextant:abc-123"
+        assert kept["source"] == "sextant"
+        assert kept["url"] == sx["url"]           # lien portail d'origine conservé
+        assert kept["name"] == "Titre ODATIS"     # contenu rafraîchi
+        assert kept["fetched_at"] == "2026-09-10T01:00:00Z"
+
+        # L'ordre inverse fonctionne aussi (base vide, ODATIS seul coché).
+        coll2 = _FakeColl()
+        assert await sb.upsert_science(coll2, od, "2026-09-10T00:00:00Z") == "inserted"
+        assert await sb.upsert_science(coll2, sx, "2026-09-10T01:00:00Z") == "updated"
+        assert len(coll2.docs) == 1
+        assert coll2.docs[0]["_id"] == "odatis:abc-123"
     asyncio.run(run())
 
 

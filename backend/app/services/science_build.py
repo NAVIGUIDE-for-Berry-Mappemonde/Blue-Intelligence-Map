@@ -417,11 +417,30 @@ def argo_docs_from_index(table: dict) -> list[dict]:
 # Persistance (upsert non destructif) et GeoJSON maigre
 # ---------------------------------------------------------------------------
 
+#: Portails GeoNetwork partageant les mêmes uuid de fiche (ODATIS est un
+#: sous-portail de Sextant) — une fiche commune ne doit exister qu'une fois.
+GN_TWIN_SOURCES = ("sextant", "odatis")
+
+#: Champs conservés du doc existant lors d'une fusion inter-portail : la
+#: fiche garde l'identité et le lien du portail qui l'a moissonnée en premier.
+_GN_MERGE_KEEP = ("_id", "source", "url")
+
+
 async def upsert_science(coll, cand: dict, fetched_at: str) -> str:
     doc = {**cand, "fetched_at": fetched_at, "schema": SCHEMA}
-    existing = await coll.find_one({"_id": doc["_id"]})
+    native = doc.get("native_id")
+    if doc.get("source") in GN_TWIN_SOURCES and native:
+        ids = [f"{s}:{native}" for s in GN_TWIN_SOURCES]
+        existing = await coll.find_one({"_id": {"$in": ids}})
+    else:
+        existing = await coll.find_one({"_id": doc["_id"]})
     if existing:
-        await coll.update_one({"_id": doc["_id"]}, {"$set": {k: v for k, v in doc.items() if k != "_id"}})
+        updates = {
+            k: v for k, v in doc.items()
+            if k not in _GN_MERGE_KEEP or existing["_id"] == doc["_id"]
+        }
+        updates.pop("_id", None)
+        await coll.update_one({"_id": existing["_id"]}, {"$set": updates})
         return "updated"
     await coll.insert_one(doc)
     return "inserted"
