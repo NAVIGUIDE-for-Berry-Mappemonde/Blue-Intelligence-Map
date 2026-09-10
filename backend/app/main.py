@@ -9,6 +9,7 @@ Quand ``frontend/build/`` existe (ou ``SERVE_FRONTEND=1``), sert aussi le
 bundle React sur ``/`` pour un accès preview unifié (API + UI sur le port 8001).
 """
 import os
+import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -40,6 +41,34 @@ app = FastAPI(
     redoc_url="/api/redoc" if _SERVE_FRONTEND else "/redoc",
     openapi_url="/api/openapi.json" if _SERVE_FRONTEND else "/openapi.json",
 )
+
+# ---------------------------------------------------------------------------
+# Garde admin — quand ADMIN_KEY est définie (production), toutes les écritures
+# /api/* et les lectures sensibles (review, admin) exigent le header
+# X-Admin-Key. Sans ADMIN_KEY (dev / tests), tout reste ouvert.
+# ---------------------------------------------------------------------------
+_PUBLIC_WRITE_PATHS = {"/api/report-project"}   # signalement public de projets
+_ADMIN_GET_PREFIXES = ("/api/review", "/api/admin")
+
+
+@app.middleware("http")
+async def _admin_gate(request, call_next):
+    admin_key = os.environ.get("ADMIN_KEY", "").strip()
+    if admin_key:
+        path = request.url.path
+        needs_key = False
+        if path.startswith("/api/"):
+            if (request.method in ("POST", "PUT", "PATCH", "DELETE")
+                    and path not in _PUBLIC_WRITE_PATHS):
+                needs_key = True
+            elif path.startswith(_ADMIN_GET_PREFIXES):
+                needs_key = True
+        if needs_key:
+            provided = request.headers.get("x-admin-key", "")
+            if not secrets.compare_digest(provided, admin_key):
+                return JSONResponse({"detail": "Admin key required"}, status_code=401)
+    return await call_next(request)
+
 
 for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc, exports):
     app.include_router(module.router)

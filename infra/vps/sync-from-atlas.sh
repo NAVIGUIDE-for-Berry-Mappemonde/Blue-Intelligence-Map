@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # Resynchronise la base LOCALE depuis Atlas — ÉCRASE les données locales.
-# À utiliser tant qu'Atlas est la base « vivante » (une dernière fois juste
-# avant la bascule DNS Cloudflare), puis plus jamais.
+# ⚠️ OBSOLÈTE depuis la bascule DNS du 2026-09-10 : le VPS est la base
+# VIVANTE, Atlas est figé à l'état d'avant-bascule. Lancer ce script
+# écraserait les données récentes. Verrou ci-dessous.
 set -euo pipefail
+
+if [ "${FORCE_RESYNC:-}" != "oui-ecraser-la-base" ]; then
+  echo "REFUS — Depuis la bascule DNS du 2026-09-10, le VPS est la base vivante."
+  echo "Resynchroniser depuis Atlas ÉCRASERAIT les données actuelles avec un état périmé."
+  echo "Les sauvegardes quotidiennes locales sont dans ~/backups/mongodb/."
+  echo "Pour forcer en toute connaissance de cause :"
+  echo "  FORCE_RESYNC=oui-ecraser-la-base bash $0"
+  exit 1
+fi
 
 CONF_DIR="$HOME/.config/blue-intelligence"
 . "$CONF_DIR/atlas.env"   # MONGO_URL (Atlas) + DB_NAME

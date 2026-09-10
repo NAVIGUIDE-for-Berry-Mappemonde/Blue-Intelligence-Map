@@ -75,7 +75,8 @@ blue-intelligence/
 │   └── src/components/ MapView, BatchHub (audit), SettingsPanel, panneaux par mode
 ├── docs/               PRD, CDC Projets, CDC Formalités (PoE), CDC Review, contrats Review par mode, règles/paramètres, architecture, audit LLM NVIDIA (`nvidia-llm-audit.md`)
 ├── infra/              SearXNG auto-hébergé (`searxng/`) + déploiement production VPS OVH (`vps/`)
-└── scripts/            Outillage d'exploitation (restauration de sauvegardes)
+├── scripts/            Outillage d'exploitation (restauration de sauvegardes)
+└── naviguide/          NAVIGUIDE — planificateur de route de l'expédition (application autonome, voir `naviguide/README.md`)
 ```
 
 ### Intelligence artificielle : NIM pour l'inférence, OpenRouter pour le web
@@ -88,6 +89,14 @@ Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par
 - **Sans clé**, l'application reste fonctionnelle en mode dégradé : heuristiques par mots-clés + modèles ML locaux (TF-IDF, spaCy NER) sans aucun appel réseau IA.
 
 Le pipeline **n'invente jamais de contenu** : chaque champ non trouvé dans les sources reste `null`, chaque port d'entrée est géocodé puis validé spatialement dans son polygone de ZEE.
+
+## NAVIGUIDE (monorepo)
+
+Le dossier `naviguide/` héberge **NAVIGUIDE**, le planificateur de route de l'expédition Berry-Mappemonde (React Vite + MapLibre GL ; services FastAPI : routage avec évitement des terres, données Copernicus, orchestrateur multi-agents LangGraph, polaires). Le dépôt `naviguide-berry-mappemonde` a été fusionné ici avec son historique complet, nettoyé au passage (`naviguide-api/venv` retiré de tout l'historique).
+
+- **Application autonome** : démarrage, dépendances et déploiement séparés de Blue Intelligence — voir `naviguide/README.md` (`naviguide/naviguide_workspace/start_local.sh` pour tout lancer en local).
+- **Production** : [www.naviguide.fr](https://www.naviguide.fr), hébergé sur le même VPS OVH que blueintelligence.online — voir `infra/vps/README.md` et `infra/vps/naviguide/`.
+- **Couches Blue Intelligence** : la carte NAVIGUIDE affiche les 5 modes (Projets, Marinas, Capitaineries, Ports d'Entrée, AMP) via les exports GeoJSON `GET /api/export/*`, consommés en même-origine par le chemin `/bi/*` (proxy Vite en dev, nginx en production).
 
 ## Démarrage local
 
@@ -165,6 +174,7 @@ complète, scripts idempotents et runbook dans **`infra/vps/README.md`** :
 
 1. **Application** : uvicorn (`SERVE_FRONTEND=1`, port local 8001) sert l'UI buildée **et** l'API, derrière le nginx du VPS (TLS Let's Encrypt). Service systemd `blue-intelligence`.
 2. **MongoDB** : MongoDB Community 8.0 auto-hébergé sur le VPS (`127.0.0.1` uniquement, authentification activée) — fin du throttling Atlas M0. Les index sont créés automatiquement au démarrage. Sauvegardes quotidiennes `mongodump` (rotation 14 j).
+   ⚠️ **Le VPS est la base vivante depuis la bascule DNS du 2026-09-10** : ne jamais relancer `infra/vps/sync-from-atlas.sh` (Atlas est figé à l'état d'avant-bascule ; le script est verrouillé). Restauration = sauvegardes locales uniquement.
 3. Un hébergement alternatif (build statique + reverse proxy `/api/*` + Atlas) reste possible : voir les variables d'environnement ci-dessus.
 
 ## API (aperçu)
