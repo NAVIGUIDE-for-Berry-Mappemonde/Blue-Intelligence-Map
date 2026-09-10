@@ -50,7 +50,7 @@ function popupHtml(p, t, { isArgo, isCruise }) {
         ${(p.start || p.end) ? `<span><span style="color:#64748b;font-family:'JetBrains Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.08em;">${esc(t("scienceCruiseDates"))}</span> <span style="color:#e2e8f0;">${esc([p.start, p.end].filter(Boolean).join(" → "))}</span></span>` : ""}
       </div>`
     : "";
-  const dateChip = !isArgo && p.date
+  const dateChip = !isArgo && !isCruise && p.date
     ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a3b8;border:1px solid #33415555;padding:2px 6px;border-radius:2px;">${esc(String(p.date).slice(0, 10))}</span>`
     : "";
   const portalBtn = p.url

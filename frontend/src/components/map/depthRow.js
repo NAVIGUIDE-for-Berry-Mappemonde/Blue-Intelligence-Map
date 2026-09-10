@@ -23,10 +23,14 @@ export function attachDepthOnPopup(map, tRef) {
   if (!map || map._biDepthHook) return;
   map._biDepthHook = true;
   map.on("popupopen", (e) => {
-    const root = e.popup && e.popup.getElement && e.popup.getElement();
-    const row = root && root.querySelector && root.querySelector(".bi-depth-row");
-    if (!row) return;
-    fillDepthRow(row, tRef);
+    const run = () => {
+      const root = e.popup && e.popup.getElement && e.popup.getElement();
+      const row = root && root.querySelector && root.querySelector(".bi-depth-row");
+      if (!row) return;
+      fillDepthRow(row, tRef);
+    };
+    run();
+    setTimeout(run, 50);
   });
 }
 

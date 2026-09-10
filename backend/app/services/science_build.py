@@ -80,7 +80,7 @@ CSR_QUERY = (
     "PREFIX csr: <http://purl.org/org/iode/po/voc/cruise-summary-reports#> "
     "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> "
     "SELECT ?r ?label (SAMPLE(?d) AS ?desc) (SAMPLE(?sh) AS ?ship) "
-    "(SAMPLE(?st) AS ?start) (SAMPLE(?en) AS ?end) (SAMPLE(?bb) AS ?bbox) "
+    "(MIN(?st) AS ?start) (MAX(?en) AS ?end) (SAMPLE(?bb) AS ?bbox) "
     "(SAMPLE(?tr) AS ?track) WHERE { "
     "?r a csr:CruiseSummaryReport . "
     "?r csr:describesCruise ?c . "
