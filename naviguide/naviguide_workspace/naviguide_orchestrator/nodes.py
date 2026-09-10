@@ -10,7 +10,7 @@ Orchestration flow:
            ▼
   run_risk_assessment             ← invokes Agent 3 graph (with Agent 1 route)
            ▼
-  llm_expedition_briefing         ← Claude/ChatBedrock unified skipper executive summary
+  llm_expedition_briefing         ← LLM cascade (NIM → OpenRouter → Claude) skipper summary
            ▼
   generate_expedition_plan        ← merge Agent 1 + Agent 3 → digital twin
            ▼
@@ -24,11 +24,15 @@ from datetime import datetime
 from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 
+# LLM cascade NIM → OpenRouter → Claude (llm_cascade.py at the naviguide/ root)
+_NAVIGUIDE_ROOT = str(Path(__file__).resolve().parents[2])
+if _NAVIGUIDE_ROOT not in sys.path:
+    sys.path.insert(0, _NAVIGUIDE_ROOT)
 try:
-    from langchain_aws import ChatBedrock
-    _BEDROCK_AVAILABLE = True
-except ImportError:
-    _BEDROCK_AVAILABLE = False
+    from llm_cascade import complete as _llm_complete
+    _LLM_AVAILABLE = True
+except Exception:
+    _LLM_AVAILABLE = False
 
 from .state import OrchestratorState
 
@@ -244,7 +248,8 @@ def run_risk_assessment_node(state: OrchestratorState) -> OrchestratorState:
 def llm_expedition_briefing_node(state: OrchestratorState) -> OrchestratorState:
     """
     Generate unified executive skipper briefing combining Agent 1 + Agent 3 outputs.
-    Uses ChatBedrock (Claude 3.5) if available; falls back to structured static text.
+    Uses the LLM cascade (NVIDIA NIM → OpenRouter → Claude) if available;
+    falls back to structured static text.
     Output language follows state["language"] ("en" | "fr").
     """
     route_plan   = state.get("route_plan", {})
@@ -372,16 +377,16 @@ Ton: professionnel hauturier, concis. Max 280 mots. Rédige l'intégralité du b
 
     briefing = ""
 
-    if _BEDROCK_AVAILABLE:
+    if _LLM_AVAILABLE:
         try:
-            llm = ChatBedrock(
-                model_id    = "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-                region_name = "us-east-1",
-            )
-            briefing = llm.invoke([HumanMessage(content=prompt)]).content
-            log.info("[orchestrator] LLM briefing generated via Bedrock")
+            briefing, _provider = _llm_complete(prompt, max_tokens=1024)
+            if briefing:
+                log.info(f"[orchestrator] LLM briefing generated via {_provider}")
+            else:
+                log.warning("[orchestrator] LLM cascade exhausted — using fallback briefing")
         except Exception as exc:
-            log.warning(f"[orchestrator] Bedrock unavailable ({exc}) — using fallback briefing")
+            log.warning(f"[orchestrator] LLM cascade unavailable ({exc}) — using fallback briefing")
+            briefing = ""
 
     if not briefing:
         # Structured fallback briefing (includes critical alerts from full risk matrix)

@@ -1313,11 +1313,12 @@ def simulation_position(req: SimulationPositionRequest):
 
 
 # ── Simulation Mode — Agent Endpoints ────────────────────────────────────────
-# All 4 agents stream token-by-token via Anthropic SSE for progressive display
-# in the frontend AgentPanel. Each endpoint:
+# All 4 agents stream token-by-token via the LLM cascade (NVIDIA NIM →
+# OpenRouter → Claude) for progressive display in the frontend AgentPanel.
+# Each endpoint:
 #   1. Runs the agent's data-fetch pipeline synchronously (in threadpool)
 #   2. Builds the LLM prompt from the fetched context
-#   3. Streams Anthropic tokens as SSE  data: {"token": "..."}  events
+#   3. Streams LLM tokens as SSE  data: {"token": "..."}  events
 #   4. Terminates with  data: [DONE]
 
 

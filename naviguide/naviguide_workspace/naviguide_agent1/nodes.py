@@ -20,17 +20,23 @@ Graph flow:
 
 import math
 import os
+import sys
 import urllib.request
 import urllib.error
 import json
 from datetime import datetime
+from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 
+# LLM cascade NIM → OpenRouter → Claude (llm_cascade.py at the naviguide/ root)
+_NAVIGUIDE_ROOT = str(Path(__file__).resolve().parents[2])
+if _NAVIGUIDE_ROOT not in sys.path:
+    sys.path.insert(0, _NAVIGUIDE_ROOT)
 try:
-    from langchain_aws import ChatBedrock
-    _BEDROCK_AVAILABLE = True
-except (ImportError, Exception):
-    _BEDROCK_AVAILABLE = False
+    from llm_cascade import complete as _llm_complete
+    _LLM_AVAILABLE = True
+except Exception:
+    _LLM_AVAILABLE = False
 
 from .state  import RouteState
 from .router import BerryMappemondeRouter
@@ -198,8 +204,9 @@ def validate_safety_node(state: RouteState) -> RouteState:
 
 def llm_route_advisor_node(state: RouteState) -> RouteState:
     """
-    Call Deploy AI (GPT-4o) to generate a professional maritime route assessment
-    and actionable optimisation recommendations.
+    Call the LLM cascade (NVIDIA NIM → OpenRouter → Claude) to generate a
+    professional maritime route assessment and actionable optimisation
+    recommendations.
     """
     segments = state.get("raw_segments", [])
     scores   = state.get("anti_shipping_scores", [])
@@ -231,10 +238,9 @@ Tone: professional, concise, offshore-sailing expertise. Max 120 words."""
 
     advice = ""
 
-    if _BEDROCK_AVAILABLE:
+    if _LLM_AVAILABLE:
         try:
-            llm    = ChatBedrock(model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
-            advice = llm.invoke([HumanMessage(content=prompt)]).content
+            advice, _provider = _llm_complete(prompt, max_tokens=512)
         except Exception as exc:
             advice = (
                 f"LLM advisor unavailable ({exc}). "

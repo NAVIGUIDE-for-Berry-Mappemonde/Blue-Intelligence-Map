@@ -10,7 +10,7 @@ GET  /                                      Health check
 POST /api/v1/polar/upload                   Upload PDF → parse → store 181×61 grid
 GET  /api/v1/polar/{expedition_id}          Retrieve full polar grid (181×61)
 GET  /api/v1/polar/{expedition_id}/summary  VMG summary only (lightweight, for briefing agents)
-POST /api/v1/polar/chat                     Polar agent chat (VMG-aware, Anthropic-backed)
+POST /api/v1/polar/chat                     Polar agent chat (VMG-aware, LLM cascade-backed)
 """
 
 import json
@@ -26,24 +26,25 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from starlette.concurrency import run_in_threadpool
 
-# Load workspace .env (ANTHROPIC_API_KEY)
+# Load workspace .env (LLM keys: NVIDIA_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-# Anthropic client (optional — chat falls back gracefully)
-try:
-    import anthropic as _anthropic
-    _ANTHROPIC_CLIENT    = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    _ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
-except Exception:
-    _ANTHROPIC_CLIENT    = None
-    _ANTHROPIC_AVAILABLE = False
-
 # ── Path setup: import polar_engine from polar_agent/ at repo root ─────────────
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # naviguide-berry-mappemonde/
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # naviguide/
 sys.path.insert(0, str(REPO_ROOT / "polar_agent"))
 
 from polar_engine import parse_polar_pdf, parse_polar_csv, parse_polar_excel, PolarData  # noqa: E402
+
+# LLM cascade NIM → OpenRouter → Claude (optional — chat falls back gracefully)
+sys.path.insert(0, str(REPO_ROOT))
+try:
+    from llm_cascade import complete as _llm_complete, has_any_llm as _has_any_llm  # noqa: E402
+    _LLM_AVAILABLE = _has_any_llm()
+except Exception:
+    _llm_complete  = None
+    _LLM_AVAILABLE = False
 
 # ── Storage directory for polar JSON files ────────────────────────────────────
 POLAR_DATA_DIR = Path(__file__).resolve().parent.parent / "polar_data"
@@ -280,7 +281,7 @@ class PolarChatRequest(BaseModel):
 def _build_polar_system_prompt(data: Dict[str, Any]) -> str:
     """
     Build a concise system prompt for the polar chat agent,
-    embedding the VMG summary so Claude can answer performance questions.
+    embedding the VMG summary so the LLM can answer performance questions.
     """
     vmg = data.get("vmg_summary", {})
     boat = data.get("boat_name", "the boat")
@@ -325,8 +326,9 @@ Be concise (max 120 words), precise, and use nautical terms. Always cite specifi
 async def polar_chat(request: PolarChatRequest):
     """
     Chat with the polar agent about boat polar performance.
-    Loads VMG context for the expedition, answers via Anthropic Claude.
-    Falls back to a structured answer if Anthropic is unavailable.
+    Loads VMG context for the expedition, answers via the LLM cascade
+    (NVIDIA NIM → OpenRouter → Claude).
+    Falls back to a structured answer if no LLM provider is available.
     """
     dest = _polar_path(request.expedition_id)
     if not dest.exists():
@@ -340,24 +342,25 @@ async def polar_chat(request: PolarChatRequest):
 
     system_prompt = _build_polar_system_prompt(polar_data)
 
-    # Build message list for Anthropic
+    # Build OpenAI-style message list (history + latest user message)
     messages = [{"role": m["role"], "content": m["content"]} for m in (request.history or [])]
     messages.append({"role": "user", "content": request.message})
 
     log.info(f"Polar chat: expedition={request.expedition_id}, msg='{request.message[:60]}'")
 
-    if _ANTHROPIC_AVAILABLE and _ANTHROPIC_CLIENT:
+    if _LLM_AVAILABLE and _llm_complete is not None:
         try:
-            resp = _ANTHROPIC_CLIENT.messages.create(
-                model      = "claude-haiku-4-5",
-                max_tokens = 300,
+            # complete() is synchronous — run in threadpool to keep the loop free
+            reply, source = await run_in_threadpool(
+                _llm_complete,
                 system     = system_prompt,
                 messages   = messages,
+                max_tokens = 300,
             )
-            reply  = resp.content[0].text
-            source = "anthropic"
+            if not reply:
+                raise RuntimeError("LLM cascade returned empty reply")
         except Exception as exc:
-            log.warning(f"Anthropic unavailable ({exc}) — using fallback")
+            log.warning(f"LLM cascade unavailable ({exc}) — using fallback")
             reply  = _polar_fallback_reply(request.message, polar_data)
             source = "fallback"
     else:

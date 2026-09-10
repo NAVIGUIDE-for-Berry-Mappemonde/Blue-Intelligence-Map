@@ -22,14 +22,20 @@ Graph flow:
       END
 """
 
+import sys
 from datetime import datetime
+from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 
+# LLM cascade NIM → OpenRouter → Claude (llm_cascade.py at the naviguide/ root)
+_NAVIGUIDE_ROOT = str(Path(__file__).resolve().parents[2])
+if _NAVIGUIDE_ROOT not in sys.path:
+    sys.path.insert(0, _NAVIGUIDE_ROOT)
 try:
-    from langchain_aws import ChatBedrock
-    _BEDROCK_AVAILABLE = True
-except (ImportError, Exception):
-    _BEDROCK_AVAILABLE = False
+    from llm_cascade import complete as _llm_complete
+    _LLM_AVAILABLE = True
+except Exception:
+    _LLM_AVAILABLE = False
 
 from .state       import RiskState
 from .risk_engine import RiskAssessmentEngine
@@ -235,10 +241,9 @@ Professional maritime tone. Max 200 words total."""
 
     summary = ""
 
-    if _BEDROCK_AVAILABLE:
+    if _LLM_AVAILABLE:
         try:
-            llm     = ChatBedrock(model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0", region_name="us-east-1")
-            summary = llm.invoke([HumanMessage(content=prompt)]).content
+            summary, _provider = _llm_complete(prompt, max_tokens=512)
         except Exception as exc:
             summary = (
                 f"LLM risk analyst unavailable ({exc}). "
