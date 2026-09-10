@@ -120,3 +120,46 @@ protégés par une clé admin :
   `cursor-agent-blue-intelligence` de `~/.ssh/authorized_keys` sur le VPS.
 - Journaux applicatifs : `sudo journalctl -u blue-intelligence -f` ;
   MongoDB : `/var/log/mongodb/mongod.log`.
+
+## NAVIGUIDE — www.naviguide.fr (même VPS)
+
+NAVIGUIDE (`naviguide/` du monorepo) est publié sur le même VPS, sous le
+domaine **www.naviguide.fr** (DNS A → 135.125.226.16, sans Cloudflare).
+Voir `infra/vps/naviguide/`.
+
+```
+Internet → nginx (443, Let's Encrypt)
+   www.naviguide.fr        → dist/ statique (React + MapLibre)
+   /route /wind /wave …    → uvicorn 127.0.0.1:9000  (naviguide-api)
+   /api/v1/polar/*         → uvicorn 127.0.0.1:9004  (polar-api)
+   /api/v1/*               → uvicorn 127.0.0.1:9008  (orchestrateur LangGraph)
+   /bi/*                   → uvicorn 127.0.0.1:8001  (Blue Intelligence /api/*)
+```
+
+| Quoi | Où |
+|------|-----|
+| Code | `~/blue-intelligence-map/naviguide/` (venv partagé `.venv/`) |
+| Secrets (cascade LLM NVIDIA/OpenRouter/Anthropic, Copernicus, StormGlass) | `~/.config/naviguide/naviguide.env` (chmod 600) |
+| Services | `naviguide-api`, `naviguide-orchestrator`, `naviguide-polar` (systemd) |
+| Reverse proxy | `/etc/nginx/sites-available/naviguide` (TLS certbot) |
+
+```bash
+# (Re)déploiement — build frontend + venv + systemd + nginx
+bash infra/vps/naviguide/deploy-naviguide.sh
+# Premier déploiement seulement : renseigner les secrets puis redémarrer
+vim ~/.config/naviguide/naviguide.env && sudo systemctl restart naviguide-api naviguide-orchestrator naviguide-polar
+```
+
+TLS : le certificat Let's Encrypt `live/naviguide.fr` (SAN naviguide.fr +
+www.naviguide.fr) préexistait sur le VPS et est réutilisé tel quel par
+`nginx-naviguide.conf` (renouvellement certbot inchangé). L'ancien site nginx
+`default` (placeholder `/var/www/html` + proxys vers des ports morts 8000/8001/3008)
+a été retiré de `sites-enabled` le 2026-09-10 — sauvegarde dans
+`sites-available/default`. `~ubuntu` est en `o+x` (751) pour que nginx lise `dist/`.
+
+Les couches « Blue Intelligence » de la carte NAVIGUIDE consomment les exports
+GeoJSON du backend Blue Intelligence local via la route nginx `/bi/*` — aucun
+CORS, aucun appel réseau externe. Journaux : `sudo journalctl -u naviguide-api -f`
+(idem `-orchestrator`, `-polar`). Ports 9000/9004/9008 réservés à NAVIGUIDE
+(8001 = Blue Intelligence). `naviguide-weather-routing` (3010) n'est pas
+déployé : le frontend ne l'appelle pas.

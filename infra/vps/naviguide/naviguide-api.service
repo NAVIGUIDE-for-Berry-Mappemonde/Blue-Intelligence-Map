@@ -1,0 +1,16 @@
+[Unit]
+Description=NAVIGUIDE — API routage, météo Copernicus, agents IA (naviguide-api)
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/blue-intelligence-map/naviguide/naviguide-api
+EnvironmentFile=-/home/ubuntu/.config/naviguide/naviguide.env
+ExecStart=/home/ubuntu/blue-intelligence-map/naviguide/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 9000
+Restart=always
+RestartSec=3
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

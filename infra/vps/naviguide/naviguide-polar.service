@@ -1,0 +1,16 @@
+[Unit]
+Description=NAVIGUIDE — Polar API (upload polaires, VMG, chat)
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/blue-intelligence-map/naviguide/naviguide_workspace
+EnvironmentFile=-/home/ubuntu/.config/naviguide/naviguide.env
+ExecStart=/home/ubuntu/blue-intelligence-map/naviguide/.venv/bin/uvicorn polar_api.main:app --host 127.0.0.1 --port 9004
+Restart=always
+RestartSec=3
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
