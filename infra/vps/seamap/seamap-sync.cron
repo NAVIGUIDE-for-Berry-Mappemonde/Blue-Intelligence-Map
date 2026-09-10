@@ -1,0 +1,6 @@
+# Synchronisation hebdomadaire du miroir carte marine (Open Waters: Seamap).
+# Le build planétaire amont tourne le lundi 03:00 UTC ; on synchronise le lundi
+# 06:30 UTC. La découverte par ETag rend le décalage sans risque : si le build
+# amont n'est pas encore publié, on resynchronise simplement l'ancien (no-op).
+# Installer : sudo cp seamap-sync.cron /etc/cron.d/seamap-sync
+30 6 * * 1 ubuntu /srv/tiles/seamap/sync-seamap.sh >> /var/log/seamap-sync.log 2>&1
