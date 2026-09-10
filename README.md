@@ -4,6 +4,16 @@
 
 Application publiée sur **[blueintelligence.online](https://blueintelligence.online)** — un projet [Berry-Mappemonde](https://berrymappemonde.org).
 
+> [!WARNING]
+> **Ne convient pas à la navigation**
+>
+> Blue Intelligence agrège des données participatives (OpenStreetMap) et des
+> extractions automatiques de sources publiques. Aucune autorité hydrographique
+> ou douanière ne les vérifie : marinas, capitaineries, ports d'entrée, AMP et
+> fond « Carte marine » sont fournis à titre indicatif. Vérifiez toujours les
+> cartes marines officielles et les publications gouvernementales avant toute
+> décision en mer.
+
 ## Les quatre modes
 
 | Mode | Couleur | Contenu |
@@ -15,6 +25,34 @@ Application publiée sur **[blueintelligence.online](https://blueintelligence.on
 | **AMP** | vert | Polygones ProtectedSeas Navigator + **deux URL séparées** : site du gestionnaire (`manager_url`) et procédures de visite / d'entrée (`visit_url`). L'URL de visite n'est jamais une copie du Website ProtectedSeas. |
 
 S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs), un onglet **Review** (relecture puis Gold — voir `docs/CAHIER_DES_CHARGES_REVIEW.md` et `docs/CONTRATS_REVIEW_PAR_MODE.md`) et des exports/imports GeoJSON contextuels.
+
+## Fonds de carte et inspirations seamap
+
+Trois fonds de carte se succèdent via le bouton du header : **sombre**,
+**clair** (raster Esri) et **Carte marine** — le style vectoriel
+[Open Waters: Seamap](https://github.com/openwatersio/seamap) (balisage IALA,
+feux, profondeurs Seascape), rendu par `maplibre-gl-leaflet` chargé à la
+demande. Un avertissement « Ne convient pas à la navigation » s'affiche sur ce
+fond. En production, `infra/vps/seamap/` auto-héberge l'archive PMTiles datée
+(~26 Go), le style et les sprites sur le VPS.
+
+Les popups Marinas portent des **badges services** : la couleur répond à une
+question du plaisancier (Amarrage / Avitaillement / Technique / À terre),
+l'infobulle liste les tags OSM qui l'attestent — rien n'est inventé.
+
+Le dépôt applique aussi les disciplines d'ingénierie de seamap :
+
+- **Exports GeoJSON versionnés** — chaque export porte `metadata` (version
+  datée + empreinte sha256, comptage, licence, avertissement) ; snapshots
+  datés **immuables** via `POST /api/export/snapshot` (`backend/exports/`).
+- **Reconstruction hebdomadaire** — `.github/workflows/weekly-data-build.yml`
+  archive chaque lundi les 7 exports + un PMTiles overlay dans une release
+  `data-<AAAA-MM-JJ>`, immuable par construction.
+- **Catalogue des tags** — `docs/CATALOGUE_SEAMARK.md` +
+  `backend/data/seamark_catalog.json` ; audit par `scripts/audit_tags.py`
+  (rapports dans `docs/audits/`).
+- **Ordre des couches verrouillé** — `frontend/src/components/map/layerOrder.js`
+  est figé par test jest (`npm test`).
 
 ## Architecture
 
@@ -138,7 +176,8 @@ complète, scripts idempotents et runbook dans **`infra/vps/README.md`** :
 - `GET /api/capitaineries` · `POST /api/capitaineries/build` · `POST /api/capitaineries/enrich-batch` — mode Capitaineries
 - `GET /api/poe/zones` · `GET /api/poe/ports` — mode Formalités (`POST …/generate` et `generate-batch` : 410)
 - `POST /api/poe/runs` · `GET /api/poe/runs/{id}/status` · `GET /api/poe/runs/{id}/diff` · `GET /api/poe/runs/{id}/report` — runs versionnés PoE
-- `GET /api/export/{geojson|marinas.geojson|capitaineries.geojson|poe.geojson}` — exports GeoJSON
+- `GET /api/export/{geojson|marinas.geojson|anchorages.geojson|capitaineries.geojson|amp.geojson|poe.geojson|route.geojson}` — exports GeoJSON versionnés (bloc `metadata`)
+- `POST /api/export/snapshot` · `GET /api/export/snapshots[/{date}/{fichier}]` — snapshots datés immuables
 
 ## Données initiales (seed)
 
@@ -167,5 +206,14 @@ python -m pytest tests/ -x -q          # certains tests exigent le serveur lanc�
 - **ZEE** : Flanders Marine Institute — [Marine Regions](https://marineregions.org), Maritime Boundaries v12 (CC-BY 4.0)
 - **Marinas / géocodage** : © contributeurs [OpenStreetMap](https://openstreetmap.org) (ODbL), Nominatim, Overpass, GeoNames
 - **Route** : route officielle de l'expédition Berry-Mappemonde
+- **Fond « Carte marine »** : © [Open Waters: Seamap](https://openwaters.io/charts/seamap) (CC-BY 4.0) sur données © OpenStreetMap contributors (ODbL), bathymétrie [Seascape](https://github.com/openwatersio/seascape), fonds [VersaTiles](https://versatiles.org), relief © Mapterhorn
+- **AMP** : ProtectedSeas Navigator (centroïdes et métadonnées) · **Capitaineries France** : SHOM (Licence Ouverte Etalab) · **États-Unis** : NOAA ENC Direct to GIS
 
-> ⚠️ Les informations du mode Formalités sont **indicatives** — vérifiez toujours auprès des autorités avant le départ.
+### Licences des bibliothèques carte
+
+Chaîne 100 % permissive, vérifiée : `leaflet` (BSD-2), `maplibre-gl` (BSD-3),
+`@maplibre/maplibre-gl-leaflet` (ISC), `pmtiles` (BSD-3). Le package npm
+`@openwaters/seamap` est **GPL-3.0 et n'est volontairement pas utilisé** : le
+frontend consomme le `style.json` servi (CC-BY 4.0), comme une donnée.
+
+> ⚠️ Les informations du mode Formalités sont **indicatives** — vérifiez toujours auprès des autorités avant le départ. Le fond « Carte marine » **ne convient pas à la navigation** (voir l'avertissement en tête de ce document).
