@@ -47,6 +47,22 @@ export default function App() {
   // Mode Science — catalogues océano + flotteurs Argo
   const [science, setScience] = useState({ type: "FeatureCollection", features: [] });
   const [flyToScience, setFlyToScience] = useState(null);
+  const [scienceWms, setScienceWms] = useState(() => {
+    try {
+      const raw = localStorage.getItem("bi.scienceWms");
+      if (raw) {
+        return { bathymetry: false, cables: false, substrate: false, ...JSON.parse(raw) };
+      }
+    } catch (_) { /* ignore */ }
+    return { bathymetry: false, cables: false, substrate: false };
+  });
+  const toggleScienceWms = useCallback((id, on) => {
+    setScienceWms((prev) => {
+      const next = { ...prev, [id]: !!on };
+      try { localStorage.setItem("bi.scienceWms", JSON.stringify(next)); } catch (_) { /* ignore */ }
+      return next;
+    });
+  }, []);
   // Phase 8 — Anchorages (mouillages) layer
   const [anchorages, setAnchorages] = useState({ type: "FeatureCollection", features: [] });
   const [showAnchorages, setShowAnchoragesRaw] = useState(() => {
@@ -477,6 +493,8 @@ export default function App() {
             science={science}
             onFlyTo={handleFlyToScience}
             onRefresh={fetchScience}
+            scienceWms={scienceWms}
+            onToggleWms={toggleScienceWms}
           />
         )}
         <main className="flex-1 relative min-w-0">
@@ -489,6 +507,7 @@ export default function App() {
               flyToCapitainerie={flyToCapitainerie}
               science={science}
               flyToScience={flyToScience}
+              scienceWms={scienceWms}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
               showReview={showReview}

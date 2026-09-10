@@ -209,6 +209,56 @@ def test_argo_docs_latest_position_per_float():
 
 
 # ---------------------------------------------------------------------------
+# CSR (campagnes)
+# ---------------------------------------------------------------------------
+
+def _csr_binding(track=True, label="NODSSUM 2026"):
+    b = {
+        "r": {"value": "https://csr.seadatanet.org/report/21042655"},
+        "label": {"value": label},
+        "desc": {"value": "Survey in the North Sea."},
+        "ship": {"value": "https://vocab.nerc.ac.uk/collection/C17/current/35PK/"},
+        "start": {"value": "2026-05-27"},
+        "end": {"value": "2026-06-28"},
+        "bbox": {"value": "POLYGON((-2 50, 3 50, 3 55, -2 55, -2 50))"},
+    }
+    if track:
+        b["track"] = {"value": "LINESTRING((-1.5 51.2, 0.4 52.1, 1.8 53.0))"}
+    return b
+
+
+def test_subsample_line_keeps_ends():
+    pairs = [(float(i), 48.0) for i in range(1000)]
+    out = sb.subsample_line(pairs, max_points=160)
+    assert len(out) == 160
+    assert out[0] == [0.0, 48.0]
+    assert out[-1] == [999.0, 48.0]
+
+
+def test_cruise_from_csr_binding():
+    doc = sb.cruise_from_csr_binding(_csr_binding())
+    assert doc["_id"] == "csr:21042655"
+    assert doc["kind"] == "cruise"
+    assert doc["ship"] == "35PK"
+    assert doc["start"] == "2026-05-27"
+    assert doc["track"][0] == [-1.5, 51.2]
+    assert "csr.seadatanet.org/report/21042655" in doc["url"]
+    assert doc["lat"] is not None and doc["lon"] is not None
+
+
+def test_cruise_skips_placeholder_label():
+    assert sb.cruise_from_csr_binding(_csr_binding(label="-")) is None
+
+
+def test_slim_feature_cruise_is_linestring():
+    doc = sb.cruise_from_csr_binding(_csr_binding())
+    feat = sb.slim_feature(doc)
+    assert feat["geometry"]["type"] == "LineString"
+    assert feat["properties"]["kind"] == "cruise"
+    assert feat["properties"]["ship"] == "35PK"
+
+
+# ---------------------------------------------------------------------------
 # Persistance + GeoJSON
 # ---------------------------------------------------------------------------
 
@@ -293,29 +343,34 @@ def test_build_science_all_sources():
             assert days == 30
             return _argo_table()
 
+        async def fake_csr(client, limit, offset):
+            return [_csr_binding()] if offset == 0 else []
+
         summary = await sb.build_science(
             coll=coll, state=state,
-            sources=("sextant", "odatis", "edmed", "argo"),
+            sources=("sextant", "odatis", "edmed", "argo", "csr"),
             fetch_gn=fake_gn, fetch_edmed=fake_edmed, fetch_argo=fake_argo,
+            fetch_csr=fake_csr,
             run_id="test-run",
         )
-        assert summary["inserted"] == 5   # 1 sextant + 1 odatis + 1 edmed + 2 argo
+        assert summary["inserted"] == 6   # 1+1+1+2 argo + 1 csr
         assert summary["updated"] == 0
-        assert not state.running and state.progress == 4
+        assert not state.running and state.progress == 5
         ids = {d["_id"] for d in coll.docs}
         assert {"sextant:sextant-1", "odatis:odatis-1", "edmed:6944",
-                "argo:1901514", "argo:6904240"} <= ids
+                "argo:1901514", "argo:6904240", "csr:21042655"} <= ids
 
         # Relance : tout passe en update, pas de doublon (no purge / upsert).
         state2 = BuildState()
         summary2 = await sb.build_science(
             coll=coll, state=state2,
-            sources=("sextant", "odatis", "edmed", "argo"),
+            sources=("sextant", "odatis", "edmed", "argo", "csr"),
             fetch_gn=fake_gn, fetch_edmed=fake_edmed, fetch_argo=fake_argo,
+            fetch_csr=fake_csr,
         )
         assert summary2["inserted"] == 0
-        assert summary2["updated"] == 5
-        assert len(coll.docs) == 5
+        assert summary2["updated"] == 6
+        assert len(coll.docs) == 6
     asyncio.run(run())
 
 
@@ -352,6 +407,7 @@ def test_science_rules_registered():
     chosen = resolved["chosen"]
     assert chosen["science.catalog_max_records"]["value"] == 2000
     assert chosen["science.argo_window_days"]["value"] == 30
+    assert chosen["science.csr_max_records"]["value"] == 500
     snap = snapshot_for_run(mode="science", overrides={"science.catalog_max_records": 500})
     assert snap["chosen"]["science.catalog_max_records"]["value"] == 500
     assert snap["hash"]

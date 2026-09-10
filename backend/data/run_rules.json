@@ -2400,6 +2400,32 @@
         "en": "30 days = active fleet (~10-day cycle). Latest position per float."
       },
       "group": "budget"
+    },
+    {
+      "id": "science.csr_max_records",
+      "mode": "science",
+      "kind": "budget",
+      "value": 500,
+      "unit": "fiches",
+      "interval": [
+        50,
+        2000
+      ],
+      "vary": true,
+      "principle": "Plafond de moissonnage des Cruise Summary Reports SeaDataNet (SPARQL Ifremer, tracés hasTrack). Les traces WKT peuvent dépasser 1 Mo : on pagine par 20 et on sous-échantillonne à 160 points. 500 tracés restent lisibles sur la carte sans exploser le GeoJSON.",
+      "cdc": "Mode Science",
+      "code": [
+        "app/services/science_build.py:build_science"
+      ],
+      "title": {
+        "fr": "Tracés de campagnes CSR max",
+        "en": "Max CSR cruise tracks"
+      },
+      "help": {
+        "fr": "Campagnes CSR avec tracé (les plus récentes d'abord). 500 par défaut.",
+        "en": "CSR cruises with a track (most recent first). Default 500."
+      },
+      "group": "budget"
     }
   ],
   "groups": [

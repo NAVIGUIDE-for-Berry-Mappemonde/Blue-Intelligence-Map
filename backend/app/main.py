@@ -116,6 +116,7 @@ async def _startup():
         from app.services.science_build import ensure_indexes as ensure_science_indexes
         await ensure_science_indexes(db.science_items)
         await db.science_runs.create_index("created_at")
+        await db.depth_samples.create_index("fetched_at")
     except Exception as e:
         print(f"[startup] science index creation failed (non-fatal): {e}")
     # Rafraîchissement automatique : zones périmées re-vérifiées (monitoring MD5)

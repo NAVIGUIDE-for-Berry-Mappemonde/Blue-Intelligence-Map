@@ -11,13 +11,21 @@ const SOURCE_FILTERS = [
   { id: "odatis", label: "ODATIS" },
   { id: "edmed", label: "EDMED" },
   { id: "argo", label: "Argo" },
+  { id: "csr", label: "CSR" },
+];
+
+const WMS_LAYERS = [
+  { id: "bathymetry", labelKey: "scienceWmsBathymetry" },
+  { id: "substrate", labelKey: "scienceWmsSubstrate" },
+  { id: "cables", labelKey: "scienceWmsCables" },
 ];
 
 /**
  * SciencePanel — liste latérale du mode Science : jeux de données océano
- * (Sextant/ODATIS/EDMED) + flotteurs Argo, filtres par source et recherche.
+ * (Sextant/ODATIS/EDMED) + flotteurs Argo + tracés CSR, filtres par source,
+ * couches WMS EMODnet.
  */
-export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
+export default function SciencePanel({ t, science, onFlyTo, onRefresh, scienceWms, onToggleWms }) {
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const features = science?.features || [];
@@ -52,6 +60,7 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
         || (p.provider || "").toLowerCase().includes(q)
         || (p.doi || "").toLowerCase().includes(q)
         || String(p.wmo || "").toLowerCase().includes(q)
+        || String(p.ship || "").toLowerCase().includes(q)
       );
     });
   }, [features, query, sourceFilter]);
@@ -59,7 +68,8 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
   const visible = filtered.slice(0, LIST_CAP);
   const truncated = filtered.length > LIST_CAP;
   const argoCount = features.filter((f) => f.properties?.kind === "argo_float").length;
-  const datasetCount = features.length - argoCount;
+  const cruiseCount = features.filter((f) => f.properties?.kind === "cruise").length;
+  const datasetCount = features.length - argoCount - cruiseCount;
 
   return (
     <aside className="w-[360px] shrink-0 flex flex-col border-r border-line bg-surface" data-testid="science-panel">
@@ -86,7 +96,7 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
             className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
           />
         </div>
-        <div className="flex gap-1 mb-3" data-testid="science-source-filter">
+        <div className="flex flex-wrap gap-1 mb-3" data-testid="science-source-filter">
           {SOURCE_FILTERS.map((s) => (
             <button
               key={s.id}
@@ -113,6 +123,31 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
               <span className="w-3 h-3 rounded-full shrink-0 border-2" style={{ borderColor: COLOR, background: "rgba(167,139,250,0.2)" }} />
               <span className="text-[11px] text-slate-300">{t("legendScienceArgo")} · {argoCount}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-0.5 shrink-0" style={{ background: COLOR }} />
+              <span className="text-[11px] text-slate-300">{t("legendScienceCruise")} · {cruiseCount}</span>
+            </div>
+          </div>
+        </div>
+        <div className="mt-3" data-testid="science-wms">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1">{t("scienceWmsTitle")}</p>
+          <p className="font-mono text-[9px] text-slate-500 mb-1.5 leading-relaxed">{t("scienceWmsHint")}</p>
+          <div className="space-y-1">
+            {WMS_LAYERS.map((layer) => (
+              <label
+                key={layer.id}
+                data-testid={`science-wms-${layer.id}`}
+                className="flex items-center gap-2 px-1 py-0.5 cursor-pointer text-[11px] text-slate-300"
+              >
+                <input
+                  type="checkbox"
+                  checked={!!(scienceWms && scienceWms[layer.id])}
+                  onChange={(e) => onToggleWms && onToggleWms(layer.id, e.target.checked)}
+                  className="accent-[#a78bfa]"
+                />
+                <span>{t(layer.labelKey)}</span>
+              </label>
+            ))}
           </div>
         </div>
       </div>
@@ -131,12 +166,16 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
         )}
         {visible.map((f) => {
           const p = f.properties || {};
-          const [lon, lat] = f.geometry?.coordinates || [0, 0];
           const isArgo = p.kind === "argo_float";
+          const isCruise = p.kind === "cruise";
+          const lat = p.lat != null ? Number(p.lat) : (f.geometry?.type === "Point" ? f.geometry.coordinates[1] : 0);
+          const lon = p.lon != null ? Number(p.lon) : (f.geometry?.type === "Point" ? f.geometry.coordinates[0] : 0);
           const sub = isArgo
             ? [p.wmo ? `WMO ${p.wmo}` : null, p.profile_date ? String(p.profile_date).slice(0, 10) : null]
               .filter(Boolean).join(" · ")
-            : (p.provider || (p.date ? String(p.date).slice(0, 10) : `${Number(lat).toFixed(2)}, ${Number(lon).toFixed(2)}`));
+            : isCruise
+              ? [p.ship, [p.start, p.end].filter(Boolean).join(" → ")].filter(Boolean).join(" · ")
+              : (p.provider || (p.date ? String(p.date).slice(0, 10) : `${Number(lat).toFixed(2)}, ${Number(lon).toFixed(2)}`));
           return (
             <button
               key={p.id}
@@ -149,14 +188,14 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh }) {
                 <MapPin size={13} className="text-accent mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="font-heading text-sm text-slate-100 truncate group-hover:text-white">
-                    {p.name || t("scienceUnnamed")}
+                    {p.name || t(isCruise ? "scienceUnnamedCruise" : "scienceUnnamed")}
                   </div>
                   <div className="font-mono text-[10px] text-slate-500 mt-0.5 truncate">
                     {sub}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <span className="px-1.5 py-0.5 border rounded-sm font-mono text-[9px] uppercase tracking-widest bg-accent/15 text-accent border-accent/40">
-                      {isArgo ? t("scienceArgoFloat") : (p.source || t("scienceDataset"))}
+                      {isArgo ? t("scienceArgoFloat") : isCruise ? t("scienceCruise") : (p.source || t("scienceDataset"))}
                     </span>
                     {p.doi && (
                       <span className="px-1.5 py-0.5 border border-line rounded-sm font-mono text-[9px] text-slate-400">

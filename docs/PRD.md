@@ -52,7 +52,8 @@ Application OSINT de cartographie à deux pipelines : (1) scraper de Ports d'Ent
   - Backend : services/science_build.py (bbox GeoJSON/WKT + antiméridien, détection bbox "monde" → fiche conservée mais non placée, upsert non destructif `_id={source}:{native_id}`), routers/science.py (geojson/count/build/status/cancel/runs/export/import), collections science_items + science_runs (snapshot de règles → onglet Runs).
   - Règles catalogue : science.catalog_max_records (2000, cap dur ES 10000), science.argo_window_days (30 j).
   - Frontend : SciencePanel (recherche, filtre par source, légende datasets/Argo), useScienceLayer (popup organisme/résumé/DOI/WMO/cycle + bouton fiche portail), ScienceCard console (sources cochables), Review non branchée (placeholder), export/import science.geojson.
-  - Tests : tests/test_science.py (18 unitaires, fetchers injectés — bbox antiméridien, dédup EDMED, dernier profil Argo, isolation d'erreur par source, re-run 100 % updated).
+  - Tests : tests/test_science.py (unitaires, fetchers injectés — bbox antiméridien, dédup EDMED, dernier profil Argo, isolation d'erreur par source, re-run 100 % updated) + tests/test_depth.py (parseur EMODnet + cache).
+  - Compléments 2026-09-10 (soir) : profondeur d'approche `GET /api/depth` (REST EMODnet Bathymetry, cache `depth_samples`, popups marinas/mouillages) ; couches WMS togglables (bathymétrie ombrée `mean_multicolour`, substrat `seabed_substrate_1m`, câbles `telecablesactual`+`powercables`) ; tracés de campagnes CSR SeaDataNet (SPARQL `https://sparql.ifremer.fr/csr/query`, `hasTrack` WKT sous-échantillonné à 160 points, règle `science.csr_max_records`=500). EDMERP (3628 projets européens) n'a **aucune** géométrie (`dct:spatial` = 0) : non cartographié ; les organismes et zones d'étude restent ceux des fiches catalogue + CSR.
 
 ## Conformité spec (Document sans titre (6).md)
 - ✅ 23/25 items pleinement conformes (classifieur SERP maintenant fait).

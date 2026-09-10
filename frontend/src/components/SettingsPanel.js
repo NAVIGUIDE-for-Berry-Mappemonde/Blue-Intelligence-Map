@@ -105,7 +105,7 @@ export default function SettingsPanel({ t, mode, settings, onSaved, onImported, 
       const isProj = "title" in first && "url" in first;
       // Science first: its features carry `source` too, which would otherwise
       // trip the marinas heuristic below.
-      const isSci = first.kind === "dataset" || first.kind === "argo_float" || "wmo" in first;
+      const isSci = first.kind === "dataset" || first.kind === "argo_float" || first.kind === "cruise" || "wmo" in first;
       const isMar = "osm_id" in first || "maps_url" in first || ("source" in first && !("title" in first));
       const isCap = first.kind === "capitainerie" || "shom_id" in first || "noaa_id" in first || first.source === "osm+shom";
       const looksLike = isSci ? "science" : isCap ? "capitaineries" : isMar ? "marinas" : isProj ? "projects" : "unknown";

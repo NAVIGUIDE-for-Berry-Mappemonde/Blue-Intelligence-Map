@@ -16,6 +16,8 @@ Sources :
   * ``edmed``   — répertoire EDMED de SeaDataNet, endpoint SPARQL (WKT)
   * ``argo``    — index des profils Argo (ERDDAP Ifremer / Coriolis),
     dernière position par flotteur sur une fenêtre glissante
+  * ``csr``     — Cruise Summary Reports SeaDataNet (SPARQL Ifremer),
+    tracés WKT ``hasTrack`` (sous-échantillonnés)
 """
 from __future__ import annotations
 
@@ -34,7 +36,10 @@ GN_ES_PAGE_SIZE = 200
 GN_ES_HARD_CAP = 10_000  # au-delà, l'API Elasticsearch exige search_after
 DEFAULT_CATALOG_MAX = 2000
 DEFAULT_ARGO_DAYS = 30
+DEFAULT_CSR_MAX = 500
 EDMED_PAGE_SIZE = 400
+CSR_PAGE_SIZE = 20
+TRACK_MAX_POINTS = 160
 
 GN_PORTALS: dict[str, dict[str, str]] = {
     "sextant": {
@@ -66,13 +71,36 @@ EDMED_QUERY = (
 ARGO_ERDDAP_INDEX = "https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats-index.json"
 ARGO_FLOAT_URL = "https://fleetmonitoring.euro-argo.eu/float/{wmo}"
 
-SOURCES = ("sextant", "odatis", "edmed", "argo")
+CSR_SPARQL = "https://sparql.ifremer.fr/csr/query"
+CSR_REPORT_URL = "https://csr.seadatanet.org/report/{native}"
+# Uniquement les campagnes qui ont un tracé (hasTrack). ORDER BY DESC(?r)
+# pour les plus récentes d'abord. Les tracks WKT peuvent dépasser 1 Mo :
+# on pagine petit et on sous-échantillonne côté Python.
+CSR_QUERY = (
+    "PREFIX csr: <http://purl.org/org/iode/po/voc/cruise-summary-reports#> "
+    "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> "
+    "SELECT ?r ?label ?desc ?lab ?ship ?start ?end ?bbox ?track WHERE { "
+    "?r a csr:CruiseSummaryReport . "
+    "?r csr:describesCruise ?c . "
+    "?c rdfs:label ?label . "
+    "?c csr:hasTrack ?track . "
+    "OPTIONAL { ?r csr:description ?desc } "
+    "OPTIONAL { ?r csr:responsibleLaboratory ?lab } "
+    "OPTIONAL { ?c csr:undertakenBy ?ship } "
+    "OPTIONAL { ?c csr:hasStartPortCall ?sp . ?sp csr:hasTimeStamp ?start } "
+    "OPTIONAL { ?c csr:hasEndPortCall ?ep . ?ep csr:hasTimeStamp ?end } "
+    "OPTIONAL { ?r csr:boundingBox ?bbox } "
+    "} ORDER BY DESC(?r) LIMIT {limit} OFFSET {offset}"
+)
+
+SOURCES = ("sextant", "odatis", "edmed", "argo", "csr")
 
 SOURCE_LABELS = {
     "sextant": "Sextant · Ifremer / SISMER",
     "odatis": "ODATIS · Data Terra",
     "edmed": "EDMED · SeaDataNet",
     "argo": "Argo · Coriolis",
+    "csr": "CSR · campagnes SeaDataNet",
 }
 
 # Codes DAC de l'index Argo (colonne institution) — jamais inventés.
@@ -114,6 +142,10 @@ SLIM_PROJECTION = {
     "cycle": 1,
     "ocean": 1,
     "wmo": 1,
+    "track": 1,
+    "ship": 1,
+    "start": 1,
+    "end": 1,
     "fetched_at": 1,
 }
 
@@ -123,6 +155,7 @@ _ARGO_CYCLE_RE = re.compile(r"_(\d+)D?\.nc$", re.I)
 FetchGn = Callable[[httpx.AsyncClient, str, int, int], Awaitable[list[dict]]]
 FetchEdmed = Callable[[httpx.AsyncClient, int, int], Awaitable[list[dict]]]
 FetchArgo = Callable[[httpx.AsyncClient, int], Awaitable[dict]]
+FetchCsr = Callable[[httpx.AsyncClient, int, int], Awaitable[list[dict]]]
 
 
 def now_iso() -> str:
@@ -205,6 +238,45 @@ def bbox_center(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
     elif lon < -180.0:
         lon += 360.0
     return (lat, lon)
+
+
+def pairs_from_wkt(wkt: str | None) -> list[tuple[float, float]]:
+    """Paires (lon, lat) d'un WKT POINT / LINESTRING / POLYGON."""
+    if not wkt or not str(wkt).strip():
+        return []
+    out: list[tuple[float, float]] = []
+    for a, b in _WKT_PAIR_RE.findall(str(wkt)):
+        lon, lat = float(a), float(b)
+        if -180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0:
+            out.append((lon, lat))
+    return out
+
+
+def subsample_line(
+    pairs: list[tuple[float, float]],
+    max_points: int = TRACK_MAX_POINTS,
+) -> list[list[float]]:
+    """Réduit un tracé à ``max_points`` en gardant le premier et le dernier."""
+    if max_points < 2:
+        max_points = 2
+    if len(pairs) <= max_points:
+        return [[lon, lat] for lon, lat in pairs]
+    step = (len(pairs) - 1) / (max_points - 1)
+    out: list[list[float]] = []
+    for i in range(max_points):
+        lon, lat = pairs[round(i * step)]
+        out.append([lon, lat])
+    last = [pairs[-1][0], pairs[-1][1]]
+    if out[-1] != last:
+        out[-1] = last
+    return out
+
+
+def _uri_tail(uri: str | None) -> str | None:
+    if not uri:
+        return None
+    tail = uri.rstrip("/").rsplit("/", 1)[-1]
+    return tail or None
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +415,57 @@ def dataset_from_edmed_binding(binding: dict) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# CSR (SeaDataNet) — binding SPARQL → tracé de campagne
+# ---------------------------------------------------------------------------
+
+def cruise_from_csr_binding(binding: dict) -> dict | None:
+    """Fiche campagne depuis une ligne SPARQL CSR (tracé WKT + métadonnées)."""
+    subject = _binding_value(binding, "r")
+    title = _binding_value(binding, "label")
+    if not subject or not title or title.strip() == "-":
+        return None
+    native = _uri_tail(subject)
+    if not native:
+        return None
+    track_pairs = pairs_from_wkt(_binding_value(binding, "track"))
+    track = subsample_line(track_pairs) if len(track_pairs) >= 2 else None
+    bbox = bbox_from_wkt(_binding_value(binding, "bbox"))
+    if not bbox and track_pairs:
+        bbox = _bbox_of_pairs(track_pairs)
+    lat = lon = None
+    if track:
+        mid = track[len(track) // 2]
+        lon, lat = float(mid[0]), float(mid[1])
+    elif bbox and not is_global_bbox(bbox):
+        lat, lon = bbox_center(bbox)
+    if lat is None or lon is None:
+        return None
+    start = (_binding_value(binding, "start") or "")[:10] or None
+    end = (_binding_value(binding, "end") or "")[:10] or None
+    desc = _binding_value(binding, "desc") or ""
+    return {
+        "_id": f"csr:{native}",
+        "kind": "cruise",
+        "source": "csr",
+        "native_id": native,
+        "name": title[:240],
+        "abstract": desc[:600],
+        "url": CSR_REPORT_URL.format(native=native),
+        "doi": None,
+        "provider": "CSR · SeaDataNet",
+        "ship": _uri_tail(_binding_value(binding, "ship")),
+        "start": start,
+        "end": end,
+        "date": start,
+        "lat": lat,
+        "lon": lon,
+        "bbox": list(bbox) if bbox else None,
+        "track": track,
+        "global": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Argo (Coriolis / ERDDAP) — index des profils → dernière position par flotteur
 # ---------------------------------------------------------------------------
 
@@ -446,12 +569,18 @@ async def upsert_science(coll, cand: dict, fetched_at: str) -> str:
     return "inserted"
 
 
-def slim_feature(doc: dict) -> dict:
-    lat = float(doc["lat"])
-    lon = float(doc["lon"])
+def slim_feature(doc: dict) -> dict | None:
+    lat, lon = doc.get("lat"), doc.get("lon")
+    track = doc.get("track")
+    if isinstance(track, list) and len(track) >= 2:
+        geometry = {"type": "LineString", "coordinates": track}
+    elif lat is not None and lon is not None:
+        geometry = {"type": "Point", "coordinates": [float(lon), float(lat)]}
+    else:
+        return None
     return {
         "type": "Feature",
-        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        "geometry": geometry,
         "properties": {
             "id": doc.get("_id"),
             "kind": doc.get("kind") or "dataset",
@@ -467,21 +596,29 @@ def slim_feature(doc: dict) -> dict:
             "cycle": doc.get("cycle"),
             "ocean": doc.get("ocean"),
             "wmo": doc.get("wmo"),
+            "ship": doc.get("ship"),
+            "start": doc.get("start"),
+            "end": doc.get("end"),
+            "lat": lat,
+            "lon": lon,
             "fetched_at": doc.get("fetched_at"),
         },
     }
 
 
 def to_slim_geojson(docs: Iterable[dict]) -> dict:
+    features = []
+    for d in docs:
+        feat = slim_feature(d)
+        if feat:
+            features.append(feat)
     return {
         "type": "FeatureCollection",
-        "features": [
-            slim_feature(d) for d in docs
-            if d.get("lat") is not None and d.get("lon") is not None
-        ],
+        "features": features,
         "attribution": (
             "Sextant © Ifremer/SISMER · ODATIS (Data Terra) · EDMED © SeaDataNet "
-            "· Argo (Coriolis ERDDAP) — métadonnées ouvertes, liens vers les portails"
+            "· Argo (Coriolis ERDDAP) · CSR © SeaDataNet — métadonnées ouvertes, "
+            "liens vers les portails · WMS EMODnet"
         ),
     }
 
@@ -546,6 +683,19 @@ async def fetch_argo_index(client: httpx.AsyncClient, days: int) -> dict:
     return data.get("table") or {"columnNames": [], "rows": []}
 
 
+async def fetch_csr_page(client: httpx.AsyncClient, limit: int, offset: int) -> list[dict]:
+    query = CSR_QUERY.replace("{limit}", str(int(limit))).replace("{offset}", str(int(offset)))
+    r = await client.get(
+        CSR_SPARQL,
+        params={"query": query},
+        headers={"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"},
+        timeout=120,
+    )
+    r.raise_for_status()
+    data = r.json()
+    return ((data.get("results") or {}).get("bindings")) or []
+
+
 # ---------------------------------------------------------------------------
 # Orchestrateur
 # ---------------------------------------------------------------------------
@@ -584,6 +734,7 @@ async def build_science(
     fetch_gn: FetchGn | None = None,
     fetch_edmed: FetchEdmed | None = None,
     fetch_argo: FetchArgo | None = None,
+    fetch_csr: FetchCsr | None = None,
     run_id: str | None = None,
 ) -> dict:
     """Moissonne les sources demandées vers la collection live (upsert, no purge)."""
@@ -602,12 +753,15 @@ async def build_science(
     cap = int(max_records if max_records is not None else _rule("science.catalog_max_records", DEFAULT_CATALOG_MAX))
     cap = max(1, min(cap, GN_ES_HARD_CAP))
     days = int(argo_days if argo_days is not None else _rule("science.argo_window_days", DEFAULT_ARGO_DAYS))
+    csr_cap = int(_rule("science.csr_max_records", DEFAULT_CSR_MAX))
+    csr_cap = max(1, min(csr_cap, 2000))
     fetched_at = now_iso()
 
     state.total = len(enabled)
     state.progress = 0
     state.log(
-        f"Moisson Science : sources={','.join(enabled)} · cap catalogue={cap} · fenêtre Argo={days} j"
+        f"Moisson Science : sources={','.join(enabled)} · cap catalogue={cap} "
+        f"· CSR={csr_cap} · fenêtre Argo={days} j"
     )
 
     per_source: dict[str, dict] = {}
@@ -675,6 +829,27 @@ async def build_science(
                         f"[argo] {summary['fetched']} profils → {len(docs)} flotteurs actifs "
                         f"(+{summary['inserted']} / ~{summary['updated']})"
                     )
+                elif source == "csr":
+                    offset = 0
+                    while offset < csr_cap and not state.cancel:
+                        limit = min(CSR_PAGE_SIZE, csr_cap - offset)
+                        bindings = await (fetch_csr or fetch_csr_page)(http, limit, offset)
+                        if not bindings:
+                            break
+                        page_docs: dict[str, dict] = {}
+                        for b in bindings:
+                            doc = cruise_from_csr_binding(b)
+                            if not doc:
+                                continue
+                            page_docs.setdefault(doc["_id"], doc)
+                        summary["fetched"] += len(bindings)
+                        await _harvest_docs(coll, page_docs.values(), summary, fetched_at)
+                        state.log(
+                            f"[csr] offset {offset} : +{summary['inserted']} / ~{summary['updated']}"
+                        )
+                        if len(bindings) < limit:
+                            break
+                        offset += limit
             except Exception as exc:
                 summary["error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
                 state.log(f"[{source}] ERREUR {summary['error']}")
@@ -692,6 +867,7 @@ async def build_science(
         "cancelled": state.cancel,
         "catalog_max_records": cap,
         "argo_window_days": days,
+        "csr_max_records": csr_cap,
     }
     state.summary = result
     state.log(f"Moisson Science terminée : +{result['inserted']} / ~{result['updated']}")

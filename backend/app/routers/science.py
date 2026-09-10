@@ -10,7 +10,7 @@ import asyncio
 import time
 import uuid
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -54,9 +54,19 @@ async def science_count():
         "unlocated": total - located,
         "datasets": await db.science_items.count_documents({"kind": "dataset"}),
         "argo_floats": await db.science_items.count_documents({"kind": "argo_float"}),
+        "cruises": await db.science_items.count_documents({"kind": "cruise"}),
         "with_doi": await db.science_items.count_documents({"doi": {"$nin": ["", None]}}),
         "by_source": by_source,
     }
+
+
+@router.get("/depth")
+async def approach_depth(lat: float = Query(...), lon: float = Query(...)):
+    """Profondeur d'approche (DTM EMODnet) en un point, avec cache Mongo."""
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        raise HTTPException(400, "lat/lon out of range")
+    from app.services.depth_sample import sample_depth
+    return await sample_depth(db.depth_samples, lat, lon)
 
 
 @router.get("/export/science.geojson")
@@ -80,10 +90,27 @@ async def import_science_geojson(fc: dict = Body(...)):
         try:
             geom = f.get("geometry") or {}
             coords = geom.get("coordinates") or []
-            if geom.get("type") != "Point" or len(coords) < 2:
+            geom_type = geom.get("type")
+            track = None
+            if geom_type == "LineString":
+                if not isinstance(coords, list) or len(coords) < 2:
+                    invalid += 1
+                    continue
+                track = []
+                for pt in coords[:500]:
+                    if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                        continue
+                    track.append([float(pt[0]), float(pt[1])])
+                if len(track) < 2:
+                    invalid += 1
+                    continue
+                mid = track[len(track) // 2]
+                lon, lat = float(mid[0]), float(mid[1])
+            elif geom_type == "Point" and len(coords) >= 2:
+                lon, lat = float(coords[0]), float(coords[1])
+            else:
                 invalid += 1
                 continue
-            lon, lat = float(coords[0]), float(coords[1])
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 invalid += 1
                 continue
@@ -111,9 +138,13 @@ async def import_science_geojson(fc: dict = Body(...)):
                 "cycle": p.get("cycle"),
                 "ocean": p.get("ocean"),
                 "wmo": p.get("wmo"),
+                "ship": p.get("ship"),
+                "start": p.get("start"),
+                "end": p.get("end"),
                 "lat": lat,
                 "lon": lon,
                 "bbox": p.get("bbox"),
+                "track": track or p.get("track"),
                 "global": False,
                 "fetched_at": p.get("fetched_at") or now,
                 "schema": SCHEMA,

@@ -12,6 +12,8 @@ import useMarinasLayer from "./map/useMarinasLayer";
 import useProjectsLayer from "./map/useProjectsLayer";
 import useRouteLayer from "./map/useRouteLayer";
 import useScienceLayer from "./map/useScienceLayer";
+import useScienceWms from "./map/useScienceWms";
+import { attachDepthOnPopup } from "./map/depthRow";
 
 /**
  * MapView — orchestrateur de la carte Leaflet à monde unique.
@@ -28,6 +30,7 @@ export default function MapView({
   flyToCapitainerie,
   science,
   flyToScience,
+  scienceWms,
   anchorages,
   showAnchorages = true,
   showReview = false,
@@ -59,6 +62,7 @@ export default function MapView({
   const capitainerieClusterRef = useRef(null);
   const capitainerieMarkersById = useRef(new Map());
   const scienceClusterRef = useRef(null);
+  const scienceTracksRef = useRef(null);
   const scienceMarkersById = useRef(new Map());
   const anchorClusterRef = useRef(null);
   const formalitiesClusterRef = useRef(null);
@@ -126,6 +130,10 @@ export default function MapView({
     map.getPane("formalities-escales").style.zIndex = 500;
     map.createPane("amp");
     map.getPane("amp").style.zIndex = 420;
+    map.createPane("science-wms");
+    map.getPane("science-wms").style.zIndex = 350;
+    map.createPane("science-tracks");
+    map.getPane("science-tracks").style.zIndex = 450;
 
     const cluster = L.markerClusterGroup({
       maxClusterRadius: 50,
@@ -180,6 +188,8 @@ export default function MapView({
       }),
     });
     scienceClusterRef.current = scienceCluster;
+    const scienceTracks = L.layerGroup();
+    scienceTracksRef.current = scienceTracks;
     // Anchorages cluster (teal), shown alongside marinas in marinas mode
     const anchorCluster = L.markerClusterGroup({
       maxClusterRadius: 40,
@@ -250,7 +260,10 @@ export default function MapView({
     else if (mode === "capitaineries") map.addLayer(capitainerieCluster);
     else if (mode === "formalities") map.addLayer(formalitiesGroup);
     else if (mode === "amp") map.addLayer(ampLayer);
-    else if (mode === "science") map.addLayer(scienceCluster);
+    else if (mode === "science") {
+      map.addLayer(scienceCluster);
+      map.addLayer(scienceTracks);
+    }
     else map.addLayer(cluster);
     // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
     map.on("zoomstart", () => { zoomingRef.current = true; });
@@ -288,12 +301,13 @@ export default function MapView({
       setTimeout(() => adjustPopup(e.popup), 250);
       setTimeout(() => adjustPopup(e.popup), 800);
     });
+    attachDepthOnPopup(map, tRef);
     mapObj.current = map;
     clusterRef.current = cluster;
     // Debug hook — expose the map + all clusters on window for headless
     // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, science: scienceCluster, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster, amp: ampLayer };
+      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, science: scienceCluster, scienceTracks, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster, amp: ampLayer };
     }
     // eslint-disable-next-line
   }, [minZoom]);
@@ -311,9 +325,11 @@ export default function MapView({
   });
   useAnchoragesLayer({ mapObj, anchorClusterRef, anchorages, tRef });
   useScienceLayer({
-    mapObj, clusterRef: scienceClusterRef, markersById: scienceMarkersById,
+    mapObj, clusterRef: scienceClusterRef, tracksLayerRef: scienceTracksRef,
+    markersById: scienceMarkersById,
     science, tRef,
   });
+  useScienceWms({ mapObj, mode, enabled: scienceWms });
   useFormalitiesLayers({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
     poeMarkersById,
@@ -337,6 +353,7 @@ export default function MapView({
     const mar = marinaClusterRef.current;
     const cap = capitainerieClusterRef.current;
     const sci = scienceClusterRef.current;
+    const sciTracks = scienceTracksRef.current;
     const anch = anchorClusterRef.current;
     const formCluster = formalitiesClusterRef.current;
     const amp = ampLayerRef.current;
@@ -346,6 +363,7 @@ export default function MapView({
     if (map.hasLayer(mar)) map.removeLayer(mar);
     if (cap && map.hasLayer(cap)) map.removeLayer(cap);
     if (sci && map.hasLayer(sci)) map.removeLayer(sci);
+    if (sciTracks && map.hasLayer(sciTracks)) map.removeLayer(sciTracks);
     if (anch && map.hasLayer(anch)) map.removeLayer(anch);
     if (map.hasLayer(formCluster)) map.removeLayer(formCluster);
     if (amp && map.hasLayer(amp)) map.removeLayer(amp);
@@ -356,6 +374,7 @@ export default function MapView({
       if (cap) map.addLayer(cap);
     } else if (mode === "science") {
       if (sci) map.addLayer(sci);
+      if (sciTracks) map.addLayer(sciTracks);
     } else if (mode === "formalities") {
       map.addLayer(formCluster);
     } else if (mode === "amp") {
@@ -391,7 +410,15 @@ export default function MapView({
     if (!map || flyToScience.lat == null || flyToScience.lon == null) return;
     const m = scienceMarkersById.current.get(flyToScience.id);
     const cluster = scienceClusterRef.current;
-    map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
+    if (m && typeof m.getBounds === "function") {
+      try {
+        map.fitBounds(m.getBounds(), { padding: [48, 48], maxZoom: 8, duration: 1.0 });
+      } catch (_) {
+        map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 7), { duration: 1.0 });
+      }
+    } else {
+      map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
+    }
     // Les fiches d'une même station partagent souvent le même centre : après
     // le vol, le marqueur peut rester agrégé. zoomToShowLayer décluster
     // (spiderfy au besoin) avant d'ouvrir le popup — openPopup seul serait

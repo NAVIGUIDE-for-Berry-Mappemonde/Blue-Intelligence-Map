@@ -7,6 +7,7 @@ const SOURCE_DEFS = [
   { id: "odatis", labelKey: "scienceSourceOdatis" },
   { id: "edmed", labelKey: "scienceSourceEdmed" },
   { id: "argo", labelKey: "scienceSourceArgo" },
+  { id: "csr", labelKey: "scienceSourceCsr" },
 ];
 
 /**
