@@ -76,6 +76,9 @@ async def stats(mode: str = "projects"):
     elif m == "amp":
         items = await db.amp_sites.count_documents({})
         tele_filter = {"dataset": "amp"}
+    elif m == "science":
+        items = await db.science_items.count_documents({})
+        tele_filter = {"dataset": "science"}
     else:  # projects (default)
         items = await db.projects.count_documents({})
         # Legacy rows have no `dataset` field — count them as projects.
@@ -103,6 +106,8 @@ def _dataset_filter(mode: str) -> dict:
         return {"dataset": "formalities"}
     if m == "amp":
         return {"dataset": "amp"}
+    if m == "science":
+        return {"dataset": "science"}
     return {"$or": [{"dataset": "projects"}, {"dataset": {"$exists": False}}]}
 
 

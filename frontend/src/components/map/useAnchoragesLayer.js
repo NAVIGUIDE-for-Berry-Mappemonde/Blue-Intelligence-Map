@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { depthRowHtml } from "./depthRow";
 
 /**
  * Couche Mouillages (Phase 8) : marqueurs teal reconstruits quand la prop
@@ -53,6 +54,7 @@ export default function useAnchoragesLayer({ mapObj, anchorClusterRef, anchorage
             </div>
             ${row(t("anchoragesCategory"), tags.anchorage_category_label)}
             ${row(t("marinasDepth"), depth)}
+            ${depthRowHtml(lat, lon, t)}
             ${row(t("anchoragesHolding"), holding)}
             ${row(t("anchoragesShelter"), tags.shelter)}
             ${row("Description", tags.description ? String(tags.description).slice(0, 160) : null)}

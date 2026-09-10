@@ -12,6 +12,7 @@ export const RUNS_API = {
   capitaineries: { list: "/capitaineries/runs", detail: (id) => `/capitaineries/runs/${id}` },
   formalities: { list: "/poe/runs", detail: (id) => `/poe/runs/${id}` },
   amp: { list: "/amp/runs", detail: (id) => `/amp/runs/${id}` },
+  science: { list: "/science/runs", detail: (id) => `/science/runs/${id}` },
 };
 
 export function loc(obj, lang) {

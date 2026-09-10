@@ -25,6 +25,7 @@ const EXPORT_URLS = {
   capitaineries: "/api/export/capitaineries.geojson",
   formalities: "/api/export/poe.geojson",
   amp:         "/api/export/amp.geojson",
+  science:     "/api/export/science.geojson",
 };
 
 // 2026-08-24 bug-fix — import endpoint per mode. Formalities (PoE) data is
@@ -33,12 +34,14 @@ const IMPORT_URLS = {
   projects:    "/import/geojson",
   marinas:     "/import/marinas.geojson",
   capitaineries: "/import/capitaineries.geojson",
+  science:     "/import/science.geojson",
 };
 
 const IMPORT_TOTAL_KEY = {
   projects:    "total_projects",
   marinas:     "total_marinas",
   capitaineries: "total_capitaineries",
+  science:     "total_science",
 };
 
 export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSaved, onImported, onProjectsCleared, onClose }) {
@@ -89,9 +92,12 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
       const fc = JSON.parse(text);
       const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
       const isProj = "title" in first && "url" in first;
+      // Science first: its features carry `source` too, which would otherwise
+      // trip the marinas heuristic below.
+      const isSci = first.kind === "dataset" || first.kind === "argo_float" || first.kind === "cruise" || "wmo" in first;
       const isMar = "osm_id" in first || "maps_url" in first || ("source" in first && !("title" in first));
       const isCap = first.kind === "capitainerie" || "shom_id" in first || "noaa_id" in first || first.source === "osm+shom";
-      const looksLike = isCap ? "capitaineries" : isMar ? "marinas" : isProj ? "projects" : "unknown";
+      const looksLike = isSci ? "science" : isCap ? "capitaineries" : isMar ? "marinas" : isProj ? "projects" : "unknown";
       if (looksLike !== "unknown" && looksLike !== currentMode) {
         throw new Error(
           `Fichier détecté comme "${looksLike}" mais le mode actif est "${currentMode}". ` +
@@ -101,6 +107,7 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
       const { data } = await api.post(importUrl, fc, { timeout: 180000 });
       const totalLabel = currentMode === "marinas" ? "Total marinas"
         : currentMode === "capitaineries" ? "Total capitaineries"
+        : currentMode === "science" ? "Total science"
         : t("totalN");
       alert(
         `${t("importDone")}\n` +

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { depthRowHtml } from "./depthRow";
 
 const esc = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -84,6 +85,7 @@ export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarker
             </div>
             ${svcRow}
             ${siteRow}
+            ${depthRowHtml(lat, lon, t)}
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <a href="${esc(mapsUrl)}" target="_blank" rel="noreferrer" data-testid="popup-maps-link"
                  style="font-size:10px;font-weight:600;color:#fff;background:rgba(255,74,74,0.18);border:1px solid rgba(255,74,74,0.45);border-radius:2px;padding:3px 10px;text-decoration:none;">
