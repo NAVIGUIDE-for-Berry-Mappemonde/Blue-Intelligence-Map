@@ -41,14 +41,23 @@ from typing import AsyncIterator, Dict, List, Optional, Tuple
 import httpx
 
 log = logging.getLogger("naviguide.llm_cascade")
-# Si le service hôte n'a configuré aucun logging (ex. naviguide-api sous
-# uvicorn), sortir nos INFO (fournisseur servant, bascules) sur stderr pour
-# journalctl. Ne rien toucher si l'application a déjà ses handlers.
-if not log.handlers and not logging.getLogger().handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    log.addHandler(_handler)
-    log.setLevel(logging.INFO)
+_LOG_READY = False
+
+
+def _ensure_log_handler() -> None:
+    """Handler stderr par défaut si le service hôte n'a configuré aucun logging
+    (ex. naviguide-api sous uvicorn), pour voir fournisseur servant et bascules
+    dans journalctl. Décidé au premier appel — pas à l'import — afin de laisser
+    le service configurer son propre logging d'abord (orchestrateur, polar)."""
+    global _LOG_READY
+    if _LOG_READY:
+        return
+    _LOG_READY = True
+    if not log.handlers and not logging.getLogger().handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
 
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -254,6 +263,7 @@ def complete(
         (texte, provider) — provider ∈ {"nvidia", "openrouter", "claude"}.
         ("", "none") si aucun fournisseur n'est disponible ou si tout échoue.
     """
+    _ensure_log_handler()
     user_msgs = _user_messages(prompt, messages)
     if not user_msgs:
         return "", "none"
@@ -314,6 +324,7 @@ async def stream(
     suivant. Une rupture après le premier jeton arrête le flux (l'appelant
     gère déjà ce cas via son fallback « aucun contenu »).
     """
+    _ensure_log_handler()
     oai_msgs = _with_system(system, [{"role": "user", "content": prompt}])
 
     candidates = []
