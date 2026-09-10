@@ -24,6 +24,8 @@ function loadGl() {
       await import("@maplibre/maplibre-gl-leaflet");
       return maplibregl;
     })();
+    // Un échec ne doit pas rester en cache : le prochain passage retentera.
+    glLoader.catch(() => { glLoader = null; });
   }
   return glLoader;
 }
@@ -61,8 +63,9 @@ export default function useNauticalBasemap({ mapObj, tileRef, basemap }) {
           if (!m.hasLayer(glRef.current)) glRef.current.addTo(m);
           setNauticalActive(true);
         })
-        .catch(() => {
+        .catch((err) => {
           // maplibre indisponible (offline…) : on reste sur le raster courant.
+          console.error("[carte marine] chargement impossible :", err);
           setNauticalActive(false);
         });
     } else {
