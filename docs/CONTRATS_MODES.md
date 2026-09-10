@@ -13,10 +13,11 @@ Les cinq modes ont été câblés séparément. Des jobs qui posent **la même q
 | **Marinas** | Annuaire mondial `leisure=marina` (identité OSM stable), signal Google `/maps/place/` s’il existe vraiment, contacts et services **sans inventer**. Mouillages OSM à part, le long de la route. Runs isolés. |
 | **Capitaineries** | Recenser les **bureaux** (le bâtiment, pas le plan d’eau ni la marina), en tirer téléphone et VHF, sans jamais les rattacher aux marinas. |
 | **AMP** | Polygones ProtectedSeas sur une **façade** (pas le monde), et **deux URL distinctes** : gestionnaire (`manager_url`) vs visite / entrée / permis / mouillage (`visit_url`). La visite n’est jamais la homepage gestionnaire. |
+| **Science** | Localiser les jeux de données océanographiques des catalogues officiels (Sextant/SISMER, ODATIS, EDMED SeaDataNet) et les flotteurs Argo actifs, chacun avec le **lien direct vers sa fiche portail**. Moisson par API structurées (JSON GeoNetwork, SPARQL, ERDDAP) — jamais de LLM ni de scraping. |
 
 Légende des jobs web : **P** Projets swarm · **TD** PoE top-down · **BU** PoE bottom-up · **MM** Marinas Maps · **ME** Marinas enrich · **CE** Capitaineries enrich · **AV** AMP visit.
 
-Les dumps OSM (marinas, capitaineries, mouillages) et les polygones AMP n’enchaînent pas les 7 familles. Ce n’est pas un trou : ce n’est pas le même objet.
+Les dumps OSM (marinas, capitaineries, mouillages), les polygones AMP et la moisson Science n’enchaînent pas les 7 familles. Ce n’est pas un trou : ce n’est pas le même objet.
 
 ---
 

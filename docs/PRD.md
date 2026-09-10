@@ -47,6 +47,13 @@ Application OSINT de cartographie à deux pipelines : (1) scraper de Ports d'Ent
   - Validation OSM COMPLÈTE terminée : 1171/1171 PoE vérifiés, 678 haute confiance (≥0.5), 154 sans tag OSM à 3 km.
   - Tests de régression réutilisables : tests/test_serp_ml_resume.py (rapide, sans coût LLM).
 
+- [2026-09-10] Mode Science (6e mode, violet #a78bfa) — jeux de données océano localisés sur la carte + lien vers leur fiche portail :
+  - Sources (API structurées uniquement — pas de LLM, pas de scraping) : Sextant/SISMER + sous-portail ODATIS via l'API JSON Elasticsearch de GeoNetwork 4 (`/geonetwork/{srv|ODATIS}/api/search/records/_search`, geom GeoJSON natif), EDMED SeaDataNet via SPARQL (WKT sur le nœud dct:spatial), flotteurs Argo actifs via l'index ERDDAP Ifremer (`ArgoFloats-index`, dernier profil par WMO, lien fleetmonitoring.euro-argo.eu).
+  - Backend : services/science_build.py (bbox GeoJSON/WKT + antiméridien, détection bbox "monde" → fiche conservée mais non placée, upsert non destructif `_id={source}:{native_id}`), routers/science.py (geojson/count/build/status/cancel/runs/export/import), collections science_items + science_runs (snapshot de règles → onglet Runs).
+  - Règles catalogue : science.catalog_max_records (2000, cap dur ES 10000), science.argo_window_days (30 j).
+  - Frontend : SciencePanel (recherche, filtre par source, légende datasets/Argo), useScienceLayer (popup organisme/résumé/DOI/WMO/cycle + bouton fiche portail), ScienceCard console (sources cochables), Review non branchée (placeholder), export/import science.geojson.
+  - Tests : tests/test_science.py (18 unitaires, fetchers injectés — bbox antiméridien, dédup EDMED, dernier profil Argo, isolation d'erreur par source, re-run 100 % updated).
+
 ## Conformité spec (Document sans titre (6).md)
 - ✅ 23/25 items pleinement conformes (classifieur SERP maintenant fait).
 - ⚠️ Partiels : traduction NLP requêtes (matrice statique 16 langues au lieu d'opus-mt local) ; crowdsourcing PoE avec lien de loi (le module existant couvre les projets).
