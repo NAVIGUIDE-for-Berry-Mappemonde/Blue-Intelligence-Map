@@ -10,6 +10,8 @@ __pycache__/
 
 # Caches runtime du backend
 backend/data/.tld_cache/
+# Snapshots datés des exports (archives locales, jamais commitées)
+backend/exports/
 # CSV brut NGA Pub 150 (snapshot slim = backend/data/wpi_ports.json)
 UpdatedPub150.csv
 **/UpdatedPub150.csv
