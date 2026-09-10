@@ -41,6 +41,14 @@ from typing import AsyncIterator, Dict, List, Optional, Tuple
 import httpx
 
 log = logging.getLogger("naviguide.llm_cascade")
+# Si le service hôte n'a configuré aucun logging (ex. naviguide-api sous
+# uvicorn), sortir nos INFO (fournisseur servant, bascules) sur stderr pour
+# journalctl. Ne rien toucher si l'application a déjà ses handlers.
+if not log.handlers and not logging.getLogger().handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
 
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -59,9 +67,10 @@ OPENROUTER_DEFAULT = "openai/gpt-4o-mini"
 ANTHROPIC_DEFAULT = "claude-opus-4-5"
 
 # Timeouts courts (usage interactif) : un modèle en queue bascule vite au
-# suivant. En SSE, read = délai max avant le premier jeton / entre chunks.
-_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
-_STREAM_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+# suivant (NIM nominal répond en 1-8 s). En SSE, read = délai max avant le
+# premier jeton / entre chunks.
+_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
+_STREAM_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 
 
 def _env(name: str) -> str:
@@ -337,9 +346,9 @@ async def stream(
                 yield token
         except Exception as e:
             if emitted:
-                log.warning(f"llm_cascade: flux {provider} {model} rompu ({e})")
+                log.warning(f"llm_cascade: flux {provider} {model} rompu ({type(e).__name__}: {e})")
                 return
-            log.warning(f"llm_cascade: stream {provider} {model}: {e} → suivant")
+            log.warning(f"llm_cascade: stream {provider} {model}: {type(e).__name__}: {e} → suivant")
             continue
         if emitted:
             return
