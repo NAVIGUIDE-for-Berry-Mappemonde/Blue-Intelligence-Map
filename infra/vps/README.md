@@ -112,7 +112,7 @@ Internet → nginx (443, Let's Encrypt)
 | Quoi | Où |
 |------|-----|
 | Code | `~/blue-intelligence-map/naviguide/` (venv partagé `.venv/`) |
-| Secrets (Anthropic, Copernicus, StormGlass) | `~/.config/naviguide/naviguide.env` (chmod 600) |
+| Secrets (cascade LLM NVIDIA/OpenRouter/Anthropic, Copernicus, StormGlass) | `~/.config/naviguide/naviguide.env` (chmod 600) |
 | Services | `naviguide-api`, `naviguide-orchestrator`, `naviguide-polar` (systemd) |
 | Reverse proxy | `/etc/nginx/sites-available/naviguide` (TLS certbot) |
 
