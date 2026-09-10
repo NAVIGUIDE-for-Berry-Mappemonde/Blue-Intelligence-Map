@@ -1,31 +1,19 @@
 {
   "summary": {
-    "ports_checked": 1169,
-    "anomalies_flagged": 48,
+    "ports_checked": 1280,
+    "anomalies_flagged": 50,
     "previously_flagged_cleared": 0,
-    "zones": 165,
-    "checked_at": "2026-08-28T18:08:41Z"
+    "zones": 166,
+    "checked_at": "2026-09-10T03:11:33Z"
   },
   "anomalies": [
-    {
-      "id": "5f1c4ec6-a5ef-496a-9fd9-5b5f97eff55c",
-      "name": "Dutch Harbor Small Boat Harbor",
-      "zone": "Alaska",
-      "lat": 53.8831064,
-      "lon": -166.552545,
-      "score": -0.0028,
-      "methods": [
-        "isolation_forest",
-        "dbscan_noise"
-      ]
-    },
     {
       "id": "62103e67-166c-4ce0-8487-c3f1fdfbaee9",
       "name": "Thursday Island",
       "zone": "Australia",
       "lat": -10.5786459,
       "lon": 142.2189206,
-      "score": -0.0472,
+      "score": -0.0349,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -37,7 +25,7 @@
       "zone": "Australia",
       "lat": -12.6652161,
       "lon": 141.873714,
-      "score": -0.0355,
+      "score": -0.0249,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -49,7 +37,7 @@
       "zone": "Australia",
       "lat": -12.4729475,
       "lon": 130.9040298,
-      "score": -0.0841,
+      "score": -0.0626,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -61,7 +49,7 @@
       "zone": "Australia",
       "lat": -35.028019,
       "lon": 117.8841916,
-      "score": -0.0382,
+      "score": -0.0352,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -73,7 +61,7 @@
       "zone": "Australia",
       "lat": -17.9628646,
       "lon": 122.2320575,
-      "score": -0.0425,
+      "score": -0.0387,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -85,7 +73,7 @@
       "zone": "Australia",
       "lat": -24.8666251,
       "lon": 113.6763702,
-      "score": -0.032,
+      "score": -0.029,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -97,7 +85,7 @@
       "zone": "Australia",
       "lat": -20.615989,
       "lon": 116.7799988,
-      "score": -0.0403,
+      "score": -0.0414,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -109,7 +97,7 @@
       "zone": "Australia",
       "lat": -33.8611665,
       "lon": 121.8885159,
-      "score": -0.0218,
+      "score": -0.0043,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -121,7 +109,7 @@
       "zone": "Australia",
       "lat": -28.775663,
       "lon": 114.614339,
-      "score": -0.0387,
+      "score": -0.036,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -133,10 +121,21 @@
       "zone": "Bangladesh",
       "lat": 24.9037895,
       "lon": 91.8655693,
-      "score": -0.0013,
+      "score": -0.0339,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
+      ]
+    },
+    {
+      "id": "ef664d9b-32bb-41aa-9a8b-addecc358c6d",
+      "name": "San Pedro",
+      "zone": "Belize",
+      "lat": 17.9192814,
+      "lon": -87.9615436,
+      "score": -0.0167,
+      "methods": [
+        "isolation_forest"
       ]
     },
     {
@@ -145,7 +144,7 @@
       "zone": "Bosnia and Herzegovina",
       "lat": 44.8756731,
       "lon": 18.8205143,
-      "score": -0.0347,
+      "score": -0.058,
       "methods": [
         "isolation_forest"
       ]
@@ -156,7 +155,7 @@
       "zone": "Bosnia and Herzegovina",
       "lat": 43.7864291,
       "lon": 19.294097,
-      "score": -0.0044,
+      "score": -0.036,
       "methods": [
         "isolation_forest"
       ]
@@ -167,7 +166,7 @@
       "zone": "Bosnia and Herzegovina",
       "lat": 44.8562052,
       "lon": 19.1480726,
-      "score": -0.0521,
+      "score": -0.0706,
       "methods": [
         "isolation_forest"
       ]
@@ -178,7 +177,7 @@
       "zone": "Bosnia and Herzegovina",
       "lat": 44.6864436,
       "lon": 19.0460211,
-      "score": -0.0373,
+      "score": -0.0565,
       "methods": [
         "isolation_forest"
       ]
@@ -189,7 +188,7 @@
       "zone": "Bulgaria",
       "lat": 43.6158817,
       "lon": 25.3509536,
-      "score": -0.0468,
+      "score": -0.0713,
       "methods": [
         "isolation_forest"
       ]
@@ -200,7 +199,7 @@
       "zone": "Bulgaria",
       "lat": 43.8480413,
       "lon": 25.9542057,
-      "score": -0.0016,
+      "score": -0.0199,
       "methods": [
         "isolation_forest"
       ]
@@ -211,7 +210,7 @@
       "zone": "Chile",
       "lat": -18.4792205,
       "lon": -70.3214246,
-      "score": -0.0036,
+      "score": -0.0084,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -223,7 +222,7 @@
       "zone": "Chile",
       "lat": -51.735838,
       "lon": -72.4904239,
-      "score": -0.0345,
+      "score": -0.037,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -235,7 +234,7 @@
       "zone": "Chile",
       "lat": -53.1625688,
       "lon": -70.907822,
-      "score": -0.0592,
+      "score": -0.0511,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -247,7 +246,7 @@
       "zone": "Chile",
       "lat": -54.9357749,
       "lon": -67.6062504,
-      "score": -0.0756,
+      "score": -0.0599,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -259,7 +258,7 @@
       "zone": "China",
       "lat": 39.6587994,
       "lon": 118.4132323,
-      "score": -0.1317,
+      "score": -0.1347,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -271,7 +270,7 @@
       "zone": "Croatia",
       "lat": 44.1168594,
       "lon": 15.2353257,
-      "score": -0.0235,
+      "score": -0.0581,
       "methods": [
         "isolation_forest"
       ]
@@ -282,7 +281,7 @@
       "zone": "Croatia",
       "lat": 43.907916,
       "lon": 15.1875435,
-      "score": -0.0306,
+      "score": -0.0678,
       "methods": [
         "isolation_forest"
       ]
@@ -293,7 +292,7 @@
       "zone": "Croatia",
       "lat": 44.1405853,
       "lon": 14.9064248,
-      "score": -0.0065,
+      "score": -0.0443,
       "methods": [
         "isolation_forest"
       ]
@@ -304,7 +303,7 @@
       "zone": "Democratic Republic of the Congo",
       "lat": -4.2995758,
       "lon": 15.3169238,
-      "score": -0.0372,
+      "score": -0.0632,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -316,7 +315,7 @@
       "zone": "Guyana",
       "lat": 8.268851,
       "lon": -59.7553788,
-      "score": -0.0239,
+      "score": -0.0464,
       "methods": [
         "isolation_forest"
       ]
@@ -327,7 +326,7 @@
       "zone": "Honduras",
       "lat": 16.4421239,
       "lon": -85.8870164,
-      "score": -0.0629,
+      "score": -0.0749,
       "methods": [
         "isolation_forest"
       ]
@@ -338,7 +337,7 @@
       "zone": "Honduras",
       "lat": 15.8178082,
       "lon": -84.5872592,
-      "score": -0.0591,
+      "score": -0.0863,
       "methods": [
         "isolation_forest"
       ]
@@ -349,21 +348,20 @@
       "zone": "Lithuania",
       "lat": 53.9809426,
       "lon": 23.9356672,
-      "score": -0.0669,
+      "score": -0.0892,
       "methods": [
         "isolation_forest"
       ]
     },
     {
-      "id": "d3898cd5-c873-4511-831d-be5a8c79a890",
-      "name": "La Paz",
-      "zone": "Mexico",
-      "lat": 19.3505168,
-      "lon": -98.9609329,
-      "score": -0.1236,
+      "id": "216ea235-9bd9-48e3-84ef-d83399c7abf9",
+      "name": "Puerto de Paita",
+      "zone": "Peru",
+      "lat": -5.0823314,
+      "lon": -81.1052675,
+      "score": -0.0011,
       "methods": [
-        "isolation_forest",
-        "dbscan_noise"
+        "isolation_forest"
       ]
     },
     {
@@ -372,7 +370,7 @@
       "zone": "Russia",
       "lat": 68.970665,
       "lon": 33.07497,
-      "score": -0.0435,
+      "score": -0.0387,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -384,10 +382,21 @@
       "zone": "Russia",
       "lat": 64.7316875,
       "lon": 177.5060925,
-      "score": -0.13,
+      "score": -0.1293,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
+      ]
+    },
+    {
+      "id": "e4135878-cef1-433a-ac48-99bfb0b5a59a",
+      "name": "Nakhodka",
+      "zone": "Russia",
+      "lat": 42.8469903,
+      "lon": 132.9606716,
+      "score": -0.1505,
+      "methods": [
+        "isolation_forest"
       ]
     },
     {
@@ -396,7 +405,7 @@
       "zone": "Russia",
       "lat": 53.027194,
       "lon": 158.6428015,
-      "score": -0.104,
+      "score": -0.1051,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -408,7 +417,7 @@
       "zone": "Russia",
       "lat": 59.5645655,
       "lon": 150.8078832,
-      "score": -0.1147,
+      "score": -0.1286,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -420,7 +429,7 @@
       "zone": "Senegal",
       "lat": 14.6720332,
       "lon": -17.4269192,
-      "score": -0.0344,
+      "score": -0.0598,
       "methods": [
         "isolation_forest"
       ]
@@ -431,7 +440,7 @@
       "zone": "South Korea",
       "lat": 35.1600749,
       "lon": 129.1405084,
-      "score": -0.0356,
+      "score": -0.0608,
       "methods": [
         "isolation_forest"
       ]
@@ -442,7 +451,7 @@
       "zone": "South Korea",
       "lat": 34.854254,
       "lon": 128.433205,
-      "score": -0.0034,
+      "score": -0.0327,
       "methods": [
         "isolation_forest"
       ]
@@ -453,7 +462,7 @@
       "zone": "South Korea",
       "lat": 34.7446451,
       "lon": 127.6730645,
-      "score": -0.0056,
+      "score": -0.0229,
       "methods": [
         "isolation_forest"
       ]
@@ -464,7 +473,7 @@
       "zone": "South Korea",
       "lat": 34.7843832,
       "lon": 126.36824,
-      "score": -0.0309,
+      "score": -0.0567,
       "methods": [
         "isolation_forest"
       ]
@@ -475,7 +484,7 @@
       "zone": "Tanzania",
       "lat": -9.3985098,
       "lon": 37.8997467,
-      "score": -0.0131,
+      "score": -0.0441,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -487,21 +496,22 @@
       "zone": "United States",
       "lat": 38.2613605,
       "lon": -119.2269816,
-      "score": -0.1563,
+      "score": -0.1528,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
       ]
     },
     {
-      "id": "0088e432-e552-4972-b0ba-0ee74153efdb",
-      "name": "Savannah",
+      "id": "84d430f9-b0cf-41d5-9668-e9b311833272",
+      "name": "Newport",
       "zone": "United States",
-      "lat": 43.0654611,
-      "lon": -76.7568196,
-      "score": -0.0078,
+      "lat": 43.185904,
+      "lon": -75.014648,
+      "score": -0.054,
       "methods": [
-        "isolation_forest"
+        "isolation_forest",
+        "dbscan_noise"
       ]
     },
     {
@@ -510,7 +520,7 @@
       "zone": "Uruguay",
       "lat": -34.4698592,
       "lon": -57.8433679,
-      "score": -0.0385,
+      "score": -0.0677,
       "methods": [
         "isolation_forest"
       ]
@@ -521,7 +531,7 @@
       "zone": "Uruguay",
       "lat": -34.4397941,
       "lon": -57.4429894,
-      "score": -0.023,
+      "score": -0.0492,
       "methods": [
         "isolation_forest"
       ]
@@ -532,7 +542,18 @@
       "zone": "Uruguay",
       "lat": -30.2612301,
       "lon": -57.6059002,
-      "score": -0.022,
+      "score": -0.0416,
+      "methods": [
+        "isolation_forest"
+      ]
+    },
+    {
+      "id": "91d4a6c2-0c2a-44bb-8489-ae4226bcae0d",
+      "name": "Prefectura de Río Branco",
+      "zone": "Uruguay",
+      "lat": -32.588689,
+      "lon": -53.3780831,
+      "score": -0.0063,
       "methods": [
         "isolation_forest"
       ]
@@ -543,7 +564,7 @@
       "zone": "Brazil",
       "lat": -1.1277371,
       "lon": -48.4497171,
-      "score": -0.027,
+      "score": -0.0195,
       "methods": [
         "isolation_forest",
         "dbscan_noise"
@@ -555,7 +576,7 @@
       "zone": "Brazil",
       "lat": -32.041681,
       "lon": -52.075975,
-      "score": -0.0924,
+      "score": -0.0666,
       "methods": [
         "isolation_forest",
         "dbscan_noise"

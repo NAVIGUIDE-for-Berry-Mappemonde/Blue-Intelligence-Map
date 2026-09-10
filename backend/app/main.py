@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import amp, capitaineries, formalities, marinas, misc, ml, project_runs, projects, review, runs, swarm
+from app.routers import amp, capitaineries, formalities, marinas, misc, ml, project_runs, projects, review, runs, science, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -41,7 +41,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _SERVE_FRONTEND else "/openapi.json",
 )
 
-for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, runs, review, ml, misc):
+for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, science, runs, review, ml, misc):
     app.include_router(module.router)
 
 
@@ -112,6 +112,12 @@ async def _startup():
         await ensure_amp_indexes(db)
     except Exception as e:
         print(f"[startup] amp index creation failed (non-fatal): {e}")
+    try:
+        from app.services.science_build import ensure_indexes as ensure_science_indexes
+        await ensure_science_indexes(db.science_items)
+        await db.science_runs.create_index("created_at")
+    except Exception as e:
+        print(f"[startup] science index creation failed (non-fatal): {e}")
     # Rafraîchissement automatique : zones périmées re-vérifiées (monitoring MD5)
     # et erreurs re-tentées, sans action manuelle.
     formalities.start_auto_refresh()

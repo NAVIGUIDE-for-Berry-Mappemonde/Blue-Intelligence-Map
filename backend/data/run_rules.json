@@ -2348,6 +2348,58 @@
         "en": "400 keeps the popup usable. ArcGIS allows 2000."
       },
       "group": "budget"
+    },
+    {
+      "id": "science.catalog_max_records",
+      "mode": "science",
+      "kind": "budget",
+      "value": 2000,
+      "unit": "fiches",
+      "interval": [
+        100,
+        10000
+      ],
+      "vary": true,
+      "principle": "Plafond de moissonnage par catalogue (Sextant, ODATIS, EDMED). L'API Elasticsearch de GeoNetwork pagine jusqu'à 10 000 ; au-delà il faut search_after. Tri changeDate desc : les fiches les plus récentes d'abord.",
+      "cdc": "Mode Science",
+      "code": [
+        "app/services/science_build.py:build_science"
+      ],
+      "title": {
+        "fr": "Fiches max par catalogue",
+        "en": "Max records per catalogue"
+      },
+      "help": {
+        "fr": "Plafond par source catalogue (Sextant, ODATIS, EDMED). Les plus récentes d'abord.",
+        "en": "Cap per catalogue source (Sextant, ODATIS, EDMED). Most recent first."
+      },
+      "group": "budget"
+    },
+    {
+      "id": "science.argo_window_days",
+      "mode": "science",
+      "kind": "budget",
+      "value": 30,
+      "unit": "jours",
+      "interval": [
+        7,
+        90
+      ],
+      "vary": true,
+      "principle": "Fenêtre de l'index Argo (ERDDAP Ifremer). Un flotteur profile tous les ~10 jours : 30 jours couvrent la flotte active (~4 000 flotteurs) sans télécharger l'historique.",
+      "cdc": "Mode Science",
+      "code": [
+        "app/services/science_build.py:fetch_argo_index"
+      ],
+      "title": {
+        "fr": "Fenêtre index Argo (jours)",
+        "en": "Argo index window (days)"
+      },
+      "help": {
+        "fr": "30 jours = flotte active (cycle ~10 jours). Position la plus récente par flotteur.",
+        "en": "30 days = active fleet (~10-day cycle). Latest position per float."
+      },
+      "group": "budget"
     }
   ],
   "groups": [
