@@ -6,7 +6,9 @@
 # Premier déploiement — après ce script :
 #   1. renseigner ~/.config/naviguide/naviguide.env (ANTHROPIC_API_KEY, COPERNICUS_*)
 #   2. sudo systemctl restart naviguide-api naviguide-orchestrator naviguide-polar
-#   3. sudo certbot --nginx -d www.naviguide.fr -d naviguide.fr
+#   3. TLS : le certificat Let's Encrypt live/naviguide.fr (SAN apex + www) existe
+#      déjà et est référencé par nginx-naviguide.conf ; sur un VPS vierge :
+#      sudo certbot --nginx -d www.naviguide.fr -d naviguide.fr
 set -euo pipefail
 
 APP="$HOME/blue-intelligence-map"
@@ -53,14 +55,18 @@ done
 if [ ! -f /etc/nginx/sites-available/naviguide ]; then
   sudo cp "$APP/infra/vps/naviguide/nginx-naviguide.conf" /etc/nginx/sites-available/naviguide
   sudo ln -sf /etc/nginx/sites-available/naviguide /etc/nginx/sites-enabled/naviguide
-  echo "Site nginx installé — lancer ensuite : sudo certbot --nginx -d www.naviguide.fr -d naviguide.fr"
 fi
+# nginx (www-data) doit pouvoir traverser ~ pour lire dist/ (bit x seulement)
+chmod o+x "$HOME"
 sudo nginx -t && sudo systemctl reload nginx
 
-# ── Santé ─────────────────────────────────────────────────────────────────────
-sleep 3
+# ── Santé (naviguide-api charge xarray/copernicusmarine : ~10 s au démarrage) ──
 for svc in "9000:naviguide-api" "9008:orchestrator" "9004:polar-api"; do
-  port="${svc%%:*}"; name="${svc##*:}"
-  code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port/" || true)
+  port="${svc%%:*}"; name="${svc##*:}"; code=000
+  for _ in $(seq 1 15); do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port/" || true)
+    [ "$code" = "200" ] && break
+    sleep 2
+  done
   echo "  $name (:$port) → HTTP $code"
 done

@@ -119,10 +119,16 @@ Internet → nginx (443, Let's Encrypt)
 ```bash
 # (Re)déploiement — build frontend + venv + systemd + nginx
 bash infra/vps/naviguide/deploy-naviguide.sh
-# Premier déploiement seulement : secrets puis TLS
+# Premier déploiement seulement : renseigner les secrets puis redémarrer
 vim ~/.config/naviguide/naviguide.env && sudo systemctl restart naviguide-api naviguide-orchestrator naviguide-polar
-sudo certbot --nginx -d www.naviguide.fr -d naviguide.fr
 ```
+
+TLS : le certificat Let's Encrypt `live/naviguide.fr` (SAN naviguide.fr +
+www.naviguide.fr) préexistait sur le VPS et est réutilisé tel quel par
+`nginx-naviguide.conf` (renouvellement certbot inchangé). L'ancien site nginx
+`default` (placeholder `/var/www/html` + proxys vers des ports morts 8000/8001/3008)
+a été retiré de `sites-enabled` le 2026-09-10 — sauvegarde dans
+`sites-available/default`. `~ubuntu` est en `o+x` (751) pour que nginx lise `dist/`.
 
 Les couches « Blue Intelligence » de la carte NAVIGUIDE consomment les exports
 GeoJSON du backend Blue Intelligence local via la route nginx `/bi/*` — aucun
