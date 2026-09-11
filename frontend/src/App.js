@@ -491,8 +491,9 @@ export default function App() {
         }
         const { data } = await api.get(ep);
         const items = (data?.items || []).filter((r) => !r.wrote_live);
+        const worldItems = items.filter((r) => String(r.label || "").startsWith("test-world"));
         const testItems = items.filter((r) => String(r.label || "").startsWith("test-map-30"));
-        const pool = testItems.length ? testItems : items;
+        const pool = worldItems.length ? worldItems : (testItems.length ? testItems : items);
         const running = runningId && pool.find((r) => r.id === runningId);
         const pick = running || pool.find((r) => r.state === "running") || pool[0];
         if (!alive) return;
