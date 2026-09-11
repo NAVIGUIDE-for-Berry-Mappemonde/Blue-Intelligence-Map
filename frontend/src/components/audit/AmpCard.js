@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Square } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import api from "../../api";
+import LaunchScope from "./LaunchScope";
 
 export default function AmpCard({ t, rulesPayload }) {
+  const [scope, setScope] = useState("test");
   const [stats, setStats] = useState(null);
   const [job, setJob] = useState(null);
   const [starting, setStarting] = useState(false);
@@ -40,7 +42,12 @@ export default function AmpCard({ t, rulesPayload }) {
     if (starting || job?.running) return;
     setStarting(true);
     try {
-      await api.post("/amp/discover-visit-urls", { limit: 200, skip_search: false, ...extra() });
+      await api.post("/amp/discover-visit-urls", {
+        limit: scope === "test" ? 25 : 2000,
+        skip_search: false,
+        scope,
+        ...extra(),
+      });
     } catch (e) {
       setJob({ error: e.response?.data?.detail || e.message });
     } finally {
@@ -58,52 +65,30 @@ export default function AmpCard({ t, rulesPayload }) {
 
   return (
     <div className="space-y-3" data-testid="amp-launch">
-      <p className="text-[11px] text-slate-400 leading-relaxed">{t("ampAuditHint")}</p>
-      <p className="text-[11px] text-slate-500 leading-relaxed">{t("ampDiscoverHint")}</p>
-      <p className="font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
-        {t("isolatedRunHintLive")}
-      </p>
-      {job?.run_id && (
-        <p className="font-mono text-[10px] text-[#4ade80]/80" data-testid="amp-run-id">
-          {t("currentRun")} {job.run_id} · {t("wroteAmpSitesFalse")}
-        </p>
-      )}
+      <LaunchScope
+        t={t} scope={scope} setScope={setScope}
+        onLaunch={startDiscover} onStop={stopDiscover}
+        running={running} busy={starting}
+        hint={scope === "test" ? t("launchAmpTestHint") : t("launchAmpFullHint")}
+        launchLabel={t("launchRun")}
+        launchTestId="amp-resolve-visit-btn"
+      />
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-slate-300" data-testid="amp-audit-stats">
         <dt className="text-slate-500">{t("ampCached")}</dt>
         <dd className="font-mono">{stats?.total ?? "—"}</dd>
-        <dt className="text-slate-500">{t("ampManagerUrl")}</dt>
-        <dd className="font-mono">{stats?.with_manager_url ?? "—"}</dd>
         <dt className="text-slate-500">{t("ampVisitUrl")}</dt>
         <dd className="font-mono text-[#4ade80]">{stats?.with_visit_url ?? "—"}</dd>
-        <dt className="text-slate-500">{t("ampVisitCoverage")}</dt>
-        <dd className="font-mono">{stats?.visit_coverage != null ? `${stats.visit_coverage} %` : "—"}</dd>
       </dl>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          data-testid="amp-resolve-visit-btn"
-          onClick={startDiscover}
-          disabled={starting || running}
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-[#4ade80]/50 bg-[#4ade80]/10 hover:bg-[#4ade80]/20 disabled:opacity-70 text-[#4ade80] font-semibold text-xs rounded-sm"
-        >
-          {running
-            ? <><Loader2 size={13} className="animate-spin" /> {job.progress}/{job.total}</>
-            : starting
-              ? <><Loader2 size={13} className="animate-spin" /> {t("ampResolving")}</>
-              : t("ampResolveVisit")}
-        </button>
-        {running && (
-          <button
-            type="button"
-            data-testid="amp-discover-stop-btn"
-            onClick={stopDiscover}
-            className="px-3 py-2 border border-line text-slate-300 hover:bg-raised rounded-sm"
-            title={t("ampDiscoverStop")}
-          >
-            <Square size={13} />
-          </button>
-        )}
-      </div>
+      {job?.run_id && (
+        <p className="font-mono text-[10px] text-[#4ade80]/80" data-testid="amp-run-id">
+          {t("currentRun")} {job.run_id}
+        </p>
+      )}
+      {running && (
+        <p className="font-mono text-[10px] text-slate-400 flex items-center gap-1">
+          <Loader2 size={11} className="animate-spin" /> {job.progress}/{job.total}
+        </p>
+      )}
       {summary && !running && (
         <p className="font-mono text-[10px] text-slate-500" data-testid="amp-resolve-summary">
           {t("ampDiscoverSummary")
@@ -114,12 +99,7 @@ export default function AmpCard({ t, rulesPayload }) {
             .replace("{rejected}", String(summary.rejected_same_as_manager ?? 0))}
         </p>
       )}
-      {job?.error && (
-        <p className="text-[11px] text-alert">{job.error}</p>
-      )}
-      {summary?.no_tinyfish_key && !running && (
-        <p className="font-mono text-[10px] text-slate-500">{t("ampDiscoverNoKey")}</p>
-      )}
+      {job?.error && <p className="text-[11px] text-alert">{job.error}</p>}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
 import api from "../api";
+import { fetchRunsOnce } from "../lib/runCache";
 
 // Endpoint « liste des runs » par mode. PoE = poe_runs, les autres = runs isolés.
 const RUNS_ENDPOINT = {
@@ -47,8 +48,8 @@ export default function RunSelector({ mode, mapRun, onSelect, t }) {
     if (!open) return undefined;
     let alive = true;
     setLoading(true);
-    api.get(RUNS_ENDPOINT[mode] || RUNS_ENDPOINT.projects)
-      .then(({ data }) => { if (alive) setRuns(data?.items || []); })
+    fetchRunsOnce(mode, () => api.get(RUNS_ENDPOINT[mode] || RUNS_ENDPOINT.projects).then(({ data }) => data?.items || []))
+      .then((items) => { if (alive) setRuns(items || []); })
       .catch(() => { if (alive) setRuns([]); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };

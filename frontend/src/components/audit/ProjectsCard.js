@@ -83,7 +83,7 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
         disabled={busy || running}
         className="w-full flex items-center justify-center gap-2 py-2 font-heading font-bold text-sm rounded-sm bg-sonar/15 border border-sonar/60 text-sonar hover:bg-sonar/25 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        <Play size={14} /> {t("startIsolatedRun")}
+        <Play size={14} /> {t("launchRun")}
       </button>
       <p className="font-mono text-[9px] text-slate-500 leading-relaxed" data-testid="isolated-run-hint">
         {t("isolatedRunHint")}

@@ -76,12 +76,12 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
     e.target.value = "";
     if (!file) return;
     const currentMode = mode || "projects";
-    if (currentMode === "formalities") {
-      alert("Import non supporté pour le mode Formalités — les Ports d'Entrée se régénèrent via le pipeline (vue Audit).");
+      if (currentMode === "formalities") {
+      alert(t("importUnsupportedFormalities"));
       return;
     }
     if (currentMode === "amp") {
-      alert("Import non supporté pour le mode AMP — les polygones se rechargent depuis ProtectedSeas (bbox carte).");
+      alert(t("importUnsupportedAmp"));
       return;
     }
     setImporting(true);
@@ -90,7 +90,14 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
     try {
       const text = await file.text();
       const fc = JSON.parse(text);
-      const first = (fc && fc.features && fc.features[0] && fc.features[0].properties) || {};
+      if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) {
+        throw new Error(t("importInvalid"));
+      }
+      if (fc.features.length === 0) {
+        alert(t("importEmpty"));
+        return;
+      }
+      const first = (fc.features[0] && fc.features[0].properties) || {};
       const isProj = "title" in first && "url" in first;
       // Science first: its features carry `source` too, which would otherwise
       // trip the marinas heuristic below.

@@ -11,22 +11,35 @@ const STATUS_COLORS = {
   DUPLICATE: "text-slate-400",
 };
 
+const RUN_STATUS = {
+  projects: "/swarm/status",
+  marinas: "/marinas/build/status",
+  capitaineries: "/capitaineries/build/status",
+  science: "/science/build/status",
+  amp: "/amp/discover-visit-urls/status",
+};
+
 export default function JournalPanel({ t, mode, status }) {
   const [stats, setStats] = useState({ total_extractions: 0, success_rate: 0, projects_mapped: 0, items_mapped: 0 });
   const [telemetry, setTelemetry] = useState([]);
   const [failed, setFailed] = useState([]);
   const [forcing, setForcing] = useState({});
+  const [runStatus, setRunStatus] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, tm, f] = await Promise.all([
+      const reqs = [
         api.get("/stats", { params: { mode: mode || "projects" } }),
         api.get("/telemetry", { params: { mode: mode || "projects" } }),
         api.get("/failed", { params: { mode: mode || "projects" } }),
-      ]);
+      ];
+      const runUrl = RUN_STATUS[mode];
+      if (runUrl) reqs.push(api.get(runUrl));
+      const [s, tm, f, run] = await Promise.all(reqs);
       setStats(s.data);
       setTelemetry(tm.data);
       setFailed(f.data);
+      if (run) setRunStatus(run.data);
     } catch (e) { /* transient */ }
   }, [mode]);
 
@@ -51,18 +64,49 @@ export default function JournalPanel({ t, mode, status }) {
           <AgentConsole t={t} agents={status?.agents || []} />
         </div>
       )}
+      <div className="grid grid-cols-3 gap-px bg-line border border-line" data-testid="journal-run-kpis">
+        <div className="bg-surface p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("journalRead")}</p>
+          <p data-testid="kpi-run-read" className="font-heading font-black text-3xl text-sonar mt-1">
+            {runStatus?.summary?.fetched_raw ?? runStatus?.summary?.fetched ?? runStatus?.progress ?? 0}
+          </p>
+        </div>
+        <div className="bg-surface p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("journalInserted")}</p>
+          <p data-testid="kpi-run-inserted" className="font-heading font-black text-3xl text-bio mt-1">
+            +{runStatus?.summary?.inserted ?? 0}
+          </p>
+        </div>
+        <div className="bg-surface p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("journalUpdated")}</p>
+          <p data-testid="kpi-run-updated" className="font-heading font-black text-3xl text-white mt-1">
+            ~{runStatus?.summary?.updated ?? 0}
+          </p>
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-px bg-line border border-line">
-        <div className="bg-surface p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("totalExtractions")}</p>
-          <p data-testid="kpi-total-extractions" className="font-heading font-black text-3xl text-sonar mt-1">{stats.total_extractions}</p>
+        <div className="bg-surface p-3">
+          <p className="font-mono text-[9px] uppercase text-slate-500">{t("journalUnlocated")}</p>
+          <p className="font-heading font-bold text-lg">{runStatus?.summary?.unlocated ?? runStatus?.summary?.unnamed ?? 0}</p>
         </div>
-        <div className="bg-surface p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("successRate")}</p>
-          <p data-testid="kpi-success-rate" className="font-heading font-black text-3xl text-bio mt-1">{stats.success_rate}%</p>
+        <div className="bg-surface p-3">
+          <p className="font-mono text-[9px] uppercase text-slate-500">{t("journalErrors")}</p>
+          <p className="font-heading font-bold text-lg text-alert">{runStatus?.summary?.errors ?? (runStatus?.error ? 1 : 0)}</p>
         </div>
-        <div className="bg-surface p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{t("itemsMapped")}</p>
-          <p data-testid="kpi-projects-mapped" className="font-heading font-black text-3xl text-white mt-1">{stats.items_mapped ?? stats.projects_mapped}</p>
+        <div className="bg-surface p-3">
+          <p className="font-mono text-[9px] uppercase text-slate-500">{t("itemsMapped")}</p>
+          <p data-testid="kpi-projects-mapped" className="font-heading font-bold text-lg">{stats.items_mapped ?? stats.projects_mapped}</p>
+        </div>
+      </div>
+      <p className="font-mono text-[9px] text-slate-500">{t("journalTelemetryHint")}</p>
+      <div className="grid grid-cols-2 gap-px bg-line border border-line">
+        <div className="bg-surface p-3">
+          <p className="font-mono text-[9px] uppercase text-slate-500">{t("totalExtractions")}</p>
+          <p data-testid="kpi-total-extractions" className="font-heading font-bold text-lg text-slate-400">{stats.total_extractions}</p>
+        </div>
+        <div className="bg-surface p-3">
+          <p className="font-mono text-[9px] uppercase text-slate-500">{t("successRate")}</p>
+          <p data-testid="kpi-success-rate" className="font-heading font-bold text-lg text-slate-400">{stats.success_rate}%</p>
         </div>
       </div>
       {telemetry.length > 0 && (
