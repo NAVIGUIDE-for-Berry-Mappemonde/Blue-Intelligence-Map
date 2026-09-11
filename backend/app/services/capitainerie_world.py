@@ -835,21 +835,49 @@ async def reset_cursor(cursor_coll) -> None:
         )
 
 
+def _id_partial_index(field: str) -> dict:
+    """Index unique (run_id, id) : seulement si l'id est une chaîne.
+
+    Un index *sparse* composé (run_id, shom_id) indexe tout document qui a
+    `run_id` — donc tous. Mongo y range `shom_id: null` / champ absent comme
+    la même clé : la 2ᵉ fiche OSM d'un run isolé lève E11000. Le dump tuile
+    Albanie n'avait qu'1 harbour_master et ne le voyait pas.
+    """
+    return {
+        "unique": True,
+        "name": f"run_id_1_{field}_1",
+        "partialFilterExpression": {field: {"$type": "string"}},
+    }
+
+
+async def _drop_index_quiet(coll, name: str) -> None:
+    drop = getattr(coll, "drop_index", None)
+    if drop is None:
+        return
+    try:
+        await drop(name)
+    except TypeError:
+        drop(name)
+    except Exception:
+        pass
+
+
 async def ensure_indexes(coll, *, isolated: bool = False) -> None:
     try:
-        if isolated:
-            await coll.create_index([("run_id", 1), ("osm_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("shom_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("noaa_id", 1)], unique=True, sparse=True)
-            await coll.create_index("run_id")
-            await coll.create_index("name")
-            await coll.create_index("source")
-            return
         # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
         if hasattr(coll, "update_many"):
             await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
             await coll.update_many({"shom_id": None}, {"$unset": {"shom_id": ""}})
             await coll.update_many({"noaa_id": None}, {"$unset": {"noaa_id": ""}})
+        if isolated:
+            for field in ("osm_id", "shom_id", "noaa_id"):
+                await _drop_index_quiet(coll, f"run_id_1_{field}_1")
+                await coll.create_index(
+                    [("run_id", 1), (field, 1)], **_id_partial_index(field))
+            await coll.create_index("run_id")
+            await coll.create_index("name")
+            await coll.create_index("source")
+            return
         await coll.create_index("osm_id", unique=True, sparse=True)
         await coll.create_index("shom_id", unique=True, sparse=True)
         await coll.create_index("noaa_id", unique=True, sparse=True)

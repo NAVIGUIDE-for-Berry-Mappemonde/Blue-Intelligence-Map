@@ -23,6 +23,8 @@ from app.services import capitainerie_enrich as ce
 class _FakeColl:
     def __init__(self, docs=None):
         self.docs = list(docs or [])
+        self.indexes = []
+        self.dropped = []
 
     def _match_one(self, doc, q):
         if not q:
@@ -79,6 +81,11 @@ class _FakeColl:
         return None
 
     async def create_index(self, *a, **k):
+        self.indexes.append((a, k))
+        return None
+
+    async def drop_index(self, name):
+        self.dropped.append(name)
         return None
 
 
@@ -645,4 +652,19 @@ def test_enrich_openrouter_after_empty_nvidia(monkeypatch):
     assert order == ["nvidia", "openrouter"]
     assert result["enrichment_source"] == "openrouter"
     assert result["canal_vhf"] == "16"
+
+
+def test_isolated_unique_indexes_are_partial_not_sparse():
+    """Plusieurs OSM sans shom_id dans le même run : pas d'E11000 sur null."""
+    coll = _FakeColl()
+    asyncio.run(cw.ensure_indexes(coll, isolated=True))
+    by_name = {kw.get("name"): kw for _args, kw in coll.indexes if kw.get("name")}
+    for field in ("osm_id", "shom_id", "noaa_id"):
+        name = f"run_id_1_{field}_1"
+        assert name in coll.dropped
+        kw = by_name[name]
+        assert kw["unique"] is True
+        assert "sparse" not in kw
+        assert kw["partialFilterExpression"] == {field: {"$type": "string"}}
+
 
