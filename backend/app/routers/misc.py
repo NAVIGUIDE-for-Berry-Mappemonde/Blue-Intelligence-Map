@@ -157,13 +157,13 @@ MANUALS = {
     "en": """# Blue Intelligence — User Manual
 
 ## Overview
-Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers four complementary modes, an operator console, and contextual GeoJSON exports. All AI-generated content is produced through OpenRouter (model configurable via the OPENROUTER_MODEL environment variable).
+Blue Intelligence turns the living web of maritime data into an executable geospatial database. The app offers six complementary modes, an operator console, and contextual GeoJSON exports. All AI-generated content is produced through OpenRouter (model configurable via the OPENROUTER_MODEL environment variable). Default language is French; default basemap is the nautical chart.
 
-## Four modes (header switch)
-The header pill lets you switch between four modes. Each mode paints the app with its own accent theme (cyan · red · amber · green) and shows its dedicated sidebar and map layer.
+## Six modes (header switch)
+The header pill lets you switch between six modes: Projects, Marinas, Offices, Ports of entry, MPAs, Science. Each mode paints the app with its own accent theme and shows its dedicated sidebar and map layer.
 
 ### 1) Projects (cyan)
-- **World map**: single-world Leaflet map with light/dark basemap toggle in the header. Project markers are colored by category and grouped into clusters. The Berry-Mappemonde route is drawn under the clusters as a neutral polyline.
+- **World map**: single-world Leaflet map (nautical / dark / light). Project markers are coloured by category — tiny canvas dots, no clusters. The Berry-Mappemonde route is drawn as a neutral polyline.
 - **Popup**: click a marker → photo, title, funder, category, description, S_ocean score and a "View project" link. The popup always stays fully on screen without moving the map.
 - **Left sidebar**:
   - *Legend*: 9 color-coded categories (Conservation, Research, Fisheries, Policy & Advocacy, Pollution, Coastal & Habitat, Education, Restoration, Other). Click a category to filter.
@@ -174,7 +174,7 @@ The header pill lets you switch between four modes. Each mode paints the app wit
   - *Export GeoJSON* button — exports the projects visible in this mode.
 
 ### 2) Marinas (red)
-- **Map**: world catalog of OpenStreetMap `leisure=marina` points, clustered. All points stay visible. A larger red dot marks a marina whose Google Maps `/place/` page was found (TinyFish Search or OSM tag) — we do not scrape Maps or wait for the `/search` → `/place` redirect. Each popup has the OSM website tag (unchecked) and a Google Maps link (place page when known, otherwise the deterministic search URL).
+- **Map**: world catalog of OpenStreetMap `leisure=marina` points (tiny canvas dots, no clusters). All points stay visible. A larger red dot marks a marina whose Google Maps `/place/` page was found (TinyFish Search or OSM tag) — we do not scrape Maps or wait for the `/search` → `/place` redirect. Each popup has the OSM website tag (unchecked) and a Google Maps link (place page when known, otherwise the deterministic search URL).
 - **Left sidebar**: search by name or OSM id (list capped at 250 rows). Attribution: © OpenStreetMap contributors (ODbL).
 - *Export GeoJSON* — slim FeatureCollection, uncapped.
 - The world dump is started from the Console (resumable tiles, no purge). Formalities / Ports of Entry stay a separate job.
@@ -196,13 +196,14 @@ The header pill lets you switch between four modes. Each mode paints the app wit
 - **Map**: ProtectedSeas Navigator polygons, coloured by Level of Fishing Protection (LFP 1–5). Zoom in on a coast (zoom ≥ 5); the world view only shows the invite, not 20 000 polygons.
 - **Popup**: two separate URLs. Grey = manager website (ProtectedSeas `url` / Website). Green = visit / entry procedures. The visit URL is never a copy of the manager homepage.
 - **Left sidebar**: search by site, country or designation; LFP filter; list of areas in the current tile.
-- **Review**: one sheet per cached site. Keep / drop visit URL candidates, then Gold into the certified run. Map stays on the unique run until Show review is on.
+- **Review**: admin tab only (hidden in Science). It is never a map overlay.
 - *Export GeoJSON* — centroids + `manager_url` / `visit_url`, not official boundaries.
 
 ## Swarm Intelligence Audit (header toggle)
 Operator console reserved for the crew / admin. It groups **all batch triggers** in one place (the "Swarm Intelligence Hub"):
-- **Projects — Swarm**: Test mode (3 foundations) or Full mode (all MasterSeeds + DeepLinkCache), "clear DB before start", Deploy / Stop buttons, live log stream, per-agent live view.
-- **Marinas — World dump**: tiled Overpass `leisure=marina` worldwide (resumable, no purge). A second Console action resolves Google `/place/` pages via TinyFish Search (signal only, no filter). Anchorages stay on the route corridor.
+- **Launch**: every mode uses the same Test | Full | Launch (+ Stop) chrome.
+- **Projects — Swarm**: Test (few portals) or Full (all seeds). Isolated run; the live map is unchanged until you pick the run.
+- **Marinas — World dump**: Test = one coastal tile. Full = worldwide dump then enrich by priority; also copies to the public map. Mouillages are worldwide (no 25 NM corridor).
 - **Capitaineries — World dump**: tiled Overpass `office=harbour_master` / `seamark:building:function=harbour_master` worldwide, then SHOM WFS `buisgl_point` FUNCTN=2 plus SMCFAC CATSCF=6, then NOAA ENC Direct BUISGL FUNCTN=2. Phone and VHF from tags, TinyFish Search/Fetch + regex, NVIDIA NIM page chain (Pro → gpt-oss → Muse), then OpenRouter. No marina linking.
 - **Formalities — EEZ referential & PoE batch**: build/refresh the world EEZ referential (VLIZ Marine Regions), then generate the Ports of Entry per zone in batches (5/10/25/all), with live logs, per-zone results and a Stop button.
 - **MPA / AMP**: cache coverage and visit-URL coverage. A Console job fills visit URLs like Marinas Google-place: ProtectedSeas extra links, then TinyFish Fetch on the manager page, then Search. Never the manager homepage.
@@ -226,13 +227,13 @@ Operator console reserved for the crew / admin. It groups **all batch triggers**
     "fr": """# Blue Intelligence — Manuel utilisateur
 
 ## Vue d'ensemble
-Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose quatre modes complémentaires, une console opérateur et des exports GeoJSON contextuels. Tous les contenus produits par IA le sont via OpenRouter (modèle configurable via la variable d'environnement OPENROUTER_MODEL).
+Blue Intelligence transforme le web vivant des données maritimes en base géospatiale exploitable. L'application propose six modes complémentaires, une console opérateur et des exports GeoJSON contextuels. Tous les contenus produits par IA le sont via OpenRouter (modèle configurable via la variable d'environnement OPENROUTER_MODEL). Langue par défaut : français. Fond par défaut : carte marine.
 
-## Quatre modes (bascule dans l'en-tête)
-La pastille de l'en-tête permet de basculer entre quatre modes. Chaque mode habille l'app avec sa teinte d'accent propre (cyan · rouge · ambre · vert) et affiche son bandeau et sa couche de carte dédiés.
+## Six modes (bascule dans l'en-tête)
+La pastille de l'en-tête permet de basculer entre six modes : Projets, Marinas, Capitaineries, Ports d’entrée, AMP, Science. Chaque mode habille l'app avec sa teinte d'accent propre et affiche son bandeau et sa couche de carte dédiés.
 
 ### 1) Projets (cyan)
-- **Carte mondiale** : carte Leaflet à monde unique, bascule fond clair/sombre dans l'en-tête. Marqueurs de projets colorés par catégorie et regroupés en clusters. La route Berry-Mappemonde est tracée sous les clusters sous forme d'une polyline neutre.
+- **Carte mondiale** : carte Leaflet à monde unique (marine / sombre / clair). Marqueurs de projets colorés par catégorie — pastilles canvas, sans clusters. La route Berry-Mappemonde est une polyline neutre.
 - **Popup** : cliquer un marqueur → photo, titre, financeur, catégorie, description, score S_ocean et lien « Voir le projet ». L'encadré reste toujours entièrement visible sans déplacer la carte.
 - **Bandeau gauche** :
   - *Légende* : 9 catégories colorées (Conservation, Recherche, Pêcheries, Politique & Plaidoyer, Pollution, Côtes & Habitats, Éducation, Restauration, Autre). Cliquer une catégorie filtre la carte.
@@ -243,7 +244,7 @@ La pastille de l'en-tête permet de basculer entre quatre modes. Chaque mode hab
   - Bouton *Export GeoJSON* — exporte les projets visibles dans ce mode.
 
 ### 2) Marinas (rouge)
-- **Carte** : catalogue mondial OpenStreetMap `leisure=marina`, en clusters. Tous les points restent visibles. Un point rouge plus gros signale une fiche Google `/maps/place/` déjà trouvée (TinyFish Search ou tag OSM) — pas de scrape Maps, pas d'attente de la redirection `/search` → `/place`. Chaque popup affiche le site tagué OSM (non vérifié) et un lien Google Maps (fiche `/place/` si connue, sinon recherche déterministe).
+- **Carte** : catalogue mondial OpenStreetMap `leisure=marina` (pastilles canvas, sans clusters). Tous les points restent visibles. Un point rouge plus gros signale une fiche Google `/maps/place/` déjà trouvée (TinyFish Search ou tag OSM) — pas de scrape Maps, pas d'attente de la redirection `/search` → `/place`. Chaque popup affiche le site tagué OSM (non vérifié) et un lien Google Maps (fiche `/place/` si connue, sinon recherche déterministe).
 - **Bandeau gauche** : recherche par nom ou id OSM (liste plafonnée à 250 lignes). Attribution : © les contributeurs OpenStreetMap (ODbL).
 - *Export GeoJSON* — FeatureCollection maigre, non plafonnée.
 - Le dump mondial se lance depuis la Console (tuiles reprenables, pas de purge). Les Formalités / Ports d'Entrée restent un autre job.
@@ -265,13 +266,14 @@ La pastille de l'en-tête permet de basculer entre quatre modes. Chaque mode hab
 - **Carte** : polygones ProtectedSeas Navigator, colorés par niveau de protection pêche (LFP 1–5). Zoomez sur une côte (zoom ≥ 5) ; la vue monde n'affiche que l'invite, pas 20 000 polygones.
 - **Popup** : deux URL séparées. Gris = site du gestionnaire (champ ProtectedSeas `url` / Website). Vert = procédures de visite / d'entrée. L'URL de visite n'est jamais une copie de la page gestionnaire.
 - **Bandeau gauche** : recherche par site, pays ou désignation ; filtre LFP ; liste des aires de la tuile courante.
-- **Review** : une fiche par site en cache. Garder / écarter les candidats visite, puis Gold dans le run certifié. La carte reste sur le run unique tant que Afficher la review est décoché.
+- **Review** : onglet admin seulement (masqué en Science). Ce n’est jamais un calque carte.
 - *Export GeoJSON* — centroïdes + `manager_url` / `visit_url`, pas les limites officielles.
 
 ## Audit Swarm Intelligence (bascule dans l'en-tête)
 Console opérateur réservée à l'équipage / admin. Elle regroupe **tous les déclencheurs batch** au même endroit (le « Swarm Intelligence Hub ») :
-- **Projets — Swarm** : mode Test (3 fondations) ou Complet (tous les MasterSeeds + DeepLinkCache), « vider la base avant de démarrer », boutons Déployer / Arrêter, flux de logs en direct, live view par agent.
-- **Marinas — Dump mondial** : tuiles Overpass `leisure=marina` (reprenable, pas de purge). Une seconde action Console résout les fiches Google `/place/` via TinyFish Search (signal seulement, pas de filtre). Les mouillages restent sur le corridor de la route.
+- **Lancer** : chaque mode a la même tête Test | Complet | Lancer (+ Stop).
+- **Projets — Swarm** : Test (quelques portails) ou Complet (toutes les graines). Run isolé ; la carte publique ne change pas tant que vous ne choisissez pas le run.
+- **Marinas — Dump mondial** : Test = une tuile côtière. Complet = dump mondial puis enrichissement par priorité ; copie aussi sur la carte publique. Les mouillages sont mondiaux (plus de corridor 25 NM).
 - **Capitaineries — Dump mondial** : tuiles Overpass `office=harbour_master` / `seamark:building:function=harbour_master`, puis overlay SHOM `buisgl_point` FUNCTN=2 (bureau de capitainerie) et SMCFAC CATSCF=6. Téléphone et VHF depuis les tags, puis le site officiel du bureau. Pas de rattachement marina.
 - **Formalités — Référentiel ZEE** : construit/rafraîchit le référentiel mondial des ZEE (VLIZ Marine Regions). La génération batch des Ports d'Entrée (generate-batch) a été retirée.
 - **AMP** : couverture du cache et des URL de visite. Un job Console remplit les URL de visite comme les fiches Google Marinas : liens extra ProtectedSeas, puis TinyFish Fetch sur la page gestionnaire, puis Search. Jamais la homepage gestionnaire.

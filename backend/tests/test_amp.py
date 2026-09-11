@@ -200,6 +200,20 @@ def test_sanitize_drops_degenerate_arcgis_hole():
     assert doc["manager_url"] == "https://parc-marin.fr"
 
 
+def test_centroid_uses_exterior_not_inland_hole():
+    geom = {
+        "type": "Polygon",
+        "coordinates": [
+            [[0.0, 0.0], [4.0, 0.0], [4.0, 1.0], [0.0, 1.0], [0.0, 0.0]],
+            [[10.0, 20.0], [10.1, 20.0], [10.1, 20.1], [10.0, 20.1], [10.0, 20.0]],
+        ],
+    }
+    lat, lon = amp_svc._centroid(geom)
+    assert lat is not None and lon is not None
+    assert 0.0 <= lat <= 1.2
+    assert 0.0 <= lon <= 4.2
+
+
 def test_sanitize_falls_back_to_centroid_point():
     geom = {
         "type": "Polygon",

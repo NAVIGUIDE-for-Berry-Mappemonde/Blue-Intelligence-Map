@@ -86,6 +86,8 @@ def test_element_name_does_not_invent():
     assert mw.element_name({}) == ""
     assert mw.element_name({"leisure": "marina"}) == ""
     assert mw.element_name({"name": "  Marina Rubicon "}) == "Marina Rubicon"
+    assert mw.element_name({"seamark:harbour:name": "Fort Bay"}) == "Fort Bay"
+    assert mw.element_name({"operator": "Port Authority"}) == "Port Authority"
 
 
 def test_marina_from_overpass_requires_leisure_marina():

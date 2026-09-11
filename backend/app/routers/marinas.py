@@ -25,6 +25,8 @@ from app.services.marina_world import (
     build_world_marinas as run_build_world_marinas,
 )
 from app.services.swarm_pipeline import now_iso
+from app.services.geojson_import import empty_import_result, parse_feature_collection
+from app.services.osm_seeds import TEST_TILE
 from app.state import swarm
 
 router = APIRouter(prefix="/api")
@@ -40,9 +42,11 @@ router = APIRouter(prefix="/api")
 # ---------------------------------------------------------------------------
 @router.post("/import/marinas.geojson")
 async def import_marinas_geojson(fc: dict = Body(...)):
-    feats = fc.get("features") or []
-    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+    kind, feats = parse_feature_collection(fc)
+    if kind == "invalid":
         raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    if kind == "empty":
+        return empty_import_result("total_marinas", await db.marinas.count_documents({}))
     imported = updated = invalid = 0
     for f in feats:
         try:
@@ -278,6 +282,7 @@ class MarinasBuildBody(BaseModel):
     corridor_step_nm: float | None = None
     corridor_radius_nm: float | None = None
     maps_place_after: bool = False
+    scope: str | None = None
 
 
 async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | None = None):
@@ -349,6 +354,8 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     from app.services.isolated_runs import reset_run as _reset_iso
     from app.core.run_rules import bind_rules, reset_rules
     _reset_iso(opened["token"])
+    scope = (body.scope or "full").lower()
+    test_tiles = (TEST_TILE,) if scope == "test" else None
 
     async def _runner():
         from app.services import isolated_runs
@@ -358,11 +365,16 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                 marinas_coll=db.marina_run_marinas,
                 cursor_coll=db.marina_run_cursors,
                 state=MARINA_BUILD_STATE,
-                resume=body.resume,
+                resume=body.resume and scope != "test",
+                tiles=test_tiles,
                 run_id=run_id,
             )
+            extra = dict(MARINA_BUILD_STATE.summary or {})
+            if scope == "full" and not getattr(MARINA_BUILD_STATE, "cancel", False):
+                extra["promoted"] = await isolated_runs.promote_run_to_live(
+                    db, "marinas", run_id)
             await isolated_runs.finalize_run(
-                db, "marinas", run_id, extra=MARINA_BUILD_STATE.summary)
+                db, "marinas", run_id, extra=extra)
             if body.maps_place_after and not MAPS_PLACE_STATE.running:
                 MARINA_BUILD_STATE.log("Dump terminé — résolution des fiches Google /place/")
                 await resolve_maps_places(
@@ -409,6 +421,15 @@ async def marinas_build_status():
     }
 
 
+@router.post("/marinas/build/cancel")
+async def marinas_build_cancel():
+    if not MARINA_BUILD_STATE.running:
+        raise HTTPException(409, "No marinas build is running")
+    MARINA_BUILD_STATE.cancel = True
+    MARINA_BUILD_STATE.log("Stop demandé")
+    return {"cancelling": True}
+
+
 @router.get("/marinas/count")
 async def marinas_count():
     async def _count(q: dict):
@@ -452,7 +473,7 @@ async def marinas_count():
 class AnchoragesBuildBody(BaseModel):
     radius_nm: float | None = None
     clear_before: bool = False
-    include_corridor: bool = True
+    include_corridor: bool = False
     corridor_step_nm: float | None = None
     corridor_radius_nm: float | None = None
     profile: str | None = None

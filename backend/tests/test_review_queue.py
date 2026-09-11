@@ -411,12 +411,11 @@ def test_frontend_review_tab_exists():
     assert 'kind === "eez" && (' in review
     assert "review-run-select" not in review
     assert "setQueue([])" in review
-    assert "map-show-review" in (root / "components" / "MapView.js").read_text(encoding="utf-8")
+    assert "map-show-review" not in (root / "components" / "MapView.js").read_text(encoding="utf-8")
     assert "onChoice={applyChoice}" in review
     formalities_layer = (root / "components" / "map" / "useFormalitiesLayers.js").read_text(encoding="utf-8")
-    assert "showReview" in formalities_layer
-    assert "visible: 1" in formalities_layer
-    assert "params: { visible: 1 }" not in formalities_layer
+    assert "showReview" not in formalities_layer
+    assert "visible: 1" not in formalities_layer
     choice_ui = (root / "components" / "review" / "choiceUi.js").read_text(encoding="utf-8")
     assert "export function KeepDrop" in choice_ui
     assert "export function FicheShell" in choice_ui
@@ -434,7 +433,8 @@ def test_frontend_review_tab_exists():
     assert "reviewNoVisit" in i18n
     app = (root / "App.js").read_text(encoding="utf-8")
     assert "useState(false)" in app
-    assert "showReview ? { visible: 1 }" in app or 'showReview ? { visible: 1 }' in app
+    assert "showReview" not in app
+    assert "visible: 1" not in app
     assert "review-comment" in review
     assert "review-next" in review
     assert "reviewHint" in review

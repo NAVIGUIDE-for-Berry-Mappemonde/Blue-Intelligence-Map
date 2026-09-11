@@ -28,6 +28,13 @@ def test_element_name_prefers_english_then_seamark():
     assert element_name({}) == ""
 
 
+def test_console_test_tile_is_small():
+    from app.services.osm_seeds import TEST_TILE, WORLD_TILES
+    s, w, n, e = TEST_TILE
+    assert (n - s) < 5 and (e - w) < 5
+    assert TEST_TILE not in WORLD_TILES
+
+
 def test_osm_tag_list_documents_relevant_tags():
     tags = {
         "harbour": "yes",

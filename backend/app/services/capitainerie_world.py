@@ -660,8 +660,17 @@ async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
-    await coll.insert_one(patch)
-    return "inserted"
+    try:
+        await coll.insert_one(patch)
+        return "inserted"
+    except Exception as exc:
+        if type(exc).__name__ != "DuplicateKeyError":
+            raise
+        existing = await coll.find_one(identity_query("osm_id", osm_id))
+        if existing:
+            await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
+            return "updated"
+        raise
 
 
 async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> str:
@@ -833,24 +842,37 @@ async def reset_cursor(cursor_coll) -> None:
         )
 
 
+async def _partial_unique(coll, keys, name: str, field: str) -> None:
+    for candidate in (name, "_".join(f"{k}_{d}" for k, d in keys)):
+        try:
+            await coll.drop_index(candidate)
+        except Exception:
+            pass
+    await coll.create_index(
+        keys,
+        unique=True,
+        name=name,
+        partialFilterExpression={field: {"$exists": True, "$type": "string"}},
+    )
+
+
 async def ensure_indexes(coll, *, isolated: bool = False) -> None:
     try:
         if isolated:
-            await coll.create_index([("run_id", 1), ("osm_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("shom_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("noaa_id", 1)], unique=True, sparse=True)
+            await _partial_unique(coll, [("run_id", 1), ("osm_id", 1)], "run_osm_id_partial", "osm_id")
+            await _partial_unique(coll, [("run_id", 1), ("shom_id", 1)], "run_shom_id_partial", "shom_id")
+            await _partial_unique(coll, [("run_id", 1), ("noaa_id", 1)], "run_noaa_id_partial", "noaa_id")
             await coll.create_index("run_id")
             await coll.create_index("name")
             await coll.create_index("source")
             return
-        # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
         if hasattr(coll, "update_many"):
             await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
             await coll.update_many({"shom_id": None}, {"$unset": {"shom_id": ""}})
             await coll.update_many({"noaa_id": None}, {"$unset": {"noaa_id": ""}})
-        await coll.create_index("osm_id", unique=True, sparse=True)
-        await coll.create_index("shom_id", unique=True, sparse=True)
-        await coll.create_index("noaa_id", unique=True, sparse=True)
+        await _partial_unique(coll, [("osm_id", 1)], "osm_id_partial", "osm_id")
+        await _partial_unique(coll, [("shom_id", 1)], "shom_id_partial", "shom_id")
+        await _partial_unique(coll, [("noaa_id", 1)], "noaa_id_partial", "noaa_id")
         await coll.create_index("name")
         await coll.create_index("source")
     except Exception:

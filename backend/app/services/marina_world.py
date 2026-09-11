@@ -153,7 +153,10 @@ def osm_website_from_tags(tags: dict | None) -> str | None:
 def element_name(tags: dict | None) -> str:
     """Nom OSM réel, ou vide — on n'invente pas « Marina @ lat,lon »."""
     tags = tags or {}
-    for key in ("name", "name:fr", "name:en", "official_name", "alt_name"):
+    for key in (
+        "name", "name:fr", "name:en", "official_name", "alt_name",
+        "loc_name", "seamark:name", "seamark:harbour:name", "operator",
+    ):
         val = str(tags.get(key) or "").strip()
         if val:
             return val[:120]
@@ -574,6 +577,9 @@ async def build_world_marinas(
         )
         try:
             for tile in grid:
+                if getattr(state, "cancel", False):
+                    state.log("Stop demandé — dump interrompu")
+                    break
                 key = tile_key(tile)
                 if key in done:
                     skipped += 1
