@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { formatCapitainerieSource } from "../../lib/capitainerieSource";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 const esc = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -11,8 +12,7 @@ const esc = (value) => String(value ?? "")
 const COLOR = "#38bdf8";
 
 /**
- * Couche Capitaineries : OSM harbour_master + SHOM + NOAA ENC.
- * Popup : téléphone et VHF — pas de rattachement marina.
+ * Couche Capitaineries : OSM + SHOM + NOAA, pastilles canvas, sans cluster.
  */
 export default function useCapitaineriesLayer({
   mapObj, clusterRef, markersById, capitaineries, tRef,
@@ -32,18 +32,18 @@ export default function useCapitaineriesLayer({
     sigRef.current = sig;
     cluster.clearLayers();
     markersById.current.clear();
+    const renderer = cluster._biRenderer;
+    const zoom = map.getZoom();
 
     const markers = feats.map((f) => {
       const [lon, lat] = f.geometry?.coordinates || [0, 0];
       const p = f.properties || {};
       const hasContact = !!(p.telephone || p.canal_vhf);
-      const m = L.circleMarker([lat, lon], {
-        radius: hasContact ? 8 : 5,
-        color: COLOR,
-        weight: hasContact ? 2.5 : 2,
-        fillColor: COLOR,
-        fillOpacity: hasContact ? 0.88 : 0.5,
-      });
+      const m = L.circleMarker([lat, lon], circleOpts(COLOR, {
+        zoom, bump: hasContact ? 0.4 : 0, weight: hasContact ? 1.4 : 1,
+        fillOpacity: hasContact ? 0.92 : 0.65, renderer,
+      }));
+      m._biBump = hasContact ? 0.4 : 0;
       m.bindPopup(
         () => {
           const t = tRef.current;
@@ -85,7 +85,7 @@ export default function useCapitaineriesLayer({
             </div>
           </div>`;
         },
-        { maxWidth: 320, maxHeight: 400, autoPan: true, autoPanPadding: [40, 40] },
+        { ...POPUP_OPTS, maxWidth: 320 },
       );
       markersById.current.set(p.id, m);
       if (p.osm_id) markersById.current.set(p.osm_id, m);

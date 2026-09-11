@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { depthRowHtml } from "./depthRow";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 const esc = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -9,8 +10,7 @@ const esc = (value) => String(value ?? "")
   .replace(/"/g, "&quot;");
 
 /**
- * Couche Marinas : dump mondial OSM.
- * Point plus gros seulement si une URL Google /maps/place/ a été trouvée.
+ * Couche Marinas : dump mondial OSM, pastilles canvas, sans cluster.
  */
 export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarkersById, marinas, tRef }) {
   const marinaSigRef = useRef("");
@@ -28,18 +28,18 @@ export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarker
     marinaSigRef.current = sig;
     marinaCluster.clearLayers();
     marinaMarkersById.current.clear();
+    const renderer = marinaCluster._biRenderer;
+    const zoom = map.getZoom();
 
     const markers = feats.map((f) => {
       const [lon, lat] = f.geometry?.coordinates || [0, 0];
       const p = f.properties || {};
       const hasPlace = !!(p.has_google_place || (p.maps_place_url && String(p.maps_place_url).includes("/maps/place/")));
-      const m = L.circleMarker([lat, lon], {
-        radius: hasPlace ? 8 : 5,
-        color: "#ff4a4a",
-        weight: hasPlace ? 2.5 : 2,
-        fillColor: "#ff4a4a",
-        fillOpacity: hasPlace ? 0.88 : 0.55,
-      });
+      const m = L.circleMarker([lat, lon], circleOpts("#ff4a4a", {
+        zoom, bump: hasPlace ? 0.4 : 0, weight: hasPlace ? 1.4 : 1,
+        fillOpacity: hasPlace ? 0.92 : 0.7, renderer,
+      }));
+      m._biBump = hasPlace ? 0.4 : 0;
       m.bindPopup(
         () => {
           const t = tRef.current;
@@ -60,8 +60,6 @@ export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarker
           const placeBadge = hasPlace
             ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#ff4a4a;border:1px solid #ff4a4a55;padding:2px 6px;border-radius:2px;">${esc(t("marinasGooglePlace"))}</span>`
             : "";
-          // Badges services (inspiration UX seamap) : la COULEUR répond à une
-          // question du plaisancier, l'infobulle liste les tags OSM qui l'attestent.
           const svc = p.svc || {};
           const SVC_UI = [
             ["berth", "#38bdf8", t("marinasSvcBerth")],
@@ -95,7 +93,7 @@ export default function useMarinasLayer({ mapObj, marinaClusterRef, marinaMarker
             </div>
           </div>`;
         },
-        { maxWidth: 320, maxHeight: 400, autoPan: true, autoPanPadding: [40, 40] },
+        { ...POPUP_OPTS, maxWidth: 320 },
       );
       marinaMarkersById.current.set(p.id, m);
       if (p.osm_id) marinaMarkersById.current.set(p.osm_id, m);

@@ -7,7 +7,7 @@ import ProjectList from "./ProjectList";
  * La légende cliquable fait office de filtre par catégorie (le menu déroulant
  * redondant a été retiré).
  */
-export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport }) {
+export default function SwarmPanel({ t, projects, funders, funderFilter, setFunderFilter, searchQuery, setSearchQuery, categories, categoryFilter, setCategoryFilter, onReport, onFlyTo }) {
   const legendCats = (categories || []).filter((c) => c.count > 0);
 
   return (
@@ -71,7 +71,7 @@ export default function SwarmPanel({ t, projects, funders, funderFilter, setFund
           </div>
         </section>
 
-        <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} />
+        <ProjectList t={t} projects={projects} funderFilter={funderFilter} searchQuery={searchQuery} categoryFilter={categoryFilter} onFlyTo={onFlyTo} />
       </div>
 
       {/* Action de pied — signaler un projet manquant */}

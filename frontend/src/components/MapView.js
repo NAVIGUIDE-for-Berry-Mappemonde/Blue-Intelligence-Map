@@ -1,11 +1,10 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
-import "leaflet.markercluster";
 
 import { FALLBACK_COLORS, TILE_URLS, ampStyle, zoneStyle } from "./map/constants";
 import { createPanes } from "./map/layerOrder";
 import { zonePopupHtml } from "./map/zonePopup";
-import useAmpLayer, { popupHtml as ampPopupHtml } from "./map/useAmpLayer";
+import useAmpLayer, { popupHtml as ampPopupHtml, ampPointToLayer } from "./map/useAmpLayer";
 import useAnchoragesLayer from "./map/useAnchoragesLayer";
 import useCapitaineriesLayer from "./map/useCapitaineriesLayer";
 import useFormalitiesLayers from "./map/useFormalitiesLayers";
@@ -16,13 +15,10 @@ import useRouteLayer from "./map/useRouteLayer";
 import useScienceLayer from "./map/useScienceLayer";
 import useScienceWms, { ensureWmsPanes } from "./map/useScienceWms";
 import { attachDepthOnPopup } from "./map/depthRow";
+import { applyPenRadii, keepPopupInView, makePointGroup, POPUP_OPTS } from "./map/points";
 
 /**
- * MapView — orchestrateur de la carte Leaflet à monde unique.
- *
- * Initialise la carte, les panes et les clusters, puis délègue chaque couche
- * à son hook dédié (components/map/) : route officielle, projets, marinas,
- * mouillages, ZEE + Ports d'Entrée, AMP. Gère la bascule de mode et le flyTo.
+ * MapView — carte Leaflet persistante, pastilles canvas, sans cluster.
  */
 export default function MapView({
   mode = "projects",
@@ -33,10 +29,10 @@ export default function MapView({
   science,
   flyToScience,
   scienceWms,
+  scienceSourceFilter = "argo",
+  ampLfpFilter = "All",
   anchorages,
   showAnchorages = true,
-  showReview = false,
-  setShowReview,
   poeZones,
   poePorts,
   route,
@@ -45,17 +41,19 @@ export default function MapView({
   flyToZone,
   flyToPoe,
   flyToAmp,
+  flyToProject,
   ampRunId,
   onAmpSites,
   zoneFiche,
   funderFilter,
   searchQuery,
   t,
-  maxMarkers,
   minZoom,
   basemap,
   categories,
   categoryFilter,
+  mapVisible = true,
+  mapRun = null,
 }) {
   const mapRef = useRef(null);
   const mapObj = useRef(null);
@@ -71,10 +69,10 @@ export default function MapView({
   const ampLayerRef = useRef(null);
   const ampLayersById = useRef(new Map());
   const marinaMarkersById = useRef(new Map());
+  const projectMarkersById = useRef(new Map());
   const tileRef = useRef(null);
   const zoomingRef = useRef(false);
   const pendingRef = useRef(null);
-  // Formalities mode = EEZ polygons + PoE port markers
   const eezLayerRef = useRef(null);
   const eezLayersByMrgid = useRef(new Map());
   const zoneItemsRef = useRef(new Map());
@@ -84,9 +82,9 @@ export default function MapView({
   poePortsRef.current = poePorts;
   const zoneFicheRef = useRef(zoneFiche);
   zoneFicheRef.current = zoneFiche;
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
 
-  // Popup content must reflect the CURRENT language + zone statuses — bindPopup(fn)
-  // reads these refs at open time instead of capturing stale closures.
   const tRef = useRef(t);
   tRef.current = t;
   const onSelectZoneRef = useRef(onSelectZone);
@@ -96,7 +94,6 @@ export default function MapView({
   (categories || []).forEach((c) => { colorMap[c.name] = c.color; });
   const colorOf = (g) => colorMap[g] || FALLBACK_COLORS[g] || "#00f0ff";
 
-  // ---------- Initialisation de la carte, des panes et des clusters ----------
   useEffect(() => {
     if (mapObj.current) return;
     const WORLD = [[-85, -180], [85, 180]];
@@ -111,12 +108,14 @@ export default function MapView({
       maxBoundsViscosity: 1.0,
     });
     tileRef.current = L.tileLayer(TILE_URLS.dark, {
-      attribution: '&copy; Esri &copy; OpenStreetMap contributors',
+      attribution: "&copy; Esri &copy; OpenStreetMap contributors",
       maxZoom: 16,
       noWrap: true,
       bounds: WORLD,
-    }).addTo(map);
-    // Single-world view: min zoom = world exactly fills the screen (no grey bands, no wrap)
+    });
+    if (basemapRef.current !== "sea") {
+      tileRef.current.addTo(map);
+    }
     const fitMinZoom = () => {
       const mz = Math.max(minZoom || 2, map.getBoundsZoom(WORLD, true));
       map.setMinZoom(mz);
@@ -125,95 +124,23 @@ export default function MapView({
     fitMinZoom();
     map.on("resize", fitMinZoom);
 
-    // Panes personnalisés — l'ordre vertical vit dans map/layerOrder.js et il
-    // est verrouillé par test (inspiration seamap : l'ordre de dessin est
-    // charge utile, un remaniement accidentel doit casser un test).
     createPanes(map);
     ensureWmsPanes(map);
     map.createPane("science-tracks");
     map.getPane("science-tracks").style.zIndex = 450;
 
-    const cluster = L.markerClusterGroup({
-      maxClusterRadius: 50,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster" style="width:34px;height:34px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [34, 34],
-      }),
-    });
-    // Marinas cluster — red-tinted, only added to the map when mode="marinas"
-    const marinaCluster = L.markerClusterGroup({
-      maxClusterRadius: 40,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-marina" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [32, 32],
-      }),
-    });
+    const cluster = makePointGroup();
+    const marinaCluster = makePointGroup();
     marinaClusterRef.current = marinaCluster;
-    const capitainerieCluster = L.markerClusterGroup({
-      maxClusterRadius: 40,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-capitainerie" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [32, 32],
-      }),
-    });
+    const capitainerieCluster = makePointGroup();
     capitainerieClusterRef.current = capitainerieCluster;
-    // Science cluster (violet) — datasets + Argo floats, only in science mode
-    const scienceCluster = L.markerClusterGroup({
-      maxClusterRadius: 40,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-science" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [32, 32],
-      }),
-    });
+    const scienceCluster = makePointGroup();
     scienceClusterRef.current = scienceCluster;
     const scienceTracks = L.layerGroup();
     scienceTracksRef.current = scienceTracks;
-    // Anchorages cluster (teal), shown alongside marinas in marinas mode
-    const anchorCluster = L.markerClusterGroup({
-      maxClusterRadius: 40,
-      chunkedLoading: true,
-      chunkInterval: 100,
-      removeOutsideVisibleBounds: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-anchorage" style="width:30px;height:30px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [30, 30],
-      }),
-    });
+    const anchorCluster = makePointGroup();
     anchorClusterRef.current = anchorCluster;
-    // Formalities mode: EEZ choropleth (VLIZ) + PoE cluster. A single
-    // layerGroup wraps both so the mode-swap effect keeps a single handle.
-    const poeCluster = L.markerClusterGroup({
-      maxClusterRadius: 45,
-      chunkedLoading: true,
-      animate: false,
-      iconCreateFunction: (c) => L.divIcon({
-        html: `<div class="bi-cluster-formalities" style="width:32px;height:32px;">${c.getChildCount()}</div>`,
-        className: "",
-        iconSize: [32, 32],
-      }),
-    });
+    const poeCluster = makePointGroup();
     poeClusterRef.current = poeCluster;
     const eezLayer = L.geoJSON(null, {
       style: (feat) => zoneStyle(zoneItemsRef.current.get(feat?.properties?.mrgid)?.status),
@@ -223,7 +150,7 @@ export default function MapView({
         lyr.bindPopup(() => zonePopupHtml(mrgid, feat.properties, {
           tRef, zoneItemsRef, zoneFicheRef, poePortsRef,
         }), {
-          maxWidth: 360, minWidth: 260, maxHeight: 460, autoPan: true, autoPanPadding: [40, 40],
+          ...POPUP_OPTS, maxWidth: 360, minWidth: 260, maxHeight: 460,
           className: "bi-formalities-popup",
         });
         lyr.on("click", () => {
@@ -240,11 +167,12 @@ export default function MapView({
     const ampLayer = L.geoJSON(null, {
       pane: "amp",
       style: (feat) => ampStyle(feat?.properties?.lfp),
+      pointToLayer: (feat, latlng) => ampPointToLayer(feat, latlng, map.getZoom()),
       onEachFeature: (feat, lyr) => {
         const id = feat.properties?.site_id || feat.properties?.id;
         if (id) ampLayersById.current.set(id, lyr);
         lyr.bindPopup(() => ampPopupHtml(feat.properties || {}, tRef.current), {
-          maxWidth: 340, minWidth: 240, maxHeight: 420, autoPan: true, autoPanPadding: [40, 40],
+          ...POPUP_OPTS, maxWidth: 340, minWidth: 240, maxHeight: 420,
           className: "bi-amp-popup",
         });
         lyr.on("mouseover", () => { try { lyr.setStyle({ weight: 2.4, opacity: 1 }); } catch (_) {} });
@@ -252,8 +180,6 @@ export default function MapView({
       },
     });
     ampLayerRef.current = ampLayer;
-    // Add whichever cluster matches the initial mode; the mode-swap effect will fix it up
-    // if the user is starting in another mode.
     if (mode === "marinas") map.addLayer(marinaCluster);
     else if (mode === "capitaineries") map.addLayer(capitainerieCluster);
     else if (mode === "formalities") map.addLayer(formalitiesGroup);
@@ -261,59 +187,48 @@ export default function MapView({
     else if (mode === "science") {
       map.addLayer(scienceCluster);
       map.addLayer(scienceTracks);
-    }
-    else map.addLayer(cluster);
-    // Defer any layer rebuild until zoom animation fully ends (prevents orphan clusters / grey screens)
+    } else map.addLayer(cluster);
+
+    const allGroups = () => [cluster, marinaCluster, capitainerieCluster, scienceCluster, anchorCluster, poeCluster];
     map.on("zoomstart", () => { zoomingRef.current = true; });
     map.on("zoomend", () => {
       zoomingRef.current = false;
+      const z = map.getZoom();
+      allGroups().forEach((g) => applyPenRadii(g, z));
       if (pendingRef.current) {
         const fn = pendingRef.current;
         pendingRef.current = null;
         fn();
       }
-      map.invalidateSize({ pan: false });
     });
-    // Keep popups fully visible WITHOUT panning the map: shift the popup bubble itself
-    const adjustPopup = (popup) => {
-      const el = popup.getElement && popup.getElement();
-      if (!el || !mapRef.current) return;
-      const wrapper = el.querySelector(".leaflet-popup-content-wrapper");
-      if (!wrapper) return;
-      wrapper.style.transform = "";
-      const mapRect = mapRef.current.getBoundingClientRect();
-      const rect = wrapper.getBoundingClientRect();
-      const pad = 10;
-      let dx = 0, dy = 0;
-      if (rect.left < mapRect.left + pad) dx = mapRect.left + pad - rect.left;
-      else if (rect.right > mapRect.right - pad) dx = mapRect.right - pad - rect.right;
-      if (rect.top < mapRect.top + pad) dy = mapRect.top + pad - rect.top;
-      else if (rect.bottom > mapRect.bottom - pad) dy = mapRect.bottom - pad - rect.bottom;
-      if (dx || dy) {
-        wrapper.style.transition = "transform 0.15s ease";
-        wrapper.style.transform = `translate(${dx}px, ${dy}px)`;
-      }
-    };
     map.on("popupopen", (e) => {
-      adjustPopup(e.popup);
-      setTimeout(() => adjustPopup(e.popup), 250);
-      setTimeout(() => adjustPopup(e.popup), 800);
+      keepPopupInView(map, e.popup, mapRef.current);
+      setTimeout(() => keepPopupInView(map, e.popup, mapRef.current), 250);
+      setTimeout(() => keepPopupInView(map, e.popup, mapRef.current), 800);
     });
     attachDepthOnPopup(map, tRef);
     mapObj.current = map;
     clusterRef.current = cluster;
-    // Debug hook — expose the map + all clusters on window for headless
-    // inspection. Non-visible, no runtime cost.
     if (typeof window !== "undefined") {
-      window.__biDebug = { map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster, science: scienceCluster, scienceTracks, anchorages: anchorCluster, formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster, amp: ampLayer };
+      window.__biDebug = {
+        map, projects: cluster, marinas: marinaCluster, capitaineries: capitainerieCluster,
+        science: scienceCluster, scienceTracks, anchorages: anchorCluster,
+        formalities: formalitiesGroup, eez: eezLayer, poe: poeCluster, amp: ampLayer,
+      };
     }
     // eslint-disable-next-line
   }, [minZoom]);
 
-  // ---------- Fond de carte : raster Esri ou carte marine vectorielle ----------
   const nauticalActive = useNauticalBasemap({ mapObj, tileRef, basemap });
 
-  // ---------- Couches déléguées aux hooks dédiés ----------
+  useEffect(() => {
+    if (!mapVisible || !mapObj.current) return;
+    const id = setTimeout(() => {
+      try { mapObj.current.invalidateSize({ pan: false }); } catch (_) { /* noop */ }
+    }, 80);
+    return () => clearTimeout(id);
+  }, [mapVisible]);
+
   useRouteLayer(mapObj, tRef, t);
   useMarinasLayer({ mapObj, marinaClusterRef, marinaMarkersById, marinas, tRef });
   useCapitaineriesLayer({
@@ -324,26 +239,24 @@ export default function MapView({
   useScienceLayer({
     mapObj, clusterRef: scienceClusterRef, tracksLayerRef: scienceTracksRef,
     markersById: scienceMarkersById,
-    science, tRef,
+    science, tRef, sourceFilter: scienceSourceFilter,
   });
   useScienceWms({ mapObj, mode, enabled: scienceWms });
   useFormalitiesLayers({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
     poeMarkersById,
     mode, poeZones, poePorts, flyToZone, tRef,
-    showReview,
   });
   useProjectsLayer({
-    mapObj, clusterRef, zoomingRef, pendingRef,
-    projects, funderFilter, categoryFilter, searchQuery, maxMarkers, colorOf, tRef,
+    mapObj, clusterRef, zoomingRef, pendingRef, markersById: projectMarkersById,
+    projects, funderFilter, categoryFilter, searchQuery, colorOf, tRef,
   });
   useAmpLayer({
     mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites: onAmpSites, flyToAmp,
     runId: ampRunId,
-    showReview,
+    lfpFilter: ampLfpFilter,
   });
 
-  // ---------- Mode swap: attach the right cluster, hide the others ----------
   useEffect(() => {
     const map = mapObj.current;
     const proj = clusterRef.current;
@@ -355,7 +268,6 @@ export default function MapView({
     const formCluster = formalitiesClusterRef.current;
     const amp = ampLayerRef.current;
     if (!map || !proj || !mar || !formCluster) return;
-    // Detach everything first, then attach only the layer(s) for the current mode.
     if (map.hasLayer(proj)) map.removeLayer(proj);
     if (map.hasLayer(mar)) map.removeLayer(mar);
     if (cap && map.hasLayer(cap)) map.removeLayer(cap);
@@ -382,7 +294,6 @@ export default function MapView({
     map.closePopup();
   }, [mode, showAnchorages]);
 
-  // ---------- FlyTo signal from MarinasPanel ----------
   useEffect(() => {
     if (!flyToMarina) return;
     const map = mapObj.current;
@@ -406,7 +317,6 @@ export default function MapView({
     const map = mapObj.current;
     if (!map || flyToScience.lat == null || flyToScience.lon == null) return;
     const m = scienceMarkersById.current.get(flyToScience.id);
-    const cluster = scienceClusterRef.current;
     if (m && typeof m.getBounds === "function") {
       try {
         map.fitBounds(m.getBounds(), { padding: [48, 48], maxZoom: 8, duration: 1.0 });
@@ -416,20 +326,7 @@ export default function MapView({
     } else {
       map.flyTo([flyToScience.lat, flyToScience.lon], Math.max(map.getZoom(), 10), { duration: 1.0 });
     }
-    // Les fiches d'une même station partagent souvent le même centre : après
-    // le vol, le marqueur peut rester agrégé. zoomToShowLayer décluster
-    // (spiderfy au besoin) avant d'ouvrir le popup — openPopup seul serait
-    // silencieux sur un marqueur encore absorbé par son cluster.
-    setTimeout(() => {
-      if (!m) return;
-      if (cluster && typeof cluster.zoomToShowLayer === "function" && cluster.hasLayer(m)) {
-        try {
-          cluster.zoomToShowLayer(m, () => m.openPopup());
-          return;
-        } catch (_) { /* marqueur détaché pendant le vol — fallback direct */ }
-      }
-      m.openPopup();
-    }, 1100);
+    setTimeout(() => { if (m) m.openPopup(); }, 1100);
   }, [flyToScience]);
 
   useEffect(() => {
@@ -441,10 +338,15 @@ export default function MapView({
     setTimeout(() => { if (m) m.openPopup(); }, 900);
   }, [flyToPoe]);
 
-  // ---------- Lang change → refresh any currently open popup ----------
-  // When the user toggles FR ↔ EN, `popup.update()` re-invokes the
-  // bindPopup(fn) content function, which reads tRef.current — the popup is
-  // re-rendered in the new language with zero marker rebuild.
+  useEffect(() => {
+    if (!flyToProject) return;
+    const map = mapObj.current;
+    if (!map || flyToProject.lat == null || flyToProject.lon == null) return;
+    const m = projectMarkersById.current.get(flyToProject.id);
+    map.flyTo([flyToProject.lat, flyToProject.lon], Math.max(map.getZoom(), 10), { duration: 0.7 });
+    setTimeout(() => { if (m) m.openPopup(); }, 800);
+  }, [flyToProject]);
+
   useEffect(() => {
     const map = mapObj.current;
     if (!map) return;
@@ -453,6 +355,16 @@ export default function MapView({
       try { popup.update(); } catch (_) { /* map/popup detached — noop */ }
     }
   }, [t, zoneFiche]);
+
+  const emptyCount = (() => {
+    if (!mapRun) return 0;
+    if (mode === "projects") return projects?.features?.length || 0;
+    if (mode === "marinas") return marinas?.features?.length || 0;
+    if (mode === "capitaineries") return capitaineries?.features?.length || 0;
+    if (mode === "formalities") return poePorts?.features?.length || 0;
+    if (mode === "science") return science?.features?.length || 0;
+    return -1;
+  })();
 
   return (
     <div className="w-full h-full relative">
@@ -467,20 +379,13 @@ export default function MapView({
           {t("seaMapDisclaimerBody")}
         </div>
       ) : null}
-      {typeof setShowReview === "function" ? (
-        <button
-          type="button"
-          data-testid="map-show-review"
-          aria-pressed={Boolean(showReview)}
-          onClick={() => setShowReview(!showReview)}
-          className={`absolute z-[1000] top-3 right-3 px-2.5 py-1.5 text-[11px] font-semibold border rounded-sm shadow-sm ${
-            showReview
-              ? "border-accent bg-accent/20 text-accent"
-              : "border-line bg-surface/90 text-slate-300 hover:bg-raised"
-          }`}
+      {mapRun && emptyCount === 0 ? (
+        <div
+          data-testid="map-run-empty"
+          className="absolute z-[1000] top-3 left-1/2 -translate-x-1/2 max-w-md px-3 py-2 text-[11px] leading-snug bg-surface/95 border border-amber-400/50 text-amber-100 rounded-sm shadow-md"
         >
-          {t("reviewShowReview")}
-        </button>
+          {t("mapRunEmpty")}
+        </div>
       ) : null}
     </div>
   );

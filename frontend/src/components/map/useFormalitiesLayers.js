@@ -2,46 +2,40 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import api from "../../api";
 import { escH, flagEmoji, zoneStyle } from "./constants";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 /**
- * Couches du mode Formalités : choroplèthe ZEE (chargée paresseusement à la
- * première ouverture du mode), restyle au changement de statut des zones,
- * marqueurs des Ports d'Entrée (ambre, clusterisés) et flyTo depuis la liste.
+ * Couches Formalités : choroplèthe ZEE + pastilles Ports d'entrée (canvas).
  */
 export default function useFormalitiesLayers({
   mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
   poeMarkersById,
   mode, poeZones, poePorts, flyToZone, tRef,
-  showReview = false,
 }) {
   const eezSigRef = useRef("");
   const poeSigRef = useRef("");
 
-  // Couche par défaut = run unique (VLIZ). Overlay = run certifié si Afficher la review.
   useEffect(() => {
     if (mode !== "formalities") return;
     const layer = eezLayerRef.current;
     if (!layer) return;
     const ids = (poeZones || []).map((z) => z.mrgid).sort().join(",");
-    const sig = `${showReview ? 1 : 0}:${ids}`;
-    if (sig === eezSigRef.current) return;
-    eezSigRef.current = sig;
+    if (ids === eezSigRef.current) return;
+    eezSigRef.current = ids;
     (async () => {
       try {
-        const res = await api.get("/poe/zones/geojson", {
-          params: showReview ? { visible: 1 } : {},
-        });
+        const res = await api.get("/poe/zones/geojson");
+        const data = res.data;
         layer.clearLayers();
         if (eezLayersByMrgid?.current) eezLayersByMrgid.current.clear();
-        if ((res.data?.features || []).length) layer.addData(res.data);
+        if ((data?.features || []).length) layer.addData(data);
       } catch (e) {
         eezSigRef.current = "";
       }
     })();
     // eslint-disable-next-line
-  }, [mode, poeZones, showReview]);
+  }, [mode, poeZones]);
 
-  // Restyle polygons + refresh any open popup whenever zone statuses change.
   useEffect(() => {
     const byMrgid = new Map();
     for (const z of poeZones || []) byMrgid.set(z.mrgid, z);
@@ -61,9 +55,9 @@ export default function useFormalitiesLayers({
     // eslint-disable-next-line
   }, [poeZones]);
 
-  // PoE port markers (amber dots, clustered).
   useEffect(() => {
     const cluster = poeClusterRef.current;
+    const map = mapObj.current;
     if (!cluster) return;
     const feats = poePorts?.features || [];
     const sig = feats.map((f) => `${f.properties.id}|${f.properties.validated ? 1 : 0}|${f.properties.osm_confidence ?? ""}|${f.properties.confidence ?? ""}|${f.properties.spatial_anomaly ? 1 : 0}`).join(",");
@@ -71,18 +65,14 @@ export default function useFormalitiesLayers({
     poeSigRef.current = sig;
     cluster.clearLayers();
     if (poeMarkersById?.current) poeMarkersById.current.clear();
+    const renderer = cluster._biRenderer;
+    const zoom = map ? map.getZoom() : 2;
     const markers = feats.map((f) => {
       const [lon, lat] = f.geometry.coordinates;
       const p = f.properties;
-      const m = L.marker([lat, lon], {
-        icon: L.divIcon({
-          html: `<div style="width:14px;height:14px;border-radius:50%;background-color:#fbbf24;border:1.5px solid #0b1220;box-sizing:border-box;"></div>`,
-          className: "bi-status-icon",
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
-          popupAnchor: [0, -7],
-        }),
-      });
+      const m = L.circleMarker([lat, lon], circleOpts("#fbbf24", {
+        zoom, fillOpacity: 0.88, renderer,
+      }));
       m.bindPopup(() => {
         const t = tRef.current;
         const valid = p.spatial_kind === "inland_river"
@@ -97,7 +87,6 @@ export default function useFormalitiesLayers({
           : "";
         const srcs = (p.source_urls || []).slice(0, 3).map((u) => `
           <div style="margin-top:3px;font-size:10px;"><a href="${escH(u)}" target="_blank" rel="noreferrer" style="color:#00f0ff;text-decoration:none;word-break:break-all;">${escH(u)}</a></div>`).join("");
-        // Badges Bottom-Up : confiance OSM (Overpass) + anomalie spatiale (ML)
         let osmBadge = "";
         if (p.osm_confidence != null) {
           const c = Number(p.osm_confidence);
@@ -122,7 +111,7 @@ export default function useFormalitiesLayers({
           ${srcs ? `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px;">${escH(t("poeSourcesTitle"))}</div>${srcs}` : ""}
           <div style="margin-top:7px;font-size:9px;color:#64748b;">${escH(t("poeGeocodeAttribution"))}${p.extracted_at ? " · " + escH(String(p.extracted_at).slice(0, 10)) : ""}</div>
         </div>`;
-      }, { maxWidth: 310, maxHeight: 340, autoPan: true, autoPanPadding: [40, 40]       });
+      }, { ...POPUP_OPTS, maxWidth: 310 });
       if (poeMarkersById?.current && p.id) poeMarkersById.current.set(p.id, m);
       return m;
     });
@@ -130,22 +119,18 @@ export default function useFormalitiesLayers({
     // eslint-disable-next-line
   }, [poePorts]);
 
-  // FlyTo signal from FormalitiesPanel (EEZ row click)
   useEffect(() => {
     if (!flyToZone) return;
     const map = mapObj.current;
     if (!map) return;
     const [w, s, e, n] = flyToZone.bbox;
-    const anchor = flyToZone.anchor; // [lon, lat] — representative point (antimeridian-safe)
+    const anchor = flyToZone.anchor;
     const anchorLatLng = anchor ? L.latLng(anchor[1], anchor[0]) : null;
     const open = () => {
       const lyr = eezLayersByMrgid.current.get(flyToZone.mrgid);
       if (!lyr) return;
       let at = anchorLatLng;
       if (at) {
-        // maxBounds (viscosity 1) can clamp the fly for antimeridian zones
-        // (Fiji at 175°E): re-anchor the popup inside the effective viewport
-        // so it never opens off-screen.
         const b = map.getBounds();
         const mLng = (b.getEast() - b.getWest()) * 0.12;
         const mLat = (b.getNorth() - b.getSouth()) * 0.12;
@@ -159,8 +144,6 @@ export default function useFormalitiesLayers({
     map.once("moveend", open);
     try {
       if (e - w > 350 && anchorLatLng) {
-        // Zone spanning the antimeridian (Fiji, Russia…): fitBounds would show
-        // the whole world — fly to the representative point instead.
         map.flyTo(anchorLatLng, 5, { duration: 0.8 });
       } else {
         map.flyToBounds(L.latLngBounds([s, w], [n, e]), { duration: 0.8, maxZoom: 7, padding: [30, 30] });

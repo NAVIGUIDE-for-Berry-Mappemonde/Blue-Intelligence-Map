@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
+import L from "leaflet";
 import api from "../../api";
 import { escH, LFP_COLORS } from "./constants";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 const DEBOUNCE_MS = 420;
+const WORLD_CACHE_LIMIT = 8000;
 
 function hostLabel(url) {
   try {
@@ -44,16 +47,32 @@ function popupHtml(p, t) {
   </div>`;
 }
 
+function matchesLfp(feat, lfpFilter) {
+  if (!lfpFilter || lfpFilter === "All") return true;
+  return String(feat?.properties?.lfp ?? 0) === String(lfpFilter);
+}
+
 /**
- * Couche AMP : polygones ProtectedSeas chargés par bbox.
- * Popup : URL gestionnaire ≠ URL de visite.
+ * Couche AMP : polygones + pastilles pour les géométries Point.
+ * Le filtre LFP s'applique à la carte, pas seulement à la liste.
  */
 export default function useAmpLayer({
   mapObj, ampLayerRef, ampLayersById, mode, tRef, onSites, flyToAmp,
-  runId = null, showReview = false,
+  runId = null, lfpFilter = "All",
 }) {
   const timerRef = useRef(null);
   const lastKeyRef = useRef("");
+  const rawRef = useRef(null);
+
+  const paint = (data) => {
+    const layer = ampLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (ampLayersById?.current) ampLayersById.current.clear();
+    const feats = (data?.features || []).filter((f) => matchesLfp(f, lfpFilter));
+    if (feats.length) layer.addData({ ...data, features: feats });
+    if (onSites) onSites(data);
+  };
 
   useEffect(() => {
     const map = mapObj.current;
@@ -61,45 +80,38 @@ export default function useAmpLayer({
     if (!map || !layer || mode !== "amp") return undefined;
 
     const load = async () => {
-      // Run sélectionné (bouton " > " de l'onglet Map) : toutes les AMP du
-      // run, quel que soit le zoom / la bbox.
       if (runId) {
         const key = `run:${runId}`;
-        if (key === lastKeyRef.current) return;
+        if (key === lastKeyRef.current && rawRef.current) {
+          paint(rawRef.current);
+          return;
+        }
         lastKeyRef.current = key;
         try {
           const { data } = await api.get(`/amp/runs/${runId}/geojson`);
-          layer.clearLayers();
-          if (ampLayersById?.current) ampLayersById.current.clear();
-          if (data?.features?.length) layer.addData(data);
-          if (onSites) onSites(data);
+          rawRef.current = data;
+          paint(data);
         } catch (_) {
           lastKeyRef.current = "";
         }
         return;
       }
-      // 2026-09 — plus de plancher de zoom : en vue dézoomée le backend
-      // répond avec les sites déjà en cache local (aucun appel ProtectedSeas),
-      // les polygones restent donc visibles au niveau monde. La bbox est
-      // bornée au monde réel (Leaflet peut déborder quand la carte se répète).
       const zoom = map.getZoom();
       const b = map.getBounds();
       const bbox = [
         Math.max(-180, b.getWest()), Math.max(-85, b.getSouth()),
         Math.min(180, b.getEast()), Math.min(85, b.getNorth()),
       ].map((n) => n.toFixed(4)).join(",");
-      const key = `${zoom}:${bbox}:${showReview ? 1 : 0}`;
-      if (key === lastKeyRef.current) return;
+      const key = `${zoom}:${bbox}`;
+      if (key === lastKeyRef.current && rawRef.current) {
+        paint(rawRef.current);
+        return;
+      }
       lastKeyRef.current = key;
       try {
-        const { data } = await api.get("/amp", {
-          params: { bbox, ...(showReview ? { review: 1 } : {}) },
-        });
-        layer.clearLayers();
-        if (ampLayersById?.current) ampLayersById.current.clear();
-        const feats = data?.features || [];
-        if (feats.length) layer.addData(data);
-        if (onSites) onSites(data);
+        const { data } = await api.get("/amp", { params: { bbox } });
+        rawRef.current = data;
+        paint(data);
       } catch (_) {
         lastKeyRef.current = "";
       }
@@ -118,7 +130,12 @@ export default function useAmpLayer({
       map.off("zoomend", schedule);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef, runId, showReview]);
+  }, [mode, mapObj, ampLayerRef, ampLayersById, onSites, tRef, runId, lfpFilter]);
+
+  useEffect(() => {
+    if (rawRef.current) paint(rawRef.current);
+    // eslint-disable-next-line
+  }, [lfpFilter]);
 
   useEffect(() => {
     if (!flyToAmp) return;
@@ -132,4 +149,10 @@ export default function useAmpLayer({
   }, [flyToAmp, mapObj, ampLayersById]);
 }
 
-export { popupHtml };
+export { popupHtml, WORLD_CACHE_LIMIT };
+
+export function ampPointToLayer(feat, latlng, zoom = 2) {
+  const lfp = Number(feat?.properties?.lfp) || 0;
+  const color = LFP_COLORS[lfp] || LFP_COLORS[0];
+  return L.circleMarker(latlng, circleOpts(color, { zoom, fillOpacity: 0.85 }));
+}

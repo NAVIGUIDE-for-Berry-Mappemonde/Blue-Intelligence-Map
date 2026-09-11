@@ -4,9 +4,9 @@ import { LFP_COLORS } from "./map/constants";
 
 const LIST_CAP = 80;
 
-export default function AmpPanel({ t, sites, sitesLoading, onFlyTo }) {
+export default function AmpPanel({ t, sites, sitesLoading, onFlyTo, lfpFilter = "All", onLfpFilter }) {
   const [q, setQ] = useState("");
-  const [lfpFilter, setLfpFilter] = useState("All");
+  const setLfpFilter = onLfpFilter || (() => {});
 
   const features = sites?.features || [];
   const hint = sites?.hint;

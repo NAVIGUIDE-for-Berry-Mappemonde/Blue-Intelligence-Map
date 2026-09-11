@@ -1,14 +1,13 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 /**
- * Couche Projets : marqueurs colorés par catégorie, filtrés (financeur,
- * catégorie, recherche) et plafonnés. Le rebuild est différé si un zoom est
- * en cours et sauté si l'ensemble visible est inchangé (signature).
+ * Couche Projets : pastilles canvas, filtrées, sans plafond ni cluster.
  */
 export default function useProjectsLayer({
-  mapObj, clusterRef, zoomingRef, pendingRef,
-  projects, funderFilter, categoryFilter, searchQuery, maxMarkers, colorOf, tRef,
+  mapObj, clusterRef, zoomingRef, pendingRef, markersById,
+  projects, funderFilter, categoryFilter, searchQuery, colorOf, tRef,
 }) {
   const sigRef = useRef("");
 
@@ -17,12 +16,11 @@ export default function useProjectsLayer({
     const map = mapObj.current;
     if (!cluster || !map) return;
     const q = (searchQuery || "").toLowerCase();
-    const features = (projects.features || [])
-      .filter((f) => (funderFilter === "All" || (f.properties.funder || "").includes(funderFilter)) &&
-        (categoryFilter === "All" || f.properties.category_group === categoryFilter) &&
-        (!q || `${f.properties.title} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q)))
-      .slice(0, maxMarkers || 1000);
-    // Skip rebuild if the visible set is unchanged — keeps open popups alive
+    const features = (projects.features || []).filter((f) => (
+      (funderFilter === "All" || (f.properties.funder || "").includes(funderFilter))
+      && (categoryFilter === "All" || f.properties.category_group === categoryFilter)
+      && (!q || `${f.properties.title} ${f.properties.description} ${f.properties.funder} ${f.properties.location || ""}`.toLowerCase().includes(q))
+    ));
     const sig = `${features.length}|${funderFilter}|${categoryFilter}|${q}|${features.map((f) => f.properties.id).join(",")}`;
     if (sig === sigRef.current) return;
     sigRef.current = sig;
@@ -30,20 +28,15 @@ export default function useProjectsLayer({
     const apply = () => {
       map.closePopup();
       cluster.clearLayers();
+      if (markersById?.current) markersById.current.clear();
+      const renderer = cluster._biRenderer;
+      const zoom = map.getZoom();
       const markers = features.map((f) => {
         const [lon, lat] = f.geometry.coordinates;
         const p = f.properties;
         const col = colorOf(p.category_group);
-        const marker = L.circleMarker([lat, lon], {
-          radius: 7,
-          color: col,
-          weight: 2,
-          fillColor: col,
-          fillOpacity: 0.6,
-        });
+        const marker = L.circleMarker([lat, lon], circleOpts(col, { zoom, renderer }));
         const img = p.image ? `<img src="${p.image}" referrerpolicy="no-referrer" style="width:100%;height:110px;object-fit:cover;border-radius:3px;margin-bottom:8px;" onerror="this.remove()" />` : "";
-        // bindPopup(FN) : le HTML est reconstruit à chaque ouverture avec le
-        // `t` COURANT via tRef — la bascule FR ↔ EN n'exige aucun rebuild.
         marker.bindPopup(() => {
           const t = tRef.current;
           const snapped = p.snapped ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#fbbf24;border:1px solid #fbbf2455;padding:1px 5px;border-radius:2px;margin-left:6px;">${t("snappedBadge")}</span>` : "";
@@ -62,7 +55,8 @@ export default function useProjectsLayer({
             </div>
           </div>
         `;
-        }, { maxWidth: 280, maxHeight: 400, autoPan: true, autoPanPadding: [40, 40] });
+        }, POPUP_OPTS);
+        if (markersById?.current && p.id) markersById.current.set(p.id, marker);
         return marker;
       });
       cluster.addLayers(markers);
@@ -73,8 +67,5 @@ export default function useProjectsLayer({
     } else {
       apply();
     }
-    // Deps DATA-ONLY : `t` est volontairement exclu — le contenu des popups
-    // lit tRef.current à l'ouverture, un changement de langue ne reconstruit
-    // jamais les marqueurs.
-  }, [projects, funderFilter, categoryFilter, searchQuery, maxMarkers]); // eslint-disable-line
+  }, [projects, funderFilter, categoryFilter, searchQuery]); // eslint-disable-line
 }
