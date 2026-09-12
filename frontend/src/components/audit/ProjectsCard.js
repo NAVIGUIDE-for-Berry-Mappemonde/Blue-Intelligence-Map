@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Play, Square } from "lucide-react";
 import api from "../../api";
 import { invalidateRuns } from "../../lib/runCache";
-import { JournalDownloadButton } from "./RunJournal";
+import { JournalDownloadButton, pickJournalRunId } from "./RunJournal";
 
 export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [swarmMode, setSwarmMode] = useState("test");
@@ -10,6 +10,17 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [lastRun, setLastRun] = useState(null);
   const running = status?.running;
   const runId = status?.run_id || lastRun?.run_id;
+
+  useEffect(() => {
+    if (status?.run_id) return undefined;
+    let alive = true;
+    api.get("/projects/runs").then(({ data }) => {
+      if (!alive) return;
+      const id = pickJournalRunId(data);
+      if (id) setLastRun((prev) => prev || { run_id: id });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [status?.run_id]);
 
   const deploy = async () => {
     setBusy(true);

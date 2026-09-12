@@ -2,6 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import api from "../../api";
 
+/** Dernier run Projets (hors import v1) — pour relire le journal à l'arrêt. */
+export function pickJournalRunId(data, liveId) {
+  if (liveId) return liveId;
+  if (data?.active_run_id) return data.active_run_id;
+  for (const row of data?.items || []) {
+    const id = row.id || row._id;
+    if (!id || id === "v1") continue;
+    if ((row.mode || row.kind) === "import") continue;
+    return id;
+  }
+  return null;
+}
+
 export async function downloadRunJournal(runId) {
   const { data } = await api.get(`/projects/runs/${runId}/journal`, {
     params: { format: "txt" },

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Zap } from "lucide-react";
 import api from "../../api";
 import AgentConsole from "../AgentConsole";
-import RunJournalViewer from "./RunJournal";
+import RunJournalViewer, { pickJournalRunId } from "./RunJournal";
 
 const STATUS_COLORS = {
   SUCCESS: "text-bio",
@@ -49,7 +49,7 @@ export default function JournalPanel({ t, mode, status }) {
         } else {
           try {
             const { data } = await api.get("/projects/runs");
-            setJournalRunId(data.active_run_id || data.items?.[0]?.id || data.items?.[0]?._id || null);
+            setJournalRunId(pickJournalRunId(data));
           } catch (_) { /* ignore */ }
         }
       }
