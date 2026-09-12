@@ -126,3 +126,38 @@ def test_copy_visit_to_live_skips_empty():
     n = asyncio.run(amp_visit.copy_visit_to_live(db, "r1"))
     assert n == 1
     assert db.amp_sites.docs[0]["visit_url"] == "https://new.fr/entrer"
+
+
+def test_saturation_from_scratch_does_not_auto_stop():
+    from app.services.swarm_pipeline import Swarm
+
+    class _SwarmDB:
+        pass
+
+    async def run():
+        sw = Swarm(_SwarmDB())
+        sw.settings = {"saturation_limit": 2}
+        sw.force_rescan = True
+        sw.running = True
+        sw.saturated = False
+        stop_called = {"n": 0}
+
+        async def fake_stop():
+            stop_called["n"] += 1
+
+        sw.stop = fake_stop
+        for _ in range(20):
+            sw._bump_saturation(False)
+        await asyncio.sleep(0)
+        assert sw.saturated is False
+        assert stop_called["n"] == 0
+        assert sw.no_new_streak == 0
+
+        sw.force_rescan = False
+        sw._bump_saturation(False)
+        sw._bump_saturation(False)
+        await asyncio.sleep(0)
+        assert sw.saturated is True
+        assert stop_called["n"] == 1
+
+    asyncio.run(run())
