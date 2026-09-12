@@ -118,7 +118,6 @@ def build_v1_seeds(projects: list[dict]) -> list[dict]:
         seeds.append({
             "name": name,
             "url": listing,
-            "priority": 2,
             "listing_kind": "homepage" if listing else "unknown",
             "source": "v1",
             "project_count": bucket["count"],
@@ -144,7 +143,6 @@ def merge_curated(v1_seeds: list[dict], curated: list[dict] | None = None) -> li
             "name": c["name"],
             "url": c["url"],
             "country": c.get("country"),
-            "priority": 1,
             "category": c.get("category"),
             "listing_kind": "projects_index",
             "source": "curated",
@@ -168,7 +166,6 @@ def merge_curated(v1_seeds: list[dict], curated: list[dict] | None = None) -> li
         out.append({
             "name": v["name"],
             "url": v.get("url"),
-            "priority": 2,
             "listing_kind": v.get("listing_kind") or ("homepage" if v.get("url") else "unknown"),
             "source": v.get("source") or "v1",
             "project_count": int(v.get("project_count") or 0),
@@ -180,13 +177,14 @@ def build_master_seeds(projects: list[dict], curated: list[dict] | None = None) 
     return merge_curated(build_v1_seeds(projects), curated)
 
 
+def _without_priority(seed: dict) -> dict:
+    return {k: v for k, v in seed.items() if k != "priority"}
+
+
 def seeds_for_run(seeds: list[dict]) -> list[dict]:
-    """File de découverte : URL obligatoire, priority 1 d'abord, puis volume v1."""
+    """Tous les listings MasterSeeds avec URL, même rang, ordre stable par nom."""
     ready = [s for s in seeds if (s.get("url") or "").strip()]
-    return sorted(
-        ready,
-        key=lambda s: (int(s.get("priority") or 2), -int(s.get("project_count") or 0), s.get("name") or ""),
-    )
+    return sorted(ready, key=lambda s: (s.get("name") or "").lower())
 
 
 def is_known_funder(seeds: list[dict], name: str | None = None, url: str | None = None) -> bool:
@@ -214,9 +212,11 @@ def load_master_seeds(path: Path | None = None) -> list[dict]:
         data = json.loads(path.read_text(encoding="utf-8"))
         seeds = data.get("seeds") if isinstance(data, dict) else data
         if isinstance(seeds, list) and seeds:
-            return seeds
+            return [_without_priority(s) if isinstance(s, dict) else s for s in seeds]
     return [
-        {**s, "source": "curated", "listing_kind": "projects_index", "project_count": 0}
+        _without_priority({
+            **s, "source": "curated", "listing_kind": "projects_index", "project_count": 0,
+        })
         for s in _curated_seeds()
     ]
 
@@ -228,7 +228,7 @@ def dump_master_seeds(seeds: list[dict], path: Path | None = None, source: str =
         "source": source,
         "n": len(seeds),
         "n_with_url": sum(1 for s in seeds if s.get("url")),
-        "seeds": seeds,
+        "seeds": [_without_priority(s) if isinstance(s, dict) else s for s in seeds],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

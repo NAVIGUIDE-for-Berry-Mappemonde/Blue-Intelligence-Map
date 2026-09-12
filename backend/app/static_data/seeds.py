@@ -1,32 +1,32 @@
 """Seeds de découverte Projets.
 
-Les 21 listings curés (priority 1) restent la source des URLs de listing
-sûres. `MASTER_SEEDS` charge l'union v1 (~861 financeurs) depuis
-`data/master_seeds.json` (CDC C5). Sans fichier, repli = les 21 curés.
+Les 21 listings curés donnent des URLs de listing fiables. `MASTER_SEEDS`
+charge l'union v1 (~861 financeurs) depuis `data/master_seeds.json` (CDC C5).
+Sans fichier, repli = les 21 curés. Tous les financeurs avec URL sont à égalité.
 """
 
 CURATED_SEEDS = [
-    {"name": "The Ocean Foundation", "url": "https://oceanfdn.org/projects/", "country": "US", "priority": 1, "category": "Conservation & Research"},
-    {"name": "Oceana", "url": "https://oceana.org/campaigns/", "country": "US", "priority": 1, "category": "Advocacy & Campaigns"},
-    {"name": "Blue Marine Foundation", "url": "https://www.bluemarinefoundation.com/projects/", "country": "UK", "priority": 1, "category": "Conservation & Research"},
-    {"name": "Fondation de la Mer", "url": "https://www.fondationdelamer.org/", "country": "FR", "priority": 1, "category": "Conservation & Research"},
-    {"name": "Pure Ocean Foundation", "url": "https://www.pure-ocean.org/", "country": "FR", "priority": 1, "category": "Applied Research"},
-    {"name": "Fondation CMA CGM", "url": "https://www.cmacgm-group.com/fr/fondation", "country": "FR", "priority": 1, "category": "Shipping & Ocean Protection", "aliases": ["CMA CGM Group"]},
-    {"name": "IFREMER", "url": "https://www.ifremer.fr/fr", "country": "FR", "priority": 1, "category": "Marine Science"},
-    {"name": "Institut Océanographique Paul Ricard", "url": "https://www.institut-paul-ricard.org/", "country": "FR", "priority": 2, "category": "Marine Biology"},
-    {"name": "SHOM", "url": "https://www.shom.fr/fr", "country": "FR", "priority": 2, "category": "Hydrography"},
-    {"name": "CORDIS Europe", "url": "https://cordis.europa.eu/projects/en", "country": "EU", "priority": 2, "category": "EU Research"},
-    {"name": "Prince Albert II Foundation", "url": "https://www.fpa2.org/en/initiatives", "country": "MC", "priority": 1, "category": "Mediterranean & MPA"},
-    {"name": "Coral Reef Alliance", "url": "https://coral.org/en/where-we-work/", "country": "US", "priority": 2, "category": "Coral Reefs"},
-    {"name": "Mission Blue", "url": "https://missionblue.org/hope-spots/", "country": "US", "priority": 2, "category": "Hope Spots"},
-    {"name": "Seacology", "url": "https://www.seacology.org/projects/", "country": "US", "priority": 2, "category": "Island Conservation"},
-    {"name": "Ocean Conservancy", "url": "https://oceanconservancy.org/programs/", "country": "US", "priority": 2, "category": "Conservation & Research"},
-    {"name": "Pew Charitable Trusts", "url": "https://www.pewtrusts.org/en/projects", "country": "US", "priority": 2, "category": "Policy & Research", "aliases": ["The Pew Charitable Trusts", "The Pew Charitable Trust"]},
-    {"name": "WWF Oceans", "url": "https://www.worldwildlife.org/initiatives/oceans", "country": "INT", "priority": 2, "category": "Conservation & Research", "aliases": ["WWF"]},
-    {"name": "Packard Foundation", "url": "https://www.packard.org/what-we-fund/ocean/", "country": "US", "priority": 2, "category": "Philanthropy"},
-    {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/", "country": "US", "priority": 2, "category": "Sustainable Fisheries", "aliases": ["Rare"]},
-    {"name": "Fauna & Flora Oceans", "url": "https://www.fauna-flora.org/environments/oceans/", "country": "UK", "priority": 2, "category": "Conservation & Research", "aliases": ["Fauna & Flora"]},
-    {"name": "Wildlife Conservation Society Marine", "url": "https://www.wcs.org/our-work/oceans", "country": "US", "priority": 2, "category": "Conservation & Research", "aliases": ["WCS"]},
+    {"name": "The Ocean Foundation", "url": "https://oceanfdn.org/projects/", "country": "US", "category": "Conservation & Research"},
+    {"name": "Oceana", "url": "https://oceana.org/campaigns/", "country": "US", "category": "Advocacy & Campaigns"},
+    {"name": "Blue Marine Foundation", "url": "https://www.bluemarinefoundation.com/projects/", "country": "UK", "category": "Conservation & Research"},
+    {"name": "Fondation de la Mer", "url": "https://www.fondationdelamer.org/", "country": "FR", "category": "Conservation & Research"},
+    {"name": "Pure Ocean Foundation", "url": "https://www.pure-ocean.org/", "country": "FR", "category": "Applied Research"},
+    {"name": "Fondation CMA CGM", "url": "https://www.cmacgm-group.com/fr/fondation", "country": "FR", "category": "Shipping & Ocean Protection", "aliases": ["CMA CGM Group"]},
+    {"name": "IFREMER", "url": "https://www.ifremer.fr/fr", "country": "FR", "category": "Marine Science"},
+    {"name": "Institut Océanographique Paul Ricard", "url": "https://www.institut-paul-ricard.org/", "country": "FR", "category": "Marine Biology"},
+    {"name": "SHOM", "url": "https://www.shom.fr/fr", "country": "FR", "category": "Hydrography"},
+    {"name": "CORDIS Europe", "url": "https://cordis.europa.eu/projects/en", "country": "EU", "category": "EU Research"},
+    {"name": "Prince Albert II Foundation", "url": "https://www.fpa2.org/en/initiatives", "country": "MC", "category": "Mediterranean & MPA"},
+    {"name": "Coral Reef Alliance", "url": "https://coral.org/en/where-we-work/", "country": "US", "category": "Coral Reefs"},
+    {"name": "Mission Blue", "url": "https://missionblue.org/hope-spots/", "country": "US", "category": "Hope Spots"},
+    {"name": "Seacology", "url": "https://www.seacology.org/projects/", "country": "US", "category": "Island Conservation"},
+    {"name": "Ocean Conservancy", "url": "https://oceanconservancy.org/programs/", "country": "US", "category": "Conservation & Research"},
+    {"name": "Pew Charitable Trusts", "url": "https://www.pewtrusts.org/en/projects", "country": "US", "category": "Policy & Research", "aliases": ["The Pew Charitable Trusts", "The Pew Charitable Trust"]},
+    {"name": "WWF Oceans", "url": "https://www.worldwildlife.org/initiatives/oceans", "country": "INT", "category": "Conservation & Research", "aliases": ["WWF"]},
+    {"name": "Packard Foundation", "url": "https://www.packard.org/what-we-fund/ocean/", "country": "US", "category": "Philanthropy"},
+    {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/", "country": "US", "category": "Sustainable Fisheries", "aliases": ["Rare"]},
+    {"name": "Fauna & Flora Oceans", "url": "https://www.fauna-flora.org/environments/oceans/", "country": "UK", "category": "Conservation & Research", "aliases": ["Fauna & Flora"]},
+    {"name": "Wildlife Conservation Society Marine", "url": "https://www.wcs.org/our-work/oceans", "country": "US", "category": "Conservation & Research", "aliases": ["WCS"]},
 ]
 
 TEST_SEED_COUNT = 3

@@ -1,5 +1,6 @@
 """MasterSeeds élargis (CDC C5) + Follow the Money (plafond = nouveautés seulement)."""
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,9 +18,9 @@ from tests.test_project_runs import _FakeDB
 
 CURATED = [
     {"name": "Blue Marine Foundation", "url": "https://www.bluemarinefoundation.com/projects/",
-     "country": "UK", "priority": 1, "category": "Conservation", "aliases": []},
+     "country": "UK", "category": "Conservation", "aliases": []},
     {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/",
-     "country": "US", "priority": 1, "category": "Fisheries", "aliases": ["Rare"]},
+     "country": "US", "category": "Fisheries", "aliases": ["Rare"]},
 ]
 
 
@@ -47,7 +48,7 @@ def test_listing_url_prefers_funder_domain():
     assert listing == "https://saveourseas.com/"
 
 
-def test_merge_curated_priority_and_alias():
+def test_merge_curated_alias_no_priority():
     v1 = [
         {"name": "Rare", "url": "https://rare.org/", "project_count": 12, "listing_kind": "homepage"},
         {"name": "Save Our Seas Foundation", "url": "https://saveourseas.com/",
@@ -55,22 +56,39 @@ def test_merge_curated_priority_and_alias():
     ]
     merged = ms.merge_curated(v1, CURATED)
     by = {s["name"]: s for s in merged}
-    assert by["Rare Fish Forever"]["priority"] == 1
+    assert "priority" not in by["Rare Fish Forever"]
+    assert by["Rare Fish Forever"]["source"] == "curated"
     assert by["Rare Fish Forever"]["url"].startswith("https://rare.org/")
     assert by["Rare Fish Forever"]["project_count"] == 12
     assert "Rare" not in by
-    assert by["Save Our Seas Foundation"]["priority"] == 2
-    assert by["Blue Marine Foundation"]["priority"] == 1
+    assert "priority" not in by["Save Our Seas Foundation"]
+    assert by["Save Our Seas Foundation"]["source"] == "v1"
+    assert "priority" not in by["Blue Marine Foundation"]
 
 
-def test_seeds_for_run_priority_first_and_skips_empty_url():
+def test_seeds_for_run_skips_empty_url_and_ignores_legacy_priority():
     seeds = [
         {"name": "P2-big", "url": "https://b.org/", "priority": 2, "project_count": 99},
         {"name": "P1", "url": "https://a.org/", "priority": 1, "project_count": 1},
         {"name": "NoURL", "url": None, "priority": 2, "project_count": 50},
+        {"name": "Alpha", "url": "https://z.org/", "project_count": 0},
     ]
     queued = ms.seeds_for_run(seeds)
-    assert [s["name"] for s in queued] == ["P1", "P2-big"]
+    assert [s["name"] for s in queued] == ["Alpha", "P1", "P2-big"]
+
+
+def test_dump_and_load_strip_legacy_priority(tmp_path):
+    path = tmp_path / "master_seeds.json"
+    ms.dump_master_seeds(
+        [{"name": "X", "url": "https://x.org/", "priority": 1, "project_count": 3}],
+        path,
+        source="test",
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "priority" not in data["seeds"][0]
+    loaded = ms.load_master_seeds(path)
+    assert "priority" not in loaded[0]
+    assert loaded[0]["name"] == "X"
 
 
 def test_build_master_seeds_from_geojson_style_funder_string():
@@ -89,6 +107,8 @@ def test_loaded_catalog_has_v1_scale():
     assert CURATED_SEEDS[0]["name"] == "The Ocean Foundation"
     # Sans JSON : repli 21. Avec JSON généré : ~861.
     assert len(MASTER_SEEDS) >= 700
+    assert all("priority" not in s for s in MASTER_SEEDS)
+    assert all("priority" not in s for s in CURATED_SEEDS)
 
 
 def test_follow_the_money_caps_only_new_orgs():
@@ -121,6 +141,7 @@ def test_follow_the_money_caps_only_new_orgs():
         assert sw.new_partner_count == 1
         extras = sw.db.master_seeds.docs
         assert any(d.get("domain") == "wild-oysters.org" for d in extras)
+        assert all("priority" not in d for d in extras)
 
     asyncio.run(run())
 

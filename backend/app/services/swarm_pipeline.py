@@ -304,10 +304,9 @@ class Swarm:
             concurrency = max(1, min(20, int(self.settings.get("extract_concurrency", 6))))
             discover_n = max(1, min(12, int(self.settings.get("discover_concurrency", 8))))
             self.workers = [asyncio.create_task(self._extract_worker(i)) for i in range(concurrency)]
-            n_p1 = sum(1 for s in seeds if int(s.get("priority") or 2) == 1)
             self.log(
                 f"MasterSeeds loaded: {len(seeds)} portals in queue "
-                f"(priority1={n_p1}, catalog={len(self.master_seeds)}, "
+                f"(catalog={len(self.master_seeds)}, "
                 f"discover_concurrency={discover_n}, extract_concurrency={concurrency})"
             )
 
@@ -585,7 +584,7 @@ class Swarm:
                 return
             self.new_partner_count += 1
             self.master_seeds.append({
-                "name": name, "url": purl, "priority": 2,
+                "name": name, "url": purl,
                 "listing_kind": "homepage", "source": "follow_the_money",
                 "project_count": 0,
             })
@@ -594,7 +593,7 @@ class Swarm:
                     {"domain": domain},
                     {"$set": {
                         "name": name, "url": purl, "domain": domain,
-                        "source": "follow_the_money", "priority": 2,
+                        "source": "follow_the_money",
                         "ts": now_iso(),
                     },
                      "$setOnInsert": {"_id": str(uuid.uuid4())}},
@@ -608,7 +607,7 @@ class Swarm:
         self.partner_count = len(self.partner_domains)
         self.log(f"Follow the Money: {kind} '{name}' ({domain}) → recursive discovery", "success")
         label = known_seed["name"] if known_seed else f"{name} (partner)"
-        seed = {"name": label, "url": purl, "priority": 2}
+        seed = {"name": label, "url": purl}
         self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
 
     def _follow_the_money(self, proj: dict, depth: int):

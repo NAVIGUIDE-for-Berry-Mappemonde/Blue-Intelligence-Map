@@ -60,11 +60,7 @@ def main() -> int:
     seeds = build_master_seeds(projects)
     path = dump_master_seeds(seeds, args.out, source=source)
     queued = seeds_for_run(seeds)
-    print(
-        f"Wrote {path} — {len(seeds)} financeurs "
-        f"({sum(1 for s in seeds if s.get('priority') == 1)} priority 1, "
-        f"{len(queued)} avec URL → file run)"
-    )
+    print(f"Wrote {path} — {len(seeds)} financeurs ({len(queued)} avec URL → file run)")
     return 0
 
 
