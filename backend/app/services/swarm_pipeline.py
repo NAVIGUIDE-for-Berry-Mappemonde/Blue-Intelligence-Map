@@ -20,10 +20,14 @@ from app.static_data.seeds import (
     CRAWL_BLACKLIST, CURATED_SEEDS, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS,
 )
 from app.services.master_seeds import (
-    domain_of, is_known_funder, listing_url_for_name, seeds_for_run,
+    SKIP_LISTING_NETLOCS, domain_of, is_known_funder, listing_url_for_name,
+    seeds_for_run,
 )
-from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
-                             tf_get_run, tf_run_async, tf_run_sse)
+from app.core.tinyfish import (
+    DISCOVERY_SCHEMA, PROJECTS_DISCOVERY_PURPOSE, discovery_goal,
+    find_live_url, tf_fetch, tf_get_run, tf_run_async, tf_run_sse, tf_search,
+)
+from app.core.serper import serper_api_key, serper_search
 from app.core.events import HeartbeatWatch
 from app.services.run_journal import (
     AGENT_LIVE_TAIL,
@@ -58,6 +62,121 @@ def pick_image(full_soup, content_soup, base_url):
     return None
 
 
+def _hit_url(hit) -> str:
+    if isinstance(hit, str):
+        return hit.strip()
+    if isinstance(hit, dict):
+        return (hit.get("url") or hit.get("link") or hit.get("href") or "").strip()
+    return ""
+
+
+def _is_skip_listing_domain(domain: str) -> bool:
+    d = (domain or "").lower()
+    if not d:
+        return True
+    for skip in SKIP_LISTING_NETLOCS:
+        if d == skip or d.endswith("." + skip):
+            return True
+    return False
+
+
+def is_project_fiche_path(path: str, *, apply_blacklist: bool = True) -> bool:
+    """Vraie fiche : motif URL_PATTERNS, ≥ 2 segments. Blacklist = Fetch/Search."""
+    if not path:
+        return False
+    if apply_blacklist and any(b in path.lower() for b in CRAWL_BLACKLIST):
+        return False
+    if not any(p in path for p in URL_PATTERNS):
+        return False
+    parts = [p for p in path.strip("/").split("/") if p]
+    return len(parts) >= 2
+
+
+def project_search_query(seed: dict) -> str:
+    """Une seule phrase : site:{domaine} … ocean project, ou \"{nom}\" marine conservation."""
+    name = (seed.get("name") or "").strip() if isinstance(seed, dict) else ""
+    url = (seed.get("url") or "").strip() if isinstance(seed, dict) else ""
+    domain = domain_of(url)
+    if domain:
+        if name:
+            return f"site:{domain} {name} ocean project"
+        return f"site:{domain} ocean project"
+    if name:
+        return f'"{name}" marine conservation'
+    return "ocean project"
+
+
+def filter_discover_urls(hits, seed, max_urls) -> list[str]:
+    """Même hôte (ou domaine trouvé), URL_PATTERNS, hors blacklist, http, dédup."""
+    try:
+        cap = max(0, int(max_urls or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    host = domain_of((seed or {}).get("url") or "") if isinstance(seed, dict) else ""
+    seed_url = ""
+    if isinstance(seed, dict):
+        seed_url = (seed.get("url") or "").rstrip("/")
+    urls, seen = [], set()
+    for hit in hits or []:
+        raw = _hit_url(hit)
+        if not raw.startswith("http"):
+            continue
+        href = raw.split("#")[0].split("?")[0]
+        if not href.startswith("http"):
+            continue
+        if seed_url and href.rstrip("/") == seed_url:
+            continue
+        d = domain_of(href)
+        if host:
+            if d != host:
+                continue
+        elif _is_skip_listing_domain(d):
+            continue
+        path = urlparse(href).path
+        if not is_project_fiche_path(path, apply_blacklist=True):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        urls.append(href)
+        if cap and len(urls) >= cap:
+            break
+    return urls[:cap]
+
+
+def official_site_from_hits(hits) -> str:
+    """Premier hit hors réseaux sociaux / raccourcisseurs → origine du site."""
+    for hit in hits or []:
+        raw = _hit_url(hit)
+        if not raw.startswith("http"):
+            continue
+        href = raw.split("#")[0].split("?")[0]
+        d = domain_of(href)
+        if _is_skip_listing_domain(d):
+            continue
+        parsed = urlparse(href)
+        if not parsed.netloc:
+            continue
+        scheme = parsed.scheme or "https"
+        return f"{scheme}://{parsed.netloc}/"
+    return ""
+
+
+def _links_from_fetch_record(rec: dict | None, base_url: str) -> list[str]:
+    out = []
+    for link in (rec or {}).get("links") or []:
+        if isinstance(link, dict):
+            raw = (link.get("url") or link.get("href") or "").strip()
+        else:
+            raw = str(link or "").strip()
+        if not raw:
+            continue
+        href = urljoin(base_url, raw).split("#")[0].split("?")[0]
+        if href.startswith("http"):
+            out.append(href)
+    return out
+
+
 class Swarm:
     def __init__(self, db):
         self.db = db
@@ -84,6 +203,7 @@ class Swarm:
         self.force_rescan = False
         self.wrote_projects = False
         self._journal_seq = 0
+        self._serper_queries = 0
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -235,6 +355,9 @@ class Swarm:
     def _tf_key(self):
         return (self.settings.get("tinyfish_api_key") or os.environ.get("TINYFISH_API_KEY") or "").strip()
 
+    def _serper_key(self):
+        return serper_api_key(self.settings)
+
     # ---------- lifecycle ----------
     def _bump_saturation(self, new_project: bool):
         if new_project:
@@ -266,10 +389,14 @@ class Swarm:
         self.running = True
         self.logs.clear()
         self._journal_seq = 0
+        self._serper_queries = 0
         self.no_new_streak = 0
         self.saturated = False
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
-        self.log(f"Deploying Swarm — mode: {mode.upper()} | cascade N1 (gratuit) → N2 → N3 TinyFish (dernier recours)")
+        self.log(
+            f"Deploying Swarm — mode: {mode.upper()} | N1 → Fetch → Search "
+            f"(Serper ∥ TinyFish, 1/seed) → Agent (wrote_projects: false)"
+        )
         self.log(f"Auto-Stop armed: shutdown after {int(settings.get('saturation_limit', 50))} extractions without new project")
         self.log(f"TinyFish key: {'ACTIVE (N3 last-resort only)' if self._tf_key() else 'MISSING → N1/N2 only'}",
                  "info")
@@ -400,7 +527,7 @@ class Swarm:
             await hb.aclose()
             self.running = False
 
-    # ---------- discovery (cascade : N1 crawler gratuit → N3 TinyFish dernier recours) ----------
+    # ---------- discovery (N1 motifs → Fetch → Search TF∥Serper → Agent) ----------
     async def _discover(self, seed, max_urls, depth=0):
         # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
         listing = (seed.get("url") or "").strip()
@@ -435,22 +562,57 @@ class Swarm:
         t0 = time.time()
         urls = []
         used_engine = "Crawler"
-        crawl_err = tf_err = ""
+        crawl_err = fetch_err = search_err = tf_err = ""
+        n_tf = n_sp = 0
         try:
-            # --- N1 : crawler httpx gratuit en PREMIÈRE intention ---
             self.set_agent(aid, status="RUNNING")
-            self.agent_log(aid, "N1: crawler httpx (gratuit, économie TinyFish)")
+            self.agent_log(aid, "N1: crawler httpx (motifs URL_PATTERNS uniquement)")
             try:
                 urls = await self._crawl_discover(seed, max_urls)
             except Exception as e:
                 crawl_err = f"{type(e).__name__}: {str(e)[:80]}"
                 self.agent_log(aid, f"N1 crawler échec: {crawl_err}")
-            # --- N3 : TinyFish uniquement si le crawler ne trouve rien ---
+            n1_n = len(urls)
+            self.agent_log(aid, f"N1: {n1_n} fiches")
+            self.log(f"[{seed['name']}] N1: {n1_n} fiches")
+
+            if not urls and key:
+                used_engine = "TinyFish Fetch"
+                self.set_agent(aid, engine="TinyFish Fetch")
+                log_fn = lambda m: self.agent_log(aid, m)
+                try:
+                    urls = await self._fetch_discover(seed, max_urls, log=log_fn)
+                except Exception as e:
+                    fetch_err = f"{type(e).__name__}: {str(e)[:80]}"
+                    self.agent_log(aid, f"Fetch échec: {fetch_err}")
+                self.agent_log(aid, f"Fetch: {len(urls)} links")
+                self.log(f"[{seed['name']}] Fetch: {len(urls)} links")
+            elif not urls:
+                self.agent_log(aid, "Fetch: skipped (no TinyFish key)")
+
+            if not urls:
+                used_engine = "Search"
+                self.set_agent(aid, engine="Search TF∥Serper")
+                log_fn = lambda m: self.agent_log(aid, m)
+                try:
+                    urls, n_tf, n_sp = await self._search_discover(
+                        seed, max_urls, log=log_fn)
+                except Exception as e:
+                    search_err = f"{type(e).__name__}: {str(e)[:80]}"
+                    self.agent_log(aid, f"Search échec: {search_err}")
+                    urls, n_tf, n_sp = [], 0, 0
+                line = (
+                    f"Search: TinyFish {n_tf} + Serper {n_sp} → {len(urls)} "
+                    f"after filter (serper {self._serper_queries})"
+                )
+                self.agent_log(aid, line)
+                self.log(f"[{seed['name']}] {line}")
+
             if not urls and key and self.settings.get("allow_tinyfish_agent", True):
                 used_engine = "TinyFish"
                 self.set_agent(aid, engine="TinyFish N3")
-                self.agent_log(aid, "N1 vide → TinyFish (N3, dernier recours payant)")
-                self.log(f"[{seed['name']}] crawler N1 vide → mission TinyFish (JS/pagination complexe présumée)")
+                self.agent_log(aid, "Search: 0 → TinyFish Agent (dernier recours)")
+                self.log(f"[{seed['name']}] Search vide → TinyFish Agent (dernier recours)")
                 try:
                     sem = self._tf_sem or asyncio.Semaphore(1)
                     async with sem:
@@ -460,7 +622,11 @@ class Swarm:
                     self.agent_log(aid, f"TinyFish failed: {tf_err}")
                     self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
             urls = urls[:max_urls]
-            engine_code = "N3" if used_engine == "TinyFish" else "N1"
+            engine_code = {
+                "TinyFish": "N3",
+                "TinyFish Fetch": "Fetch",
+                "Search": "Search",
+            }.get(used_engine, "N1")
             await self._emit(
                 "discover_urls", seed=seed.get("name"), n=len(urls),
                 engine=engine_code, depth=depth,
@@ -488,7 +654,10 @@ class Swarm:
             else:
                 self.set_agent(aid, status="FAILED")
                 self.log(f"[{seed['name']}] discovery returned 0 URLs", "warn")
-                detail = f"crawler: {crawl_err or '0 urls'}; tinyfish: {tf_err or 'not attempted'}"
+                detail = (
+                    f"crawler: {crawl_err or '0 urls'}; fetch: {fetch_err or 'n/a'}; "
+                    f"search: {search_err or '0 urls'}; tinyfish: {tf_err or 'not attempted'}"
+                )
                 await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, detail)
                 await self.add_failed(seed["url"], seed["url"], seed["name"], detail, "discover")
         except asyncio.CancelledError:
@@ -555,6 +724,9 @@ class Swarm:
         raise TimeoutError("TinyFish run timed out (360s)")
 
     async def _crawl_discover(self, seed, max_urls):
+        """1er passage seulement : chemins URL_PATTERNS (≥ 2 segments). Les 8
+        liens internes hors blacklist ne comptent pas comme vraies fiches —
+        sinon les homes sauteraient Fetch/Search."""
         async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=UA) as client:
             r = await client.get(seed["url"])
             soup = BeautifulSoup(r.text, "html.parser")
@@ -565,26 +737,69 @@ class Swarm:
             if urlparse(href).netloc != base_host or href.rstrip("/") == seed["url"].rstrip("/"):
                 continue
             path = urlparse(href).path
-            if any(p in path for p in URL_PATTERNS) and len(path.strip("/").split("/")) >= 2:
+            if is_project_fiche_path(path, apply_blacklist=False):
                 if href not in seen:
                     seen.add(href)
                     urls.append(href)
             if len(urls) >= max_urls * 2:
                 break
-        if not urls:
-            for a in soup.find_all("a", href=True):
-                href = urljoin(seed["url"], a["href"]).split("#")[0].split("?")[0]
-                if urlparse(href).netloc != base_host or href.rstrip("/") == seed["url"].rstrip("/"):
-                    continue
-                path = urlparse(href).path.strip("/")
-                if not path or any(b in path.lower() for b in CRAWL_BLACKLIST):
-                    continue
-                if href not in seen:
-                    seen.add(href)
-                    urls.append(href)
-                if len(urls) >= min(8, max_urls):
-                    break
         return urls[:max_urls]
+
+    async def _fetch_discover(self, seed, max_urls, log=None):
+        """TinyFish Fetch de la même URL (miroir JS) → mêmes filtres motifs."""
+        key = self._tf_key()
+        url = (seed.get("url") or "").strip()
+        if not key or not url:
+            return []
+        recs = await tf_fetch(
+            [url], key, links=True, purpose=PROJECTS_DISCOVERY_PURPOSE,
+            log=log or (lambda m: None))
+        rec = (recs or {}).get(url) or {}
+        if not rec and recs:
+            rec = next(iter(recs.values()))
+        hits = [{"url": u} for u in _links_from_fetch_record(rec, url)]
+        return filter_discover_urls(hits, seed, max_urls)
+
+    async def _tf_search_discover(self, query: str, seed: dict, log=None) -> list:
+        key = self._tf_key()
+        if not key:
+            return []
+        domain = domain_of((seed or {}).get("url") or "")
+        include = [domain] if domain else None
+        return await tf_search(
+            query, key, include_domains=include,
+            purpose=PROJECTS_DISCOVERY_PURPOSE, log=log or (lambda m: None))
+
+    async def _serper_discover(self, query: str, log=None) -> list:
+        key = self._serper_key()
+        if not key:
+            return []
+        self._serper_queries += 1
+        return await serper_search(query, key, log=log or (lambda m: None))
+
+    async def _search_discover(self, seed, max_urls, log=None):
+        """TinyFish Search ∥ Serper (1 shot), union filtrée. Jamais 2 shots EN/FR."""
+        query = project_search_query(seed)
+        tf_hits, sp_hits = await asyncio.gather(
+            self._tf_search_discover(query, seed, log=log),
+            self._serper_discover(query, log=log),
+        )
+        combined = list(tf_hits or []) + list(sp_hits or [])
+        return filter_discover_urls(combined, seed, max_urls), len(tf_hits or []), len(sp_hits or [])
+
+    async def _search_partner_site(self, name: str, log=None) -> str:
+        seed = {"name": name, "url": ""}
+        query = project_search_query(seed)
+        tf_hits, sp_hits = await asyncio.gather(
+            self._tf_search_discover(query, seed, log=log),
+            self._serper_discover(query, log=log),
+        )
+        site = official_site_from_hits(list(tf_hits or []) + list(sp_hits or []))
+        self.log(
+            f"Follow the Money: Search '{name}' → {site or 'aucun site'} "
+            f"(serper {self._serper_queries})"
+        )
+        return site
 
     # ---------- extraction ----------
     async def _extract_worker(self, idx):
@@ -647,16 +862,25 @@ class Swarm:
         seed = {"name": label, "url": purl}
         self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
 
-    def _follow_the_money(self, proj: dict, depth: int):
+    async def _follow_the_money(self, proj: dict, depth: int):
         if depth != 0:
             return
         seeds = self.master_seeds or MASTER_SEEDS
         for p in (proj.get("partners") or []):
             if not isinstance(p, dict) or not p.get("name"):
                 continue
-            purl = (p.get("url") or "").strip() or listing_url_for_name(seeds, p["name"]) or ""
-            if purl:
-                self._queue_partner(p["name"], purl)
+            name = p["name"]
+            purl = (p.get("url") or "").strip() or listing_url_for_name(seeds, name) or ""
+            if not purl:
+                known = is_known_funder(seeds, name, None)
+                if not known:
+                    cap = int(self.settings.get("max_partner_orgs", 5))
+                    if self.new_partner_count >= cap:
+                        continue
+                purl = await self._search_partner_site(name)
+                if not purl:
+                    continue
+            self._queue_partner(name, purl)
 
     async def _process_url(self, item):
         if not self.run_id:
@@ -760,7 +984,7 @@ class Swarm:
             if not ok:
                 self.set_agent(aid, status="FAILED")
                 self.agent_log(aid, f"UNLOCATED ({kind}): no boat-accessible site — not published")
-                self._follow_the_money(proj, depth)
+                await self._follow_the_money(proj, depth)
                 await self._write_verdict(
                     item, "unlocated", title=proj.get("title") or page_title,
                     location=proj.get("location"), lat=lat, lon=lon,
@@ -805,7 +1029,7 @@ class Swarm:
             self.agent_log(aid, f"Site recorded in run — S_ocean {proj.get('s_ocean')}")
             self.log(f"+ {proj['title'][:60]} ({funder}) → run {self.run_id}", "success")
             await self.telemetry(url, proj["engine"], "SUCCESS", (time.time() - t0) * 1000, 1)
-            self._follow_the_money(proj, depth)
+            await self._follow_the_money(proj, depth)
             return {"status": "site", "url": url}
         except asyncio.CancelledError:
             self.set_agent(aid, status="CANCELLED")

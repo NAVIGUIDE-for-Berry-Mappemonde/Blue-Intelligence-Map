@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-09",
+  "updated": "2026-09-12",
   "principle": "Un chiffre n'est pas une opinion. Il est soit une loi (contrat métier, jamais modulable), soit une mesure (phénomène physique + intervalle de validité), soit une calibration (jeu étiqueté / courbe précision-rappel), soit un budget (quota ou argent). L'intervalle dit encore de quoi on parle ; le défaut est le point d'opération. Un run ne peut bouger que dans l'intervalle. Hors intervalle, ce n'est plus la même règle.",
   "kinds": {
     "loi": {

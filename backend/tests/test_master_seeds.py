@@ -163,7 +163,7 @@ def test_follow_the_money_resolves_name_without_url():
             discovered.append((seed["name"], seed["url"]))
 
         sw._discover = fake_discover
-        sw._follow_the_money({"partners": [{"name": "Rare", "url": None}]}, depth=0)
+        await sw._follow_the_money({"partners": [{"name": "Rare", "url": None}]}, depth=0)
         await asyncio.sleep(0)
         assert discovered == [("Rare Fish Forever", "https://rare.org/program/fish-forever/")]
         assert sw.new_partner_count == 0
