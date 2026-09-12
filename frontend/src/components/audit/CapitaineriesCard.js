@@ -37,7 +37,8 @@ export default function CapitaineriesCard({ t, rulesPayload }) {
     setStarting(true);
     try {
       await api.post("/capitaineries/build", {
-        resume: scope === "full",
+        resume: false,
+        from_scratch: scope === "full",
         clear_before: false,
         scope,
         ...extra(),

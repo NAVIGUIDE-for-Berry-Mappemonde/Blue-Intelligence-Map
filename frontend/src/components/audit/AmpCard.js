@@ -44,8 +44,10 @@ export default function AmpCard({ t, rulesPayload }) {
     setStarting(true);
     try {
       await api.post("/amp/discover-visit-urls", {
-        limit: scope === "test" ? 25 : 2000,
+        limit: scope === "test" ? 25 : 0,
         skip_search: false,
+        from_scratch: scope === "full",
+        harvest_polygons: scope === "full",
         scope,
         ...extra(),
       });

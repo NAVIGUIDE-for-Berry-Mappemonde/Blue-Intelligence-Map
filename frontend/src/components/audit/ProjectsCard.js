@@ -14,7 +14,12 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
     setBusy(true);
     try {
       const extra = rulesPayload ? rulesPayload() : {};
-      const { data } = await api.post("/projects/runs", { mode: swarmMode, ...extra });
+      const { data } = await api.post("/projects/runs", {
+        mode: swarmMode,
+        from_scratch: swarmMode === "full",
+        force_rescan: swarmMode === "full",
+        ...extra,
+      });
       setLastRun(data);
       invalidateRuns("projects");
       refresh && refresh();

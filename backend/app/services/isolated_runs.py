@@ -490,15 +490,29 @@ _PROMOTE_SKIP = {
 }
 
 
-async def promote_run_to_live(db, dataset: str, run_id: str) -> int:
-    """Copie les fiches d'un run terminé vers la collection publique."""
+async def promote_run_to_live(db, dataset: str, run_id: str, *,
+                              replace: bool = False) -> int:
+    """Copie les fiches d'un run terminé vers la collection publique.
+
+    ``replace=True`` (run Full from scratch) : la carte live devient *ce* dump.
+    On ne vide la live que si le run a au moins une fiche — un dump vide
+    n'efface pas la carte.
+    """
     spec = spec_for(dataset)
     live_name = LIVE_COLL.get(dataset)
     if not live_name or not run_id:
         return 0
     dest = coll(db, live_name)
+    items = coll(db, spec.items_coll)
+    n_src = 0
+    try:
+        n_src = await items.count_documents({"run_id": run_id})
+    except Exception:
+        n_src = 0
+    if replace and n_src:
+        await dest.delete_many({})
     n = 0
-    async for doc in coll(db, spec.items_coll).find({"run_id": run_id}):
+    async for doc in items.find({"run_id": run_id}):
         live = {k: v for k, v in doc.items() if k not in _PROMOTE_SKIP}
         live_id = str(
             doc.get("source_id")

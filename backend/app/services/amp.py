@@ -116,6 +116,48 @@ def bbox_span_deg(bbox: tuple[float, float, float, float]) -> float:
     return max(bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
+def iter_world_bboxes(step: float | None = None):
+    """Découpe WORLD_TILES en bbox AMP (minx, miny, maxx, maxy)."""
+    from app.services.osm_seeds import WORLD_TILES
+    step = float(step if step is not None else catalog_default("amp.bbox_max_deg", 8))
+    step = max(1.0, min(step, 8.0))
+    for south, west, north, east in WORLD_TILES:
+        lat = south
+        while lat < north - 1e-9:
+            nlat = min(lat + step, north)
+            lon = west
+            while lon < east - 1e-9:
+                nlon = min(lon + step, east)
+                yield (lon, lat, nlon, nlat)
+                lon = nlon
+            lat = nlat
+
+
+async def harvest_world_polygons(db, *, state=None, force: bool = True) -> dict:
+    """Rafraîchit les polygones ProtectedSeas tuile par tuile (from scratch)."""
+    tiles = list(iter_world_bboxes())
+    fetched = 0
+    errors = 0
+    if state is not None:
+        state.log(f"AMP polygones : {len(tiles)} tuiles (force={force})")
+    for i, box in enumerate(tiles, 1):
+        if state is not None and getattr(state, "cancel", False):
+            if state is not None:
+                state.log("Stop demandé — harvest polygones interrompu")
+            break
+        try:
+            _docs, meta = await sites_in_bbox(db, box, force=force)
+            fetched += int(meta.get("fetched") or 0)
+            if state is not None and i % 20 == 0:
+                state.log(f"AMP polygones {i}/{len(tiles)} — fetched={fetched}")
+        except Exception:
+            errors += 1
+    summary = {"tiles": len(tiles), "fetched": fetched, "errors": errors}
+    if state is not None:
+        state.log(f"AMP polygones terminé: {summary}")
+    return summary
+
+
 def bbox_polygon(bbox: tuple[float, float, float, float]) -> dict:
     minx, miny, maxx, maxy = bbox
     ring = [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]

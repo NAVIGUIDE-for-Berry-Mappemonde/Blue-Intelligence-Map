@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.config import ROUTE_FILE
+from app.core.from_scratch import resolve_from_scratch
 from app.core.llm import get_llm_key
 from app.core.tasks import BuildState, TaskState, new_task, prune_tasks, LOGS_TAIL_N
 from app.db import db, get_settings
@@ -278,6 +279,7 @@ async def export_marinas():
 class MarinasBuildBody(BaseModel):
     clear_before: bool = False
     resume: bool = True
+    from_scratch: bool | None = None
     profile: str | None = None
     rules: dict | None = None
     # Conservés pour ne pas casser les anciens clients / la carte Audit mouillages.
@@ -340,18 +342,24 @@ async def _persist_marina_run(kind: str, rules: dict, extra: dict, *,
     return opened
 
 
-async def _chain_marinas_enrich_and_anchorages(scope: str) -> None:
+async def _chain_marinas_enrich_and_anchorages(
+        scope: str, *, from_scratch: bool = False) -> None:
     """Après le dump : enrichissement par priorité puis mouillages.
 
     Test : 10 fiches enrichies + la tuile golfe de Gascogne.
-    Full : tout par priorité (garde crédits + Stop) + le monde entier.
+    Full from scratch : tout (y compris déjà enrichi) + mouillages sans curseur.
     Les mouillages écrivent la carte publique (`db.anchorages`, upsert).
     """
     try:
         if not ENRICH_BATCH_STATE.running:
-            MARINA_BUILD_STATE.log("Chaînage — enrichissement par priorité")
+            MARINA_BUILD_STATE.log(
+                "Chaînage — enrichissement par priorité"
+                + (" (from scratch)" if from_scratch else ""))
             await marina_enrich_batch(
-                MarinaEnrichBatchBody(limit=10 if scope == "test" else 0))
+                MarinaEnrichBatchBody(
+                    limit=10 if scope == "test" else 0,
+                    include_enriched=bool(from_scratch and scope == "full"),
+                ))
     except HTTPException:
         pass
     except Exception as exc:
@@ -363,7 +371,13 @@ async def _chain_marinas_enrich_and_anchorages(scope: str) -> None:
     try:
         MARINA_BUILD_STATE.log(
             "Chaînage — dump mouillages "
-            + ("(tuile test)" if scope == "test" else "monde"))
+            + ("(tuile test)" if scope == "test" else "monde")
+            + (" from scratch" if from_scratch else ""))
+        if from_scratch and scope == "full":
+            try:
+                await db.anchorages.delete_many({})
+            except Exception:
+                pass
         await run_build_world_anchorages(
             anchorages_coll=db.anchorages,
             cursor_coll=(
@@ -371,7 +385,7 @@ async def _chain_marinas_enrich_and_anchorages(scope: str) -> None:
                 else db.anchorage_world_cursors),
             state=ANCHORAGE_BUILD_STATE,
             route_path=ROUTE_FILE,
-            resume=scope != "test",
+            resume=(scope != "test") and not from_scratch,
             tiles=(TEST_TILE,) if scope == "test" else None,
         )
     except Exception as exc:
@@ -396,12 +410,17 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    scope = (body.scope or "full").lower()
+    scratch = resolve_from_scratch(body.from_scratch, scope=scope)
+    resume = bool(body.resume) and not scratch and scope != "test"
+
     opened = await _persist_marina_run("marinas_world", rules, {
-        "resume": body.resume,
+        "resume": resume,
+        "from_scratch": scratch,
         "profile": rules.get("profile"),
         "kind": "world_leisure_marina",
         "tiles": [list(t) for t in tiles] if tiles else None,
-    }, resume=body.resume, settings=settings, rules_overrides=body.rules,
+    }, resume=resume, settings=settings, rules_overrides=body.rules,
         label=body.label)
     run_id = opened["run_id"]
     recorder = opened["recorder"]
@@ -409,8 +428,8 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     from app.services.isolated_runs import reset_run as _reset_iso
     from app.core.run_rules import bind_rules, reset_rules
     _reset_iso(opened["token"])
-    scope = (body.scope or "full").lower()
     test_tiles = (TEST_TILE,) if scope == "test" else None
+    maps_after = bool(body.maps_place_after or scratch)
 
     async def _runner():
         from app.services import isolated_runs
@@ -420,32 +439,37 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                 marinas_coll=db.marina_run_marinas,
                 cursor_coll=db.marina_run_cursors,
                 state=MARINA_BUILD_STATE,
-                resume=body.resume and scope != "test",
+                resume=resume,
                 tiles=test_tiles or tiles,
                 run_id=run_id,
                 recorder=recorder,
             )
             extra = dict(MARINA_BUILD_STATE.summary or {})
-            if scope == "full" and not getattr(MARINA_BUILD_STATE, "cancel", False):
-                extra["promoted"] = await isolated_runs.promote_run_to_live(
-                    db, "marinas", run_id)
-            await isolated_runs.finalize_run(
-                db, "marinas", run_id, extra=extra,
-                cancelled=bool(MARINA_BUILD_STATE.cancel),
-            )
-            if (body.maps_place_after and not MAPS_PLACE_STATE.running
+            extra["from_scratch"] = scratch
+            if (maps_after and not MAPS_PLACE_STATE.running
                     and not MARINA_BUILD_STATE.cancel):
-                MARINA_BUILD_STATE.log("Dump terminé — résolution des fiches Google /place/")
+                MARINA_BUILD_STATE.log(
+                    "Dump terminé — résolution des fiches Google /place/"
+                    + (" (force)" if scratch else ""))
                 await resolve_maps_places(
                     marinas_coll=db.marina_run_marinas,
                     state=MAPS_PLACE_STATE,
                     skip_search=True,
+                    force=scratch,
                     extra_filter={"run_id": run_id},
                     run_id=run_id,
                     dest_db=db,
                 )
+            if scope == "full" and not getattr(MARINA_BUILD_STATE, "cancel", False):
+                extra["promoted"] = await isolated_runs.promote_run_to_live(
+                    db, "marinas", run_id, replace=scratch)
+            await isolated_runs.finalize_run(
+                db, "marinas", run_id, extra=extra,
+                cancelled=bool(MARINA_BUILD_STATE.cancel),
+            )
             if not getattr(MARINA_BUILD_STATE, "cancel", False):
-                await _chain_marinas_enrich_and_anchorages(scope)
+                await _chain_marinas_enrich_and_anchorages(
+                    scope, from_scratch=scratch)
         except Exception as e:
             await isolated_runs.finalize_run(
                 db, "marinas", run_id, error=str(e)[:200])
@@ -457,8 +481,9 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         "started": True,
         "run_id": run_id,
         "kind": "world_leisure_marina",
-        "resume": body.resume,
-        "maps_place_after": body.maps_place_after,
+        "resume": resume,
+        "from_scratch": scratch,
+        "maps_place_after": maps_after,
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
         "wrote_marinas": False,
