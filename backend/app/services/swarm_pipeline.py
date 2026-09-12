@@ -17,7 +17,12 @@ from app.core.dedup import is_duplicate
 from app.core.extract import extract_cascade
 from app.core.project_geo import geocode_project_site, site_publishable, valid_coords
 from app.core.rag import select_context
-from app.static_data.seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
+from app.static_data.seeds import (
+    CRAWL_BLACKLIST, CURATED_SEEDS, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS,
+)
+from app.services.master_seeds import (
+    domain_of, is_known_funder, listing_url_for_name, seeds_for_run,
+)
 from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
                              tf_get_run, tf_run_async, tf_run_sse)
 from app.core.events import RUNS_DIR, HeartbeatWatch
@@ -63,6 +68,9 @@ class Swarm:
         self.recursive_tasks = []
         self.partner_domains = set()
         self.partner_count = 0
+        self.new_partner_count = 0
+        self.master_seeds = []
+        self._tf_sem = None
         self.no_new_streak = 0
         self.saturated = False
         self.run_id = None
@@ -271,16 +279,36 @@ class Swarm:
             ),
         })
         try:
-            seeds = MASTER_SEEDS[:TEST_SEED_COUNT] if self.mode == "test" else MASTER_SEEDS
+            extras = []
+            try:
+                extras = await self.db.master_seeds.find({}).to_list(2000)
+            except Exception:
+                extras = []
+            self.master_seeds = list(MASTER_SEEDS) + [
+                e for e in extras
+                if (e.get("url") or e.get("name"))
+                and not is_known_funder(MASTER_SEEDS, e.get("name"), e.get("url"))
+            ]
+            if self.mode == "test":
+                seeds = list(CURATED_SEEDS[:TEST_SEED_COUNT])
+            else:
+                seeds = seeds_for_run(self.master_seeds)
             max_urls = int(self.settings.get("test_max_urls_per_seed", 6)) if self.mode == "test" \
                 else int(self.settings.get("full_max_urls_per_seed", 20))
             self.queue = asyncio.Queue()
             self.recursive_tasks = []
-            self.partner_domains = {urlparse(s["url"]).netloc.replace("www.", "") for s in MASTER_SEEDS}
+            self.partner_domains = {domain_of(s.get("url")) for s in seeds if s.get("url")}
+            self.partner_domains.discard("")
             self.partner_count = 0
+            self.new_partner_count = 0
             concurrency = max(1, min(20, int(self.settings.get("extract_concurrency", 6))))
+            discover_n = max(1, min(12, int(self.settings.get("discover_concurrency", 8))))
             self.workers = [asyncio.create_task(self._extract_worker(i)) for i in range(concurrency)]
-            self.log(f"MasterSeeds loaded: {len(seeds)} portals | extraction concurrency: {concurrency}")
+            self.log(
+                f"MasterSeeds loaded: {len(seeds)} portals in queue "
+                f"(catalog={len(self.master_seeds)}, "
+                f"discover_concurrency={discover_n}, extract_concurrency={concurrency})"
+            )
 
             if self.mode == "full":
                 cached = await self.db.deeplink_pages.find({}).to_list(5000)
@@ -296,10 +324,11 @@ class Swarm:
             tf_agents = max(1, min(2, int(get_rule(
                 "projects.tinyfish_agents",
                 self.settings.get("tinyfish_agents", 2)))))
-            sem = asyncio.Semaphore(tf_agents)
+            self._tf_sem = asyncio.Semaphore(tf_agents)
+            discover_sem = asyncio.Semaphore(discover_n)
 
             async def guarded(seed):
-                async with sem:
+                async with discover_sem:
                     await self._discover(seed, max_urls)
 
             await asyncio.gather(*[guarded(s) for s in seeds], return_exceptions=True)
@@ -341,7 +370,11 @@ class Swarm:
     # ---------- discovery (cascade : N1 crawler gratuit → N3 TinyFish dernier recours) ----------
     async def _discover(self, seed, max_urls, depth=0):
         # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
-        await self._emit("discover_seed", seed=seed.get("name"), url=seed.get("url"),
+        listing = (seed.get("url") or "").strip()
+        if not listing:
+            self.log(f"[{seed.get('name')}] skipped — no listing URL", "warn")
+            return
+        await self._emit("discover_seed", seed=seed.get("name"), url=listing,
                          depth=depth)
         known_urls = []
         force = bool(getattr(self, "force_rescan", False))
@@ -386,7 +419,9 @@ class Swarm:
                 self.agent_log(aid, "N1 vide → TinyFish (N3, dernier recours payant)")
                 self.log(f"[{seed['name']}] crawler N1 vide → mission TinyFish (JS/pagination complexe présumée)")
                 try:
-                    urls = await self._tinyfish_discover(aid, seed, key, max_urls, known_urls)
+                    sem = self._tf_sem or asyncio.Semaphore(1)
+                    async with sem:
+                        urls = await self._tinyfish_discover(aid, seed, key, max_urls, known_urls)
                 except Exception as e:
                     tf_err = str(e)[:120]
                     self.agent_log(aid, f"TinyFish failed: {tf_err}")
@@ -539,19 +574,56 @@ class Swarm:
     def _queue_partner(self, name: str, purl: str):
         if not self.running or not self.settings.get("follow_the_money", True):
             return
-        try:
-            domain = urlparse(purl).netloc.replace("www.", "")
-        except Exception:
+        domain = domain_of(purl)
+        if not domain:
             return
-        if not domain or domain in self.partner_domains:
+        if domain in self.partner_domains:
             return
-        if self.partner_count >= int(self.settings.get("max_partner_orgs", 5)):
-            return
+        seeds = self.master_seeds or MASTER_SEEDS
+        known_seed = next((s for s in seeds if is_known_funder([s], name, purl)), None)
+        known = known_seed is not None
+        cap = int(self.settings.get("max_partner_orgs", 5))
+        if not known:
+            if self.new_partner_count >= cap:
+                return
+            self.new_partner_count += 1
+            self.master_seeds.append({
+                "name": name, "url": purl,
+                "listing_kind": "homepage", "source": "follow_the_money",
+                "project_count": 0,
+            })
+            try:
+                asyncio.create_task(self.db.master_seeds.update_one(
+                    {"domain": domain},
+                    {"$set": {
+                        "name": name, "url": purl, "domain": domain,
+                        "source": "follow_the_money",
+                        "ts": now_iso(),
+                    },
+                     "$setOnInsert": {"_id": str(uuid.uuid4())}},
+                    upsert=True))
+            except Exception:
+                pass
+            kind = f"new org ({self.new_partner_count}/{cap})"
+        else:
+            kind = "known v1 — queued (cap does not apply)"
         self.partner_domains.add(domain)
-        self.partner_count += 1
-        self.log(f"Follow the Money: new org '{name}' ({domain}) → recursive discovery", "success")
-        seed = {"name": f"{name} (partner)", "url": purl}
+        self.partner_count = len(self.partner_domains)
+        self.log(f"Follow the Money: {kind} '{name}' ({domain}) → recursive discovery", "success")
+        label = known_seed["name"] if known_seed else f"{name} (partner)"
+        seed = {"name": label, "url": purl}
         self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
+
+    def _follow_the_money(self, proj: dict, depth: int):
+        if depth != 0:
+            return
+        seeds = self.master_seeds or MASTER_SEEDS
+        for p in (proj.get("partners") or []):
+            if not isinstance(p, dict) or not p.get("name"):
+                continue
+            purl = (p.get("url") or "").strip() or listing_url_for_name(seeds, p["name"]) or ""
+            if purl:
+                self._queue_partner(p["name"], purl)
 
     async def _process_url(self, item):
         if not self.run_id:
@@ -655,6 +727,7 @@ class Swarm:
             if not ok:
                 self.set_agent(aid, status="FAILED")
                 self.agent_log(aid, f"UNLOCATED ({kind}): no boat-accessible site — not published")
+                self._follow_the_money(proj, depth)
                 await self._write_verdict(
                     item, "unlocated", title=proj.get("title") or page_title,
                     location=proj.get("location"), lat=lat, lon=lon,
@@ -699,10 +772,7 @@ class Swarm:
             self.agent_log(aid, f"Site recorded in run — S_ocean {proj.get('s_ocean')}")
             self.log(f"+ {proj['title'][:60]} ({funder}) → run {self.run_id}", "success")
             await self.telemetry(url, proj["engine"], "SUCCESS", (time.time() - t0) * 1000, 1)
-            if depth == 0:
-                for p in (proj.get("partners") or []):
-                    if p.get("url"):
-                        self._queue_partner(p["name"], p["url"])
+            self._follow_the_money(proj, depth)
             return {"status": "site", "url": url}
         except asyncio.CancelledError:
             self.set_agent(aid, status="CANCELLED")

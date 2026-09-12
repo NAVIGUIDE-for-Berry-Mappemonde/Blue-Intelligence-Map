@@ -353,7 +353,7 @@ Critère de sortie B : un run test (3 seeds) remplit `project_run_*`, `projects.
 | C2. Juge de lieu | `project_geocode.py` (nouveau) | Refus HQ (ville du financeur, mots headquarters/siège). Nominatim + GeoNames. Claude ou OpenRouter : « ce toponyme est-il un lieu d’action marin visitable ? ». Polygone AMP si le nom matche (géocodage, pas couche carte). |
 | C3. Multi-points | `project_to_feature` / couche Leaflet | Un `project_id`, *n* Features, ou GeometryCollection. Popup : nom du **site**. |
 | C4. TinyFish | `_discover` | Crawler → Search → Fetch ; Agent si `allow_tinyfish_agent` et toujours 0. |
-| C5. MasterSeeds 861 | script `scripts/export_master_seeds.py`, `data/master_seeds.json` | Union distincte de `funders` + 21 URLs curées. Listing URL : domaine le plus fréquent des projets de ce financeur, ou à découvrir. Plus de plafond 5 partenaires en dur : même table, `max_partner_orgs` settings. |
+| C5. MasterSeeds 861 | script `scripts/export_master_seeds.py`, `data/master_seeds.json` | Union distincte de `funders` + 21 URLs curées, **sans priorité**. Listing URL : domaine le plus fréquent des projets de ce financeur, ou à découvrir. Plafond `max_partner_orgs` = nouveautés Follow the Money seulement. |
 | C6. Dédup | `_dedup_merge` | Appeler `merge_docs`. |
 
 Critère de sortie C : sur un échantillon (Hope Spots, un programme multi-îles, un siège Pew), les sites publiés dans le **run** sont visitables ; 0 HQ ; 0 fallback.
@@ -448,7 +448,7 @@ Une fiche par financeur (~861+) :
 |-------|------|
 | `name` | Nom tel que vu en base / page |
 | `url` | Listing si connu, sinon domaine déduit |
-| `priority` | 1 = les 21 listings curés (URLs sûres) ; 2 = le reste des 861 |
+| `source` | `curated` · `v1` · `follow_the_money` — pas de rang entre eux |
 | `last_scan` / `urls_found` | Découverte |
 | `listing_kind` | `projects_index` · `unknown` · … |
 
@@ -523,11 +523,11 @@ Manques actuels (= phase B/D) : runs, revue, multi-sites, fiche 861 portails.
 
 **Cible : ~861 financeurs** issus de la v1, pas 21 lignes.
 
-Les 21 listings curés restent **priority 1** (URL de listing connue) :
+Les 21 listings curés et les ~840 financeurs v1 sont **à égalité** dans la file (plus de priorité 1 / 2). Les 21 fournissent surtout une URL de listing déjà connue :
 
 The Ocean Foundation, Oceana, Blue Marine Foundation, Fondation de la Mer, Pure Ocean, Fondation CMA CGM, IFREMER, Prince Albert II, Institut Paul Ricard, SHOM, CORDIS, Coral Reef Alliance, Mission Blue, Seacology, Ocean Conservancy, Pew, WWF Oceans, Packard, Rare Fish Forever, Fauna & Flora Oceans, WCS Marine.
 
-Les autres ~840 : `priority: 2`, nom tel qu’en base, URL à découvrir (Search sur `"{name}" marine projects`).
+Les autres ~840 : nom tel qu’en base, URL de listing = domaine le plus fréquent de leurs projets v1 (sinon à découvrir via Search `"{name}" marine projects`).
 
 SHOM / IFREMER : instituts — 0 URL projet reste un succès honnête s’il n’y a pas de listing d’actions.
 
@@ -596,7 +596,7 @@ cd backend && python3 -m pytest tests/test_project_contract.py tests/test_blue_i
 | Rustine GPS | Plus d’appel ; revue des v1 sales |
 | HQ | Juge de lieu + liste de villes siège |
 | Programme mondial → 0 point | Extraire *n* sites ; `unlocated` honnête > centroïde |
-| 861 seeds = crawl énorme | Runs isolés, TTL, saturation, priority 1 d’abord |
+| 861 seeds = crawl énorme | Runs isolés, TTL, saturation |
 | TinyFish Agent | Search/Fetch ; flag off |
 | ML v1 biaisé | Ne pas ré-entraîner avant Gold |
 | AMP mal utilisées | Coulisse géocode seulement |
