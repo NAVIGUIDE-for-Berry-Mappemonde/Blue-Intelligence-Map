@@ -12,6 +12,7 @@ from app.core import judge as yn  # noqa: E402
 from app.core import llm  # noqa: E402
 from app.services import amp_visit  # noqa: E402
 from app.services import poe_seed_enrich as enr  # noqa: E402
+from app.services import project_listing as pl  # noqa: E402
 
 
 def _run(coro):
@@ -140,10 +141,17 @@ class TestCallersKeepOwnPrompts:
         assert "is_poe" not in amp_visit.VISIT_JUDGE_SYSTEM
         assert "Gatekeeper Protocol" not in amp_visit.VISIT_JUDGE_SYSTEM
 
+        assert "catalogue de projets" in pl.LISTING_JUDGE_SYSTEM
+        assert "N'invente aucune URL" in pl.LISTING_JUDGE_SYSTEM
+        assert "visite d'aire marine" not in pl.LISTING_JUDGE_SYSTEM
+        assert "is_poe" not in pl.LISTING_JUDGE_SYSTEM
+        assert "Gatekeeper Protocol" not in pl.LISTING_JUDGE_SYSTEM
+
     def test_callers_use_ask_yes_no(self):
         assert "ask_yes_no" in inspect.getsource(llm.gatekeeper_check)
         assert "ask_yes_no" in inspect.getsource(amp_visit.llm_judge_visit)
         assert "ask_yes_no" in inspect.getsource(enr._judge_llm)
+        assert "ask_yes_no" in inspect.getsource(pl.llm_judge_listing)
 
     def test_amp_judge_rejects_invented_url(self, monkeypatch):
         async def fake_yes(*a, **k):
@@ -181,6 +189,48 @@ class TestCallersKeepOwnPrompts:
         ))
         assert chosen == "https://ofb.gouv.fr/visite-cerbere"
         assert doc["visit_url_judge"] == "nvidia-muse"
+
+    def test_listing_judge_rejects_invented_url(self, monkeypatch):
+        async def fake_yes(*a, **k):
+            assert k.get("role") == "json"
+            assert k.get("allowed_urls")
+            return yn.parse_yes_no(
+                {"accept": True, "url": "https://evil.example/invented"},
+                engine="nvidia-muse",
+                allowed_urls=k["allowed_urls"],
+                forbidden_urls=k.get("forbidden_urls"),
+                url_key=k.get("url_key"),
+            )
+
+        monkeypatch.setattr(yn, "ask_yes_no", fake_yes)
+        chosen = _run(pl.llm_judge_listing(
+            {"name": "Example Ocean", "url": "https://example.org/"},
+            [
+                {"url": "https://example.org/our-programmes", "title": "P"},
+                {"url": "https://example.org/research", "title": "R"},
+            ],
+        ))
+        assert chosen is None
+
+    def test_listing_judge_keeps_listed_url(self, monkeypatch):
+        async def fake_yes(*a, **k):
+            return yn.parse_yes_no(
+                {"accept": True, "url": "https://example.org/our-programmes"},
+                engine="nvidia-muse",
+                allowed_urls=k["allowed_urls"],
+                forbidden_urls=k.get("forbidden_urls"),
+                url_key=k.get("url_key"),
+            )
+
+        monkeypatch.setattr(yn, "ask_yes_no", fake_yes)
+        chosen = _run(pl.llm_judge_listing(
+            {"name": "Example Ocean", "url": "https://example.org/"},
+            [
+                "https://example.org/research",
+                "https://example.org/our-programmes",
+            ],
+        ))
+        assert chosen == "https://example.org/our-programmes"
 
     def test_gatekeeper_string_false_is_reject(self, monkeypatch):
         async def fake_yes(*a, **k):

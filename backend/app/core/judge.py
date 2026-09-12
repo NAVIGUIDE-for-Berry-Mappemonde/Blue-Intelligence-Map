@@ -16,7 +16,8 @@ Chaîne d'appel (un seul endroit à corriger) :
 Le hop listing / inconclusive du bottom-up n'est pas un second métier :
 c'est le même câble, avec ``hop_if`` pour essayer le modèle NIM suivant
 ou Sonnet. Les questions « projet marin ? », « port plaisance ? »,
-« quelle URL de visite déjà trouvée ? » restent trois prompts.
+« quelle URL de visite déjà trouvée ? », « quelle URL catalogue ? »
+restent des prompts distincts.
 """
 from __future__ import annotations
 
