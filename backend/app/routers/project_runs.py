@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.core.tasks import TaskState
 from app.core.run_rules import RuleError, snapshot_list_fields
+from app.core.from_scratch import resolve_from_scratch
 from app.db import db, get_settings
 from app.services import project_runs
 from app.state import swarm
@@ -17,7 +18,8 @@ RUN_STATES: dict[str, TaskState] = {}
 class ProjectRunBody(BaseModel):
     mode: str = "test"
     label: str = ""
-    force_rescan: bool = False
+    force_rescan: bool | None = None
+    from_scratch: bool | None = None
     profile: str | None = None
     rules: dict | None = None
 
@@ -29,11 +31,15 @@ async def project_run_start(body: ProjectRunBody | None = None):
         raise HTTPException(400, "mode must be test|full")
     if swarm.running:
         raise HTTPException(409, "swarm already running")
+    scratch = resolve_from_scratch(
+        body.from_scratch if body.from_scratch is not None else body.force_rescan,
+        mode=body.mode)
+    force_rescan = scratch
     settings = await get_settings()
     try:
         opened = await project_runs.open_run(
             db, mode=body.mode, label=body.label, settings=settings,
-            force_rescan=body.force_rescan, rules_overrides=body.rules,
+            force_rescan=force_rescan, rules_overrides=body.rules,
             profile=body.profile)
     except RuleError as e:
         raise HTTPException(400, str(e)) from e
@@ -43,7 +49,7 @@ async def project_run_start(body: ProjectRunBody | None = None):
     RUN_STATES[run_id] = state
     try:
         await swarm.deploy(
-            body.mode, False, settings, body.force_rescan,
+            body.mode, False, settings, force_rescan,
             run_id=run_id, recorder=opened["recorder"])
     except ValueError as e:
         await project_runs.finalize_run(db, run_id, error=str(e))
@@ -52,6 +58,8 @@ async def project_run_start(body: ProjectRunBody | None = None):
         "status": "started",
         "run_id": run_id,
         "mode": body.mode,
+        "force_rescan": force_rescan,
+        "from_scratch": scratch,
         "wrote_projects": False,
     }
 

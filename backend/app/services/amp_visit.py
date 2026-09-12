@@ -225,9 +225,15 @@ def search_queries(doc: dict) -> list[tuple[str, str | None]]:
     return out
 
 
-def _needs_visit(doc: dict) -> bool:
-    if (doc.get("visit_url_source") or "") == "manual" and doc.get("visit_url"):
+def _is_manual_visit(doc: dict) -> bool:
+    return (doc.get("visit_url_source") or "") == "manual" and bool(doc.get("visit_url"))
+
+
+def _needs_visit(doc: dict, *, from_scratch: bool = False) -> bool:
+    if _is_manual_visit(doc):
         return False
+    if from_scratch:
+        return True
     if doc.get("visit_url") and not amp_svc.urls_equivalent(
             doc.get("visit_url"), doc.get("manager_url")):
         return False
@@ -302,15 +308,21 @@ def _doc_in_bbox(doc: dict, bbox: tuple[float, float, float, float]) -> bool:
     return miny <= lat_f <= maxy and minx <= lon_f <= maxx
 
 
-async def pending_sites(db, limit: int, *, bbox=None, run_id=None) -> list[dict]:
-    q = {
-        "$or": [
-            {"visit_url": {"$in": [None, ""]}},
-            {"visit_url_status": {"$in": ["none", "not_found", None]}},
-        ],
-    }
-    docs = await db.amp_sites.find(q).to_list(int(limit) * 4 if bbox else int(limit))
-    docs = [d for d in docs if _needs_visit(d)]
+async def pending_sites(db, limit: int, *, bbox=None, run_id=None,
+                        from_scratch: bool = False) -> list[dict]:
+    cap = int(limit) if limit and int(limit) > 0 else 50_000
+    if from_scratch:
+        docs = await db.amp_sites.find({}).to_list(cap * 4 if bbox else cap)
+        docs = [d for d in docs if _needs_visit(d, from_scratch=True)]
+    else:
+        q = {
+            "$or": [
+                {"visit_url": {"$in": [None, ""]}},
+                {"visit_url_status": {"$in": ["none", "not_found", None]}},
+            ],
+        }
+        docs = await db.amp_sites.find(q).to_list(cap * 4 if bbox else cap)
+        docs = [d for d in docs if _needs_visit(d)]
     if bbox:
         docs = [d for d in docs if _doc_in_bbox(d, bbox)]
     if run_id:
@@ -331,7 +343,54 @@ async def pending_sites(db, limit: int, *, bbox=None, run_id=None) -> list[dict]
             d for d in docs
             if str(d.get("site_id") or d.get("_id") or "") not in done_ids
         ]
-    return docs[:int(limit)]
+    if from_scratch:
+        blanked = []
+        for doc in docs:
+            out = dict(doc)
+            out["visit_url"] = None
+            out["visit_url_status"] = "none"
+            out["visit_url_source"] = None
+            blanked.append(out)
+        docs = blanked
+    return docs[:cap]
+
+
+async def copy_visit_to_live(db, run_id: str) -> int:
+    """Recopie les visit_url trouvées du run vers ``amp_sites``.
+
+    N'écrase pas une URL live par un vide : si le from-scratch n'a rien
+    trouvé, on garde l'ancienne.
+    """
+    if not run_id:
+        return 0
+    n = 0
+    try:
+        rows = await db.amp_run_sites.find({"run_id": run_id}).to_list(50_000)
+    except Exception:
+        return 0
+    for row in rows:
+        url = row.get("visit_url")
+        if not url:
+            continue
+        sid = str(row.get("site_id") or row.get("source_id") or "")
+        if not sid:
+            continue
+        fields = {
+            "visit_url": url,
+            "visit_url_status": row.get("visit_url_status") or "found",
+            "visit_url_source": row.get("visit_url_source"),
+            "visit_url_judge": row.get("visit_url_judge"),
+            "enriched_at": row.get("enriched_at"),
+        }
+        try:
+            await db.amp_sites.update_one(
+                {"_id": sid}, {"$set": fields})
+            await db.amp_sites.update_one(
+                {"site_id": sid}, {"$set": fields})
+            n += 1
+        except Exception:
+            continue
+    return n
 
 
 async def default_fetch_many(urls: list[str], *, key: str, log=None) -> dict[str, dict]:
@@ -384,6 +443,8 @@ async def discover_visit_urls(
     run_id: str | None = None,
     recorder=None,
     bbox: tuple[float, float, float, float] | None = None,
+    from_scratch: bool = False,
+    harvest_polygons: bool = False,
 ) -> dict:
     """Refresh PS → extras → Fetch → Search → juge Muse / OpenRouter."""
     from app.services.isolated_runs import bind_run, reset_run, write_item
@@ -404,6 +465,11 @@ async def discover_visit_urls(
         "total": state.total,
         "last_item": getattr(state, "last_item", None),
     })
+    harvest_summary = None
+    if harvest_polygons and not bbox:
+        harvest_summary = await amp_svc.harvest_world_polygons(
+            db, state=state, force=True)
+        await emit(recorder, "amp_harvest", **(harvest_summary or {}))
     if bbox:
         await emit(recorder, "bbox", bbox=list(bbox),
                    minx=bbox[0], miny=bbox[1], maxx=bbox[2], maxy=bbox[3])
@@ -416,7 +482,8 @@ async def discover_visit_urls(
             await emit(recorder, "cache_hit", bbox=list(bbox),
                        count=last.get("count"), source=src or "cache")
 
-    docs = await pending_sites(db, limit, bbox=bbox, run_id=run_id)
+    docs = await pending_sites(
+        db, limit, bbox=bbox, run_id=run_id, from_scratch=from_scratch)
     if bbox and run_id:
         map_docs = []
         try:
@@ -450,7 +517,10 @@ async def discover_visit_urls(
         "no_tinyfish_key": False,
         "judge_engine": None,
     }
-    state.log(f"AMP visite : {len(docs)} site(s) sans URL de visite")
+    state.log(
+        f"AMP visite : {len(docs)} site(s)"
+        + (" (from scratch)" if from_scratch else " sans URL de visite")
+    )
 
     remaining: list[dict] = []
     try:
@@ -610,6 +680,8 @@ async def discover_visit_urls(
             **counters,
             "found": counters["from_links"] + counters["from_fetch"] + counters["from_search"],
             "skip_search": skip_search,
+            "from_scratch": from_scratch,
+            "harvest": harvest_summary,
         }
         state.summary = summary
         state.log(f"AMP visite terminé: {summary}")

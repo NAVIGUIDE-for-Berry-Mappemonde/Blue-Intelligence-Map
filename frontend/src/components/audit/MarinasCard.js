@@ -40,7 +40,9 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
     setStarting(true);
     try {
       await api.post("/marinas/build", {
-        resume: scope === "full",
+        resume: false,
+        from_scratch: scope === "full",
+        maps_place_after: scope === "full",
         clear_before: false,
         scope,
         ...extra(),

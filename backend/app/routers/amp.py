@@ -4,6 +4,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.from_scratch import resolve_from_scratch
 from app.core.run_rules import catalog_default
 from app.core.tasks import TaskState, LOGS_TAIL_N
 from app.db import db
@@ -31,6 +32,9 @@ class DiscoverBody(BaseModel):
     bbox: str | None = None
     label: str | None = None
     resume: bool = False
+    from_scratch: bool | None = None
+    harvest_polygons: bool | None = None
+    scope: str | None = None
 
 
 def _parse_bbox(raw: str, **caps):
@@ -147,7 +151,17 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
     if VISIT_DISCOVER_STATE.running:
         raise HTTPException(409, "A visit-URL discover is already running")
     body = body or DiscoverBody()
-    limit = min(max(int(body.limit or 200), 1), 2000)
+    scope = (body.scope or "full").lower()
+    scratch = resolve_from_scratch(body.from_scratch, scope=scope)
+    harvest = (
+        bool(body.harvest_polygons) if body.harvest_polygons is not None
+        else scratch)
+    if scratch and (body.limit is None or int(body.limit or 0) <= 0):
+        limit = 50_000
+    elif scratch:
+        limit = min(max(int(body.limit), 1), 50_000)
+    else:
+        limit = min(max(int(body.limit or 200), 1), 2000)
     bbox = None
     if body.bbox:
         bbox = _parse_bbox(body.bbox, max_w=360.0, max_h=180.0)
@@ -166,9 +180,10 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
         label=body.label or "amp-visit", settings=settings,
         extra_params={"limit": limit, "skip_search": bool(body.skip_search),
                       "profile": rules.get("profile"),
-                      "bbox": body.bbox},
+                      "bbox": body.bbox, "from_scratch": scratch,
+                      "harvest_polygons": harvest},
         rules_overrides=body.rules, profile=body.profile,
-        resume=body.resume,
+        resume=body.resume and not scratch,
     )
     run_id = opened["run_id"]
     recorder = opened["recorder"]
@@ -186,9 +201,16 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
                 run_id=run_id,
                 recorder=recorder,
                 bbox=bbox,
+                from_scratch=scratch,
+                harvest_polygons=harvest,
             )
+            copied = 0
+            if scratch:
+                copied = await amp_visit.copy_visit_to_live(db, run_id)
+            extra = dict(VISIT_DISCOVER_STATE.summary or {})
+            extra["copied_to_live"] = copied
             await isolated_runs.finalize_run(
-                db, "amp", run_id, extra=VISIT_DISCOVER_STATE.summary,
+                db, "amp", run_id, extra=extra,
                 cancelled=bool(VISIT_DISCOVER_STATE.cancel))
         except Exception as exc:
             VISIT_DISCOVER_STATE.error = f"{type(exc).__name__}: {exc}"
@@ -200,6 +222,7 @@ async def amp_discover_visit_start(body: DiscoverBody | None = None):
     asyncio.create_task(_runner())
     return {
         "started": True, "limit": limit, "skip_search": bool(body.skip_search),
+        "from_scratch": scratch, "harvest_polygons": harvest,
         "run_id": run_id, "wrote_amp_sites": False,
         "profile": rules.get("profile"), "rules_hash": rules.get("hash"),
         "bbox": body.bbox, "label": body.label,

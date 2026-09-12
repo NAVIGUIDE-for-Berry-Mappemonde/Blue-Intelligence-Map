@@ -344,10 +344,11 @@ class Swarm:
         await self._emit("discover_seed", seed=seed.get("name"), url=seed.get("url"),
                          depth=depth)
         known_urls = []
+        force = bool(getattr(self, "force_rescan", False))
         if depth == 0:
             state = await self.db.discovery_state.find_one({"seed_url": seed["url"]})
             rescan_days = float(self.settings.get("rescan_after_days", 7))
-            if state and state.get("last_scan") and not getattr(self, "force_rescan", False):
+            if state and state.get("last_scan") and not force:
                 try:
                     last = datetime.fromisoformat(state["last_scan"])
                     age_days = (datetime.now(timezone.utc) - last).total_seconds() / 86400
@@ -356,10 +357,13 @@ class Swarm:
                         return
                 except ValueError:
                     pass
-            cached = await self.db.deeplink_pages.find({"source": seed["url"]}, {"url": 1}).to_list(300)
-            known_urls = [c["url"] for c in cached]
-            if known_urls:
-                self.log(f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission")
+            if not force:
+                cached = await self.db.deeplink_pages.find({"source": seed["url"]}, {"url": 1}).to_list(300)
+                known_urls = [c["url"] for c in cached]
+                if known_urls:
+                    self.log(f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission")
+            else:
+                self.log(f"[{seed['name']}] from scratch — TTL et URLs déjà connues non sautés")
         key = self._tf_key()
         aid = self.new_agent("Crawler N1", "discover", seed["url"], seed["name"])
         t0 = time.time()
@@ -749,6 +753,9 @@ class Swarm:
                 await self._emit("dedup", url=url, into=c.get("url"), how="merged_run")
                 return "merged_run"
 
+        # From scratch : on ré-extrait dans le run, même si la fiche existe en v1.
+        if getattr(self, "force_rescan", False):
+            return None
         v1_docs = await self.db.projects.find(
             {}, {"title": 1, "lat": 1, "lon": 1, "url": 1},
         ).to_list(30000)

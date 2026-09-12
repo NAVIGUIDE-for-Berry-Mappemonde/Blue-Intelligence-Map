@@ -38,6 +38,10 @@ class _FakeCursor:
     def limit(self, n):
         return _FakeCursor(self._docs[:int(n)])
 
+    async def __aiter__(self):
+        for d in self._docs:
+            yield d
+
 
 class _FakeColl:
     def __init__(self, docs=None):
@@ -103,6 +107,12 @@ class _FakeColl:
         if matched:
             self.docs.remove(matched[0])
         return None
+
+    async def delete_many(self, q):
+        keep = [d for d in self.docs if not self._match_one(d, q or {})]
+        n = len(self.docs) - len(keep)
+        self.docs = keep
+        return n
 
     async def create_index(self, *a, **k):
         return None
@@ -474,3 +484,44 @@ def test_list_and_get_meta_run_expose_snapshot():
     assert detail["profile"] == "strict"
     assert detail["chosen"]["marinas.corridor_radius_nm"]["value"] == 15
     assert detail["chosen"]["marinas.corridor_radius_nm"]["source"] == "profile"
+
+
+def test_promote_replace_clears_live_then_copies_run():
+    db = _FakeDB(
+        marina_run_marinas=[{
+            "_id": "r1:node/9",
+            "run_id": "r1",
+            "source_id": "node/9",
+            "osm_id": "node/9",
+            "name": "New dump",
+            "wrote_marinas": False,
+        }],
+        marinas=[{
+            "_id": "old",
+            "name": "Stale marina",
+            "osm_id": "node/1",
+        }],
+    )
+
+    async def _go():
+        n = await isolated_runs.promote_run_to_live(
+            db, "marinas", "r1", replace=True)
+        return n
+
+    n = asyncio.run(_go())
+    assert n == 1
+    ids = {d["_id"] for d in db.marinas.docs}
+    assert ids == {"node/9"}
+    assert db.marinas.docs[0]["name"] == "New dump"
+
+
+def test_promote_replace_empty_run_keeps_live():
+    db = _FakeDB(
+        marina_run_marinas=[],
+        marinas=[{"_id": "keep", "name": "Live"}],
+    )
+    n = asyncio.run(isolated_runs.promote_run_to_live(
+        db, "marinas", "empty", replace=True))
+    assert n == 0
+    assert db.marinas.docs[0]["_id"] == "keep"
+

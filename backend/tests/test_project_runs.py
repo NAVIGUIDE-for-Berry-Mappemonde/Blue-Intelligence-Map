@@ -277,7 +277,37 @@ def test_seen_v1_skips_crawl_and_leaves_treasure(monkeypatch):
     asyncio.run(run())
 
 
-def test_unlocated_inland_stays_in_run(monkeypatch):
+def test_force_rescan_reextracts_url_already_on_live_map(monkeypatch):
+    _patch_extract(monkeypatch, proj=_ocean_proj(title="Reextracted Hope Spot"))
+
+    async def run():
+        db = _FakeDB(projects=[_v1_treasure()])
+        before = await db.projects.count_documents({})
+        opened = await project_runs.open_run(
+            db, mode="full", settings={}, to_file=False, force_rescan=True)
+        sw = Swarm(db)
+        sw.run_id = opened["run_id"]
+        sw.recorder = opened["recorder"]
+        sw.force_rescan = True
+        sw.settings = {}
+        out = await sw._process_url({
+            "url": "https://example.org/v1-keep",
+            "funder": "Mission Blue",
+            "source": "test",
+            "force": True,
+        })
+        assert out["status"] == "site", out
+        assert await db.projects.count_documents({}) == before
+        v1 = await db.projects.find_one({"_id": "v1-keep"})
+        assert v1["title"] == "Existing Hope Spot"
+        row = await db.project_run_projects.find_one({
+            "run_id": opened["run_id"], "url": "https://example.org/v1-keep",
+        })
+        assert row["verdict"] == "site"
+        assert row["title"] == "Reextracted Hope Spot"
+
+    asyncio.run(run())
+
     _patch_extract(monkeypatch, proj=_ocean_proj(title="Pew HQ", lat=48.8566, lon=2.3522))
 
     async def run():

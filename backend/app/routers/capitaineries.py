@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.core.from_scratch import resolve_from_scratch
 from app.core.llm import get_llm_key
 from app.core.tasks import BuildState, TaskState, new_task, prune_tasks, LOGS_TAIL_N
 from app.db import db, get_settings
@@ -150,6 +151,7 @@ async def export_capitaineries():
 class BuildBody(BaseModel):
     clear_before: bool = False
     resume: bool = True
+    from_scratch: bool | None = None
     profile: str | None = None
     rules: dict | None = None
     scope: str | None = None
@@ -180,22 +182,25 @@ async def capitaineries_build_start(body: BuildBody | None = None):
         tiles = isolated_runs.parse_osm_tiles(body.tiles)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    scope = (body.scope or "full").lower()
+    scratch = resolve_from_scratch(body.from_scratch, scope=scope)
+    resume = bool(body.resume) and not scratch and scope != "test"
     opened = await isolated_runs.open_run(
         db, "capitaineries", kind="world_harbour_master",
         label=body.label or "capitaineries-world", settings=settings,
         extra_params={
-            "resume": body.resume, "profile": rules.get("profile"),
+            "resume": resume, "from_scratch": scratch,
+            "profile": rules.get("profile"),
             "skip_shom": body.skip_shom, "skip_noaa": body.skip_noaa,
             "tiles": body.tiles,
         },
         rules_overrides=body.rules, profile=body.profile,
-        resume=body.resume,
+        resume=resume,
     )
     run_id = opened["run_id"]
     recorder = opened["recorder"]
     BUILD_STATE.run_id = run_id
     isolated_runs.reset_run(opened["token"])
-    scope = (body.scope or "full").lower()
     test_tiles = (TEST_TILE,) if scope == "test" else None
 
     async def _runner():
@@ -205,7 +210,7 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                 coll=db.capitainerie_run_sites,
                 cursor_coll=db.capitainerie_run_cursors,
                 state=BUILD_STATE,
-                resume=body.resume and scope != "test",
+                resume=resume,
                 tiles=test_tiles or tiles,
                 skip_shom=scope == "test" or body.skip_shom,
                 skip_noaa=scope == "test" or body.skip_noaa,
@@ -213,9 +218,10 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                 recorder=recorder,
             )
             extra = dict(BUILD_STATE.summary or {})
+            extra["from_scratch"] = scratch
             if scope == "full" and not BUILD_STATE.cancel:
                 extra["promoted"] = await isolated_runs.promote_run_to_live(
-                    db, "capitaineries", run_id)
+                    db, "capitaineries", run_id, replace=scratch)
             await isolated_runs.finalize_run(
                 db, "capitaineries", run_id, extra=extra,
                 cancelled=bool(BUILD_STATE.cancel))
@@ -223,8 +229,11 @@ async def capitaineries_build_start(body: BuildBody | None = None):
             # stoppable, garde crédits OpenRouter dans l'endpoint.
             if scope == "full" and not BUILD_STATE.cancel and not ENRICH_BATCH_STATE.running:
                 try:
-                    BUILD_STATE.log("Chaînage — enrichissement par priorité")
-                    await enrich_batch(EnrichBatchBody(limit=0))
+                    BUILD_STATE.log(
+                        "Chaînage — enrichissement par priorité"
+                        + (" (from scratch)" if scratch else ""))
+                    await enrich_batch(EnrichBatchBody(
+                        limit=0, include_enriched=scratch))
                 except HTTPException:
                     pass
                 except Exception as chain_exc:
@@ -239,7 +248,8 @@ async def capitaineries_build_start(body: BuildBody | None = None):
 
     asyncio.create_task(_runner())
     return {
-        "started": True, "kind": "world_harbour_master", "resume": body.resume,
+        "started": True, "kind": "world_harbour_master", "resume": resume,
+        "from_scratch": scratch,
         "run_id": run_id, "wrote_capitaineries": False,
         "profile": rules.get("profile"), "rules_hash": rules.get("hash"),
         "skip_shom": body.skip_shom, "skip_noaa": body.skip_noaa,

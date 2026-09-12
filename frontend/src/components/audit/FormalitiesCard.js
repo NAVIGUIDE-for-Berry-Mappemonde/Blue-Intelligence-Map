@@ -41,9 +41,9 @@ export default function FormalitiesCard({ t, onPoeRefresh, rulesPayload }) {
     setPoeStarting(true);
     try {
       if (scope === "test") {
-        await api.post("/poe/runs", { variant: "tinyfish", zones: [FRANCE_MRGID], ...extra() });
+        await api.post("/poe/runs", { variant: "tinyfish", zones: [FRANCE_MRGID], from_scratch: false, ...extra() });
       } else {
-        await api.post("/poe/runs", { variant: "tinyfish", ...extra() });
+        await api.post("/poe/runs", { variant: "tinyfish", from_scratch: true, ...extra() });
       }
       invalidateRuns("formalities");
       if (onPoeRefresh) onPoeRefresh();
