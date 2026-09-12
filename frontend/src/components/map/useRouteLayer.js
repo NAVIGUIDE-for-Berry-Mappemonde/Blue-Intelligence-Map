@@ -5,6 +5,7 @@ import {
   ESCALE_FILL, ESCALE_STROKE, INTERMEDIATE_FILL, INTERMEDIATE_STROKE,
   ROUTE_CASING_COLOR, ROUTE_CASING_WEIGHT, ROUTE_MAIN_COLOR, ROUTE_MAIN_WEIGHT,
 } from "./constants";
+import { POPUP_OPTS } from "./points";
 
 /**
  * Couche route Berry-Mappemonde (statique, officielle) : polylignes à double
@@ -101,9 +102,7 @@ export default function useRouteLayer(mapObj, tRef, t) {
               w.name || ""
             }</div>
           </div>`,
-          // keepInView removed: combined with maxBounds it caused an
-          // infinite pan loop (stack overflow in LineUtil.simplify) near ±180°.
-          { maxWidth: 260, autoPan: true, autoPanPadding: [40, 40] },
+          { ...POPUP_OPTS, maxWidth: 260 },
         );
         m.addTo(group);
       });

@@ -15,7 +15,7 @@ import useRouteLayer from "./map/useRouteLayer";
 import useScienceLayer from "./map/useScienceLayer";
 import useScienceWms, { ensureWmsPanes } from "./map/useScienceWms";
 import { attachDepthOnPopup } from "./map/depthRow";
-import { applyPenRadii, keepPopupInView, makePointGroup, POPUP_OPTS } from "./map/points";
+import { applyPenRadii, makePointGroup, POPUP_OPTS } from "./map/points";
 
 /**
  * MapView — carte Leaflet persistante, pastilles canvas, sans cluster.
@@ -201,11 +201,6 @@ export default function MapView({
         pendingRef.current = null;
         fn();
       }
-    });
-    map.on("popupopen", (e) => {
-      keepPopupInView(map, e.popup, mapRef.current);
-      setTimeout(() => keepPopupInView(map, e.popup, mapRef.current), 250);
-      setTimeout(() => keepPopupInView(map, e.popup, mapRef.current), 800);
     });
     attachDepthOnPopup(map, tRef);
     mapObj.current = map;
