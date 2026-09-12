@@ -15,7 +15,11 @@ from app.config import ROUTE_FILE
 from app.core.llm import get_llm_key
 from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
 from app.db import db, get_settings
-from app.services.anchorage_build import build_anchorages as run_build_anchorages, anchorages_to_geojson
+from app.services.anchorage_build import (
+    anchorages_to_geojson,
+    build_anchorages as run_build_anchorages,
+    build_world_anchorages as run_build_world_anchorages,
+)
 from app.services.marina_enrich import ENRICH_FIELDS, enrich_marina
 from app.services.marina_maps_place import is_google_place_url, resolve_maps_places
 from app.services.marina_world import (
@@ -333,6 +337,45 @@ async def _persist_marina_run(kind: str, rules: dict, extra: dict, *,
     return opened
 
 
+async def _chain_marinas_enrich_and_anchorages(scope: str) -> None:
+    """Après le dump : enrichissement par priorité puis mouillages.
+
+    Test : 10 fiches enrichies + la tuile golfe de Gascogne.
+    Full : tout par priorité (garde crédits + Stop) + le monde entier.
+    Les mouillages écrivent la carte publique (`db.anchorages`, upsert).
+    """
+    try:
+        if not ENRICH_BATCH_STATE.running:
+            MARINA_BUILD_STATE.log("Chaînage — enrichissement par priorité")
+            await marina_enrich_batch(
+                MarinaEnrichBatchBody(limit=10 if scope == "test" else 0))
+    except HTTPException:
+        pass
+    except Exception as exc:
+        MARINA_BUILD_STATE.log(
+            f"enrich chaîné: {type(exc).__name__}: {str(exc)[:60]}")
+
+    if ANCHORAGE_BUILD_STATE.running:
+        return
+    try:
+        MARINA_BUILD_STATE.log(
+            "Chaînage — dump mouillages "
+            + ("(tuile test)" if scope == "test" else "monde"))
+        await run_build_world_anchorages(
+            anchorages_coll=db.anchorages,
+            cursor_coll=(
+                db.anchorage_test_cursors if scope == "test"
+                else db.anchorage_world_cursors),
+            state=ANCHORAGE_BUILD_STATE,
+            route_path=ROUTE_FILE,
+            resume=scope != "test",
+            tiles=(TEST_TILE,) if scope == "test" else None,
+        )
+    except Exception as exc:
+        MARINA_BUILD_STATE.log(
+            f"mouillages chaînés: {type(exc).__name__}: {str(exc)[:60]}")
+
+
 @router.post("/marinas/build")
 async def marinas_build_start(body: MarinasBuildBody | None = None):
     if MARINA_BUILD_STATE.running:
@@ -385,6 +428,8 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                     run_id=run_id,
                     dest_db=db,
                 )
+            if not getattr(MARINA_BUILD_STATE, "cancel", False):
+                await _chain_marinas_enrich_and_anchorages(scope)
         except Exception as e:
             await isolated_runs.finalize_run(
                 db, "marinas", run_id, error=str(e)[:200])
@@ -478,6 +523,9 @@ class AnchoragesBuildBody(BaseModel):
     corridor_radius_nm: float | None = None
     profile: str | None = None
     rules: dict | None = None
+    # "full" (défaut) = dump mondial en tuiles · "test" = tuile Gascogne ·
+    # "corridor" = legacy waypoints + bande route (run isolé).
+    scope: str | None = None
 
 
 @router.get("/anchorages")
@@ -508,6 +556,37 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
     if ANCHORAGE_BUILD_STATE.running:
         raise HTTPException(409, "An anchorages build is already running")
     body = body or AnchoragesBuildBody()
+    scope = (body.scope or "full").lower()
+    if scope != "corridor":
+        # 2026-09 — dump mondial en tuiles : plus de corridor 25 NM.
+        # Écrit la carte publique (db.anchorages), upsert par dedup_key.
+        if body.clear_before:
+            raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
+        ANCHORAGE_BUILD_STATE.run_id = None
+
+        async def _world_runner():
+            try:
+                await run_build_world_anchorages(
+                    anchorages_coll=db.anchorages,
+                    cursor_coll=(
+                        db.anchorage_test_cursors if scope == "test"
+                        else db.anchorage_world_cursors),
+                    state=ANCHORAGE_BUILD_STATE,
+                    route_path=ROUTE_FILE,
+                    resume=scope != "test",
+                    tiles=(TEST_TILE,) if scope == "test" else None,
+                )
+            except Exception:
+                pass
+
+        asyncio.create_task(_world_runner())
+        return {
+            "started": True,
+            "scope": scope,
+            "world": True,
+            "wrote_marinas": False,
+            "wrote_anchorages": True,
+        }
     settings = await get_settings()
     extra = {}
     if body.corridor_step_nm is not None:
@@ -570,6 +649,15 @@ async def anchorages_build_start(body: AnchoragesBuildBody | None = None):
         "wrote_marinas": False,
         "wrote_anchorages": False,
     }
+
+
+@router.post("/anchorages/build/cancel")
+async def anchorages_build_cancel():
+    if not ANCHORAGE_BUILD_STATE.running:
+        raise HTTPException(409, "No anchorages build is running")
+    ANCHORAGE_BUILD_STATE.cancel = True
+    ANCHORAGE_BUILD_STATE.log("Stop demandé")
+    return {"cancelling": True}
 
 
 @router.get("/anchorages/build/status")

@@ -204,6 +204,17 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                     db, "capitaineries", run_id)
             await isolated_runs.finalize_run(
                 db, "capitaineries", run_id, extra=extra)
+            # Full : « dump mondial, puis enrichissement » — par priorité,
+            # stoppable, garde crédits OpenRouter dans l'endpoint.
+            if scope == "full" and not BUILD_STATE.cancel and not ENRICH_BATCH_STATE.running:
+                try:
+                    BUILD_STATE.log("Chaînage — enrichissement par priorité")
+                    await enrich_batch(EnrichBatchBody(limit=0))
+                except HTTPException:
+                    pass
+                except Exception as chain_exc:
+                    BUILD_STATE.log(
+                        f"enrich chaîné: {type(chain_exc).__name__}: {str(chain_exc)[:60]}")
         except Exception as exc:
             BUILD_STATE.log(f"build crashed: {type(exc).__name__}: {exc}")
             await isolated_runs.finalize_run(
