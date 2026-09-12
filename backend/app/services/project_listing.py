@@ -3,6 +3,10 @@
 Les 21 curés donnent les motifs d'une page qui *liste* les projets.
 Les MasterSeeds v1 n'ont souvent que la home (`https://domaine/`).
 Cette étape trouve l'URL catalogue avant la découverte des fiches.
+
+Hop 1 : hygiène SERP (même hôte, pas home / news / donate / wp-content) →
+raccourci feuille curée (`/projects/`) → sinon juge LLM de 3–5 URLs →
+Agent listing. Le filtre feuille n'est plus un veto sur la SERP.
 """
 from __future__ import annotations
 
@@ -10,6 +14,11 @@ from urllib.parse import urlparse
 
 from app.services.master_seeds import SKIP_LISTING_NETLOCS, domain_of
 from app.static_data.seeds import CRAWL_BLACKLIST, CURATED_SEEDS, URL_PATTERNS
+
+LISTING_JUDGE_CAP = 5
+_FILE_EXTS = frozenset({
+    "pdf", "jpg", "jpeg", "png", "gif", "zip", "svg", "mp4", "webp", "css", "js",
+})
 
 LANG_PREFIXES = {
     "en", "fr", "de", "es", "it", "pt", "nl", "int", "uk", "us", "eu",
@@ -27,6 +36,9 @@ _NOT_LISTING_PREFIXES = (
 
 def _norm_seg(seg: str) -> str:
     return (seg or "").strip().strip("/").lower()
+
+
+_BLOCKED_SEGS = frozenset(_norm_seg(s) for s in CRAWL_BLACKLIST)
 
 
 def listing_leaves() -> frozenset[str]:
@@ -154,7 +166,13 @@ def apply_learned_listings(seeds: list[dict], extras: list[dict] | None) -> list
         if (extra.get("listing_kind") or "").strip().lower() != "projects_index":
             continue
         u = (extra.get("url") or "").strip()
-        if not u or not (is_listing_url(u) or is_curated_listing_url(u)):
+        if not u or is_homepage_url(u):
+            continue
+        if not (
+            is_listing_url(u)
+            or is_curated_listing_url(u)
+            or listing_hygiene_ok(u)
+        ):
             continue
         d = domain_of(u) or domain_of(extra.get("domain") or "")
         if d:
@@ -275,12 +293,40 @@ def _hit_url(hit) -> str:
     return ""
 
 
-def filter_listing_urls(hits, seed, max_urls=3, *, exclude_urls=None) -> list[str]:
-    """Même hôte, page catalogue, hors home, hors URLs déjà éliminées."""
-    try:
-        cap = max(0, int(max_urls or 0))
-    except (TypeError, ValueError):
-        cap = 0
+def _looks_like_fiche_parts(parts: list[str]) -> bool:
+    """`/projects/coral-restore` : feuille + slug. Pas un catalogue."""
+    meaningful = [_norm_seg(p) for p in parts if _norm_seg(p) not in LANG_PREFIXES]
+    if len(meaningful) < 2:
+        return False
+    leaves = listing_leaves()
+    return meaningful[0] in leaves and meaningful[-1] not in leaves
+
+
+def listing_hygiene_ok(url: str | None) -> bool:
+    """Même contrainte légère pour SERP, Agent et mémoire. Pas un veto feuille."""
+    if not (url or "").startswith("http"):
+        return False
+    if is_homepage_url(url):
+        return False
+    path = urlparse(url).path or ""
+    low = path.lower()
+    if any(low.startswith(p) or p in low for p in _NOT_LISTING_PREFIXES):
+        return False
+    parts = path_parts(path)
+    if not parts or len(parts) > 3:
+        return False
+    segs = [_norm_seg(p) for p in parts]
+    if any(s in _BLOCKED_SEGS for s in segs):
+        return False
+    last = segs[-1]
+    if "." in last and last.rsplit(".", 1)[-1] in _FILE_EXTS:
+        return False
+    if _looks_like_fiche_parts(parts):
+        return False
+    return True
+
+
+def _collect_same_host_hits(hits, seed, *, exclude_urls=None) -> list[str]:
     excluded = {u.rstrip("/") for u in (exclude_urls or []) if u}
     host = domain_of((seed or {}).get("url") or "") if isinstance(seed, dict) else ""
     seed_url = ""
@@ -304,10 +350,169 @@ def filter_listing_urls(hits, seed, max_urls=3, *, exclude_urls=None) -> list[st
             continue
         if not host and (not d or d in SKIP_LISTING_NETLOCS):
             continue
+        seen.add(key)
+        urls.append(href)
+    return urls
+
+
+def hygiene_listing_urls(hits, seed, max_urls=LISTING_JUDGE_CAP, *, exclude_urls=None) -> list[str]:
+    """3–5 candidats juge : même hôte, pas home / news / donate / fiche / wp-content.
+
+    Les feuilles curées (`/projects/`) passent en tête pour le raccourci, sans
+    plafonner avant : un `/projects/` en 6e hit SERP n'est pas perdu.
+    """
+    try:
+        cap = max(0, int(max_urls or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    same = _collect_same_host_hits(hits, seed, exclude_urls=exclude_urls)
+    ok = [u for u in same if listing_hygiene_ok(u)]
+    leaves = [u for u in ok if is_listing_url(u)]
+    rest = [u for u in ok if not is_listing_url(u)]
+    ordered = leaves + rest
+    return ordered[:cap] if cap else ordered
+
+
+def merge_listing_candidates(*groups, cap=LISTING_JUDGE_CAP) -> list[str]:
+    """Union crawl + Fetch + Search, feuilles d'abord, plafond juge."""
+    seen: set[str] = set()
+    leaves, rest = [], []
+    for group in groups:
+        for u in group or []:
+            if not u:
+                continue
+            key = u.rstrip("/")
+            if key in seen:
+                continue
+            seen.add(key)
+            if is_listing_url(u):
+                leaves.append(u)
+            elif listing_hygiene_ok(u):
+                rest.append(u)
+    ordered = leaves + rest
+    try:
+        limit = max(0, int(cap or 0))
+    except (TypeError, ValueError):
+        limit = LISTING_JUDGE_CAP
+    return ordered[:limit] if limit else ordered
+
+
+def accept_listing_url(url: str | None, seed: dict | None = None) -> str | None:
+    """Sortie Agent listing : hygiène, pas le veto feuille `/projects/`."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return None
+    href = raw.split("#")[0].split("?")[0]
+    if not listing_hygiene_ok(href):
+        return None
+    if isinstance(seed, dict):
+        host = domain_of(seed.get("url") or "")
+        if host and domain_of(href) != host:
+            return None
+        seed_url = (seed.get("url") or "").rstrip("/")
+        if seed_url and href.rstrip("/") == seed_url:
+            return None
+    return href
+
+
+def filter_listing_urls(hits, seed, max_urls=3, *, exclude_urls=None) -> list[str]:
+    """Raccourci feuille curée uniquement (`/projects/`, `/hope-spots/`)."""
+    try:
+        cap = max(0, int(max_urls or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    urls, seen = [], set()
+    for href in _collect_same_host_hits(hits, seed, exclude_urls=exclude_urls):
         if not is_listing_url(href):
+            continue
+        key = href.rstrip("/")
+        if key in seen:
             continue
         seen.add(key)
         urls.append(href)
         if cap and len(urls) >= cap:
             break
     return urls[:cap] if cap else urls
+
+
+LISTING_JUDGE_SYSTEM = (
+    "Tu juges des URL de catalogue de projets d'une organisation marine. "
+    "Réponds uniquement en JSON strict : "
+    '{"url": "https://example.org/projects/", "accept": true, "reason": ""} '
+    "url doit être l'une des candidates, ou null. "
+    "accept=true seulement si la page LISTE plusieurs projets, campagnes, "
+    "programmes ou hope spots DE CETTE organisation (index, directory, "
+    "where we work, our work, our programmes). "
+    "accept=false pour une homepage, une fiche projet unique, une actualité, "
+    "un don, une page about/contact, un PDF ou /wp-content. "
+    "N'invente aucune URL."
+)
+
+
+def listing_judge_prompt(seed: dict, candidates: list) -> str:
+    lines = []
+    for i, cand in enumerate(candidates[:LISTING_JUDGE_CAP], 1):
+        if isinstance(cand, dict):
+            url = cand.get("url") or ""
+            title = (cand.get("title") or "").strip()
+        else:
+            url, title = str(cand), ""
+        extra = f" | {title}" if title else ""
+        lines.append(f"{i}. {url}{extra}")
+    home = ((seed or {}).get("url") or "").strip()
+    name = ((seed or {}).get("name") or "").strip()
+    return (
+        f"Organisation : {name}\n"
+        f"Homepage (interdite comme listing) : {home}\n"
+        f"Candidats :\n" + "\n".join(lines)
+    )
+
+
+def parse_listing_judge(data: dict | None, candidates: list, home: str | None) -> str | None:
+    from app.core.judge import parse_yes_no
+    yes = parse_yes_no(
+        data,
+        allowed_urls=candidates,
+        forbidden_urls=[home] if home else None,
+    )
+    return yes.url if yes.accepted else None
+
+
+async def llm_judge_listing(
+    seed: dict,
+    candidates: list,
+    *,
+    settings: dict | None = None,
+    log=None,
+) -> str | None:
+    """NVIDIA (chaîne json) → OpenRouter → Claude. Une URL parmi 3–5, jamais hors liste."""
+    packed = []
+    for cand in candidates or []:
+        if isinstance(cand, dict):
+            url = (cand.get("url") or cand.get("link") or "").strip()
+            title = cand.get("title") or ""
+        else:
+            url, title = str(cand).strip(), ""
+        if url.startswith("http"):
+            packed.append({"url": url, "title": title})
+        if len(packed) >= LISTING_JUDGE_CAP:
+            break
+    if not packed:
+        return None
+    from app.core.judge import ask_yes_no
+
+    home = (seed or {}).get("url")
+    yes = await ask_yes_no(
+        LISTING_JUDGE_SYSTEM,
+        listing_judge_prompt(seed or {}, packed),
+        settings=settings,
+        log=log,
+        role="json",
+        max_tokens=400,
+        allowed_urls=packed,
+        forbidden_urls=[home] if home else None,
+        on_empty="inconclusive",
+    )
+    if yes.accepted and yes.url:
+        return yes.url
+    return None

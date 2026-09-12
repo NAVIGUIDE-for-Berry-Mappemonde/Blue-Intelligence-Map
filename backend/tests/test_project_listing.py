@@ -15,9 +15,12 @@ import pytest
 
 from app.core.tinyfish import LISTING_SCHEMA, PROJECTS_LISTING_PURPOSE
 from app.services.project_listing import (
-    apply_learned_listings, filter_listing_urls, infer_listing_from_project_urls,
-    is_homepage_url, is_listing_path, is_listing_url, listing_search_query,
-    listing_search_retry_query, needs_listing_hop, pick_listing_url,
+    accept_listing_url, apply_learned_listings,
+    filter_listing_urls, hygiene_listing_urls, infer_listing_from_project_urls,
+    is_homepage_url, is_listing_path, is_listing_url, listing_hygiene_ok,
+    listing_search_query, listing_search_retry_query,
+    merge_listing_candidates, needs_listing_hop, parse_listing_judge,
+    pick_listing_url,
 )
 from app.services.swarm_pipeline import Swarm
 from app.static_data.seeds import CURATED_SEEDS
@@ -122,6 +125,59 @@ def test_filter_listing_same_host_not_fiche_not_home():
     assert dropped == ["https://example.org/hope-spots/"]
 
 
+def test_hygiene_keeps_our_programmes_research_not_fiches():
+    hits = [
+        {"url": "https://example.org/"},
+        {"url": "https://example.org/news/project-launch"},
+        {"url": "https://example.org/donate"},
+        {"url": "https://example.org/about"},
+        {"url": "https://example.org/wp-content/uploads/a.pdf"},
+        {"url": "https://example.org/projects/coral-restore"},
+        {"url": "https://example.org/research"},
+        {"url": "https://example.org/our-programmes"},
+        {"url": "https://other.org/research"},
+        {"url": "https://example.org/projects/"},
+    ]
+    hyg = hygiene_listing_urls(hits, HOME, 5)
+    assert hyg[0] == "https://example.org/projects/"
+    assert "https://example.org/our-programmes" in hyg
+    assert "https://example.org/research" in hyg
+    assert "https://example.org/projects/coral-restore" not in hyg
+    assert "https://example.org/news/project-launch" not in hyg
+    assert "https://example.org/" not in hyg
+    assert listing_hygiene_ok("https://example.org/research")
+    assert listing_hygiene_ok("https://example.org/our-programmes")
+    assert not listing_hygiene_ok("https://example.org/projects/coral-restore")
+    assert not listing_hygiene_ok("https://example.org/wp-content/uploads/x.pdf")
+    assert not is_listing_url("https://example.org/our-programmes")
+    assert not is_listing_url("https://example.org/research")
+    assert accept_listing_url("https://example.org/our-programmes", HOME) == (
+        "https://example.org/our-programmes"
+    )
+    assert accept_listing_url("https://example.org/projects/coral-restore", HOME) is None
+    assert filter_listing_urls(hits, HOME, 5) == ["https://example.org/projects/"]
+
+
+def test_hygiene_puts_late_leaf_first():
+    hits = [{"url": f"https://example.org/page-{i}"} for i in range(6)]
+    hits.append({"url": "https://example.org/projects/"})
+    hyg = hygiene_listing_urls(hits, HOME, 5)
+    assert hyg[0] == "https://example.org/projects/"
+    assert len(hyg) == 5
+
+
+def test_merge_listing_candidates_caps_at_judge():
+    merged = merge_listing_candidates(
+        ["https://example.org/research"],
+        ["https://example.org/our-programmes"],
+        ["https://example.org/what-we-do", "https://example.org/projects/"],
+        cap=5,
+    )
+    assert merged[0] == "https://example.org/projects/"
+    assert "https://example.org/our-programmes" in merged
+    assert len(merged) <= 5
+
+
 def test_infer_listing_sos_not_wp_content():
     sos = infer_listing_from_project_urls([
         "https://saveourseas.com/project/alpha",
@@ -145,6 +201,20 @@ def test_apply_learned_listings_overlays_v1_home():
     }]
     out = apply_learned_listings(seeds, extras)
     assert out[0]["url"] == "https://example.org/projects/"
+    assert out[0]["listing_kind"] == "projects_index"
+    assert needs_listing_hop(out[0]) is False
+
+
+def test_apply_learned_listings_keeps_hygiene_not_leaf():
+    seeds = [
+        {"name": "Example Ocean", "url": "https://example.org/", "listing_kind": "homepage"},
+    ]
+    extras = [{
+        "name": "Example Ocean", "url": "https://example.org/our-programmes",
+        "domain": "example.org", "listing_kind": "projects_index",
+    }]
+    out = apply_learned_listings(seeds, extras)
+    assert out[0]["url"] == "https://example.org/our-programmes"
     assert out[0]["listing_kind"] == "projects_index"
     assert needs_listing_hop(out[0]) is False
 
@@ -330,6 +400,183 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
     assert "TinyFish Agent listing" in msgs
     assert "TinyFish Agent fiches" in msgs
     assert "Search vide → TinyFish Agent" not in msgs
+
+
+def test_listing_judge_picks_our_programmes_skips_agent(monkeypatch):
+    sw = _swarm()
+    seen = {"listing_agent": 0, "judge": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def fake_tf(query, key, **kw):
+        return [
+            {"url": "https://example.org/research", "title": "Research"},
+            {"url": "https://example.org/our-programmes", "title": "Programmes"},
+            {"url": "https://example.org/news/project-launch", "title": "News"},
+        ]
+
+    async def fake_sp(query, key, **kw):
+        return [{"url": "https://example.org/what-we-do"}]
+
+    async def fake_judge(seed, candidates, **kw):
+        seen["judge"] += 1
+        urls = []
+        for c in candidates:
+            urls.append(c.get("url") if isinstance(c, dict) else c)
+        assert "https://example.org/our-programmes" in urls
+        assert "https://example.org/research" in urls
+        assert "https://example.org/news/project-launch" not in urls
+        assert len(candidates) <= 5
+        return "https://example.org/our-programmes"
+
+    async def boom_listing(*a, **k):
+        seen["listing_agent"] += 1
+        return None
+
+    async def fake_fiche_crawl(seed, max_urls):
+        assert seed["url"] == "https://example.org/our-programmes"
+        return ["https://example.org/projects/coral"]
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    monkeypatch.setattr(sw, "_tinyfish_listing_discover", boom_listing)
+    monkeypatch.setattr(sw, "_tinyfish_discover", empty)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", fake_tf)
+    monkeypatch.setattr(sp, "serper_search", fake_sp)
+    monkeypatch.setattr(sp, "llm_judge_listing", fake_judge)
+
+    queued = _run(_queued(sw, HOME))
+    assert [i["url"] for i in queued] == ["https://example.org/projects/coral"]
+    assert seen == {"listing_agent": 0, "judge": 1}
+    assert queued[0]["source"] == "https://example.org/our-programmes"
+    remembered = sw.db.master_seeds.docs
+    assert any(d.get("url") == "https://example.org/our-programmes" for d in remembered)
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "Listing juge → https://example.org/our-programmes" in msgs
+    assert "TinyFish Agent listing" not in msgs
+    assert sw.db.projects.docs == []
+
+
+def test_listing_leaf_shortcut_skips_judge(monkeypatch):
+    sw = _swarm()
+    seen = {"judge": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def fake_tf(query, key, **kw):
+        return [
+            {"url": "https://example.org/research"},
+            {"url": "https://example.org/projects/"},
+        ]
+
+    async def fake_sp(query, key, **kw):
+        return []
+
+    async def boom_judge(*a, **k):
+        seen["judge"] += 1
+        raise AssertionError("leaf shortcut must skip the listing judge")
+
+    async def fake_fiche_crawl(seed, max_urls):
+        assert seed["url"] == "https://example.org/projects/"
+        return ["https://example.org/projects/coral"]
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    monkeypatch.setattr(sw, "_tinyfish_listing_discover", empty)
+    monkeypatch.setattr(sw, "_tinyfish_discover", empty)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", fake_tf)
+    monkeypatch.setattr(sp, "serper_search", fake_sp)
+    monkeypatch.setattr(sp, "llm_judge_listing", boom_judge)
+
+    queued = _run(_queued(sw, HOME))
+    assert [i["url"] for i in queued] == ["https://example.org/projects/coral"]
+    assert seen["judge"] == 0
+
+
+def test_listing_judge_none_then_agent_keeps_our_programmes(monkeypatch):
+    sw = _swarm()
+    seen = {"judge": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def fake_tf(query, key, **kw):
+        return [{"url": "https://example.org/research"}]
+
+    async def fake_sp(query, key, **kw):
+        return []
+
+    async def fake_judge(*a, **k):
+        seen["judge"] += 1
+        return None
+
+    async def fake_sse(url, goal, schema, key, **kw):
+        if schema is LISTING_SCHEMA or schema.get("required") == ["listing_url"]:
+            return {"listing_url": "https://example.org/our-programmes", "title": "P"}
+        return {"projects": [
+            {"url": "https://example.org/projects/coral", "title": "Coral"},
+        ]}
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+
+    async def empty_fiche_search(*a, **k):
+        return [], 0, 0
+
+    monkeypatch.setattr(sw, "_search_discover", empty_fiche_search)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", fake_tf)
+    monkeypatch.setattr(sp, "serper_search", fake_sp)
+    monkeypatch.setattr(sp, "llm_judge_listing", fake_judge)
+    monkeypatch.setattr(sp, "tf_run_sse", fake_sse)
+
+    queued = _run(_queued(sw, HOME))
+    assert [i["url"] for i in queued] == ["https://example.org/projects/coral"]
+    assert seen["judge"] == 1
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "Listing juge: aucune" in msgs
+    assert "TinyFish Agent listing" in msgs
+    remembered = sw.db.master_seeds.docs
+    assert any(d.get("url") == "https://example.org/our-programmes" for d in remembered)
+
+
+def test_parse_listing_judge_rejects_invented():
+    cands = [
+        {"url": "https://example.org/our-programmes", "title": "P"},
+        {"url": "https://example.org/research", "title": "R"},
+    ]
+    ok = parse_listing_judge(
+        {"accept": True, "url": "https://example.org/our-programmes"},
+        cands, "https://example.org/")
+    assert ok == "https://example.org/our-programmes"
+    invented = parse_listing_judge(
+        {"accept": True, "url": "https://evil.example/invented"},
+        cands, "https://example.org/")
+    assert invented is None
+    home = parse_listing_judge(
+        {"accept": True, "url": "https://example.org/"},
+        [{"url": "https://example.org/"}], "https://example.org/")
+    assert home is None
 
 
 def test_filtered_search_log_is_not_empty_search(monkeypatch, tmp_path):

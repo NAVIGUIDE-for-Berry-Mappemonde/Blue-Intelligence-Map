@@ -30,9 +30,11 @@ from app.core.tinyfish import (
     tf_fetch, tf_get_run, tf_run_async, tf_run_sse, tf_search,
 )
 from app.services.project_listing import (
-    apply_learned_listings, filter_listing_urls, fiche_search_retry_query,
+    LISTING_JUDGE_CAP, accept_listing_url, apply_learned_listings,
+    fiche_search_retry_query, hygiene_listing_urls,
     infer_listing_from_project_urls, is_listing_url, listing_search_query,
-    listing_search_retry_query, needs_listing_hop, pick_listing_url,
+    listing_search_retry_query, llm_judge_listing, merge_listing_candidates,
+    needs_listing_hop, pick_listing_url,
 )
 from app.core.serper import serper_api_key, serper_search
 from app.core.events import HeartbeatWatch
@@ -644,9 +646,11 @@ class Swarm:
         n_tf = n_sp = 0
         try:
             self.set_agent(aid, status="RUNNING")
-            self.agent_log(aid, "Listing N1: crawler (motifs catalogues curés)")
+            crawled = fetched = searched = []
+            pool: list[str] = []
+            self.agent_log(aid, "Listing N1: crawler (hygiène + feuilles curées)")
             try:
-                crawled = await self._crawl_listing(seed, 5)
+                crawled = await self._crawl_listing(seed, LISTING_JUDGE_CAP)
             except Exception as e:
                 crawled = []
                 self.agent_log(aid, f"Listing N1 échec: {type(e).__name__}: {str(e)[:80]}")
@@ -689,20 +693,44 @@ class Swarm:
                 found = pick_listing_url(searched)
                 line = (
                     f"Listing Search: TinyFish {n_tf} + Serper {n_sp} → "
-                    f"{len(searched)} catalogues after filter "
+                    f"{len(searched)} candidats hygiène "
                     f"(serper {self._serper_queries})"
                 )
                 self.agent_log(aid, line)
                 self.log(f"[{name}] {line}")
 
+            if not found:
+                pool = merge_listing_candidates(
+                    crawled, fetched, searched, cap=LISTING_JUDGE_CAP)
+                if pool:
+                    used_engine = "Listing judge"
+                    self.set_agent(aid, engine="Listing juge LLM")
+                    log_fn = lambda m: self.agent_log(aid, m)
+                    try:
+                        found = await llm_judge_listing(
+                            seed, pool, settings=self.settings, log=log_fn)
+                    except Exception as e:
+                        found = None
+                        self.agent_log(
+                            aid,
+                            f"Listing juge échec: {type(e).__name__}: {str(e)[:80]}")
+                    if found:
+                        self.agent_log(aid, f"Listing juge → {found}")
+                        self.log(f"[{name}] Listing juge → {found}")
+                    else:
+                        self.agent_log(
+                            aid, f"Listing juge: aucune des {len(pool)} URLs")
+                        self.log(f"[{name}] Listing juge: aucune des {len(pool)} URLs")
+
             if not found and key and self.settings.get("allow_tinyfish_agent", True):
                 used_engine = "TinyFish listing"
                 self.set_agent(aid, engine="TinyFish Agent listing")
-                reason = (
-                    "Listing Search: 0 hit → TinyFish Agent listing"
-                    if (n_tf + n_sp) == 0
-                    else "Listing Search: hits filtrés (0 catalogues) → TinyFish Agent listing"
-                )
+                if (n_tf + n_sp) == 0 and not crawled and not fetched:
+                    reason = "Listing Search: 0 hit → TinyFish Agent listing"
+                elif pool:
+                    reason = "Listing juge: aucune → TinyFish Agent listing"
+                else:
+                    reason = "Listing Search: hits hygiène 0 → TinyFish Agent listing"
                 self.agent_log(aid, reason)
                 self.log(f"[{name}] {reason}")
                 try:
@@ -947,8 +975,7 @@ class Swarm:
         if not raw.startswith("http"):
             return None
         href = raw.split("#")[0].split("?")[0]
-        picked = pick_listing_url(filter_listing_urls([{"url": href}], seed, 1))
-        return picked
+        return accept_listing_url(href, seed)
 
     async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
         """Agent TinyFish n°2 : fiches individuelles (SSE puis polling)."""
@@ -1024,10 +1051,10 @@ class Swarm:
             urls.append(href)
         return urls
 
-    async def _crawl_listing(self, seed, max_urls=5):
-        """Liens internes qui ressemblent à un catalogue (1–3 segments, feuille curée)."""
+    async def _crawl_listing(self, seed, max_urls=LISTING_JUDGE_CAP):
+        """Liens internes : hygiène (le raccourci feuille est appliqué plus haut)."""
         hrefs = await self._crawl_page_links(seed)
-        return filter_listing_urls([{"url": u} for u in hrefs], seed, max_urls)
+        return hygiene_listing_urls([{"url": u} for u in hrefs], seed, max_urls)
 
     async def _crawl_discover(self, seed, max_urls):
         """1er passage fiches : chemins URL_PATTERNS (≥ 2 segments). Les 8
@@ -1055,7 +1082,7 @@ class Swarm:
         if not rec and recs:
             rec = next(iter(recs.values()))
         hits = [{"url": u} for u in _links_from_fetch_record(rec, url)]
-        return filter_listing_urls(hits, seed, 3)
+        return hygiene_listing_urls(hits, seed, LISTING_JUDGE_CAP)
 
     async def _fetch_discover(self, seed, max_urls, log=None):
         """TinyFish Fetch de la même URL (miroir JS) → mêmes filtres motifs fiches."""
@@ -1121,8 +1148,8 @@ class Swarm:
 
     async def _search_listing(self, seed, log=None):
         return await self._search_with_filter(
-            seed, listing_search_query(seed), 3,
-            filter_fn=filter_listing_urls,
+            seed, listing_search_query(seed), LISTING_JUDGE_CAP,
+            filter_fn=hygiene_listing_urls,
             purpose=PROJECTS_LISTING_PURPOSE, log=log,
             retry_query=listing_search_retry_query(seed))
 
