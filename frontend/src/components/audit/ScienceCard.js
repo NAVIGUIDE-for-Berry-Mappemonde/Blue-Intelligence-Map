@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { FlaskConical, Loader2, Square } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
+import LaunchScope from "./LaunchScope";
 
 const SOURCE_DEFS = [
   { id: "sextant", labelKey: "scienceSourceSextant" },
@@ -10,11 +12,8 @@ const SOURCE_DEFS = [
   { id: "csr", labelKey: "scienceSourceCsr" },
 ];
 
-/**
- * ScienceCard — carte de lancement de la moisson des catalogues océano.
- * Sources cochables (Sextant, ODATIS, EDMED, Argo), upsert non destructif.
- */
 export default function ScienceCard({ t, rulesPayload }) {
+  const [scope, setScope] = useState("test");
   const [buildStatus, setBuildStatus] = useState(null);
   const [starting, setStarting] = useState(false);
   const [sources, setSources] = useState(() => new Set(SOURCE_DEFS.map((s) => s.id)));
@@ -43,14 +42,21 @@ export default function ScienceCard({ t, rulesPayload }) {
     });
   };
 
+  const selected = SOURCE_DEFS.filter((s) => sources.has(s.id));
+  const launchLabel = selected.length
+    ? `${t("launchRun")} · ${selected.map((s) => t(s.labelKey).split("·")[0].trim()).join(" + ")}`
+    : t("launchRun");
+
   const startBuild = async () => {
     if (starting || buildStatus?.running || sources.size === 0) return;
     setStarting(true);
     try {
       await api.post("/science/build", {
         sources: SOURCE_DEFS.map((s) => s.id).filter((id) => sources.has(id)),
+        scope,
         ...extra(),
       });
+      invalidateRuns("science");
     } catch (e) { alert(e.response?.data?.detail || e.message); }
     finally { setTimeout(() => setStarting(false), 800); }
   };
@@ -65,19 +71,15 @@ export default function ScienceCard({ t, rulesPayload }) {
 
   return (
     <div className="space-y-3" data-testid="science-launch">
-      <div>
-        <label className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
-          {t("auditScienceBuild")}
-        </label>
-        <p className="mb-2 text-[10px] font-mono text-slate-500 leading-relaxed">
-          {t("auditScienceHint")}
-        </p>
-        {buildStatus?.run_id && (
-          <p className="mb-2 font-mono text-[10px] text-accent/80" data-testid="science-run-id">
-            {t("currentRun")} {buildStatus.run_id}
-          </p>
-        )}
-        <div className="mb-2">
+      <LaunchScope
+        t={t} scope={scope} setScope={setScope}
+        onLaunch={startBuild} onStop={stopBuild}
+        running={!!buildStatus?.running} busy={starting || sources.size === 0}
+        hint={scope === "test" ? t("launchScienceTestHint") : t("launchScienceFullHint")}
+        launchLabel={launchLabel}
+        launchTestId="audit-science-scan-btn"
+      >
+        <div>
           <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500 block mb-1">
             {t("auditScienceSources")}
           </span>
@@ -104,58 +106,30 @@ export default function ScienceCard({ t, rulesPayload }) {
             ))}
           </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            data-testid="audit-science-scan-btn"
-            onClick={startBuild}
-            disabled={starting || buildStatus?.running || sources.size === 0}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent/50 bg-accent/10 hover:bg-accent/20 disabled:opacity-70 disabled:cursor-not-allowed text-accent font-semibold text-xs rounded-sm"
-          >
-            {buildStatus?.running ? (
-              <><Loader2 size={13} className="animate-spin" /> {buildStatus.progress}/{buildStatus.total}</>
-            ) : (
-              <><FlaskConical size={13} /> {t("scienceScan")}</>
-            )}
-          </button>
-          {buildStatus?.running && (
-            <button
-              data-testid="audit-science-stop-btn"
-              onClick={stopBuild}
-              disabled={buildStatus?.cancelling}
-              className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-accent bg-accent/25 hover:bg-accent/40 disabled:opacity-60 text-accent font-bold text-xs rounded-sm"
-            >
-              <Square size={11} /> {buildStatus?.cancelling ? "…" : "Stop"}
-            </button>
-          )}
+      </LaunchScope>
+      {buildStatus?.run_id && (
+        <p className="font-mono text-[10px] text-accent/80" data-testid="science-run-id">
+          {t("currentRun")} {buildStatus.run_id}
+        </p>
+      )}
+      {buildStatus?.running && (
+        <p className="font-mono text-[10px] text-slate-400 flex items-center gap-1">
+          <Loader2 size={11} className="animate-spin" /> {buildStatus.progress}/{buildStatus.total}
+        </p>
+      )}
+      {summary && !buildStatus?.running && (
+        <div className="text-[9px] font-mono text-slate-500" data-testid="audit-science-summary">
+          <p>✓ +{summary.inserted ?? 0} · ~{summary.updated ?? 0} · {summary.unlocated ?? 0} {t("journalUnlocated")}</p>
+          {SOURCE_DEFS.filter((s) => perSource[s.id]).map((s) => {
+            const st = perSource[s.id];
+            return (
+              <p key={s.id} className="truncate">
+                {t(s.labelKey)} : {st.fetched ?? 0} · +{st.inserted ?? 0} · ~{st.updated ?? 0}
+              </p>
+            );
+          })}
         </div>
-        {summary && !buildStatus?.running && (
-          <div className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed" data-testid="audit-science-summary">
-            <p>✓ +{summary.inserted ?? 0} · ~{summary.updated ?? 0} · {summary.unlocated ?? 0} {t("scienceCount")} sans position</p>
-            {SOURCE_DEFS.filter((s) => perSource[s.id]).map((s) => {
-              const st = perSource[s.id];
-              return (
-                <p key={s.id} className="truncate">
-                  {t(s.labelKey)} : {st.fetched ?? 0} lues · +{st.inserted ?? 0} · ~{st.updated ?? 0}
-                  {st.error ? ` · ✗ ${String(st.error).slice(0, 60)}` : ""}
-                </p>
-              );
-            })}
-          </div>
-        )}
-        {buildStatus?.error && !buildStatus.running && (
-          <p className="mt-1.5 text-[9px] font-mono text-alert leading-relaxed">
-            ✗ {String(buildStatus.error).slice(0, 90)}
-          </p>
-        )}
-        {buildStatus?.running && buildStatus?.logs_tail?.length > 0 && (
-          <div
-            data-testid="audit-science-logs"
-            className="mt-1.5 text-[9px] font-mono text-slate-500 max-h-32 overflow-y-auto leading-relaxed bg-abyss/60 border border-line rounded-sm px-2 py-1"
-          >
-            {buildStatus.logs_tail.slice(-8).map((l, i) => <div key={i} className="truncate">{l}</div>)}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

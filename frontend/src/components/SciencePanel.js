@@ -25,9 +25,12 @@ const WMS_LAYERS = [
  * (Sextant/ODATIS/EDMED) + flotteurs Argo + tracés CSR, filtres par source,
  * couches WMS EMODnet.
  */
-export default function SciencePanel({ t, science, onFlyTo, onRefresh, scienceWms, onToggleWms }) {
+export default function SciencePanel({
+  t, science, onFlyTo, onRefresh, scienceWms, onToggleWms,
+  sourceFilter = "argo", onSourceFilter,
+}) {
   const [query, setQuery] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("all");
+  const setSourceFilter = onSourceFilter || (() => {});
   const features = science?.features || [];
 
   // Quand une moisson se termine, rafraîchir la carte + la liste.
@@ -96,19 +99,37 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh, scienceWm
             className="w-full bg-raised border border-line rounded-sm pl-7 pr-2 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-accent/50"
           />
         </div>
-        <div className="flex flex-wrap gap-1 mb-3" data-testid="science-source-filter">
+        <div className="flex flex-wrap gap-1 mb-2" data-testid="science-source-filter">
           {SOURCE_FILTERS.map((s) => (
             <button
               key={s.id}
+              type="button"
               data-testid={`science-filter-${s.id}`}
               onClick={() => setSourceFilter(s.id)}
-              className={`flex-1 px-1 py-1 font-mono text-[9px] uppercase tracking-wide border rounded-sm transition-colors ${
+              className={`px-1.5 py-1 font-mono text-[9px] uppercase tracking-wide border rounded-sm transition-colors ${
                 sourceFilter === s.id
                   ? "border-accent/60 bg-accent/15 text-accent"
                   : "border-line text-slate-500 hover:text-slate-300 hover:bg-raised"
               }`}
             >
               {s.labelKey ? t(s.labelKey) : s.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1 mb-3" data-testid="science-wms">
+          {WMS_LAYERS.map((layer) => (
+            <button
+              key={layer.id}
+              type="button"
+              data-testid={`science-wms-${layer.id}`}
+              onClick={() => onToggleWms && onToggleWms(layer.id, !(scienceWms && scienceWms[layer.id]))}
+              className={`px-1.5 py-1 font-mono text-[9px] uppercase tracking-wide border rounded-sm transition-colors ${
+                scienceWms && scienceWms[layer.id]
+                  ? "border-accent/60 bg-accent/15 text-accent"
+                  : "border-line text-slate-500 hover:text-slate-300 hover:bg-raised"
+              }`}
+            >
+              {t(layer.labelKey)}
             </button>
           ))}
         </div>
@@ -129,27 +150,7 @@ export default function SciencePanel({ t, science, onFlyTo, onRefresh, scienceWm
             </div>
           </div>
         </div>
-        <div className="mt-3" data-testid="science-wms">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-500 mb-1">{t("scienceWmsTitle")}</p>
-          <p className="font-mono text-[9px] text-slate-500 mb-1.5 leading-relaxed">{t("scienceWmsHint")}</p>
-          <div className="space-y-1">
-            {WMS_LAYERS.map((layer) => (
-              <label
-                key={layer.id}
-                data-testid={`science-wms-${layer.id}`}
-                className="flex items-center gap-2 px-1 py-0.5 cursor-pointer text-[11px] text-slate-300"
-              >
-                <input
-                  type="checkbox"
-                  checked={!!(scienceWms && scienceWms[layer.id])}
-                  onChange={(e) => onToggleWms && onToggleWms(layer.id, e.target.checked)}
-                  className="accent-[#a78bfa]"
-                />
-                <span>{t(layer.labelKey)}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <p className="font-mono text-[9px] text-slate-500 leading-relaxed mb-1">{t("scienceWmsHint")}</p>
       </div>
 
       <div className="flex-1 overflow-y-auto" data-testid="science-list">

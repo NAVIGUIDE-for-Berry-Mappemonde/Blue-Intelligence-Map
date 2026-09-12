@@ -11,6 +11,7 @@ import MarinasCard from "./MarinasCard";
 import CapitaineriesCard from "./CapitaineriesCard";
 import ProjectsCard from "./ProjectsCard";
 import ScienceCard from "./ScienceCard";
+import ExplainPanel from "./ExplainPanel";
 import { buildLaunchPayload, matchingProfile } from "../../lib/runRules";
 
 const BORDER = {
@@ -24,10 +25,11 @@ const BORDER = {
 
 const TABS = [
   { id: "launch", key: "consoleTabLaunch" },
-  { id: "rules", key: "consoleTabRules" },
   { id: "runs", key: "consoleTabRuns" },
   { id: "journal", key: "consoleTabJournal" },
+  { id: "rules", key: "consoleTabRules" },
   { id: "keys", key: "consoleTabKeys" },
+  { id: "explain", key: "consoleTabExplain" },
 ];
 
 export default function ConsoleShell({
@@ -179,6 +181,9 @@ export default function ConsoleShell({
         </div>
         <div className={tab === "keys" ? "" : "hidden"}>
           <ApiKeysPanel t={t} settings={settings} onSaved={onSettingsSaved} />
+        </div>
+        <div className={tab === "explain" ? "" : "hidden"}>
+          <ExplainPanel t={t} mode={mode} />
         </div>
       </CardShell>
     </div>

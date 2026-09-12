@@ -472,6 +472,202 @@ async def build_anchorages(
 
 
 # ---------------------------------------------------------------------------
+# Dump mondial (2026-09) — tuiles côtières, plus de corridor 25 NM.
+# Même mécanique que build_world_marinas : grille WORLD_TILES, curseur
+# reprenable, upsert par dedup_key, jamais de purge.
+# ---------------------------------------------------------------------------
+
+async def fetch_tile_anchorages(
+    client: httpx.AsyncClient,
+    tile: tuple[float, float, float, float],
+    *,
+    logger=None,
+) -> list[dict]:
+    """Bbox Overpass mouillages sur une tuile ; split récursif si trop vaste."""
+    from app.services.marina_build import overpass_fetch_bbox
+    from app.services.marina_world import (
+        should_split_before_overpass,
+        split_bbox,
+        tile_key,
+        tile_span_deg,
+    )
+    from app.services.osm_seeds import MIN_TILE_DEG
+
+    south, west, north, east = tile
+
+    async def _split(reason: str) -> list[dict]:
+        if logger:
+            logger(f"Tuile {tile_key(tile)} {reason} — split")
+        out: list[dict] = []
+        for sub in split_bbox(south, west, north, east):
+            await asyncio.sleep(1.2)
+            out.extend(await fetch_tile_anchorages(client, sub, logger=logger))
+        return out
+
+    if should_split_before_overpass(tile, min_span=MIN_TILE_DEG):
+        return await _split(f"trop vaste ({tile_span_deg(tile):.0f}°)")
+    body = anchorage_bbox_body(south, west, north, east)
+    try:
+        return await overpass_fetch_bbox(
+            south, west, north, east, client, logger=logger, body=body,
+        )
+    except Exception as exc:
+        if tile_span_deg(tile) > MIN_TILE_DEG:
+            return await _split(f"trop lourde ({type(exc).__name__})")
+        raise
+
+
+async def upsert_world_anchorage(coll, doc: dict) -> str:
+    """Upsert par dedup_key — on ne purge jamais, on ne duplique jamais."""
+    existing = await coll.find_one({"dedup_key": doc["dedup_key"]}, {"_id": 1})
+    if existing:
+        payload = dict(doc)
+        payload["_id"] = existing["_id"]
+        await coll.replace_one({"_id": existing["_id"]}, payload)
+        return "updated"
+    await coll.insert_one(doc)
+    return "inserted"
+
+
+async def build_world_anchorages(
+    *,
+    anchorages_coll,
+    cursor_coll,
+    state: BuildState,
+    route_path: Path,
+    resume: bool = True,
+    tiles: tuple[tuple[float, float, float, float], ...] | None = None,
+    client: httpx.AsyncClient | None = None,
+    throttle_s: float | None = None,
+    fetch_tile=None,
+) -> dict:
+    """
+    Balaye les tuiles côtières mondiales (comme les marinas) et upsert les
+    mouillages par dedup_key. La route ne sert plus qu'à calculer la
+    priorité / le waypoint le plus proche de chaque mouillage.
+    `fetch_tile` est injectable pour les tests (pas d'Overpass).
+    """
+    from app.services.marina_world import (
+        USER_AGENT as MW_USER_AGENT,
+        _throttle_s,
+        load_done_tiles,
+        mark_tile_done,
+        reset_cursor,
+        tile_key,
+    )
+    from app.services.osm_seeds import WORLD_TILES
+
+    state.running = True
+    state.started_at = time.time()
+    state.finished_at = None
+    state.error = None
+    state.logs = []
+    state.summary = None
+    state.cancel = False
+
+    grid = tiles or WORLD_TILES
+    pause = _throttle_s(throttle_s)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    try:
+        wps, _lines = load_route(route_path)
+        try:
+            await anchorages_coll.create_index("dedup_key", unique=True)
+            await anchorages_coll.create_index([("priority", 1), ("name", 1)])
+            await anchorages_coll.create_index("anchorage_type")
+        except Exception:
+            pass
+        if not resume:
+            await reset_cursor(cursor_coll)
+            state.log("Reprise désactivée — curseur tuiles remis à zéro (pas de purge)")
+
+        done = set(await load_done_tiles(cursor_coll)) if resume else set()
+        state.total = len(grid)
+        state.progress = 0
+        state.log(
+            f"Dump mondial mouillages : {len(grid)} tuiles, "
+            f"{len(done)} déjà faites, throttle={pause:.1f}s"
+        )
+
+        inserted = updated = fetched_raw = errors = skipped = 0
+        by_type: dict[str, int] = {}
+        own_client = client is None
+        http = client or httpx.AsyncClient(
+            headers={"User-Agent": MW_USER_AGENT},
+            timeout=httpx.Timeout(connect=15.0, read=130.0, write=20.0, pool=10.0),
+        )
+        try:
+            for tile in grid:
+                if getattr(state, "cancel", False):
+                    state.log("Stop demandé — dump mouillages interrompu")
+                    break
+                key = tile_key(tile)
+                if key in done:
+                    skipped += 1
+                    state.progress += 1
+                    continue
+                state.log(f"Tuile {key} — Overpass mouillages…")
+                try:
+                    if fetch_tile:
+                        elements = await fetch_tile(http, tile)
+                    else:
+                        elements = await fetch_tile_anchorages(http, tile, logger=state.log)
+                except Exception as exc:
+                    errors += 1
+                    state.log(f"Tuile {key} : {type(exc).__name__}: {str(exc)[:80]}")
+                    state.progress += 1
+                    await asyncio.sleep(pause)
+                    continue
+
+                fetched_raw += len(elements)
+                tile_ins = tile_upd = 0
+                for elem in elements:
+                    cand = _overpass_elem_to_anchorage(elem)
+                    if not cand:
+                        continue
+                    doc = _anchorage_doc(cand, wps, now_iso)
+                    result = await upsert_world_anchorage(anchorages_coll, doc)
+                    if result == "inserted":
+                        inserted += 1
+                        tile_ins += 1
+                    else:
+                        updated += 1
+                        tile_upd += 1
+                    t = doc.get("anchorage_type", "anchorage")
+                    by_type[t] = by_type.get(t, 0) + 1
+
+                await mark_tile_done(cursor_coll, key, now_iso)
+                state.progress += 1
+                state.log(f"Tuile {key} : {len(elements)} brut → +{tile_ins} / ~{tile_upd}")
+                await asyncio.sleep(pause)
+        finally:
+            if own_client:
+                await http.aclose()
+
+        summary = {
+            "tiles_total": len(grid),
+            "tiles_skipped": skipped,
+            "tiles_errors": errors,
+            "fetched_raw": fetched_raw,
+            "inserted": inserted,
+            "updated": updated,
+            "by_type": by_type,
+            "resume": resume,
+            "world": True,
+        }
+        state.summary = summary
+        state.log(f"Dump mondial mouillages terminé: {json.dumps(summary)}")
+        return summary
+    except Exception as e:
+        state.error = f"{type(e).__name__}: {e}"
+        state.log(f"FATAL: {state.error}")
+        raise
+    finally:
+        state.finished_at = time.time()
+        state.running = False
+
+
+# ---------------------------------------------------------------------------
 # GeoJSON serialiser
 # ---------------------------------------------------------------------------
 

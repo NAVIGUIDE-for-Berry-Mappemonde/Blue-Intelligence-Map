@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { circleOpts, POPUP_OPTS } from "./points";
 
 const esc = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -77,14 +78,32 @@ function popupHtml(p, t, { isArgo, isCruise }) {
   </div>`;
 }
 
+function sourceOf(p) {
+  return p.source || (p.kind === "argo_float" ? "argo" : p.kind === "cruise" ? "csr" : "");
+}
+
+function applyFilter(markers, tracks, group, tracksLayer, sourceFilter) {
+  const want = (lyr) => sourceFilter === "all" || lyr._biSource === sourceFilter;
+  if (group) {
+    group.clearLayers();
+    group.addLayers(markers.filter(want));
+  }
+  if (tracksLayer) {
+    tracksLayer.clearLayers();
+    tracks.filter(want).forEach((lyr) => tracksLayer.addLayer(lyr));
+  }
+}
+
 /**
- * Couche Science : datasets (disque plein), Argo (anneau), campagnes CSR
- * (polylines hors cluster). Popup : organisme, résumé, DOI, lien portail.
+ * Couche Science : pastilles canvas + tracés CSR. Le filtre source
+ * montre / cache les couches déjà construites (pas de clear+rebuild).
  */
 export default function useScienceLayer({
   mapObj, clusterRef, tracksLayerRef, markersById, science, tRef,
+  sourceFilter = "argo",
 }) {
   const sigRef = useRef("");
+  const builtRef = useRef({ markers: [], tracks: [] });
 
   useEffect(() => {
     const cluster = clusterRef.current;
@@ -99,16 +118,17 @@ export default function useScienceLayer({
     const sig = `${feats.length}:${argoCount}:${cruiseCount}:${first.id || ""}:${last.id || ""}`;
     if (sig === sigRef.current) return;
     sigRef.current = sig;
-    cluster.clearLayers();
-    if (tracksLayer) tracksLayer.clearLayers();
-    markersById.current.clear();
-
+    if (markersById?.current) markersById.current.clear();
+    const renderer = cluster._biRenderer;
+    const zoom = map.getZoom();
+    const popupOpts = { ...POPUP_OPTS, maxWidth: 330 };
     const markers = [];
+    const tracks = [];
     feats.forEach((f) => {
       const p = f.properties || {};
       const isArgo = p.kind === "argo_float";
       const isCruise = p.kind === "cruise";
-      const popupOpts = { maxWidth: 330, maxHeight: 420, autoPan: true, autoPanPadding: [40, 40] };
+      const src = sourceOf(p);
       if (isCruise && f.geometry?.type === "LineString") {
         const latlngs = (f.geometry.coordinates || [])
           .filter((pt) => Array.isArray(pt) && pt.length >= 2)
@@ -117,22 +137,31 @@ export default function useScienceLayer({
         const line = L.polyline(latlngs, {
           color: COLOR, weight: 2.5, opacity: 0.85, pane: "science-tracks",
         });
+        line._biSource = src;
         line.bindPopup(() => popupHtml(p, tRef.current, { isArgo: false, isCruise: true }), popupOpts);
-        if (tracksLayer) tracksLayer.addLayer(line);
-        markersById.current.set(p.id, line);
+        tracks.push(line);
+        if (markersById?.current) markersById.current.set(p.id, line);
         return;
       }
       const [lon, lat] = f.geometry?.coordinates || [0, 0];
-      const m = L.circleMarker([lat, lon], isArgo
-        ? { radius: 5, color: COLOR, weight: 2, fillColor: COLOR, fillOpacity: 0.25 }
-        : isCruise
-          ? { radius: 6, color: COLOR, weight: 2, fillColor: COLOR, fillOpacity: 0.45 }
-          : { radius: 6, color: COLOR, weight: 2, fillColor: COLOR, fillOpacity: 0.85 });
+      const fill = isArgo ? 0.25 : isCruise ? 0.45 : 0.85;
+      const m = L.circleMarker([lat, lon], circleOpts(COLOR, {
+        zoom, fillOpacity: fill, renderer,
+      }));
+      m._biSource = src;
       m.bindPopup(() => popupHtml(p, tRef.current, { isArgo, isCruise }), popupOpts);
-      markersById.current.set(p.id, m);
+      if (markersById?.current) markersById.current.set(p.id, m);
       markers.push(m);
     });
-    cluster.addLayers(markers);
+    builtRef.current = { markers, tracks };
+    applyFilter(markers, tracks, cluster, tracksLayer, sourceFilter);
     // eslint-disable-next-line
   }, [science]);
+
+  useEffect(() => {
+    const cluster = clusterRef.current;
+    const tracksLayer = tracksLayerRef && tracksLayerRef.current;
+    if (!cluster) return;
+    applyFilter(builtRef.current.markers, builtRef.current.tracks, cluster, tracksLayer, sourceFilter);
+  }, [sourceFilter, clusterRef, tracksLayerRef]);
 }

@@ -140,7 +140,7 @@ export default function Header({
               <Radar size={13} /> {t("audit")}
             </button>
           )}
-          {isAdmin && (
+          {isAdmin && mode !== "science" && (
             <button
               data-testid="view-toggle-review"
               onClick={() => setView("review")}

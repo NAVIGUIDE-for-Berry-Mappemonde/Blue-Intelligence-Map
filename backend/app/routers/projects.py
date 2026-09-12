@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.core.tasks import new_task, prune_tasks
 from app.db import db, get_settings
 from app.services.swarm_pipeline import now_iso
+from app.services.geojson_import import empty_import_result, parse_feature_collection
 from app.state import swarm
 from app.static_data.categories import CATEGORY_GROUPS, normalize_category
 
@@ -85,9 +86,11 @@ async def export_geojson():
 
 @router.post("/import/geojson")
 async def import_geojson(fc: dict = Body(...)):
-    feats = fc.get("features") or []
-    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+    kind, feats = parse_feature_collection(fc)
+    if kind == "invalid":
         raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    if kind == "empty":
+        return empty_import_result("total_projects", await db.projects.count_documents({}))
     existing = await db.projects.find({}, {"url": 1, "title": 1, "lat": 1, "lon": 1, "funders": 1}).to_list(50000)
     seen_urls = {e.get("url") for e in existing}
     grid = {}

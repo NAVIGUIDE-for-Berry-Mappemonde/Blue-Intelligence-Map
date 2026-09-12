@@ -404,7 +404,7 @@ def test_frontend_fiche_has_no_generate_button():
     assert "review-kind-switch" not in review
     assert "review-gold" in review
     assert "onChoice" in review
-    assert "map-show-review" in (root / "components" / "MapView.js").read_text(encoding="utf-8")
+    assert "map-show-review" not in (root / "components" / "MapView.js").read_text(encoding="utf-8")
     assert "reviewShowReview" in (root / "i18n.js").read_text(encoding="utf-8")
     label_js = (root / "components" / "map" / "zoneLabel.js").read_text(encoding="utf-8")
     assert "disambiguated" in label_js

@@ -56,9 +56,9 @@ async def list_amp(bbox: str = "", force: bool = False, visible: bool = False,
         # ProtectedSeas). Au-delà de 60° un polygone bbox dépasse l'hémisphère
         # que Mongo accepte pour $geoIntersects → on liste tout le cache.
         if span >= 60:
-            docs = await db.amp_sites.find({}).limit(400).to_list(400)
+            docs = await db.amp_sites.find({}).limit(8000).to_list(8000)
         else:
-            docs = await amp_svc.query_cache(db, box, limit=400)
+            docs = await amp_svc.query_cache(db, box, limit=8000)
         if visible or review:
             from app.services.review_gold import filter_visible
             docs = await filter_visible(
@@ -67,7 +67,7 @@ async def list_amp(bbox: str = "", force: bool = False, visible: bool = False,
         return amp_svc.to_feature_collection(docs, extra={
             "hint": "zoom" if not docs else None,
             "source": "cache",
-            "truncated": len(docs) >= 400,
+            "truncated": len(docs) >= 8000,
             "fetched": 0,
         })
     docs, meta = await amp_svc.sites_in_bbox(db, box, force=force)

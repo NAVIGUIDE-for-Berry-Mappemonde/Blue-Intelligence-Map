@@ -155,7 +155,10 @@ def osm_website_from_tags(tags: dict | None) -> str | None:
 def element_name(tags: dict | None) -> str:
     """Nom OSM réel, ou vide — on n'invente pas « Marina @ lat,lon »."""
     tags = tags or {}
-    for key in ("name", "name:fr", "name:en", "official_name", "alt_name"):
+    for key in (
+        "name", "name:fr", "name:en", "official_name", "alt_name",
+        "loc_name", "seamark:name", "seamark:harbour:name", "operator",
+    ):
         val = str(tags.get(key) or "").strip()
         if val:
             return val[:120]

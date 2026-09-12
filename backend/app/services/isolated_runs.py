@@ -478,3 +478,34 @@ async def get_meta_run(db, dataset: str, run_id: str) -> dict | None:
         "chosen": rules.get("chosen") or {},
         "params": {"rules": rules},
     }
+
+
+LIVE_COLL = {
+    "marinas": "marinas",
+    "capitaineries": "capitaineries",
+}
+
+_PROMOTE_SKIP = {
+    "run_id", "wrote_marinas", "wrote_capitaineries", "wrote_amp_sites",
+}
+
+
+async def promote_run_to_live(db, dataset: str, run_id: str) -> int:
+    """Copie les fiches d'un run terminé vers la collection publique."""
+    spec = spec_for(dataset)
+    live_name = LIVE_COLL.get(dataset)
+    if not live_name or not run_id:
+        return 0
+    dest = coll(db, live_name)
+    n = 0
+    async for doc in coll(db, spec.items_coll).find({"run_id": run_id}):
+        live = {k: v for k, v in doc.items() if k not in _PROMOTE_SKIP}
+        live_id = str(
+            doc.get("source_id")
+            or doc.get("osm_id")
+            or str(doc.get("_id")).split(":", 1)[-1]
+        )
+        live["_id"] = live_id
+        await dest.update_one({"_id": live_id}, {"$set": live}, upsert=True)
+        n += 1
+    return n

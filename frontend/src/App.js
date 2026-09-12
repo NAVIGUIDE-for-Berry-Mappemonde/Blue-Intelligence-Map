@@ -47,8 +47,28 @@ const readInitialMode = () => {
   return "projects";
 };
 
+const readInitialLang = () => {
+  try {
+    const v = localStorage.getItem("bi.lang");
+    if (v === "fr" || v === "en") return v;
+  } catch (_) { /* disabled */ }
+  return "fr";
+};
+
+const readInitialBasemap = () => {
+  try {
+    const v = localStorage.getItem("bi.basemap");
+    if (v === "dark" || v === "light" || v === "sea") return v;
+  } catch (_) { /* disabled */ }
+  return "sea";
+};
+
 export default function App() {
-  const [lang, setLang] = useState("en");
+  const [lang, setLangRaw] = useState(readInitialLang);
+  const setLang = useCallback((l) => {
+    setLangRaw(l);
+    try { localStorage.setItem("bi.lang", l); } catch (_) { /* ignore */ }
+  }, []);
   const [view, setView] = useState("map");
   // Mode admin — Console et Review ne sont visibles qu'après validation de la
   // clé (?admin=<clé> dans l'URL, mémorisée par api.js) par le backend.
@@ -68,7 +88,14 @@ export default function App() {
   const [funders, setFunders] = useState({ total: 0, funders: [] });
   const [funderFilter, setFunderFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
-  const [basemap, setBasemap] = useState("dark");
+  const [basemap, setBasemapRaw] = useState(readInitialBasemap);
+  const setBasemap = useCallback((v) => {
+    setBasemapRaw(v);
+    try { localStorage.setItem("bi.basemap", v); } catch (_) { /* ignore */ }
+  }, []);
+  const [scienceSourceFilter, setScienceSourceFilter] = useState("argo");
+  const [ampLfpFilter, setAmpLfpFilter] = useState("All");
+  const [flyToProject, setFlyToProject] = useState(null);
   const [settings, setSettings] = useState(null);
   const [showReport, setShowReport] = useState(false);
   const [categories, setCategories] = useState([]);
@@ -114,8 +141,6 @@ export default function App() {
   const [zoneFiche, setZoneFiche] = useState(null);
   const [ficheLoading, setFicheLoading] = useState(false);
   const [mapEpoch, setMapEpoch] = useState(0);
-  const [showReview, setShowReview] = useState(false);
-  useEffect(() => { lastTotalRef.current = -1; }, [showReview]);
   const [flyToPoe, setFlyToPoe] = useState(null);
   const [ampSites, setAmpSites] = useState({ type: "FeatureCollection", features: [] });
   const [flyToAmp, setFlyToAmp] = useState(null);
@@ -146,6 +171,7 @@ export default function App() {
     lastFitKeyRef.current = "";
     setModeRaw(m);
     try { localStorage.setItem("bi.mode", m); } catch (_) { /* ignore */ }
+    if (m === "science" && viewRef.current === "review") setView("map");
   }, []);
 
   useEffect(() => {
@@ -176,16 +202,15 @@ export default function App() {
         }
         return;
       }
-      const params = showReview ? { visible: 1 } : {};
-      const f = await api.get("/funders", { params: { ...params } });
+      const f = await api.get("/funders");
       setFunders(f.data);
       if (force || f.data.total !== lastTotalRef.current) {
-        const p = await api.get("/projects", { params });
+        const p = await api.get("/projects");
         setProjects(p.data);
         lastTotalRef.current = f.data.total;
       }
     } catch (e) { /* transient */ }
-  }, [showReview]);
+  }, []);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -207,15 +232,13 @@ export default function App() {
   const fetchMarinas = useCallback(async (force = false) => {
     try {
       const run = mapRunsRef.current.marinas;
-      if (!force && !run?.id && !showReview
-          && (marinasRef.current?.features?.length || 0) > 1000) {
+      if (!force && !run?.id
+          && (marinasRef.current?.features?.length || 0) > 0) {
         return;
       }
-      // Dump mondial (~32 000 features) : sur un Mongo distant lent, la
-      // requête peut dépasser les 120 s du timeout axios par défaut.
       const { data } = run?.id
         ? await api.get(`/marinas/runs/${run.id}/geojson`, { timeout: 300000 })
-        : await api.get("/marinas", { params: showReview ? { visible: 1 } : {}, timeout: 300000 });
+        : await api.get("/marinas", { timeout: 300000 });
       setMarinas(data);
       if (run?.id) {
         const n = data?.features?.length || 0;
@@ -227,14 +250,18 @@ export default function App() {
         }
       }
     } catch (e) { /* transient */ }
-  }, [showReview]);
+  }, []);
 
-  const fetchCapitaineries = useCallback(async () => {
+  const capitaineriesRef = useRef(capitaineries);
+  capitaineriesRef.current = capitaineries;
+
+  const fetchCapitaineries = useCallback(async (force = false) => {
     try {
       const run = mapRunsRef.current.capitaineries;
+      if (!force && !run?.id && (capitaineriesRef.current?.features?.length || 0) > 0) return;
       const { data } = run?.id
         ? await api.get(`/capitaineries/runs/${run.id}/geojson`)
-        : await api.get("/capitaineries", { params: showReview ? { visible: 1 } : {} });
+        : await api.get("/capitaineries");
       setCapitaineries(data);
       if (run?.id) {
         const n = data?.features?.length || 0;
@@ -246,7 +273,7 @@ export default function App() {
         }
       }
     } catch (e) { /* transient */ }
-  }, [showReview]);
+  }, []);
 
   // Phase 8 — anchorages fetcher
   const fetchAnchorages = useCallback(async () => {
@@ -267,28 +294,32 @@ export default function App() {
 
   const fetchPoeZones = useCallback(async () => {
     try {
-      const { data } = await api.get("/poe/zones", { params: showReview ? { visible: 1 } : {} });
+      const { data } = await api.get("/poe/zones");
       setPoeZones(data);
     } catch (e) { /* transient */ }
     finally { setPoeZonesLoading(false); }
-  }, [showReview]);
+  }, []);
 
-  const fetchPoePorts = useCallback(async () => {
+  const poePortsRef = useRef(poePorts);
+  poePortsRef.current = poePorts;
+
+  const fetchPoePorts = useCallback(async (force = false) => {
     try {
       const run = mapRunsRef.current.formalities;
+      if (!force && !run?.id && (poePortsRef.current?.features?.length || 0) > 0) return;
       const { data } = run?.id
         ? await api.get(`/poe/runs/${run.id}/ports`)
-        : await api.get("/poe/ports", { params: showReview ? { visible: 1 } : {} });
+        : await api.get("/poe/ports");
       setPoePorts(data);
     } catch (e) { /* transient */ }
-  }, [showReview]);
+  }, []);
 
   const refreshMapData = useCallback(() => {
     fetchProjects(true);
     fetchMarinas(true);
-    fetchCapitaineries();
+    fetchCapitaineries(true);
     fetchPoeZones();
-    fetchPoePorts();
+    fetchPoePorts(true);
     setMapEpoch((n) => n + 1);
   }, [fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoeZones, fetchPoePorts]);
 
@@ -440,19 +471,17 @@ export default function App() {
       }
       await fetchMarinas();
     };
-    const s = setInterval(fetchStatus, 2000);
-    const p = setInterval(unlessReview(() => fetchProjects()), 5000);
-    const c = setInterval(fetchCategories, 15000);
-    // Full GeoJSON is expensive; MarinasPanel already refreshes when a dump ends.
-    const m = setInterval(fetchMarinasIfIdle, 8000);
-    const cap = setInterval(unlessReview(fetchCapitaineries), 8000);
-    const a = setInterval(unlessReview(fetchAnchorages), 10000);
-    // La moisson Science est manuelle et le GeoJSON volumineux (~7 Mo) —
-    // poll espacé (60s, comme marinas) ; SciencePanel force un refresh
-    // dès qu'un build se termine.
-    const sci = setInterval(unlessReview(fetchScience), 60000);
-    const z = setInterval(unlessReview(fetchPoeZones), 12000);
-    const pp = setInterval(unlessReview(fetchPoePorts), 12000);
+    // Polls espacés (fluidité) : les GeoJSON complets sont lourds ; les
+    // panneaux forcent un refresh ciblé dès qu'un build se termine.
+    const s = setInterval(fetchStatus, 4000);
+    const p = setInterval(unlessReview(() => fetchProjects()), 30000);
+    const c = setInterval(fetchCategories, 60000);
+    const m = setInterval(fetchMarinasIfIdle, 180000);
+    const cap = setInterval(unlessReview(() => fetchCapitaineries()), 60000);
+    const a = setInterval(unlessReview(fetchAnchorages), 120000);
+    const sci = setInterval(unlessReview(fetchScience), 180000);
+    const z = setInterval(unlessReview(fetchPoeZones), 60000);
+    const pp = setInterval(unlessReview(() => fetchPoePorts()), 60000);
     return () => {
       clearTimeout(later);
       clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m);
@@ -524,12 +553,21 @@ export default function App() {
     }
   }, [ampSites, mapRuns]);
 
-  // Changement de run sélectionné => re-fetch immédiat des datasets carte.
+  // Changement de run sélectionné => re-fetch immédiat du dataset concerné.
+  const prevMapRunsRef = useRef({});
   useEffect(() => {
-    fetchProjects(true);
-    fetchMarinas(true);
-    fetchCapitaineries();
-    fetchPoePorts();
+    const prev = prevMapRunsRef.current;
+    const next = mapRuns;
+    prevMapRunsRef.current = next;
+    const changed = Object.keys({ ...prev, ...next }).filter(
+      (k) => (prev[k]?.id || null) !== (next[k]?.id || null),
+    );
+    if (!changed.length) return;
+    if (changed.includes("projects")) fetchProjects(true);
+    if (changed.includes("marinas")) fetchMarinas(true);
+    if (changed.includes("capitaineries")) fetchCapitaineries(true);
+    if (changed.includes("formalities")) fetchPoePorts(true);
+    if (changed.includes("amp")) setMapEpoch((n) => n + 1);
   }, [mapRuns, fetchProjects, fetchMarinas, fetchCapitaineries, fetchPoePorts]);
 
   // Handler passed to MarinasPanel — sets a one-shot fly target consumed by MapView
@@ -572,12 +610,12 @@ export default function App() {
     }
     let alive = true;
     setFicheLoading(true);
-    api.get(`/poe/zones/${selectedZone}`, { params: showReview ? { review: 1 } : {} })
+    api.get(`/poe/zones/${selectedZone}`)
       .then(({ data }) => { if (alive) setZoneFiche(data); })
       .catch(() => { if (alive) setZoneFiche(null); })
       .finally(() => { if (alive) setFicheLoading(false); });
     return () => { alive = false; };
-  }, [selectedZone, mapEpoch, showReview]);
+  }, [selectedZone, mapEpoch]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-abyss" data-mode={mode}>
@@ -597,6 +635,7 @@ export default function App() {
             funderFilter={funderFilter} setFunderFilter={setFunderFilter}
             searchQuery={searchQuery} setSearchQuery={setSearchQuery}
             categories={categories} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter}
+            onFlyTo={(id, lat, lon) => setFlyToProject({ id, lat, lon, ts: Date.now() })}
             onReport={() => setShowReport(true)}
           />
         )}
@@ -633,6 +672,8 @@ export default function App() {
           <AmpPanel
             t={t}
             sites={ampSites}
+            lfpFilter={ampLfpFilter}
+            onLfpFilter={setAmpLfpFilter}
             onFlyTo={handleFlyToAmp}
           />
         )}
@@ -642,12 +683,17 @@ export default function App() {
             science={science}
             onFlyTo={handleFlyToScience}
             onRefresh={fetchScience}
+            sourceFilter={scienceSourceFilter}
+            onSourceFilter={setScienceSourceFilter}
             scienceWms={scienceWms}
             onToggleWms={toggleScienceWms}
           />
         )}
         <main className="flex-1 relative min-w-0">
-          {view === "map" ? (
+          <div
+            className={view === "map" ? "absolute inset-0" : "absolute inset-0 invisible pointer-events-none"}
+            aria-hidden={view !== "map"}
+          >
             <MapView
               mode={mode}
               projects={projects}
@@ -657,10 +703,10 @@ export default function App() {
               science={science}
               flyToScience={flyToScience}
               scienceWms={scienceWms}
+              scienceSourceFilter={scienceSourceFilter}
+              ampLfpFilter={ampLfpFilter}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
-              showReview={showReview}
-              setShowReview={setShowReview}
               poeZones={poeZones.items}
               poePorts={poePorts}
               onSelectZone={handleSelectZone}
@@ -668,30 +714,34 @@ export default function App() {
               flyToZone={flyToZone}
               flyToPoe={flyToPoe}
               flyToAmp={flyToAmp}
+              flyToProject={flyToProject}
               fitRunBounds={fitRunBounds}
               ampRunId={mapRuns.amp?.id || null}
               onAmpSites={setAmpSites}
               zoneFiche={zoneFiche}
               funderFilter={funderFilter} searchQuery={searchQuery} t={t}
               basemap={basemap} categories={categories} categoryFilter={categoryFilter}
-              maxMarkers={settings?.max_markers || 1000} minZoom={settings?.min_zoom || 2} />
-          ) : view === "audit" ? (
+              minZoom={settings?.min_zoom || 2}
+              mapVisible={view === "map"}
+              mapRun={mapRuns[mode] || null} />
+          </div>
+          {view === "audit" ? (
             <AuditView t={t} lang={lang} mode={mode} status={status} refresh={() => { fetchStatus(); fetchProjects(); }}
               settings={settings} onSettingsSaved={fetchSettings}
-              onPoeRefresh={() => { fetchPoeZones(); fetchPoePorts(); }}
+              onPoeRefresh={() => { fetchPoeZones(); fetchPoePorts(true); }}
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
-          ) : mode === "science" ? (
-            // La Review n'est pas branchée sur Science : les fiches viennent
-            // telles quelles des catalogues officiels (pas de pipeline LLM).
-            <div className="h-full flex items-center justify-center p-8" data-testid="review-science-placeholder">
-              <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
-                {t("reviewScienceUnavailable")}
-              </p>
-            </div>
-          ) : (
-            <ReviewView t={t} mode={mode} onMapDirty={refreshMapData} />
-          )}
+          ) : view === "review" ? (
+            mode === "science" ? (
+              <div className="h-full flex items-center justify-center p-8" data-testid="review-science-placeholder">
+                <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
+                  {t("reviewScienceUnavailable")}
+                </p>
+              </div>
+            ) : (
+              <ReviewView t={t} mode={mode} onMapDirty={refreshMapData} />
+            )
+          ) : null}
         </main>
           {showSettings && (
           <SettingsPanel t={t} lang={lang} mode={mode} settings={settings}
@@ -702,7 +752,7 @@ export default function App() {
             // dataset (never both, to avoid unnecessary re-fetches).
             onImported={(importedMode) => {
               if (importedMode === "marinas") fetchMarinas(true);
-              else if (importedMode === "capitaineries") fetchCapitaineries();
+              else if (importedMode === "capitaineries") fetchCapitaineries(true);
               else if (importedMode === "science") fetchScience();
               else fetchProjects(true);
             }}

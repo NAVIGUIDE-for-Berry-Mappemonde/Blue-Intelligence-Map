@@ -662,8 +662,17 @@ async def upsert_osm(coll, cand: dict, now_iso: str) -> str:
     patch["enriched"] = False
     patch["stale"] = False
     fill_contact(patch, cand.get("telephone"), cand.get("canal_vhf"))
-    await coll.insert_one(patch)
-    return "inserted"
+    try:
+        await coll.insert_one(patch)
+        return "inserted"
+    except Exception as exc:
+        if type(exc).__name__ != "DuplicateKeyError":
+            raise
+        existing = await coll.find_one(identity_query("osm_id", osm_id))
+        if existing:
+            await coll.update_one({"_id": existing["_id"]}, {"$set": patch})
+            return "updated"
+        raise
 
 
 async def upsert_shom(coll, cand: dict, now_iso: str, osm_pts: list[dict]) -> str:

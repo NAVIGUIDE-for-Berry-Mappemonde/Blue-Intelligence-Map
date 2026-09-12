@@ -381,6 +381,9 @@ TAGINFO_CATALOG: tuple[dict[str, Any], ...] = (
     },
 )
 
+# Golfe de Gascogne — tuile Console Test (WORLD_TILES[0] est trop vaste).
+TEST_TILE: tuple[float, float, float, float] = (46.0, -2.0, 48.5, 0.5)
+
 # (south, west, north, east) — assez petits pour Overpass public ; split auto sinon.
 WORLD_TILES: tuple[tuple[float, float, float, float], ...] = (
     (-60.0, -180.0, -15.0, -90.0),

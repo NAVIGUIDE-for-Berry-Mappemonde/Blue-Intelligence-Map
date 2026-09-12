@@ -419,25 +419,77 @@ def _point_geom(lat: float | None, lon: float | None) -> dict | None:
     return {"type": "Point", "coordinates": [float(lon), float(lat)]}
 
 
+def _ring_area(ring: list) -> float:
+    if not ring or len(ring) < 3:
+        return 0.0
+    area = 0.0
+    for i in range(len(ring) - 1):
+        x1, y1 = float(ring[i][0]), float(ring[i][1])
+        x2, y2 = float(ring[i + 1][0]), float(ring[i + 1][1])
+        area += x1 * y2 - x2 * y1
+    return abs(area) * 0.5
+
+
+def _ring_centroid(ring: list) -> tuple[float | None, float | None]:
+    if not ring or len(ring) < 1:
+        return None, None
+    if len(ring) < 3:
+        return float(ring[0][1]), float(ring[0][0])
+    area2 = 0.0
+    cx = 0.0
+    cy = 0.0
+    for i in range(len(ring) - 1):
+        x1, y1 = float(ring[i][0]), float(ring[i][1])
+        x2, y2 = float(ring[i + 1][0]), float(ring[i + 1][1])
+        cross = x1 * y2 - x2 * y1
+        area2 += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(area2) < 1e-12:
+        return float(ring[0][1]), float(ring[0][0])
+    cx /= (3.0 * area2)
+    cy /= (3.0 * area2)
+    return cy, cx
+
+
 def _centroid(geom: dict | None) -> tuple[float | None, float | None]:
+    """Centroïde de l'anneau extérieur (ou du plus grand polygone)."""
     if not geom:
         return None, None
-    coords: list[list[float]] = []
+    kind = geom.get("type")
+    coords = geom.get("coordinates")
+    if kind == "Point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        return float(coords[1]), float(coords[0])
+    if kind == "Polygon" and coords:
+        return _ring_centroid(coords[0])
+    if kind == "MultiPolygon" and coords:
+        best = None
+        best_a = -1.0
+        for poly in coords:
+            if not poly:
+                continue
+            area = _ring_area(poly[0])
+            if area > best_a:
+                best_a = area
+                best = poly[0]
+        if best:
+            return _ring_centroid(best)
+    flat: list[list[float]] = []
 
     def walk(node):
         if not node:
             return
         if isinstance(node[0], (int, float)) and len(node) >= 2:
-            coords.append([float(node[0]), float(node[1])])
+            flat.append([float(node[0]), float(node[1])])
             return
         for child in node:
             walk(child)
 
-    walk(geom.get("coordinates"))
-    if not coords:
+    walk(coords)
+    if not flat:
         return None, None
-    lon = sum(c[0] for c in coords) / len(coords)
-    lat = sum(c[1] for c in coords) / len(coords)
+    lon = sum(c[0] for c in flat) / len(flat)
+    lat = sum(c[1] for c in flat) / len(flat)
     return lat, lon
 
 

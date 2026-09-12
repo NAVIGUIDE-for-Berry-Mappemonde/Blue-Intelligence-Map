@@ -24,6 +24,7 @@ from app.services.science_build import (
     to_slim_geojson,
 )
 from app.services.swarm_pipeline import now_iso
+from app.services.geojson_import import empty_import_result, parse_feature_collection
 
 router = APIRouter(prefix="/api")
 
@@ -81,9 +82,11 @@ async def export_science():
 
 @router.post("/import/science.geojson")
 async def import_science_geojson(fc: dict = Body(...)):
-    feats = fc.get("features") or []
-    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+    kind, feats = parse_feature_collection(fc)
+    if kind == "invalid":
         raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    if kind == "empty":
+        return empty_import_result("total_science", await db.science_items.count_documents({}))
     imported = updated = invalid = 0
     now = now_iso()
     for f in feats:
@@ -170,6 +173,8 @@ class ScienceBuildBody(BaseModel):
     sources: list[str] | None = None
     profile: str | None = None
     rules: dict | None = None
+    scope: str | None = None
+    max_records: int | None = None
 
 
 @router.post("/science/build")
@@ -216,10 +221,14 @@ async def science_build_start(body: ScienceBuildBody | None = None):
         rules_token = bind_rules(rules)
         error = None
         try:
+            cap = body.max_records
+            if (body.scope or "").lower() == "test":
+                cap = cap or 80
             await build_science(
                 coll=db.science_items,
                 state=BUILD_STATE,
                 sources=sources,
+                max_records=cap,
                 run_id=run_id,
             )
         except Exception as exc:

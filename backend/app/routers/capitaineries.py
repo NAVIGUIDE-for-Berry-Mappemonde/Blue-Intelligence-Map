@@ -24,6 +24,8 @@ from app.services.capitainerie_world import (
 )
 from app.services.marina_world import official_website
 from app.services.swarm_pipeline import now_iso
+from app.services.geojson_import import empty_import_result, parse_feature_collection
+from app.services.osm_seeds import TEST_TILE
 
 router = APIRouter(prefix="/api")
 
@@ -40,9 +42,12 @@ async def _all_docs(q: dict | None = None, projection: dict | None = None) -> li
 
 @router.post("/import/capitaineries.geojson")
 async def import_capitaineries_geojson(fc: dict = Body(...)):
-    feats = fc.get("features") or []
-    if fc.get("type") != "FeatureCollection" or not isinstance(feats, list) or not feats:
+    kind, feats = parse_feature_collection(fc)
+    if kind == "invalid":
         raise HTTPException(400, "invalid GeoJSON FeatureCollection")
+    if kind == "empty":
+        return empty_import_result(
+            "total_capitaineries", await db.capitaineries.count_documents({}))
     imported = updated = invalid = 0
     for f in feats:
         try:
@@ -113,6 +118,16 @@ async def list_capitaineries(source: str | None = None, visible: bool = False,
     if source:
         q["source"] = source
     docs = await _all_docs(q)
+    if not docs and not (visible or review):
+        last = await db.capitainerie_runs.find_one(
+            {"state": "done"},
+            sort=[("finished_at", -1), ("created_at", -1)],
+        )
+        if last:
+            cur = db.capitainerie_run_sites.find(
+                {"run_id": last["_id"]}, SLIM_PROJECTION or {}
+            ).sort("name", 1)
+            docs = [d async for d in cur]
     if visible or review:
         from app.services.review_gold import filter_visible
         docs = await filter_visible(
@@ -137,6 +152,7 @@ class BuildBody(BaseModel):
     resume: bool = True
     profile: str | None = None
     rules: dict | None = None
+    scope: str | None = None
     tiles: list[list[float]] | None = None
     skip_shom: bool = False
     skip_noaa: bool = False
@@ -179,6 +195,8 @@ async def capitaineries_build_start(body: BuildBody | None = None):
     recorder = opened["recorder"]
     BUILD_STATE.run_id = run_id
     isolated_runs.reset_run(opened["token"])
+    scope = (body.scope or "full").lower()
+    test_tiles = (TEST_TILE,) if scope == "test" else None
 
     async def _runner():
         rules_token = bind_rules(rules)
@@ -187,16 +205,31 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                 coll=db.capitainerie_run_sites,
                 cursor_coll=db.capitainerie_run_cursors,
                 state=BUILD_STATE,
-                resume=body.resume,
-                tiles=tiles,
-                skip_shom=body.skip_shom,
-                skip_noaa=body.skip_noaa,
+                resume=body.resume and scope != "test",
+                tiles=test_tiles or tiles,
+                skip_shom=scope == "test" or body.skip_shom,
+                skip_noaa=scope == "test" or body.skip_noaa,
                 run_id=run_id,
                 recorder=recorder,
             )
+            extra = dict(BUILD_STATE.summary or {})
+            if scope == "full" and not BUILD_STATE.cancel:
+                extra["promoted"] = await isolated_runs.promote_run_to_live(
+                    db, "capitaineries", run_id)
             await isolated_runs.finalize_run(
-                db, "capitaineries", run_id, extra=BUILD_STATE.summary,
+                db, "capitaineries", run_id, extra=extra,
                 cancelled=bool(BUILD_STATE.cancel))
+            # Full : « dump mondial, puis enrichissement » — par priorité,
+            # stoppable, garde crédits OpenRouter dans l'endpoint.
+            if scope == "full" and not BUILD_STATE.cancel and not ENRICH_BATCH_STATE.running:
+                try:
+                    BUILD_STATE.log("Chaînage — enrichissement par priorité")
+                    await enrich_batch(EnrichBatchBody(limit=0))
+                except HTTPException:
+                    pass
+                except Exception as chain_exc:
+                    BUILD_STATE.log(
+                        f"enrich chaîné: {type(chain_exc).__name__}: {str(chain_exc)[:60]}")
         except Exception as exc:
             BUILD_STATE.log(f"build crashed: {type(exc).__name__}: {exc}")
             await isolated_runs.finalize_run(
