@@ -182,3 +182,126 @@ def test_router_exposes_journal():
     from app.routers import project_runs as pr
     paths = {getattr(r, "path", "") for r in pr.router.routes}
     assert "/api/projects/runs/{run_id}/journal" in paths
+
+
+def _snapshot_params(**extra):
+    from app.core.run_rules import attach_rules, snapshot_for_run
+    from app.services.run_fingerprint import merge_run_params
+    rules = snapshot_for_run(mode="projects", settings={})
+    params = attach_rules(merge_run_params({
+        "mode": "full",
+        "label": "from-scratch-all",
+        "force_rescan": True,
+        "wrote_projects": False,
+        "profile": rules["profile"],
+        "openrouter_api_key": "sk-secret-must-not-leak",
+        **extra,
+    }, {
+        "git_sha": "deadbeefcafebabe",
+        "git_dirty": False,
+        "tinyfish_configured": True,
+        "serper_configured": False,
+        "openrouter_configured": True,
+        "nvidia_configured": False,
+        "claude_enabled": False,
+        "openrouter_api_key": "also-secret",
+    }), rules)
+    return params
+
+
+def test_public_params_strip_secrets_and_keep_rules():
+    params = _snapshot_params()
+    pub = run_journal.public_run_params(params)
+    blob = json.dumps(pub)
+    assert "sk-secret" not in blob
+    assert "also-secret" not in blob
+    assert "api_key" not in blob
+    assert pub["wrote_projects"] is False
+    assert pub["profile"]
+    assert pub["rules"]["shared.no_snap"]["value"] is True
+    assert "projects.max_partner_orgs" in pub["rules"]
+    again = run_journal.public_run_params(pub)
+    assert again["rules"]["shared.no_snap"]["value"] is True
+    assert again["profile"] == pub["profile"]
+
+
+def test_journal_txt_starts_with_params_and_rules():
+    params = _snapshot_params()
+    items = [
+        {"kind": "meta", "msg": "Run params", "params": run_journal.public_run_params(params),
+         "ts": "2026-09-12T19:00:00Z"},
+        {"kind": "log", "level": "info", "msg": "Isolated run — wrote_projects: false",
+         "ts": "2026-09-12T19:00:01Z"},
+    ]
+    text = run_journal.journal_to_text("20260912-190000-txt001", items)
+    assert "# --- Paramètres ---" in text
+    assert "# --- Règles" in text
+    assert "shared.no_snap" in text
+    assert "max_partner_orgs" in text
+    assert "from-scratch-all" in text
+    assert "wrote_projects: false" in text
+    assert "sk-secret" not in text
+    assert "Isolated run" in text
+    assert "# --- Récit ---" in text
+    # la ligne meta n'est pas rejouée dans le flux horodaté
+    assert "19:00:00 INFO" not in text
+
+
+def test_header_reconstructed_from_mongo_params_without_meta():
+    params = _snapshot_params()
+    items = [{"kind": "log", "msg": "hello old run", "ts": "2026-09-12T18:00:00Z",
+              "level": "info"}]
+    text = run_journal.journal_to_text("legacy-run", items, params=params)
+    assert "hello old run" in text
+    assert "shared.no_snap" in text
+    assert "sk-secret" not in text
+    packed = {"items": items, "total": 1, "wrote_projects": False}
+    run_journal.enrich_journal_payload(packed, params)
+    assert packed["params"]["wrote_projects"] is False
+    assert packed["header_text"]
+    assert "cdc_default" in packed["header_text"] or packed["params"]["profile"]
+    assert packed["params"]["rules"]["shared.no_snap"]["value"] is True
+    # tail=true : items sans meta, l'en-tête reste présent
+    tail = {"items": [{"kind": "log", "msg": "late line"}], "total": 50}
+    run_journal.enrich_journal_payload(tail, params)
+    assert "shared.no_snap" in tail["header_text"]
+    jsonl = run_journal.journal_to_jsonl(items, params=params)
+    assert '"kind": "meta"' in jsonl or '"kind":"meta"' in jsonl
+    assert "sk-secret" not in jsonl
+
+
+def test_swarm_writes_meta_header_after_seq_reset(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_journal, "RUNS_DIR", tmp_path)
+    db = _FakeDB()
+    rid = "20260912-190000-hdr001"
+    params = _snapshot_params()
+
+    async def go():
+        await db.project_runs.insert_one({
+            "_id": rid, "params": params, "wrote_projects": False,
+        })
+        sw = Swarm(db)
+        sw.run_id = rid
+        sw._journal_seq = 0
+        await sw._write_journal_header()
+        sw.log("Isolated run — wrote_projects: false")
+        return sw
+
+    sw = asyncio.run(go())
+    packed = run_journal.read_journal_file(rid)
+    assert packed["wrote_projects"] is False
+    assert packed["items"][0]["kind"] == "meta"
+    assert packed["items"][0]["seq"] == 1
+    assert packed["items"][1]["kind"] == "log"
+    assert packed["items"][1]["seq"] == 2
+    blob = json.dumps(packed["items"][0])
+    assert "sk-secret" not in blob
+    assert "api_key" not in blob
+    assert packed["items"][0]["params"]["rules"]["shared.no_snap"]["value"] is True
+    text = run_journal.journal_to_text(rid)
+    assert "# --- Paramètres ---" in text
+    assert "shared.no_snap" in text
+    swarm_lines = (tmp_path / f"{rid}.swarm.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert json.loads(swarm_lines[0])["kind"] == "meta"
+    assert db.projects.docs == []
+    assert sw.wrote_projects is False
