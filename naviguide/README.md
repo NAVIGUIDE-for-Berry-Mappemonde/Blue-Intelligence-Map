@@ -256,7 +256,7 @@ Full waypoint list with coordinates: `naviguide-app/src/constants/itineraryPoint
 |---|---|
 | Frontend | React 18, Vite 7, MapLibre GL JS, Tailwind CSS v4 |
 | Backend API | Python 3, FastAPI, uvicorn |
-| AI Orchestration | LangGraph + LLM cascade (`llm_cascade.py`): NVIDIA NIM (`deepseek-v4-pro`) → OpenRouter (`gpt-4o-mini`) → Anthropic Claude (`claude-opus-4-5`) |
+| AI Orchestration | LangGraph + LLM cascade (`llm_cascade.py`): NVIDIA NIM / [Token Factory](https://tokenfactory.nebius.com/) (y compris [Nemotron](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/)) → OpenRouter (`gpt-4o-mini`) → Anthropic Claude (`claude-opus-4-5`) |
 | Routing Engine | Custom haversine + iterative land-avoidance algorithm |
 | Marine Data | Copernicus Marine Service (CMEMS) — wind, wave, current |
 | Polar Analysis | Custom TWA×TWS VMG interpolation from CSV polars |
@@ -277,7 +277,7 @@ Full waypoint list with coordinates: `naviguide-app/src/constants/itineraryPoint
 
 ## 📄 License
 
-Private — Berry-Mappemonde Expedition / NAVIGUIDE Project.
+MIT **or** Apache License 2.0, at your option — see [`LICENSE-MIT`](../LICENSE-MIT) and [`LICENSE-APACHE`](../LICENSE-APACHE) at the repository root. Nemotron model weights remain under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/).
 
 ---
 

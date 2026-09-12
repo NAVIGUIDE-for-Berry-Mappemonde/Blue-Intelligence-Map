@@ -77,6 +77,8 @@ class TestParseAndLegal:
         assert nvidia.engine_label("poolside/laguna-xs-2.1") == "nvidia-laguna"
         assert nvidia.engine_label("openai/gpt-oss-20b") == "nvidia-gpt-oss"
         assert nvidia.engine_label("meta/llama-3.2-11b-vision-instruct") == "nvidia-llama"
+        assert nvidia.engine_label("nvidia/nemotron-3-nano-30b-a3b") == "nvidia-nemotron"
+        assert nvidia.engine_label("nvidia/nemotron-3.5-lightning-30b-a3b") == "nvidia-nemotron"
 
     def test_second_extract_skips_overridden_primary(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "other/reader")
