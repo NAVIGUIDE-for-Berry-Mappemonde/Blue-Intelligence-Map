@@ -79,6 +79,48 @@ def spec_for(dataset: str) -> DatasetSpec:
     return DATASETS[dataset]
 
 
+def parse_osm_tiles(raw) -> tuple[tuple[float, float, float, float], ...] | None:
+    """Body HTTP `tiles: [[south, west, north, east], ...]` → tuples."""
+    if not raw:
+        return None
+    out: list[tuple[float, float, float, float]] = []
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 4:
+            raise ValueError("tile must be [south, west, north, east]")
+        south, west, north, east = (float(x) for x in item)
+        if south >= north or west >= east:
+            raise ValueError("tile requires south < north and west < east")
+        if not (-90.0 <= south <= 90.0 and -90.0 <= north <= 90.0):
+            raise ValueError("tile latitude out of range")
+        if not (-180.0 <= west <= 180.0 and -180.0 <= east <= 180.0):
+            raise ValueError("tile longitude out of range")
+        out.append((south, west, north, east))
+    return tuple(out)
+
+
+async def list_run_events(db, dataset: str, run_id: str, *, step: str | None = None,
+                          skip: int = 0, limit: int = 500) -> dict:
+    spec = spec_for(dataset)
+    q: dict = {"run_id": run_id}
+    if step:
+        q["step"] = step
+    coll = getattr(db, spec.events_coll)
+    total = await coll.count_documents(q)
+    cur = coll.find(q)
+    if hasattr(cur, "sort"):
+        cur = cur.sort("seq", 1)
+    if hasattr(cur, "skip"):
+        cur = cur.skip(int(skip or 0))
+    docs = await cur.to_list(min(int(limit or 500), 2000))
+    return {
+        "total": total,
+        "skip": skip,
+        "count": len(docs),
+        "items": docs,
+        spec.wrote_flag: False,
+    }
+
+
 def current_run_id() -> str | None:
     return _current_run_id.get()
 
@@ -233,6 +275,7 @@ async def finalize_run(db, dataset: str, run_id: str, *, cancelled: bool = False
         return
     spec = spec_for(dataset)
     rec = RunRecorder(run_id, db=db, events_coll=spec.events_coll)
+    await rec.resume_seq()
     n = 0
     try:
         n = await coll(db, spec.items_coll).count_documents({"run_id": run_id})

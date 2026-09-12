@@ -27,6 +27,8 @@ ARCGIS_AMP_URL = (
     "Navigator_AllSites_010925_attributes/FeatureServer/0/query"
 )
 
+LAST_REFRESH: dict = {}
+
 AMP_OUT_FIELDS = (
     "SITE_ID,site_name,url,country,state,managing_authority,designation,"
     "category_name,wdpa_id,iucn_cat,purpose,lfp,other_helpful_links,"
@@ -768,14 +770,26 @@ async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
     except Exception:
         tile = None
     meta = {"source": "cache", "truncated": False, "fetched": 0}
+
+    def _remember(docs, meta_out):
+        LAST_REFRESH.clear()
+        LAST_REFRESH.update({
+            "bbox": list(bbox),
+            "source": meta_out.get("source"),
+            "count": len(docs or []),
+            "fetched": meta_out.get("fetched"),
+            "error": meta_out.get("error"),
+        })
+        return docs, meta_out
+
     if cache_covers_tile(cached, tile, ttl_days, force=force):
         meta["truncated"] = len(cached) >= max_features
-        return cached, meta
+        return _remember(cached, meta)
     try:
         remote = await fetch_arcgis(bbox, max_features=max_features)
     except Exception as exc:
         meta["error"] = str(exc)[:180]
-        return cached, meta
+        return _remember(cached, meta)
     if remote:
         try:
             meta["fetched"] = await upsert_sites(db, remote)
@@ -797,7 +811,7 @@ async def sites_in_bbox(db, bbox: tuple[float, float, float, float], *,
             meta["error"] = str(exc)[:180]
             cached = remote or cached
     meta["truncated"] = len(cached) >= max_features
-    return cached, meta
+    return _remember(cached, meta)
 
 
 async def resolve_visit_urls(db, *, limit: int = 500) -> dict:

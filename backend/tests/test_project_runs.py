@@ -184,6 +184,10 @@ def _patch_extract(monkeypatch, *, page=None, gk=None, proj=None):
     monkeypatch.setattr(sp, "extract_cascade", fake_cascade)
     monkeypatch.setattr(sp, "gatekeeper_check", fake_gk)
     monkeypatch.setattr(sp, "extract_project", fake_extract)
+    # Geocode live (Nominatim) would turn inland HQ coords into a site; keep
+    # the inland→unlocated path deterministic.
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(sp, "geocode_project_site", AsyncMock(return_value={}))
 
 
 def test_open_run_never_writes_projects():

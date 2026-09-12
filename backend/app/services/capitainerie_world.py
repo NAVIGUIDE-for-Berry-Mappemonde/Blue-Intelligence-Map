@@ -22,6 +22,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from app.core.events import HeartbeatWatch, emit
 from app.core.identity import OVERLAY_RADIUS_KM, building_radius_km, find_building
 from app.services.marina_build import (
     KEPT_TAGS,
@@ -46,6 +47,7 @@ from app.services.marina_world import (
 
 SCHEMA = "capitainerie_world_v1"
 CURSOR_ID = "world_harbour_master"
+TILE_UPSERT_EVERY = 10
 SHOM_CATSCF = "6"  # SMCFAC : rarement peuplé sur le WFS public
 SHOM_BUISGL_FUNCTN = "2"  # S-57 FUNCTN = harbour-master's office
 SHOM_MERGE_KM = OVERLAY_RADIUS_KM
@@ -833,21 +835,49 @@ async def reset_cursor(cursor_coll) -> None:
         )
 
 
+def _id_partial_index(field: str) -> dict:
+    """Index unique (run_id, id) : seulement si l'id est une chaîne.
+
+    Un index *sparse* composé (run_id, shom_id) indexe tout document qui a
+    `run_id` — donc tous. Mongo y range `shom_id: null` / champ absent comme
+    la même clé : la 2ᵉ fiche OSM d'un run isolé lève E11000. Le dump tuile
+    Albanie n'avait qu'1 harbour_master et ne le voyait pas.
+    """
+    return {
+        "unique": True,
+        "name": f"run_id_1_{field}_1",
+        "partialFilterExpression": {field: {"$type": "string"}},
+    }
+
+
+async def _drop_index_quiet(coll, name: str) -> None:
+    drop = getattr(coll, "drop_index", None)
+    if drop is None:
+        return
+    try:
+        await drop(name)
+    except TypeError:
+        drop(name)
+    except Exception:
+        pass
+
+
 async def ensure_indexes(coll, *, isolated: bool = False) -> None:
     try:
-        if isolated:
-            await coll.create_index([("run_id", 1), ("osm_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("shom_id", 1)], unique=True, sparse=True)
-            await coll.create_index([("run_id", 1), ("noaa_id", 1)], unique=True, sparse=True)
-            await coll.create_index("run_id")
-            await coll.create_index("name")
-            await coll.create_index("source")
-            return
         # Unique sparse : un `osm_id: null` explicite n'est indexé qu'une fois.
         if hasattr(coll, "update_many"):
             await coll.update_many({"osm_id": None}, {"$unset": {"osm_id": ""}})
             await coll.update_many({"shom_id": None}, {"$unset": {"shom_id": ""}})
             await coll.update_many({"noaa_id": None}, {"$unset": {"noaa_id": ""}})
+        if isolated:
+            for field in ("osm_id", "shom_id", "noaa_id"):
+                await _drop_index_quiet(coll, f"run_id_1_{field}_1")
+                await coll.create_index(
+                    [("run_id", 1), (field, 1)], **_id_partial_index(field))
+            await coll.create_index("run_id")
+            await coll.create_index("name")
+            await coll.create_index("source")
+            return
         await coll.create_index("osm_id", unique=True, sparse=True)
         await coll.create_index("shom_id", unique=True, sparse=True)
         await coll.create_index("noaa_id", unique=True, sparse=True)
@@ -874,12 +904,13 @@ async def fetch_tile_harbour_masters(
     logger=None,
     timeout: int = OVERPASS_TILE_TIMEOUT_S,
     min_span: float = MIN_TILE_DEG,
+    meta: dict | None = None,
 ) -> list[dict]:
     south, west, north, east = tile
     body = harbour_master_bbox_ql(south, west, north, east, timeout=timeout)
     try:
         return await overpass_fetch_bbox(
-            south, west, north, east, client, logger=logger, body=body,
+            south, west, north, east, client, logger=logger, body=body, meta=meta,
         )
     except Exception as exc:
         span = max(north - south, east - west)
@@ -1261,6 +1292,7 @@ async def build_world_capitaineries(
     skip_shom: bool = False,
     skip_noaa: bool = False,
     run_id: str | None = None,
+    recorder=None,
 ) -> dict:
     """Dump OSM harbour_master (tuiles), overlay SHOM, overlay NOAA ENC."""
     from app.services.isolated_runs import bind_run, reset_run
@@ -1278,6 +1310,11 @@ async def build_world_capitaineries(
     grid = tiles or WORLD_TILES
     pause = _throttle_s(throttle_s)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    hb = HeartbeatWatch(recorder).start(lambda: {
+        "progress": state.progress,
+        "total": state.total,
+        "last_item": getattr(state, "last_item", None),
+    })
 
     try:
         await ensure_indexes(coll, isolated=bool(run_id))
@@ -1292,39 +1329,83 @@ async def build_world_capitaineries(
             f"Dump mondial harbour_master : {len(grid)} tuiles, "
             f"{len(done)} déjà faites, throttle={pause:.1f}s"
         )
+        if skip_shom or skip_noaa:
+            await emit(recorder, "skip_overlay", shom=bool(skip_shom), noaa=bool(skip_noaa))
+            state.log(f"Overlay skip SHOM={skip_shom} NOAA={skip_noaa}")
 
         inserted = updated = fetched_raw = errors = skipped = 0
         named = unnamed = with_phone = with_vhf = 0
+        cancelled = False
         own_client = client is None
         http = client or httpx.AsyncClient(headers={"User-Agent": USER_AGENT})
         try:
             for tile in grid:
                 if state.cancel:
+                    cancelled = True
                     state.log("Stop demandé — dump OSM interrompu")
                     break
+                south, west, north, east = tile
                 key = tile_key(tile)
                 if key in done:
                     skipped += 1
                     state.progress += 1
                     state.log(f"Tuile {key} déjà faite — skip")
                     continue
+                state.last_item = key
+                hb.update(progress=state.progress, last_item=key)
+                await emit(recorder, "tile_start", tile=key,
+                           south=south, west=west, north=north, east=east)
+                op_meta: dict = {}
                 try:
+                    await emit(
+                        recorder, "overpass_query",
+                        bbox=[south, west, north, east],
+                        timeout=OVERPASS_TILE_TIMEOUT_S,
+                    )
                     if fetch_tile:
                         elements = await fetch_tile(http, tile)
+                        op_meta = {
+                            "http": None, "mirror": "injected",
+                            "latency_ms": 0, "n": len(elements),
+                        }
                     else:
-                        elements = await fetch_tile_harbour_masters(http, tile, logger=state.log)
+                        elements = await fetch_tile_harbour_masters(
+                            http, tile, logger=state.log, meta=op_meta)
                 except Exception as exc:
                     errors += 1
                     state.log(f"Tuile {key} : {type(exc).__name__}: {str(exc)[:80]}")
+                    await emit(
+                        recorder, "overpass_result",
+                        n=0, http=op_meta.get("http"),
+                        mirror=op_meta.get("mirror"),
+                        latency_ms=op_meta.get("latency_ms"),
+                        error=f"{type(exc).__name__}: {str(exc)[:120]}",
+                    )
                     state.progress += 1
                     await asyncio.sleep(pause)
                     continue
 
+                await emit(
+                    recorder, "overpass_result",
+                    n=len(elements),
+                    http=op_meta.get("http"),
+                    mirror=op_meta.get("mirror"),
+                    latency_ms=op_meta.get("latency_ms"),
+                )
                 fetched_raw += len(elements)
-                tile_ins = tile_upd = 0
+                tile_ins = tile_upd = tile_skip = 0
+                seen = 0
+                last_osm = last_name = None
+                stopped_mid_tile = False
                 for elem in elements:
+                    if state.cancel:
+                        cancelled = True
+                        stopped_mid_tile = True
+                        state.log("Stop demandé — interruption entre fiches")
+                        break
                     cand = capitainerie_from_overpass(elem)
                     if not cand:
+                        tile_skip += 1
                         continue
                     result = await upsert_osm(coll, cand, now_iso)
                     if result == "inserted":
@@ -1341,12 +1422,34 @@ async def build_world_capitaineries(
                         with_phone += 1
                     if cand.get("canal_vhf"):
                         with_vhf += 1
+                    seen += 1
+                    last_osm = cand.get("osm_id")
+                    last_name = cand.get("name")
+                    state.last_item = last_osm or key
+                    hb.update(progress=state.progress, last_item=state.last_item)
+                    if seen % TILE_UPSERT_EVERY == 0:
+                        await emit(
+                            recorder, "tile_upsert",
+                            tile=key, n=seen, total=len(elements),
+                            inserted=tile_ins, updated=tile_upd,
+                            osm_id=last_osm, name=last_name,
+                        )
 
-                await mark_tile_done(cursor_coll, key, now_iso)
+                if not stopped_mid_tile:
+                    await mark_tile_done(cursor_coll, key, now_iso)
                 state.progress += 1
+                await emit(
+                    recorder, "tile_done",
+                    tile=key, raw=len(elements),
+                    inserted=tile_ins, updated=tile_upd, skipped=tile_skip,
+                    cancelled=stopped_mid_tile,
+                    osm_id=last_osm, name=last_name,
+                )
                 state.log(
                     f"Tuile {key} : {len(elements)} brut → +{tile_ins} / ~{tile_upd}"
                 )
+                if stopped_mid_tile:
+                    break
                 await asyncio.sleep(pause)
 
             shom_summary = {
@@ -1395,6 +1498,7 @@ async def build_world_capitaineries(
             "shom": shom_summary,
             "noaa": noaa_summary,
             "resume": resume,
+            "cancelled": cancelled or bool(state.cancel),
         }
         state.summary = summary
         state.log(f"Dump capitaineries terminé: {json.dumps(summary)}")
@@ -1404,6 +1508,7 @@ async def build_world_capitaineries(
         state.log(f"FATAL: {state.error}")
         raise
     finally:
+        await hb.aclose()
         state.finished_at = time.time()
         state.running = False
         if token is not None:

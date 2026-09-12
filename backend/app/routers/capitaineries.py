@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.llm import get_llm_key
-from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
+from app.core.tasks import BuildState, TaskState, new_task, prune_tasks, LOGS_TAIL_N
 from app.db import db, get_settings
 from app.services.capitainerie_enrich import (
     ENRICH_FIELDS,
@@ -137,6 +137,10 @@ class BuildBody(BaseModel):
     resume: bool = True
     profile: str | None = None
     rules: dict | None = None
+    tiles: list[list[float]] | None = None
+    skip_shom: bool = False
+    skip_noaa: bool = False
+    label: str | None = None
 
 
 @router.post("/capitaineries/build")
@@ -156,14 +160,23 @@ async def capitaineries_build_start(body: BuildBody | None = None):
             overrides=body.rules, profile=body.profile)
     except RuleError as e:
         raise HTTPException(400, str(e)) from e
+    try:
+        tiles = isolated_runs.parse_osm_tiles(body.tiles)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     opened = await isolated_runs.open_run(
         db, "capitaineries", kind="world_harbour_master",
-        label="capitaineries-world", settings=settings,
-        extra_params={"resume": body.resume, "profile": rules.get("profile")},
+        label=body.label or "capitaineries-world", settings=settings,
+        extra_params={
+            "resume": body.resume, "profile": rules.get("profile"),
+            "skip_shom": body.skip_shom, "skip_noaa": body.skip_noaa,
+            "tiles": body.tiles,
+        },
         rules_overrides=body.rules, profile=body.profile,
         resume=body.resume,
     )
     run_id = opened["run_id"]
+    recorder = opened["recorder"]
     BUILD_STATE.run_id = run_id
     isolated_runs.reset_run(opened["token"])
 
@@ -175,10 +188,15 @@ async def capitaineries_build_start(body: BuildBody | None = None):
                 cursor_coll=db.capitainerie_run_cursors,
                 state=BUILD_STATE,
                 resume=body.resume,
+                tiles=tiles,
+                skip_shom=body.skip_shom,
+                skip_noaa=body.skip_noaa,
                 run_id=run_id,
+                recorder=recorder,
             )
             await isolated_runs.finalize_run(
-                db, "capitaineries", run_id, extra=BUILD_STATE.summary)
+                db, "capitaineries", run_id, extra=BUILD_STATE.summary,
+                cancelled=bool(BUILD_STATE.cancel))
         except Exception as exc:
             BUILD_STATE.log(f"build crashed: {type(exc).__name__}: {exc}")
             await isolated_runs.finalize_run(
@@ -191,6 +209,9 @@ async def capitaineries_build_start(body: BuildBody | None = None):
         "started": True, "kind": "world_harbour_master", "resume": body.resume,
         "run_id": run_id, "wrote_capitaineries": False,
         "profile": rules.get("profile"), "rules_hash": rules.get("hash"),
+        "skip_shom": body.skip_shom, "skip_noaa": body.skip_noaa,
+        "tiles": [list(t) for t in tiles] if tiles else None,
+        "label": body.label,
     }
 
 
@@ -205,7 +226,7 @@ async def capitaineries_build_status():
         "total": s.total,
         "summary": s.summary,
         "error": s.error,
-        "logs_tail": s.logs[-40:],
+        "logs_tail": s.logs[-LOGS_TAIL_N:],
         "cancelling": s.cancel and s.running,
         "run_id": s.run_id,
         "wrote_capitaineries": False,
@@ -527,6 +548,16 @@ async def capitaineries_run_detail(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     return {**doc, "wrote_capitaineries": False}
+
+
+@router.get("/capitaineries/runs/{run_id}/events")
+async def capitaineries_run_events(run_id: str, step: str | None = None,
+                                   skip: int = 0, limit: int = 500):
+    from app.services import isolated_runs
+    if not await db.capitainerie_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    return await isolated_runs.list_run_events(
+        db, "capitaineries", run_id, step=step, skip=skip, limit=limit)
 
 
 @router.get("/capitaineries/runs/{run_id}/geojson")

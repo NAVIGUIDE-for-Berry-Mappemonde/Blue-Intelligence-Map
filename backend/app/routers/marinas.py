@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.config import ROUTE_FILE
 from app.core.llm import get_llm_key
-from app.core.tasks import BuildState, TaskState, new_task, prune_tasks
+from app.core.tasks import BuildState, TaskState, new_task, prune_tasks, LOGS_TAIL_N
 from app.db import db, get_settings
 from app.services.anchorage_build import build_anchorages as run_build_anchorages, anchorages_to_geojson
 from app.services.marina_enrich import ENRICH_FIELDS, enrich_marina
@@ -278,6 +278,8 @@ class MarinasBuildBody(BaseModel):
     corridor_step_nm: float | None = None
     corridor_radius_nm: float | None = None
     maps_place_after: bool = False
+    tiles: list[list[float]] | None = None
+    label: str | None = None
 
 
 async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | None = None):
@@ -316,10 +318,11 @@ async def _marina_rules_and_radii(body, settings: dict, extra_overrides: dict | 
 
 async def _persist_marina_run(kind: str, rules: dict, extra: dict, *,
                               resume: bool = False, settings: dict | None = None,
-                              rules_overrides: dict | None = None) -> dict:
+                              rules_overrides: dict | None = None,
+                              label: str | None = None) -> dict:
     from app.services import isolated_runs
     opened = await isolated_runs.open_run(
-        db, "marinas", kind=kind, label=f"marinas-{kind}",
+        db, "marinas", kind=kind, label=label or f"marinas-{kind}",
         settings=settings or {}, extra_params=extra,
         profile=rules.get("profile"),
         rules_overrides=rules_overrides,
@@ -339,12 +342,21 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
     if body.clear_before:
         raise HTTPException(400, "clear_before is forbidden (shared.no_purge)")
 
+    from app.services import isolated_runs
+    try:
+        tiles = isolated_runs.parse_osm_tiles(body.tiles)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
     opened = await _persist_marina_run("marinas_world", rules, {
         "resume": body.resume,
         "profile": rules.get("profile"),
         "kind": "world_leisure_marina",
-    }, resume=body.resume, settings=settings, rules_overrides=body.rules)
+        "tiles": [list(t) for t in tiles] if tiles else None,
+    }, resume=body.resume, settings=settings, rules_overrides=body.rules,
+        label=body.label)
     run_id = opened["run_id"]
+    recorder = opened["recorder"]
     MARINA_BUILD_STATE.run_id = run_id
     from app.services.isolated_runs import reset_run as _reset_iso
     from app.core.run_rules import bind_rules, reset_rules
@@ -359,11 +371,17 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
                 cursor_coll=db.marina_run_cursors,
                 state=MARINA_BUILD_STATE,
                 resume=body.resume,
+                tiles=tiles,
                 run_id=run_id,
+                recorder=recorder,
             )
             await isolated_runs.finalize_run(
-                db, "marinas", run_id, extra=MARINA_BUILD_STATE.summary)
-            if body.maps_place_after and not MAPS_PLACE_STATE.running:
+                db, "marinas", run_id,
+                extra=MARINA_BUILD_STATE.summary,
+                cancelled=bool(MARINA_BUILD_STATE.cancel),
+            )
+            if (body.maps_place_after and not MAPS_PLACE_STATE.running
+                    and not MARINA_BUILD_STATE.cancel):
                 MARINA_BUILD_STATE.log("Dump terminé — résolution des fiches Google /place/")
                 await resolve_maps_places(
                     marinas_coll=db.marina_run_marinas,
@@ -389,6 +407,8 @@ async def marinas_build_start(body: MarinasBuildBody | None = None):
         "profile": rules.get("profile"),
         "rules_hash": rules.get("hash"),
         "wrote_marinas": False,
+        "tiles": [list(t) for t in tiles] if tiles else None,
+        "label": body.label,
     }
 
 
@@ -403,10 +423,20 @@ async def marinas_build_status():
         "total": s.total,
         "summary": s.summary,
         "error": s.error,
-        "logs_tail": s.logs[-40:],
+        "logs_tail": s.logs[-LOGS_TAIL_N:],
         "run_id": s.run_id,
         "wrote_marinas": False,
+        "cancelling": bool(s.cancel and s.running),
     }
+
+
+@router.post("/marinas/build/cancel")
+async def marinas_build_cancel():
+    if not MARINA_BUILD_STATE.running:
+        raise HTTPException(409, "No marinas build is running")
+    MARINA_BUILD_STATE.cancel = True
+    MARINA_BUILD_STATE.log("Stop demandé")
+    return {"cancelling": True}
 
 
 @router.get("/marinas/count")
@@ -562,7 +592,7 @@ async def anchorages_build_status():
         "total": s.total,
         "summary": s.summary,
         "error": s.error,
-        "logs_tail": s.logs[-40:],
+        "logs_tail": s.logs[-LOGS_TAIL_N:],
         "run_id": s.run_id,
         "wrote_marinas": False,
     }
@@ -994,7 +1024,7 @@ async def marinas_maps_place_status():
         "total": s.total,
         "summary": s.summary,
         "error": s.error,
-        "logs_tail": s.logs[-40:],
+        "logs_tail": s.logs[-LOGS_TAIL_N:],
         "run_id": s.run_id,
         "wrote_marinas": False,
     }
@@ -1018,6 +1048,16 @@ async def marinas_run_detail(run_id: str):
     if not doc:
         raise HTTPException(404, f"Run {run_id} unknown")
     return {**doc, "wrote_marinas": False}
+
+
+@router.get("/marinas/runs/{run_id}/events")
+async def marinas_run_events(run_id: str, step: str | None = None,
+                             skip: int = 0, limit: int = 500):
+    from app.services import isolated_runs
+    if not await db.marina_runs.find_one({"_id": run_id}):
+        raise HTTPException(404, f"Run {run_id} unknown")
+    return await isolated_runs.list_run_events(
+        db, "marinas", run_id, step=step, skip=skip, limit=limit)
 
 
 @router.get("/marinas/runs/{run_id}/geojson")

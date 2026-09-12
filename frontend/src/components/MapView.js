@@ -45,6 +45,7 @@ export default function MapView({
   flyToZone,
   flyToPoe,
   flyToAmp,
+  fitRunBounds,
   ampRunId,
   onAmpSites,
   zoneFiche,
@@ -440,6 +441,22 @@ export default function MapView({
     map.flyTo([flyToPoe.lat, flyToPoe.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
     setTimeout(() => { if (m) m.openPopup(); }, 900);
   }, [flyToPoe]);
+
+  useEffect(() => {
+    if (!fitRunBounds?.points?.length) return;
+    const map = mapObj.current;
+    if (!map) return;
+    try {
+      if (fitRunBounds.points.length === 1) {
+        map.setView(fitRunBounds.points[0], 11, { animate: true });
+        return;
+      }
+      const b = L.latLngBounds(fitRunBounds.points);
+      if (b.isValid()) {
+        map.fitBounds(b, { padding: [48, 48], maxZoom: 12, animate: true });
+      }
+    } catch (_) { /* bounds vides */ }
+  }, [fitRunBounds]);
 
   // ---------- Lang change → refresh any currently open popup ----------
   // When the user toggles FR ↔ EN, `popup.update()` re-invokes the
