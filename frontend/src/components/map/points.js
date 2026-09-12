@@ -1,4 +1,7 @@
 import L from "leaflet";
+import { installPopupFitPolicy } from "./popupFit";
+
+installPopupFitPolicy();
 
 /** Rayon « pointe de Bic » : minuscule en vue monde, un peu plus lisible en zoom. */
 export function penRadius(zoom, bump = 0) {
@@ -41,27 +44,6 @@ export function applyPenRadii(group, zoom) {
     const bump = lyr._biBump || 0;
     lyr.setRadius(penRadius(zoom, bump));
   });
-}
-
-/** Décale le popup dans le cadre visible sans bouger la carte. */
-export function keepPopupInView(map, popup, mapEl) {
-  const el = popup && popup.getElement && popup.getElement();
-  if (!el || !mapEl) return;
-  const wrapper = el.querySelector(".leaflet-popup-content-wrapper") || el;
-  wrapper.style.transform = "";
-  const mapRect = mapEl.getBoundingClientRect();
-  const rect = wrapper.getBoundingClientRect();
-  const pad = 12;
-  let dx = 0;
-  let dy = 0;
-  if (rect.left < mapRect.left + pad) dx = mapRect.left + pad - rect.left;
-  else if (rect.right > mapRect.right - pad) dx = mapRect.right - pad - rect.right;
-  if (rect.top < mapRect.top + pad) dy = mapRect.top + pad - rect.top;
-  else if (rect.bottom > mapRect.bottom - pad) dy = mapRect.bottom - pad - rect.bottom;
-  if (dx || dy) {
-    wrapper.style.transition = "transform 0.12s ease";
-    wrapper.style.transform = `translate(${dx}px, ${dy}px)`;
-  }
 }
 
 export function circleOpts(color, {

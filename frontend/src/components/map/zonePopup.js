@@ -128,7 +128,7 @@ export function zonePopupHtml(mrgid, props, { tRef, zoneItemsRef, zoneFicheRef, 
       </div>`
     : "";
   return `
-    <div data-testid="poe-zone-fiche-popup" style="min-width:260px;max-width:340px;font-family:Manrope,sans-serif;">
+    <div data-testid="poe-zone-fiche-popup" style="max-width:100%;font-family:Manrope,sans-serif;">
       <div data-testid="poe-fiche-popup-title" style="font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:14px;color:#fff;line-height:1.3;">${flag} ${escH(zoneDisplayName({ ...props, ...z }, t))}</div>
       <div style="font-size:11px;color:#94a3b8;margin:3px 0 6px;">${escH(zoneSubtitle({ ...props, ...z }) || (polType && polType !== "200NM" ? polType : ""))}</div>
       <div style="margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">

@@ -137,13 +137,30 @@ html, body, #root {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 22px rgba(var(--accent-rgb), 0.10);
 }
 .leaflet-popup-tip { background: #0f172a; border: 1px solid rgba(var(--accent-rgb), 0.4); }
-/* Phase 6 — popups scrollable from top to bottom, themed scrollbar */
 .leaflet-popup-content {
   margin: 12px 14px;
-  max-height: 62vh;
   overflow-y: auto;
+  max-width: 100%;
+  box-sizing: border-box;
   scrollbar-width: thin;
   scrollbar-color: rgba(var(--accent-rgb), 0.5) rgba(15, 23, 42, 0.4);
+}
+.leaflet-popup-content > * {
+  max-width: 100%;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+.leaflet-popup.bi-popup--below {
+  margin-bottom: 0;
+  margin-top: 20px;
+}
+.leaflet-popup.bi-popup--below .leaflet-popup-tip-container {
+  top: 0;
+  bottom: auto;
+  margin-top: -20px;
+}
+.leaflet-popup.bi-popup--below .leaflet-popup-tip {
+  margin: 9px auto 0;
 }
 .leaflet-popup-content::-webkit-scrollbar { width: 6px; }
 .leaflet-popup-content::-webkit-scrollbar-track { background: transparent; }
