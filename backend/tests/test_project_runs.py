@@ -462,3 +462,4 @@ def test_promote_is_phase_d():
     assert "501" in text
     assert "phase D" in text
     assert "/projects/runs/{run_id}/report" in text
+    assert "/projects/runs/{run_id}/journal" in text

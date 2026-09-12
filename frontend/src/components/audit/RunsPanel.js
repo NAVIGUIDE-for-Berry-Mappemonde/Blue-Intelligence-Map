@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import api from "../../api";
 import { differsFromCdc, loc, RUNS_API, sourceLabel, valuesFromChosen } from "../../lib/runRules";
+import { JournalDownloadButton } from "./RunJournal";
 
 function hash8(h) {
   return (h || "").slice(0, 8) || "—";
@@ -71,6 +72,7 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
               <th className="px-3 py-2">{t("statusCol")}</th>
               <th className="px-3 py-2">{t("rulesProfile")}</th>
               <th className="px-3 py-2">hash</th>
+              {mode === "projects" && <th className="px-3 py-2">{t("consoleTabJournal")}</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-line/50">
@@ -88,11 +90,18 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
                   <td className="px-3 py-1.5 font-mono text-[10px] text-slate-300">{row.state || "—"}</td>
                   <td className="px-3 py-1.5 font-mono text-[10px] text-accent">{row.profile || row.params?.rules?.profile || "—"}</td>
                   <td className="px-3 py-1.5 font-mono text-[10px] text-slate-400">{hash8(row.hash || row.hash8 || row.params?.rules?.hash)}</td>
+                  {mode === "projects" && (
+                    <td className="px-3 py-1.5">
+                      {id && id !== "v1" && (row.mode || row.kind) !== "import" && (
+                        <JournalDownloadButton t={t} runId={id} testId="download-run-journal-runs" />
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {items.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-4 font-mono text-[10px] text-slate-500">{ready ? t("runsEmpty") : "…"}</td></tr>
+              <tr><td colSpan={mode === "projects" ? 6 : 5} className="px-3 py-4 font-mono text-[10px] text-slate-500">{ready ? t("runsEmpty") : "…"}</td></tr>
             )}
           </tbody>
         </table>
@@ -101,6 +110,9 @@ export default function RunsPanel({ t, lang, mode, catalog, onReuse }) {
       {detail && (
         <div className="border border-line bg-raised/30 p-3 space-y-2" data-testid="run-rules-detail">
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent/80">{t("runRulesTitle")}</p>
+          {mode === "projects" && (
+            <JournalDownloadButton t={t} runId={detail.id} testId="download-run-journal-runs" />
+          )}
           <p className="font-mono text-[10px] text-slate-400">
             {detail.profile || "—"} · {hash8(detail.hash || detail.hash8)}
           </p>

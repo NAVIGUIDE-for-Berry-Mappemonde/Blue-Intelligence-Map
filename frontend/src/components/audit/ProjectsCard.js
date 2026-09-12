@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Play, Square } from "lucide-react";
 import api from "../../api";
 import { invalidateRuns } from "../../lib/runCache";
+import { JournalDownloadButton, pickJournalRunId } from "./RunJournal";
 
 export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [swarmMode, setSwarmMode] = useState("test");
@@ -9,6 +10,26 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [lastRun, setLastRun] = useState(null);
   const running = status?.running;
   const runId = status?.run_id || lastRun?.run_id;
+  const journalCount = running
+    ? status?.journal_lines
+    : (lastRun?.journal_lines ?? status?.journal_lines);
+
+  useEffect(() => {
+    if (status?.run_id) return undefined;
+    let alive = true;
+    api.get("/projects/runs").then(({ data }) => {
+      if (!alive) return;
+      const id = pickJournalRunId(data);
+      const row = (data.items || []).find((r) => (r.id || r._id) === id);
+      if (id) {
+        setLastRun((prev) => prev || {
+          run_id: id,
+          journal_lines: row?.journal_lines,
+        });
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [status?.run_id]);
 
   const deploy = async () => {
     setBusy(true);
@@ -96,9 +117,15 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
         {t("isolatedRunHint")}
       </p>
       {runId && (
-        <p className="font-mono text-[10px] text-sonar/80" data-testid="project-run-id">
-          {t("currentRun")} {runId} · {t("wroteProjectsFalse")}
-        </p>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="font-mono text-[10px] text-sonar/80" data-testid="project-run-id">
+            {t("currentRun")} {runId} · {t("wroteProjectsFalse")}
+            {journalCount != null && (
+              <span className="text-slate-500"> · {t("journalLines").replace("{n}", String(journalCount))}</span>
+            )}
+          </p>
+          <JournalDownloadButton t={t} runId={runId} />
+        </div>
       )}
       <button
         data-testid="stop-swarm-btn"
@@ -121,6 +148,7 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
         ))}
         {running && <span className="text-bio cursor-blink">▊</span>}
       </div>
+      <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("journalCompleteHint")}</p>
     </div>
   );
 }

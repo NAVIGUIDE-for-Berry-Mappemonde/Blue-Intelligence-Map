@@ -453,6 +453,7 @@ def test_routers_expose_runs_endpoints():
     project_paths = {getattr(r, "path", "") for r in project_runs_router.router.routes}
     poe_paths = {getattr(r, "path", "") for r in poe_router.router.routes}
     assert "/api/projects/runs/{run_id}" in project_paths
+    assert "/api/projects/runs/{run_id}/journal" in project_paths
     assert "/api/poe/runs/{run_id}" in poe_paths
 
 
