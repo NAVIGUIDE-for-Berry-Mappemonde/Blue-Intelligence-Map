@@ -27,6 +27,7 @@ from app.services.marina_build import (
     overpass_fetch_bbox,
 )
 from app.services.osm_seeds import MIN_TILE_DEG, WORLD_TILES
+from app.core.events import HeartbeatWatch, emit
 
 SCHEMA = "marina_world_v1"
 CURSOR_ID = "world_leisure_marina"
@@ -36,6 +37,7 @@ OVERPASS_TILE_TIMEOUT_S = 180
 # On découpe avant l'appel dès que le plus grand côté dépasse ça.
 SPLIT_BEFORE_DEG = 40.0
 UPSERT_HEARTBEAT = 250
+TILE_UPSERT_EVERY = 10
 
 # Statuts que le palier 2 posera ; le dump ne les écrase pas.
 LOCKED_WEBSITE_STATUSES = frozenset({"osm_ok", "tinyfish_ok"})
@@ -499,6 +501,7 @@ async def fetch_tile_leisure_marinas(
     logger=None,
     timeout: int = OVERPASS_TILE_TIMEOUT_S,
     min_span: float = MIN_TILE_DEG,
+    meta: dict | None = None,
 ) -> list[dict]:
     south, west, north, east = tile
     if should_split_before_overpass(tile, min_span=min_span):
@@ -511,7 +514,7 @@ async def fetch_tile_leisure_marinas(
     body = leisure_marina_bbox_ql(south, west, north, east, timeout=timeout)
     try:
         return await overpass_fetch_bbox(
-            south, west, north, east, client, logger=logger, body=body,
+            south, west, north, east, client, logger=logger, body=body, meta=meta,
         )
     except Exception as exc:
         if tile_span_deg(tile) > min_span:
@@ -533,6 +536,7 @@ async def build_world_marinas(
     throttle_s: float | None = None,
     fetch_tile: FetchTile | None = None,
     run_id: str | None = None,
+    recorder=None,
 ) -> dict:
     """
     Balaye les tuiles monde, upsert par osm_id, reprend les tuiles déjà faites.
@@ -548,11 +552,17 @@ async def build_world_marinas(
     state.error = None
     state.logs = []
     state.summary = None
+    state.cancel = False
     state.run_id = run_id
 
     grid = tiles or WORLD_TILES
     pause = _throttle_s(throttle_s)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    hb = HeartbeatWatch(recorder).start(lambda: {
+        "progress": state.progress,
+        "total": state.total,
+        "last_item": getattr(state, "last_item", None),
+    })
 
     try:
         await ensure_indexes(marinas_coll, isolated=bool(run_id))
@@ -570,6 +580,7 @@ async def build_world_marinas(
 
         inserted = updated = fetched_raw = errors = skipped = 0
         named = unnamed = with_site = 0
+        cancelled = False
         own_client = client is None
         http = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
@@ -578,34 +589,73 @@ async def build_world_marinas(
         try:
             for tile in grid:
                 if getattr(state, "cancel", False):
-                    state.log("Stop demandé — dump interrompu")
+                    cancelled = True
+                    state.log("Stop demandé — dump OSM interrompu")
                     break
+                south, west, north, east = tile
                 key = tile_key(tile)
                 if key in done:
                     skipped += 1
                     state.progress += 1
                     state.log(f"Tuile {key} déjà faite — skip")
                     continue
+                state.last_item = key
+                hb.update(progress=state.progress, last_item=key)
+                await emit(recorder, "tile_start", tile=key,
+                           south=south, west=west, north=north, east=east)
                 state.log(f"Tuile {key} — Overpass + upsert…")
+                op_meta: dict = {}
                 try:
+                    await emit(
+                        recorder, "overpass_query",
+                        bbox=[south, west, north, east],
+                        timeout=OVERPASS_TILE_TIMEOUT_S,
+                    )
                     if fetch_tile:
                         elements = await fetch_tile(http, tile)
+                        op_meta = {
+                            "http": None, "mirror": "injected",
+                            "latency_ms": 0, "n": len(elements),
+                        }
                     else:
-                        elements = await fetch_tile_leisure_marinas(http, tile, logger=state.log)
+                        elements = await fetch_tile_leisure_marinas(
+                            http, tile, logger=state.log, meta=op_meta)
                 except Exception as exc:
                     errors += 1
                     state.log(f"Tuile {key} : {type(exc).__name__}: {str(exc)[:80]}")
+                    await emit(
+                        recorder, "overpass_result",
+                        n=0, http=op_meta.get("http"),
+                        mirror=op_meta.get("mirror"),
+                        latency_ms=op_meta.get("latency_ms"),
+                        error=f"{type(exc).__name__}: {str(exc)[:120]}",
+                    )
                     state.progress += 1
                     await asyncio.sleep(pause)
                     continue
 
+                await emit(
+                    recorder, "overpass_result",
+                    n=len(elements),
+                    http=op_meta.get("http"),
+                    mirror=op_meta.get("mirror"),
+                    latency_ms=op_meta.get("latency_ms"),
+                )
                 fetched_raw += len(elements)
                 state.log(f"Tuile {key} : {len(elements)} éléments Overpass — upsert")
-                tile_ins = tile_upd = 0
+                tile_ins = tile_upd = tile_skip = 0
                 seen = 0
+                last_osm = last_name = None
+                stopped_mid_tile = False
                 for elem in elements:
+                    if getattr(state, "cancel", False):
+                        cancelled = True
+                        stopped_mid_tile = True
+                        state.log("Stop demandé — interruption entre fiches")
+                        break
                     cand = marina_from_overpass(elem)
                     if not cand:
+                        tile_skip += 1
                         continue
                     result = await upsert_world_marina(marinas_coll, cand, now_iso)
                     if result == "inserted":
@@ -621,17 +671,38 @@ async def build_world_marinas(
                     if cand.get("website"):
                         with_site += 1
                     seen += 1
+                    last_osm = cand.get("osm_id")
+                    last_name = cand.get("name")
+                    state.last_item = last_osm or key
+                    hb.update(progress=state.progress, last_item=state.last_item)
+                    if seen % TILE_UPSERT_EVERY == 0:
+                        await emit(
+                            recorder, "tile_upsert",
+                            tile=key, n=seen, total=len(elements),
+                            inserted=tile_ins, updated=tile_upd,
+                            osm_id=last_osm, name=last_name,
+                        )
                     if seen % UPSERT_HEARTBEAT == 0:
                         state.log(
                             f"Tuile {key} upsert {seen}/{len(elements)} "
                             f"(+{tile_ins} / ~{tile_upd})"
                         )
 
-                await mark_tile_done(cursor_coll, key, now_iso)
+                if not stopped_mid_tile:
+                    await mark_tile_done(cursor_coll, key, now_iso)
                 state.progress += 1
+                await emit(
+                    recorder, "tile_done",
+                    tile=key, raw=len(elements),
+                    inserted=tile_ins, updated=tile_upd, skipped=tile_skip,
+                    cancelled=stopped_mid_tile,
+                    osm_id=last_osm, name=last_name,
+                )
                 state.log(
                     f"Tuile {key} : {len(elements)} brut → +{tile_ins} / ~{tile_upd}"
                 )
+                if stopped_mid_tile:
+                    break
                 await asyncio.sleep(pause)
         finally:
             if own_client:
@@ -649,6 +720,7 @@ async def build_world_marinas(
             "unnamed": unnamed,
             "with_website_tag": with_site,
             "resume": resume,
+            "cancelled": cancelled,
         }
         state.summary = summary
         state.log(f"Dump mondial terminé: {json.dumps(summary)}")
@@ -658,6 +730,7 @@ async def build_world_marinas(
         state.log(f"FATAL: {state.error}")
         raise
     finally:
+        await hb.aclose()
         state.finished_at = time.time()
         state.running = False
         if token is not None:

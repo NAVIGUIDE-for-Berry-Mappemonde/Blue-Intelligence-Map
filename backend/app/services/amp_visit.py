@@ -14,6 +14,7 @@ import re
 import time
 from collections import defaultdict
 from typing import Awaitable, Callable
+from app.core.events import HeartbeatWatch, emit
 from app.core.search import search_named
 from app.core.tinyfish import AMP_VISIT_PURPOSE, FETCH_URL_CAP, tf_api_key
 from app.db import get_settings
@@ -256,29 +257,81 @@ async def _write_visit(db, doc: dict) -> None:
     await db.amp_sites.update_one({"_id": doc["_id"]}, {"$set": fields})
 
 
-async def _commit_discovered(db, doc: dict, url: str | None, source: str) -> str:
+async def _commit_discovered(db, doc: dict, url: str | None, source: str,
+                             recorder=None) -> str:
+    site_id = doc.get("site_id") or doc.get("_id")
+    await emit(
+        recorder, "visit_try",
+        site_id=site_id, name=doc.get("name"), source=source, url=url,
+    )
     if not url:
         return "unchanged"
     amp_svc.apply_visit_choice(doc, discovered=url, source=source)
     after = doc.get("visit_url")
     if after and not amp_svc.urls_equivalent(after, doc.get("manager_url")):
         await _write_visit(db, doc)
+        await emit(
+            recorder, "visit_found",
+            site_id=site_id, name=doc.get("name"), source=source, url=after,
+        )
         return "found"
     if doc.get("visit_url_status") == "rejected_same_as_manager":
         await _write_visit(db, doc)
+        await emit(
+            recorder, "visit_rejected",
+            site_id=site_id, name=doc.get("name"), source=source,
+            url=url, reason="rejected_same_as_manager",
+        )
         return "rejected"
+    await emit(
+        recorder, "visit_rejected",
+        site_id=site_id, name=doc.get("name"), source=source,
+        url=url, reason=doc.get("visit_url_status") or "unchanged",
+    )
     return "unchanged"
 
 
-async def pending_sites(db, limit: int) -> list[dict]:
+def _doc_in_bbox(doc: dict, bbox: tuple[float, float, float, float]) -> bool:
+    minx, miny, maxx, maxy = bbox
+    lat = doc.get("lat")
+    lon = doc.get("lon") if doc.get("lon") is not None else doc.get("lng")
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return False
+    return miny <= lat_f <= maxy and minx <= lon_f <= maxx
+
+
+async def pending_sites(db, limit: int, *, bbox=None, run_id=None) -> list[dict]:
     q = {
         "$or": [
             {"visit_url": {"$in": [None, ""]}},
             {"visit_url_status": {"$in": ["none", "not_found", None]}},
         ],
     }
-    docs = await db.amp_sites.find(q).to_list(int(limit))
-    return [d for d in docs if _needs_visit(d)][:int(limit)]
+    docs = await db.amp_sites.find(q).to_list(int(limit) * 4 if bbox else int(limit))
+    docs = [d for d in docs if _needs_visit(d)]
+    if bbox:
+        docs = [d for d in docs if _doc_in_bbox(d, bbox)]
+    if run_id:
+        done_ids: set[str] = set()
+        try:
+            already = await db.amp_run_sites.find({"run_id": run_id}).to_list(5000)
+        except Exception:
+            already = []
+        for row in already:
+            status = row.get("visit_url_status")
+            if row.get("visit_url") or status in (
+                "found", "rejected_same_as_manager", "not_found",
+            ):
+                sid = str(row.get("site_id") or row.get("source_id") or "")
+                if sid:
+                    done_ids.add(sid)
+        docs = [
+            d for d in docs
+            if str(d.get("site_id") or d.get("_id") or "") not in done_ids
+        ]
+    return docs[:int(limit)]
 
 
 async def default_fetch_many(urls: list[str], *, key: str, log=None) -> dict[str, dict]:
@@ -329,9 +382,11 @@ async def discover_visit_urls(
     use_llm_judge: bool = True,
     judge_fn: JudgeFn | None = None,
     run_id: str | None = None,
+    recorder=None,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> dict:
     """Refresh PS → extras → Fetch → Search → juge Muse / OpenRouter."""
-    from app.services.isolated_runs import bind_run, reset_run
+    from app.services.isolated_runs import bind_run, reset_run, write_item
 
     token = bind_run(run_id) if run_id else None
     state.running = True
@@ -344,7 +399,44 @@ async def discover_visit_urls(
     state.cancel = False
     state.run_id = run_id
 
-    docs = await pending_sites(db, limit)
+    hb = HeartbeatWatch(recorder).start(lambda: {
+        "progress": state.progress,
+        "total": state.total,
+        "last_item": getattr(state, "last_item", None),
+    })
+    if bbox:
+        await emit(recorder, "bbox", bbox=list(bbox),
+                   minx=bbox[0], miny=bbox[1], maxx=bbox[2], maxy=bbox[3])
+        last = getattr(amp_svc, "LAST_REFRESH", None) or {}
+        src = last.get("source")
+        if src == "arcgis":
+            await emit(recorder, "arcgis_fetch", bbox=list(bbox),
+                       count=last.get("count"), fetched=last.get("fetched"))
+        else:
+            await emit(recorder, "cache_hit", bbox=list(bbox),
+                       count=last.get("count"), source=src or "cache")
+
+    docs = await pending_sites(db, limit, bbox=bbox, run_id=run_id)
+    if bbox and run_id:
+        map_docs = []
+        try:
+            map_docs = await amp_svc.query_cache(db, bbox, limit=int(limit))
+        except Exception:
+            map_docs = []
+        if not map_docs:
+            try:
+                raw = await db.amp_sites.find({}).to_list(4000)
+            except Exception:
+                raw = []
+            map_docs = [d for d in raw if _doc_in_bbox(d, bbox)][:int(limit)]
+        for doc in map_docs:
+            try:
+                await write_item(
+                    db, "amp", run_id, dict(doc),
+                    source_id=doc.get("site_id") or doc.get("_id"),
+                )
+            except Exception:
+                pass
     state.total = len(docs)
     counters = {
         "selected": len(docs),
@@ -391,16 +483,40 @@ async def discover_visit_urls(
             if getattr(state, "cancel", False):
                 state.log("Stop demandé")
                 break
+            site_id = doc.get("site_id") or doc.get("_id")
+            state.last_item = site_id
+            hb.update(progress=state.progress, last_item=site_id)
+            await emit(
+                recorder, "site",
+                site_id=site_id, name=doc.get("name"),
+                has_visit=bool(doc.get("visit_url")),
+            )
             before = doc.get("visit_url")
+            await emit(
+                recorder, "visit_try",
+                site_id=site_id, name=doc.get("name"),
+                source="other_helpful_links",
+            )
             amp_svc.apply_visit_choice(doc, source="other_helpful_links")
             after = doc.get("visit_url")
             if after and not amp_svc.urls_equivalent(after, doc.get("manager_url")):
                 await _write_visit(db, doc)
                 counters["from_links"] += 1
                 state.log(f"✓ {doc.get('name')} ← other_helpful_links")
+                await emit(
+                    recorder, "visit_found",
+                    site_id=site_id, name=doc.get("name"),
+                    source="other_helpful_links", url=after,
+                )
             else:
                 if doc.get("visit_url_status") == "rejected_same_as_manager":
                     counters["rejected_same_as_manager"] += 1
+                    await emit(
+                        recorder, "visit_rejected",
+                        site_id=site_id, name=doc.get("name"),
+                        source="other_helpful_links",
+                        url=after, reason="rejected_same_as_manager",
+                    )
                 remaining.append(doc)
                 if after != before or doc.get("ps_website_raw"):
                     await _write_visit(db, doc)
@@ -447,7 +563,7 @@ async def discover_visit_urls(
                         doc.get("manager_url"), links,
                         name=doc.get("name") or "")
                     verdict = await _commit_discovered(
-                        db, doc, picked, "tinyfish_fetch")
+                        db, doc, picked, "tinyfish_fetch", recorder=recorder)
                     if verdict == "found":
                         counters["from_fetch"] += 1
                         state.log(f"✓ {doc.get('name')} ← tinyfish_fetch")
@@ -479,7 +595,7 @@ async def discover_visit_urls(
                     counters["unchanged"] += 1
                     continue
                 verdict = await _commit_discovered(
-                    db, doc, picked, "tinyfish_search")
+                    db, doc, picked, "tinyfish_search", recorder=recorder)
                 if verdict == "found":
                     counters["from_search"] += 1
                     state.log(f"✓ {doc.get('name')} ← tinyfish_search")
@@ -503,6 +619,7 @@ async def discover_visit_urls(
         state.log(f"FATAL: {state.error}")
         raise
     finally:
+        await hb.aclose()
         state.finished_at = time.time()
         state.running = False
         if token is not None:

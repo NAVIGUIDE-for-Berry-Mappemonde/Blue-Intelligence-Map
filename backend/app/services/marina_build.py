@@ -254,16 +254,19 @@ async def overpass_fetch_bbox(
     max_retries: int = 5,
     logger=None,
     body: str | None = None,
+    meta: dict | None = None,
 ) -> list[dict]:
     """
     Fetch all marina/harbour features inside a bbox. Retries across endpoints.
     Returns raw Overpass `elements` list. Pass a custom `body` (Overpass QL)
     to reuse the same client for other feature classes (e.g. anchorages).
+    `meta` is filled with http / mirror / latency_ms / n of the successful call.
     """
     body = body or _overpass_bbox_body(south, west, north, east)
     last_err: Exception | None = None
     for attempt in range(max_retries):
         endpoint = OVERPASS_ENDPOINTS[attempt % len(OVERPASS_ENDPOINTS)]
+        t0 = time.time()
         try:
             r = await client.post(
                 endpoint,
@@ -271,12 +274,27 @@ async def overpass_fetch_bbox(
                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
                 timeout=httpx.Timeout(connect=10.0, read=120.0, write=15.0, pool=8.0),
             )
+            latency_ms = int((time.time() - t0) * 1000)
             if r.status_code == 200:
                 payload = r.json() if r.content else {}
                 remark = str((payload or {}).get("remark") or "")
                 if "timed out" in remark.lower():
                     raise TimeoutError(f"Overpass remark timeout on {endpoint}: {remark[:120]}")
-                return (payload.get("elements") or [])
+                elements = payload.get("elements") or []
+                if meta is not None:
+                    meta.update({
+                        "http": 200,
+                        "mirror": endpoint,
+                        "latency_ms": latency_ms,
+                        "n": len(elements),
+                    })
+                return elements
+            if meta is not None:
+                meta.update({
+                    "http": r.status_code,
+                    "mirror": endpoint,
+                    "latency_ms": latency_ms,
+                })
             if r.status_code in (429, 502, 503, 504):
                 sleep_s = 3 * (2 ** min(attempt, 3))
                 if logger:
@@ -286,6 +304,13 @@ async def overpass_fetch_bbox(
             last_err = RuntimeError(f"HTTP {r.status_code}: {r.text[:120]}")
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             last_err = e
+            if meta is not None:
+                meta.update({
+                    "http": None,
+                    "mirror": endpoint,
+                    "latency_ms": int((time.time() - t0) * 1000),
+                    "error": type(e).__name__,
+                })
             if logger and attempt < 2:
                 logger(f"Overpass bbox {type(e).__name__} on {endpoint}: {str(e)[:60]}")
             await asyncio.sleep(2)

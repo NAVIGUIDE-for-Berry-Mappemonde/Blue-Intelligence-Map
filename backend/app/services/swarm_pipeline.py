@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import os
 import time
 import uuid
@@ -18,6 +20,9 @@ from app.core.rag import select_context
 from app.static_data.seeds import CRAWL_BLACKLIST, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS
 from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
                              tf_get_run, tf_run_async, tf_run_sse)
+from app.core.events import RUNS_DIR, HeartbeatWatch
+
+logger = logging.getLogger(__name__)
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
@@ -47,7 +52,7 @@ class Swarm:
         self.db = db
         self.running = False
         self.mode = "test"
-        self.logs = deque(maxlen=300)
+        self.logs = deque(maxlen=4000)
         self.agents = {}
         self.agent_seq = 0
         self.queue = None
@@ -67,7 +72,17 @@ class Swarm:
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
-        self.logs.append({"ts": now_iso(), "msg": msg, "level": level})
+        entry = {"ts": now_iso(), "msg": msg, "level": level}
+        self.logs.append(entry)
+        rid = self.run_id
+        if rid:
+            try:
+                RUNS_DIR.mkdir(parents=True, exist_ok=True)
+                path = RUNS_DIR / f"{rid}.swarm.jsonl"
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as exc:
+                logger.warning("swarm JSONL append failed run_id=%s: %s", rid, exc)
 
     def new_agent(self, engine, mode, url, source=""):
         self.agent_seq += 1
@@ -114,8 +129,8 @@ class Swarm:
         if rec is not None:
             try:
                 await rec.event(step, **payload)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("swarm recorder.event failed step=%s: %s", step, exc)
 
     async def _bump_run(self, key: str):
         if not self.run_id:
@@ -172,7 +187,7 @@ class Swarm:
             "active": sum(1 for a in self.agents.values() if a["status"] in ("PENDING", "RUNNING")),
             "queued": self.queued_count,
             "agents": agents,
-            "logs": list(self.logs)[-100:],
+            "logs": list(self.logs)[-200:],
             "run_id": self.run_id,
             "wrote_projects": False,
         }
@@ -245,6 +260,16 @@ class Swarm:
     async def _run(self):
         cancelled = False
         error = None
+        hb = HeartbeatWatch(self.recorder).start(lambda: {
+            "progress": self.queued_count,
+            "active": sum(1 for a in self.agents.values()
+                          if a["status"] in ("PENDING", "RUNNING")),
+            "last_item": next(
+                (a.get("url") for a in reversed(list(self.agents.values()))
+                 if a.get("status") == "RUNNING"),
+                None,
+            ),
+        })
         try:
             seeds = MASTER_SEEDS[:TEST_SEED_COUNT] if self.mode == "test" else MASTER_SEEDS
             max_urls = int(self.settings.get("test_max_urls_per_seed", 6)) if self.mode == "test" \
@@ -310,11 +335,14 @@ class Swarm:
                     self.db, self.run_id, cancelled=cancelled, error=error)
             except Exception:
                 pass
+            await hb.aclose()
             self.running = False
 
     # ---------- discovery (cascade : N1 crawler gratuit → N3 TinyFish dernier recours) ----------
     async def _discover(self, seed, max_urls, depth=0):
         # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
+        await self._emit("discover_seed", seed=seed.get("name"), url=seed.get("url"),
+                         depth=depth)
         known_urls = []
         if depth == 0:
             state = await self.db.discovery_state.find_one({"seed_url": seed["url"]})
@@ -360,6 +388,11 @@ class Swarm:
                     self.agent_log(aid, f"TinyFish failed: {tf_err}")
                     self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
             urls = urls[:max_urls]
+            engine_code = "N3" if used_engine == "TinyFish" else "N1"
+            await self._emit(
+                "discover_urls", seed=seed.get("name"), n=len(urls),
+                engine=engine_code, depth=depth,
+            )
             if depth == 0 and (urls or known_urls):
                 new_count = len([u for u in urls if u not in set(known_urls)])
                 await self.db.discovery_state.update_one(
@@ -544,6 +577,7 @@ class Swarm:
 
         aid = self.new_agent("Cascade N1→N2", "extract", url, source)
         t0 = time.time()
+        await self._emit("extract_start", url=url, funder=funder, source=source)
         try:
             self.set_agent(aid, status="RUNNING")
             self.agent_log(aid, "Cascade hybride: N1 trafilatura/PyMuPDF → N2 Readability")
@@ -567,6 +601,8 @@ class Swarm:
                 self.agent_log(aid, f"REJECTED: {gk['reason'][:80]}")
                 await self._write_verdict(item, "rejected", title=page_title,
                                           reason=gk["reason"], engine=gk.get("engine"))
+                await self._emit("rejected", url=url, reason=gk["reason"],
+                                 engine=gk.get("engine"))
                 await self.telemetry(url, gk["engine"], "REJECTED", (time.time() - t0) * 1000, 0, gk["reason"])
                 await self.add_failed(url, source, funder, gk["reason"], "gatekeeper")
                 self._bump_saturation(False)
@@ -598,7 +634,18 @@ class Swarm:
                 )
                 if geo.get("lat") is not None:
                     lat, lon = geo["lat"], geo["lon"]
-                    geo_src = geo.get("geo_source") or "geocoded:location"
+                    geo_src = geo.get("source") or geo.get("geo_source") or "geocoded:location"
+                await self._emit(
+                    "geocode", url=url,
+                    source=geo_src if lat is not None else (geo.get("source") or "none"),
+                    kind=geo.get("geo_kind") or "havre",
+                    lat=lat, lon=lon,
+                )
+            else:
+                await self._emit(
+                    "geocode", url=url, source=geo_src, kind="extracted",
+                    lat=lat, lon=lon,
+                )
 
             ok, kind = site_publishable(lat, lon, self.settings)
             if not ok:
@@ -609,6 +656,8 @@ class Swarm:
                     location=proj.get("location"), lat=lat, lon=lon,
                     geo_source=geo_src, geo_kind=kind, engine=proj.get("engine"),
                     reason=f"unlocated:{kind}")
+                await self._emit("unlocated", url=url, reason=f"unlocated:{kind}",
+                                 kind=kind, lat=lat, lon=lon)
                 await self.telemetry(url, proj["engine"], "UNLOCATED", (time.time() - t0) * 1000, 0, kind)
                 await self.add_failed(url, source, funder, f"unlocated:{kind}", "unlocated")
                 self._bump_saturation(False)
@@ -697,6 +746,7 @@ class Swarm:
                     location=proj.get("location"),
                     merged_into_url=c.get("url"),
                 )
+                await self._emit("dedup", url=url, into=c.get("url"), how="merged_run")
                 return "merged_run"
 
         v1_docs = await self.db.projects.find(
@@ -717,5 +767,6 @@ class Swarm:
                     location=proj.get("location"),
                     v1_url=c.get("url"), v1_id=c.get("_id"),
                 )
+                await self._emit("dedup", url=url, into=c.get("url"), how="merged_v1")
                 return "merged_v1"
         return None

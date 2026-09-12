@@ -5,6 +5,8 @@ server.py, BuildState de marinas.py).
 """
 import time
 
+LOGS_TAIL_N = 200
+
 
 class TaskState:
     """État in-memory d'une tâche/batch de fond, avec journal borné."""
@@ -45,7 +47,7 @@ class TaskState:
         return {
             "running": self.running, "started_at": self.started_at, "finished_at": self.finished_at,
             "progress": self.progress, "total": self.total, "results": self.results[-40:],
-            "logs_tail": self.logs[-60:], "error": self.error, "summary": self.summary,
+            "logs_tail": self.logs[-LOGS_TAIL_N:], "error": self.error, "summary": self.summary,
             "cancelling": self.cancel and self.running,
             "run_id": self.run_id,
         }

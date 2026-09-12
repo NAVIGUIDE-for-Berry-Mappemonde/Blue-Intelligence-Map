@@ -431,8 +431,13 @@ def test_routers_expose_runs_endpoints():
     amp_paths = {getattr(r, "path", "") for r in amp_router.router.routes}
     assert "/api/marinas/runs" in marina_paths
     assert "/api/marinas/runs/{run_id}" in marina_paths
+    assert "/api/marinas/runs/{run_id}/events" in marina_paths
+    assert "/api/marinas/build/cancel" in marina_paths
     assert "/api/capitaineries/runs" in cap_paths
     assert "/api/capitaineries/runs/{run_id}" in cap_paths
+    assert "/api/capitaineries/runs/{run_id}/events" in cap_paths
+    assert "/api/amp/runs/{run_id}/geojson" in amp_paths
+    assert "/api/amp/runs/{run_id}/events" in amp_paths
     from app.routers import project_runs as project_runs_router
     from app.routers import runs as poe_router
     project_paths = {getattr(r, "path", "") for r in project_runs_router.router.routes}
