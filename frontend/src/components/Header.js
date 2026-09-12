@@ -1,5 +1,6 @@
-import { Anchor, ClipboardCheck, Compass, FlaskConical, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Ship, Sun, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, FlaskConical, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Ship, Sun, UserPlus, Waves } from "lucide-react";
 import RunSelector from "./RunSelector";
+import { HELLOASSO_MEMBERSHIP_URL } from "../config/helloasso";
 import { nextBasemap } from "./map/basemaps";
 
 // Icône et libellé du PROCHAIN fond de carte (le bouton annonce sa destination).
@@ -150,6 +151,17 @@ export default function Header({
             </button>
           )}
         </div>
+        <a
+          href={HELLOASSO_MEMBERSHIP_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="membership-cta"
+          title={t("membershipCtaTooltip")}
+          className="flex items-center gap-2 px-3 py-1.5 border border-bio/40 bg-bio/10 hover:bg-bio/15 rounded-sm text-bio font-semibold text-xs transition-colors"
+        >
+          <UserPlus size={13} />
+          <span className="hidden md:inline">{t("membershipCta")}</span>
+        </a>
         <div className="flex border border-line rounded-sm overflow-hidden font-mono text-xs">
           <button
             data-testid="lang-toggle-en"

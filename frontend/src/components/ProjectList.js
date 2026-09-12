@@ -1,7 +1,7 @@
 import { ExternalLink } from "lucide-react";
 
-// Phase 5 — donate button was removed from the list rows; donations now happen
-// through the global "Support Blue Intelligence" CTA in the header.
+// Per-project donate buttons were removed; membership happens via the HelloAsso
+// CTA in the header (Berry-Mappemonde association).
 export default function ProjectList({ t, projects, funderFilter, searchQuery, categoryFilter, onFlyTo }) {
   const q = (searchQuery || "").toLowerCase();
   const features = (projects.features || []).filter(
