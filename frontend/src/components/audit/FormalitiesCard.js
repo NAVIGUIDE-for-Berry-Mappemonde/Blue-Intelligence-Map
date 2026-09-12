@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 import LaunchScope from "./LaunchScope";
 
 const FRANCE_MRGID = 5677;
@@ -44,6 +45,7 @@ export default function FormalitiesCard({ t, onPoeRefresh, rulesPayload }) {
       } else {
         await api.post("/poe/runs", { variant: "tinyfish", ...extra() });
       }
+      invalidateRuns("formalities");
       if (onPoeRefresh) onPoeRefresh();
     } catch (e) {
       alert(e.response?.data?.detail || e.message);

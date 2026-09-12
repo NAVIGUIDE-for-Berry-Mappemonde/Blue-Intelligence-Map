@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Play, Square } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 
 export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [swarmMode, setSwarmMode] = useState("test");
@@ -15,6 +16,7 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
       const extra = rulesPayload ? rulesPayload() : {};
       const { data } = await api.post("/projects/runs", { mode: swarmMode, ...extra });
       setLastRun(data);
+      invalidateRuns("projects");
       refresh && refresh();
     } catch (e) {
       alert(e.response?.data?.detail || e.message);

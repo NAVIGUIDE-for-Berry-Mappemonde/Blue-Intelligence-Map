@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 import LaunchScope from "./LaunchScope";
 
 const SOURCE_DEFS = [
@@ -55,6 +56,7 @@ export default function ScienceCard({ t, rulesPayload }) {
         scope,
         ...extra(),
       });
+      invalidateRuns("science");
     } catch (e) { alert(e.response?.data?.detail || e.message); }
     finally { setTimeout(() => setStarting(false), 800); }
   };
@@ -117,7 +119,7 @@ export default function ScienceCard({ t, rulesPayload }) {
       )}
       {summary && !buildStatus?.running && (
         <div className="text-[9px] font-mono text-slate-500" data-testid="audit-science-summary">
-          <p>✓ +{summary.inserted ?? 0} · ~{summary.updated ?? 0} · {summary.unlocated ?? 0} {t("scienceCount")}</p>
+          <p>✓ +{summary.inserted ?? 0} · ~{summary.updated ?? 0} · {summary.unlocated ?? 0} {t("journalUnlocated")}</p>
           {SOURCE_DEFS.filter((s) => perSource[s.id]).map((s) => {
             const st = perSource[s.id];
             return (

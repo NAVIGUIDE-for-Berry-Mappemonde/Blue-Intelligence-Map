@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 import LaunchScope from "./LaunchScope";
 
 export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anchoragesCount, rulesPayload }) {
@@ -44,6 +45,7 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
         scope,
         ...extra(),
       });
+      invalidateRuns("marinas");
     } catch (e) { alert(e.response?.data?.detail || e.message); }
     finally { setTimeout(() => setStarting(false), 800); }
   };
@@ -52,6 +54,7 @@ export default function MarinasCard({ t, showAnchorages, setShowAnchorages, anch
     try {
       if (buildStatus?.running) await api.post("/marinas/build/cancel");
       if (batchStatus?.running) await api.post("/marinas/enrich-batch/cancel");
+      if (anchStatus?.running) await api.post("/anchorages/build/cancel");
     } catch (e) { console.warn("marina stop failed", e); }
   };
 

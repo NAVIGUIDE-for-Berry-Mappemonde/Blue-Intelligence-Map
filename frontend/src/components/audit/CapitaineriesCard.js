@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 import LaunchScope from "./LaunchScope";
 
 export default function CapitaineriesCard({ t, rulesPayload }) {
@@ -41,6 +42,7 @@ export default function CapitaineriesCard({ t, rulesPayload }) {
         scope,
         ...extra(),
       });
+      invalidateRuns("capitaineries");
     } catch (e) { alert(e.response?.data?.detail || e.message); }
     finally { setTimeout(() => setStarting(false), 800); }
   };

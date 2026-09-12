@@ -76,7 +76,7 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
     e.target.value = "";
     if (!file) return;
     const currentMode = mode || "projects";
-      if (currentMode === "formalities") {
+    if (currentMode === "formalities") {
       alert(t("importUnsupportedFormalities"));
       return;
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import api from "../../api";
+import { invalidateRuns } from "../../lib/runCache";
 import LaunchScope from "./LaunchScope";
 
 export default function AmpCard({ t, rulesPayload }) {
@@ -48,6 +49,7 @@ export default function AmpCard({ t, rulesPayload }) {
         scope,
         ...extra(),
       });
+      invalidateRuns("amp");
     } catch (e) {
       setJob({ error: e.response?.data?.detail || e.message });
     } finally {
