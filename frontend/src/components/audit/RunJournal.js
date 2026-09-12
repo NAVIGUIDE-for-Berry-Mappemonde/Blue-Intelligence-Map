@@ -100,7 +100,7 @@ export default function RunJournalViewer({ t, runId }) {
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">{t("journalParamsTitle")}</p>
           <pre
             data-testid="run-journal-params"
-            className="console-scanlines bg-black/60 border border-line rounded-sm max-h-40 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap"
+            className="console-scanlines bg-black/60 border border-line rounded-sm max-h-80 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap"
           >{pack.header_text}</pre>
         </div>
       ) : null}
