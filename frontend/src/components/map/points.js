@@ -22,7 +22,9 @@ export const POPUP_OPTS = {
 
 /** Groupe de points (plus de cluster) avec addLayers pour les hooks existants. */
 export function makePointGroup() {
-  const renderer = L.canvas({ padding: 0.5, tolerance: 3 });
+  // tolerance 8 : la pastille reste minuscule à l'écran mais la zone de
+  // clic/tap autour reste confortable (sinon les popups sont inatteignables).
+  const renderer = L.canvas({ padding: 0.5, tolerance: 8 });
   const group = L.layerGroup();
   group._biRenderer = renderer;
   group.addLayers = (layers) => {
