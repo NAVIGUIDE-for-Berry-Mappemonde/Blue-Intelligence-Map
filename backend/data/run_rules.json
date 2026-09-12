@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-09",
+  "updated": "2026-09-12",
   "principle": "Un chiffre n'est pas une opinion. Il est soit une loi (contrat métier, jamais modulable), soit une mesure (phénomène physique + intervalle de validité), soit une calibration (jeu étiqueté / courbe précision-rappel), soit un budget (quota ou argent). L'intervalle dit encore de quoi on parle ; le défaut est le point d'opération. Un run ne peut bouger que dans l'intervalle. Hors intervalle, ce n'est plus la même règle.",
   "kinds": {
     "loi": {
@@ -770,6 +770,34 @@
       "help": {
         "fr": "Agent = scalpel, pas moteur. Search/Fetch d'abord. On peut l'éteindre.",
         "en": "Agent is a scalpel, not the engine. Search/Fetch first. You can turn it off."
+      },
+      "group": "budget"
+    },
+    {
+      "id": "projects.serper_max_per_run",
+      "mode": "projects",
+      "kind": "budget",
+      "value": 1800,
+      "unit": "credits",
+      "interval": [
+        0,
+        2089
+      ],
+      "vary": true,
+      "settings_key": "serper_max_per_run",
+      "principle": "1 requête Serper par graine, en parallèle de TinyFish Search. Plafond dur sous le stock de crédits.",
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8.1",
+      "code": [
+        "app/config.py",
+        "app/services/swarm_pipeline.py"
+      ],
+      "title": {
+        "fr": "Plafond Serper par run Projets",
+        "en": "Serper cap per Projects run"
+      },
+      "help": {
+        "fr": "1 crédit Serper par graine (num=10). Au plafond, TinyFish Search continue, Serper s'arrête. Pas de 2e requête EN/FR.",
+        "en": "1 Serper credit per seed (num=10). At the cap, TinyFish Search continues and Serper stops. No second EN/FR query."
       },
       "group": "budget"
     },

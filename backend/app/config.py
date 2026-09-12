@@ -37,6 +37,7 @@ DEFAULT_SETTINGS = {
     "gatekeeper_accept": 0.85,
     "gatekeeper_reject": 0.12,
     "allow_tinyfish_agent": True,
+    "serper_max_per_run": 1800,
     "test_max_urls_per_seed": 6,
     "full_max_urls_per_seed": 20,
     "min_zoom": 2,

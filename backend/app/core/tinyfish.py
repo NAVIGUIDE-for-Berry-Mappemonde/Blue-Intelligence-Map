@@ -24,6 +24,11 @@ AMP_VISIT_PURPOSE = (
     "/permits or /reglementation — never the organization homepage alone."
 )
 
+PROJECTS_DISCOVERY_PURPOSE = (
+    "Individual marine, ocean or coastal conservation project pages "
+    "(project, campaign, initiative, programme). Ignore news, donations and events."
+)
+
 # Une retry 429 ; monkeypatchable dans les tests.
 SEARCH_RETRY_SLEEP_S = 2.0
 FETCH_LEVEL = "N3-mirror-tinyfish"

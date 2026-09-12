@@ -77,6 +77,7 @@ class SettingsBody(BaseModel):
     gatekeeper_accept: float | None = None
     gatekeeper_reject: float | None = None
     allow_tinyfish_agent: bool | None = None
+    serper_max_per_run: int | None = None
     test_max_urls_per_seed: int | None = None
     full_max_urls_per_seed: int | None = None
     min_zoom: int | None = None
