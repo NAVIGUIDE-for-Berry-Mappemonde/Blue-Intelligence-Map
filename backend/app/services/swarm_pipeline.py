@@ -24,8 +24,15 @@ from app.services.master_seeds import (
     seeds_for_run,
 )
 from app.core.tinyfish import (
-    DISCOVERY_SCHEMA, PROJECTS_DISCOVERY_PURPOSE, discovery_goal,
-    find_live_url, tf_fetch, tf_get_run, tf_run_async, tf_run_sse, tf_search,
+    AGENT_CREDIT_CAP, DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S,
+    LISTING_AGENT_DURATION_S, LISTING_SCHEMA, PROJECTS_DISCOVERY_PURPOSE,
+    PROJECTS_LISTING_PURPOSE, discovery_goal, listing_goal, find_live_url,
+    tf_fetch, tf_get_run, tf_run_async, tf_run_sse, tf_search,
+)
+from app.services.project_listing import (
+    apply_learned_listings, filter_listing_urls, fiche_search_retry_query,
+    infer_listing_from_project_urls, is_listing_url, listing_search_query,
+    listing_search_retry_query, needs_listing_hop, pick_listing_url,
 )
 from app.core.serper import serper_api_key, serper_search
 from app.core.events import HeartbeatWatch
@@ -109,12 +116,13 @@ def project_search_query(seed: dict) -> str:
     return "ocean project"
 
 
-def filter_discover_urls(hits, seed, max_urls) -> list[str]:
+def filter_discover_urls(hits, seed, max_urls, *, exclude_urls=None) -> list[str]:
     """Même hôte (ou domaine trouvé), URL_PATTERNS, hors blacklist, http, dédup."""
     try:
         cap = max(0, int(max_urls or 0))
     except (TypeError, ValueError):
         cap = 0
+    excluded = {u.rstrip("/") for u in (exclude_urls or []) if u}
     host = domain_of((seed or {}).get("url") or "") if isinstance(seed, dict) else ""
     seed_url = ""
     if isinstance(seed, dict):
@@ -127,7 +135,10 @@ def filter_discover_urls(hits, seed, max_urls) -> list[str]:
         href = raw.split("#")[0].split("?")[0]
         if not href.startswith("http"):
             continue
-        if seed_url and href.rstrip("/") == seed_url:
+        key = href.rstrip("/")
+        if key in excluded:
+            continue
+        if seed_url and key == seed_url:
             continue
         d = domain_of(href)
         if host:
@@ -425,8 +436,9 @@ class Swarm:
         await self._write_journal_header()
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
         self.log(
-            f"Deploying Swarm — mode: {mode.upper()} | N1 → Fetch → Search "
-            f"(Serper ∥ TinyFish, 1/seed) → Agent (wrote_projects: false)"
+            f"Deploying Swarm — mode: {mode.upper()} | home→catalogue puis fiches | "
+            f"N1 → Fetch → Search (Serper ∥ TinyFish) → Agent listing | Agent fiches "
+            f"(wrote_projects: false)"
         )
         if force_rescan:
             self.log("Auto-Stop disarmed — from scratch (known URLs are re-extracted)")
@@ -481,7 +493,7 @@ class Swarm:
                 extras = await self.db.master_seeds.find({}).to_list(2000)
             except Exception:
                 extras = []
-            self.master_seeds = list(MASTER_SEEDS) + [
+            self.master_seeds = apply_learned_listings(list(MASTER_SEEDS), extras) + [
                 e for e in extras
                 if (e.get("url") or e.get("name"))
                 and not is_known_funder(MASTER_SEEDS, e.get("name"), e.get("url"))
@@ -507,7 +519,7 @@ class Swarm:
                 f"discover_concurrency={discover_n}, extract_concurrency={concurrency})"
             )
 
-            if self.mode == "full":
+            if self.mode == "full" and not getattr(self, "force_rescan", False):
                 cached = await self.db.deeplink_pages.find({}).to_list(5000)
                 if cached:
                     existing = {p["url"] for p in await self.db.projects.find({}, {"url": 1}).to_list(30000)}
@@ -516,6 +528,8 @@ class Swarm:
                     for c in fresh:
                         self.queued_count += 1
                         await self.queue.put({"url": c["url"], "funder": c.get("funder", ""), "source": c.get("source", "cache")})
+            elif self.mode == "full" and getattr(self, "force_rescan", False):
+                self.log("from scratch — DeepLinkCache non déversé (redécouverte via catalogues)")
 
             from app.core.run_rules import get_rule
             tf_agents = max(1, min(2, int(get_rule(
@@ -564,36 +578,226 @@ class Swarm:
             await hb.aclose()
             self.running = False
 
-    # ---------- discovery (N1 motifs → Fetch → Search TF∥Serper → Agent) ----------
+    # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
-        # Incremental discovery: skip seeds scanned recently (TTL), unless force_rescan
-        listing = (seed.get("url") or "").strip()
-        if not listing:
+        seed = dict(seed or {})
+        start_url = (seed.get("url") or "").strip()
+        if not start_url:
             self.log(f"[{seed.get('name')}] skipped — no listing URL", "warn")
             return
-        await self._emit("discover_seed", seed=seed.get("name"), url=listing,
+        await self._emit("discover_seed", seed=seed.get("name"), url=start_url,
                          depth=depth)
-        known_urls = []
         force = bool(getattr(self, "force_rescan", False))
         if depth == 0:
-            state = await self.db.discovery_state.find_one({"seed_url": seed["url"]})
+            state = await self.db.discovery_state.find_one({"seed_url": start_url})
             rescan_days = float(self.settings.get("rescan_after_days", 7))
             if state and state.get("last_scan") and not force:
                 try:
                     last = datetime.fromisoformat(state["last_scan"])
                     age_days = (datetime.now(timezone.utc) - last).total_seconds() / 86400
                     if age_days < rescan_days:
-                        self.log(f"[{seed['name']}] discovery skipped — scanned {age_days:.1f}d ago (TTL {rescan_days:g}d, cache reused)")
+                        self.log(
+                            f"[{seed['name']}] discovery skipped — scanned {age_days:.1f}d ago "
+                            f"(TTL {rescan_days:g}d, cache reused)"
+                        )
                         return
                 except ValueError:
                     pass
-            if not force:
-                cached = await self.db.deeplink_pages.find({"source": seed["url"]}, {"url": 1}).to_list(300)
-                known_urls = [c["url"] for c in cached]
-                if known_urls:
-                    self.log(f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission")
-            else:
+            if force:
                 self.log(f"[{seed['name']}] from scratch — TTL et URLs déjà connues non sautés")
+
+        if needs_listing_hop(seed):
+            found = await self._resolve_listing(seed)
+            if found:
+                await self._remember_listing(seed, found)
+                seed["url"] = found
+                seed["listing_kind"] = "projects_index"
+                self.log(f"[{seed['name']}] catalogue: {found}")
+            else:
+                self.log(f"[{seed['name']}] catalogue introuvable — fiches depuis la home")
+
+        known_urls = []
+        if depth == 0 and not force:
+            try:
+                cached = await self.db.deeplink_pages.find(
+                    {"$or": [{"source": start_url}, {"source": seed["url"]}]},
+                    {"url": 1},
+                ).to_list(300)
+            except Exception:
+                cached = await self.db.deeplink_pages.find(
+                    {"source": seed["url"]}, {"url": 1}).to_list(300)
+            known_urls = [c["url"] for c in cached if c.get("url")]
+            if known_urls:
+                self.log(
+                    f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission"
+                )
+        await self._discover_fiches(seed, max_urls, depth, known_urls)
+
+    async def _resolve_listing(self, seed):
+        """Home → une URL catalogue. N'écrit pas de fiches. Pas d'échec run si 0."""
+        name = seed.get("name") or seed.get("url")
+        key = self._tf_key()
+        aid = self.new_agent("Listing N1", "listing", seed["url"], seed["name"])
+        t0 = time.time()
+        found = None
+        used_engine = "Crawler"
+        n_tf = n_sp = 0
+        try:
+            self.set_agent(aid, status="RUNNING")
+            self.agent_log(aid, "Listing N1: crawler (motifs catalogues curés)")
+            try:
+                crawled = await self._crawl_listing(seed, 5)
+            except Exception as e:
+                crawled = []
+                self.agent_log(aid, f"Listing N1 échec: {type(e).__name__}: {str(e)[:80]}")
+            found = pick_listing_url(crawled)
+            self.agent_log(aid, f"Listing N1: {len(crawled)} candidat(s)")
+            self.log(f"[{name}] Listing N1: {len(crawled)} candidat(s)")
+
+            if not found:
+                inferred = await self._infer_listing_from_live(seed)
+                if inferred:
+                    found = inferred
+                    used_engine = "indice v1"
+                    self.agent_log(aid, f"indice v1 → {found}")
+                    self.log(f"[{name}] Listing indice v1: {found}")
+
+            if not found and key:
+                used_engine = "TinyFish Fetch"
+                self.set_agent(aid, engine="Listing Fetch")
+                log_fn = lambda m: self.agent_log(aid, m)
+                try:
+                    fetched = await self._fetch_listing(seed, log=log_fn)
+                except Exception as e:
+                    fetched = []
+                    self.agent_log(aid, f"Listing Fetch échec: {type(e).__name__}: {str(e)[:80]}")
+                found = pick_listing_url(fetched)
+                self.agent_log(aid, f"Listing Fetch: {len(fetched)} candidat(s)")
+                self.log(f"[{name}] Listing Fetch: {len(fetched)} candidat(s)")
+            elif not found:
+                self.agent_log(aid, "Listing Fetch: skipped (no TinyFish key)")
+
+            if not found:
+                used_engine = "Search"
+                self.set_agent(aid, engine="Listing Search TF∥Serper")
+                log_fn = lambda m: self.agent_log(aid, m)
+                try:
+                    searched, n_tf, n_sp = await self._search_listing(seed, log=log_fn)
+                except Exception as e:
+                    searched, n_tf, n_sp = [], 0, 0
+                    self.agent_log(aid, f"Listing Search échec: {type(e).__name__}: {str(e)[:80]}")
+                found = pick_listing_url(searched)
+                line = (
+                    f"Listing Search: TinyFish {n_tf} + Serper {n_sp} → "
+                    f"{len(searched)} catalogues after filter "
+                    f"(serper {self._serper_queries})"
+                )
+                self.agent_log(aid, line)
+                self.log(f"[{name}] {line}")
+
+            if not found and key and self.settings.get("allow_tinyfish_agent", True):
+                used_engine = "TinyFish listing"
+                self.set_agent(aid, engine="TinyFish Agent listing")
+                reason = (
+                    "Listing Search: 0 hit → TinyFish Agent listing"
+                    if (n_tf + n_sp) == 0
+                    else "Listing Search: hits filtrés (0 catalogues) → TinyFish Agent listing"
+                )
+                self.agent_log(aid, reason)
+                self.log(f"[{name}] {reason}")
+                try:
+                    sem = self._tf_sem or asyncio.Semaphore(1)
+                    async with sem:
+                        found = await self._tinyfish_listing_discover(aid, seed, key)
+                except Exception as e:
+                    self.agent_log(aid, f"TinyFish Agent listing failed: {str(e)[:120]}")
+                    self.log(f"TinyFish listing failed on {name}: {str(e)[:120]}", "error")
+
+            if found:
+                self.set_agent(aid, status="SUCCESS")
+                self.agent_log(aid, f"catalogue {found} ({used_engine})")
+                await self.telemetry(
+                    seed["url"], used_engine, "SUCCESS",
+                    (time.time() - t0) * 1000, 1)
+            else:
+                self.set_agent(aid, status="FAILED")
+                await self.telemetry(
+                    seed["url"], used_engine, "FAILED",
+                    (time.time() - t0) * 1000, 0, "listing not found")
+            return found
+        except asyncio.CancelledError:
+            self.set_agent(aid, status="CANCELLED")
+            raise
+        except Exception as e:
+            self.set_agent(aid, status="FAILED")
+            self.log(f"[{name}] listing hop error: {str(e)[:120]}", "error")
+            return None
+
+    async def _infer_listing_from_live(self, seed) -> str | None:
+        """Indice : préfixe commun des fiches v1 du même financeur (pas un dump extraction)."""
+        name = (seed.get("name") or "").strip()
+        if not name:
+            return None
+        try:
+            docs = await self.db.projects.find(
+                {}, {"url": 1, "funders": 1, "funder": 1}).to_list(8000)
+        except Exception:
+            return None
+        urls = []
+        needle = name.lower()
+        for doc in docs or []:
+            names = []
+            raw = doc.get("funders")
+            if isinstance(raw, list):
+                names.extend(str(x) for x in raw if x)
+            elif raw:
+                names.append(str(raw))
+            if doc.get("funder"):
+                names.append(str(doc["funder"]))
+            if any(needle == str(n).strip().lower() for n in names):
+                u = (doc.get("url") or "").strip()
+                if u:
+                    urls.append(u)
+        if len(urls) < 2:
+            return None
+        inferred = infer_listing_from_project_urls(urls, name)
+        if inferred and is_listing_url(inferred):
+            host = domain_of(seed.get("url") or "")
+            if host and domain_of(inferred) != host:
+                return None
+            return inferred
+        return None
+
+    async def _remember_listing(self, seed, listing_url: str):
+        """Mémoire in-process + Mongo. Jamais `projects`."""
+        domain = domain_of(listing_url) or domain_of(seed.get("url") or "")
+        name = seed.get("name") or ""
+        for item in self.master_seeds or []:
+            same = domain and domain_of(item.get("url")) == domain
+            if same or (name and (item.get("name") or "") == name):
+                item["url"] = listing_url
+                item["listing_kind"] = "projects_index"
+                break
+        if not domain:
+            return
+        try:
+            await self.db.master_seeds.update_one(
+                {"domain": domain},
+                {"$set": {
+                    "name": name,
+                    "url": listing_url,
+                    "domain": domain,
+                    "listing_kind": "projects_index",
+                    "source": "listing_hop",
+                    "ts": now_iso(),
+                },
+                 "$setOnInsert": {"_id": str(uuid.uuid4())}},
+                upsert=True)
+        except Exception:
+            pass
+
+    async def _discover_fiches(self, seed, max_urls, depth=0, known_urls=None):
+        known_urls = list(known_urls or [])
         key = self._tf_key()
         aid = self.new_agent("Crawler N1", "discover", seed["url"], seed["name"])
         t0 = time.time()
@@ -603,7 +807,7 @@ class Swarm:
         n_tf = n_sp = 0
         try:
             self.set_agent(aid, status="RUNNING")
-            self.agent_log(aid, "N1: crawler httpx (motifs URL_PATTERNS uniquement)")
+            self.agent_log(aid, "N1: crawler httpx (motifs URL_PATTERNS fiches)")
             try:
                 urls = await self._crawl_discover(seed, max_urls)
             except Exception as e:
@@ -633,7 +837,8 @@ class Swarm:
                 log_fn = lambda m: self.agent_log(aid, m)
                 try:
                     urls, n_tf, n_sp = await self._search_discover(
-                        seed, max_urls, log=log_fn)
+                        seed, max_urls, log=log_fn,
+                        retry_query=fiche_search_retry_query(seed))
                 except Exception as e:
                     search_err = f"{type(e).__name__}: {str(e)[:80]}"
                     self.agent_log(aid, f"Search échec: {search_err}")
@@ -647,16 +852,22 @@ class Swarm:
 
             if not urls and key and self.settings.get("allow_tinyfish_agent", True):
                 used_engine = "TinyFish"
-                self.set_agent(aid, engine="TinyFish N3")
-                self.agent_log(aid, "Search: 0 → TinyFish Agent (dernier recours)")
-                self.log(f"[{seed['name']}] Search vide → TinyFish Agent (dernier recours)")
+                self.set_agent(aid, engine="TinyFish Agent fiches")
+                reason = (
+                    "Search: 0 hit → TinyFish Agent fiches"
+                    if (n_tf + n_sp) == 0
+                    else "Search: hits filtrés (0 fiches) → TinyFish Agent fiches"
+                )
+                self.agent_log(aid, reason)
+                self.log(f"[{seed['name']}] {reason}")
                 try:
                     sem = self._tf_sem or asyncio.Semaphore(1)
                     async with sem:
-                        urls = await self._tinyfish_discover(aid, seed, key, max_urls, known_urls)
+                        urls = await self._tinyfish_discover(
+                            aid, seed, key, max_urls, known_urls)
                 except Exception as e:
                     tf_err = str(e)[:120]
-                    self.agent_log(aid, f"TinyFish failed: {tf_err}")
+                    self.agent_log(aid, f"TinyFish Agent fiches failed: {tf_err}")
                     self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
             urls = urls[:max_urls]
             engine_code = {
@@ -705,11 +916,7 @@ class Swarm:
             await self.telemetry(seed["url"], used_engine, "FAILED", (time.time() - t0) * 1000, 0, str(e))
             await self.add_failed(seed["url"], seed["url"], seed["name"], str(e), "discover")
 
-    async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
-        """SSE streaming first (real-time agent events), polling fallback."""
-        self.set_agent(aid, status="RUNNING")
-        goal = discovery_goal(seed["name"], known_urls)
-
+    def _tf_agent_on_event(self, aid):
         async def on_event(ev):
             et = ev.get("type")
             if et == "STARTED":
@@ -718,24 +925,63 @@ class Swarm:
                 self.set_agent(aid, live_url=ev["streaming_url"])
             elif et == "PROGRESS" and ev.get("purpose"):
                 self.agent_log(aid, str(ev["purpose"])[:110])
+        return on_event
+
+    async def _tinyfish_listing_discover(self, aid, seed, key):
+        """Agent TinyFish n°1 : une URL catalogue, pas de fiches individuelles."""
+        self.set_agent(aid, status="RUNNING")
+        goal = listing_goal(seed["name"])
+        cfg = {"max_duration_seconds": LISTING_AGENT_DURATION_S, "max_steps": AGENT_CREDIT_CAP}
+        try:
+            result = await tf_run_sse(
+                seed["url"], goal, LISTING_SCHEMA, key,
+                on_event=self._tf_agent_on_event(aid),
+                timeout=240, agent_config=cfg)
+        except (httpx.HTTPError, TimeoutError) as e:
+            self.agent_log(aid, f"SSE listing dropped ({str(e)[:60]}) → polling fallback")
+            result = await self._tinyfish_discover_poll(
+                aid, seed, key, goal, schema=LISTING_SCHEMA,
+                max_duration_s=LISTING_AGENT_DURATION_S)
+        raw = ((result or {}).get("listing_url") or "").strip()
+        self.agent_log(aid, f"agent listing finished: {raw or 'empty'}")
+        if not raw.startswith("http"):
+            return None
+        href = raw.split("#")[0].split("?")[0]
+        picked = pick_listing_url(filter_listing_urls([{"url": href}], seed, 1))
+        return picked
+
+    async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
+        """Agent TinyFish n°2 : fiches individuelles (SSE puis polling)."""
+        self.set_agent(aid, status="RUNNING")
+        goal = discovery_goal(seed["name"], known_urls)
+        cfg = {"max_duration_seconds": FICHE_AGENT_DURATION_S, "max_steps": AGENT_CREDIT_CAP}
 
         try:
-            result = await tf_run_sse(seed["url"], goal, DISCOVERY_SCHEMA, key, on_event=on_event)
+            result = await tf_run_sse(
+                seed["url"], goal, DISCOVERY_SCHEMA, key,
+                on_event=self._tf_agent_on_event(aid),
+                agent_config=cfg)
         except (httpx.HTTPError, TimeoutError) as e:
             self.agent_log(aid, f"SSE dropped ({str(e)[:60]}) → polling fallback")
-            result = await self._tinyfish_discover_poll(aid, seed, key, goal)
+            result = await self._tinyfish_discover_poll(
+                aid, seed, key, goal, schema=DISCOVERY_SCHEMA,
+                max_duration_s=FICHE_AGENT_DURATION_S)
         projects = (result or {}).get("projects") or []
-        self.agent_log(aid, f"agent finished: {len(projects)} candidates")
+        self.agent_log(aid, f"agent fiches finished: {len(projects)} candidates")
         urls, seen = [], set()
         for p in projects:
             u = (p.get("url") or "").strip()
             if u.startswith("http") and u not in seen:
                 seen.add(u)
                 urls.append(u)
-        return urls[:max_urls]
+        return filter_discover_urls([{"url": u} for u in urls], seed, max_urls)
 
-    async def _tinyfish_discover_poll(self, aid, seed, key, goal=None):
-        body = await tf_run_async(seed["url"], goal or discovery_goal(seed["name"]), DISCOVERY_SCHEMA, key)
+    async def _tinyfish_discover_poll(self, aid, seed, key, goal=None, *,
+                                       schema=None, max_duration_s=None):
+        schema = schema or DISCOVERY_SCHEMA
+        body = await tf_run_async(
+            seed["url"], goal or discovery_goal(seed["name"]), schema, key,
+            max_duration_s=max_duration_s)
         run_id = body.get("run_id")
         if not run_id:
             raise ValueError(body.get("error", "no run_id"))
@@ -743,7 +989,9 @@ class Swarm:
         if live:
             self.set_agent(aid, live_url=live)
         self.agent_log(aid, f"run_id {run_id[:12]}… agent navigating")
-        for i in range(120):
+        budget = int(max_duration_s or 360)
+        rounds = max(1, budget // 3)
+        for i in range(rounds):
             await asyncio.sleep(3)
             run = await tf_get_run(run_id, key)
             st = run.get("status", "")
@@ -758,12 +1006,9 @@ class Swarm:
                 return run.get("result") or {}
             if i % 5 == 0:
                 self.agent_log(aid, f"status {st or 'PENDING'} — navigating pagination/forms")
-        raise TimeoutError("TinyFish run timed out (360s)")
+        raise TimeoutError(f"TinyFish run timed out ({budget}s)")
 
-    async def _crawl_discover(self, seed, max_urls):
-        """1er passage seulement : chemins URL_PATTERNS (≥ 2 segments). Les 8
-        liens internes hors blacklist ne comptent pas comme vraies fiches —
-        sinon les homes sauteraient Fetch/Search."""
+    async def _crawl_page_links(self, seed):
         async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=UA) as client:
             r = await client.get(seed["url"])
             soup = BeautifulSoup(r.text, "html.parser")
@@ -773,17 +1018,47 @@ class Swarm:
             href = urljoin(seed["url"], a["href"]).split("#")[0].split("?")[0]
             if urlparse(href).netloc != base_host or href.rstrip("/") == seed["url"].rstrip("/"):
                 continue
+            if href in seen:
+                continue
+            seen.add(href)
+            urls.append(href)
+        return urls
+
+    async def _crawl_listing(self, seed, max_urls=5):
+        """Liens internes qui ressemblent à un catalogue (1–3 segments, feuille curée)."""
+        hrefs = await self._crawl_page_links(seed)
+        return filter_listing_urls([{"url": u} for u in hrefs], seed, max_urls)
+
+    async def _crawl_discover(self, seed, max_urls):
+        """1er passage fiches : chemins URL_PATTERNS (≥ 2 segments). Les 8
+        liens internes hors blacklist ne comptent pas comme vraies fiches —
+        sinon les homes sauteraient Fetch/Search."""
+        hrefs = await self._crawl_page_links(seed)
+        urls = []
+        for href in hrefs:
             path = urlparse(href).path
             if is_project_fiche_path(path, apply_blacklist=False):
-                if href not in seen:
-                    seen.add(href)
-                    urls.append(href)
+                urls.append(href)
             if len(urls) >= max_urls * 2:
                 break
         return urls[:max_urls]
 
+    async def _fetch_listing(self, seed, log=None):
+        key = self._tf_key()
+        url = (seed.get("url") or "").strip()
+        if not key or not url:
+            return []
+        recs = await tf_fetch(
+            [url], key, links=True, purpose=PROJECTS_LISTING_PURPOSE,
+            log=log or (lambda m: None))
+        rec = (recs or {}).get(url) or {}
+        if not rec and recs:
+            rec = next(iter(recs.values()))
+        hits = [{"url": u} for u in _links_from_fetch_record(rec, url)]
+        return filter_listing_urls(hits, seed, 3)
+
     async def _fetch_discover(self, seed, max_urls, log=None):
-        """TinyFish Fetch de la même URL (miroir JS) → mêmes filtres motifs."""
+        """TinyFish Fetch de la même URL (miroir JS) → mêmes filtres motifs fiches."""
         key = self._tf_key()
         url = (seed.get("url") or "").strip()
         if not key or not url:
@@ -797,7 +1072,8 @@ class Swarm:
         hits = [{"url": u} for u in _links_from_fetch_record(rec, url)]
         return filter_discover_urls(hits, seed, max_urls)
 
-    async def _tf_search_discover(self, query: str, seed: dict, log=None) -> list:
+    async def _tf_search_discover(self, query: str, seed: dict, log=None,
+                                 purpose=None) -> list:
         key = self._tf_key()
         if not key:
             return []
@@ -805,7 +1081,8 @@ class Swarm:
         include = [domain] if domain else None
         return await tf_search(
             query, key, include_domains=include,
-            purpose=PROJECTS_DISCOVERY_PURPOSE, log=log or (lambda m: None))
+            purpose=purpose or PROJECTS_DISCOVERY_PURPOSE,
+            log=log or (lambda m: None))
 
     async def _serper_discover(self, query: str, log=None) -> list:
         key = self._serper_key()
@@ -814,15 +1091,48 @@ class Swarm:
         self._serper_queries += 1
         return await serper_search(query, key, log=log or (lambda m: None))
 
-    async def _search_discover(self, seed, max_urls, log=None):
-        """TinyFish Search ∥ Serper (1 shot), union filtrée. Jamais 2 shots EN/FR."""
-        query = project_search_query(seed)
+    async def _search_with_filter(self, seed, query, max_urls, *,
+                                  filter_fn, purpose, log=None,
+                                  retry_query=None):
+        """Un shot TF ∥ Serper, puis retry seulement si des hits ont été filtrés à 0."""
         tf_hits, sp_hits = await asyncio.gather(
-            self._tf_search_discover(query, seed, log=log),
+            self._tf_search_discover(query, seed, log=log, purpose=purpose),
             self._serper_discover(query, log=log),
         )
+        n_tf, n_sp = len(tf_hits or []), len(sp_hits or [])
         combined = list(tf_hits or []) + list(sp_hits or [])
-        return filter_discover_urls(combined, seed, max_urls), len(tf_hits or []), len(sp_hits or [])
+        urls = filter_fn(combined, seed, max_urls)
+        raw = [_hit_url(h) for h in combined if _hit_url(h).startswith("http")]
+        if urls or not raw or not retry_query:
+            return urls, n_tf, n_sp
+        if log:
+            log(f"Search: {len(raw)} hits → 0 after filter — retry")
+        self.log(f"[{seed.get('name')}] Search: {len(raw)} hits → 0 after filter — retry")
+        tf2, sp_hits2 = await asyncio.gather(
+            self._tf_search_discover(retry_query, seed, log=log, purpose=purpose),
+            self._serper_discover(retry_query, log=log),
+        )
+        n_tf += len(tf2 or [])
+        n_sp += len(sp_hits2 or [])
+        urls = filter_fn(
+            list(tf2 or []) + list(sp_hits2 or []), seed, max_urls,
+            exclude_urls=raw)
+        return urls, n_tf, n_sp
+
+    async def _search_listing(self, seed, log=None):
+        return await self._search_with_filter(
+            seed, listing_search_query(seed), 3,
+            filter_fn=filter_listing_urls,
+            purpose=PROJECTS_LISTING_PURPOSE, log=log,
+            retry_query=listing_search_retry_query(seed))
+
+    async def _search_discover(self, seed, max_urls, log=None, retry_query=None):
+        """TinyFish Search ∥ Serper, union filtrée fiches. Jamais 2 shots EN/FR."""
+        return await self._search_with_filter(
+            seed, project_search_query(seed), max_urls,
+            filter_fn=filter_discover_urls,
+            purpose=PROJECTS_DISCOVERY_PURPOSE, log=log,
+            retry_query=retry_query)
 
     async def _search_partner_site(self, name: str, log=None) -> str:
         seed = {"name": name, "url": ""}

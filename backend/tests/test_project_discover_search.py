@@ -13,14 +13,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.core.tinyfish import POE_PURPOSE, PROJECTS_DISCOVERY_PURPOSE
+from app.core.tinyfish import POE_PURPOSE, PROJECTS_DISCOVERY_PURPOSE, PROJECTS_LISTING_PURPOSE
 from app.services import run_journal
 from app.services.swarm_pipeline import (
     Swarm, filter_discover_urls, official_site_from_hits, project_search_query,
 )
 from tests.test_project_runs import _FakeDB
 
-SEED = {"name": "Example Ocean", "url": "https://example.org/"}
+SEED = {
+    "name": "Example Ocean",
+    "url": "https://example.org/projects/",
+    "listing_kind": "projects_index",
+}
 HOME_HTML = """
 <html><body>
 <a href="/about">About</a>
@@ -97,6 +101,16 @@ def test_project_search_query_site_and_name():
     assert project_search_query({"name": "Wild Oysters"}) == '"Wild Oysters" marine conservation'
 
 
+def test_filter_exclude_urls_skips_already_eliminated():
+    hits = [
+        {"url": "https://example.org/projects/coral"},
+        {"url": "https://example.org/projects/kelp"},
+    ]
+    out = filter_discover_urls(
+        hits, SEED, 10, exclude_urls=["https://example.org/projects/coral"])
+    assert out == ["https://example.org/projects/kelp"]
+
+
 def test_filter_drops_news_and_other_domain():
     hits = [
         {"url": "https://example.org/projects/coral"},
@@ -133,11 +147,16 @@ def test_official_site_skips_facebook():
 def test_purpose_is_projects_not_poe():
     assert "project" in PROJECTS_DISCOVERY_PURPOSE.lower()
     assert PROJECTS_DISCOVERY_PURPOSE != POE_PURPOSE
+    assert PROJECTS_LISTING_PURPOSE != PROJECTS_DISCOVERY_PURPOSE
+    assert PROJECTS_LISTING_PURPOSE != POE_PURPOSE
     src = Path(__file__).resolve().parents[1] / "app" / "services" / "swarm_pipeline.py"
     text = src.read_text(encoding="utf-8")
     assert "google_style_shots" not in text
     assert "db.projects.insert_one" not in text
     assert "db.projects.update_one" not in text
+    assert "listing_goal(" in text
+    assert "discovery_goal(" in text
+    assert "_tinyfish_listing_discover" in text
 
 
 def test_n1_patterns_skip_search_and_agent(monkeypatch):
@@ -264,6 +283,7 @@ def test_n1_and_fetch_empty_runs_tf_and_serper_in_parallel(monkeypatch, tmp_path
     assert "N1: 0 fiches" in msgs
     assert "Fetch:" in msgs
     assert "Search: TinyFish 1 + Serper 3 → 2 after filter (serper 1)" in msgs
+    assert "Search vide → TinyFish Agent" not in msgs
 
 
 def test_no_serper_hard_cap_still_calls_serper(monkeypatch):
@@ -301,7 +321,7 @@ def test_no_serper_hard_cap_still_calls_serper(monkeypatch):
 
 
 def test_home_internal_links_are_not_n1_fiches(monkeypatch):
-    """Les 8 liens internes N1 ne bloquent pas Search."""
+    """Sur un catalogue, About/News ne comptent pas comme fiches — Search tourne."""
     _HtmlClient.html = HOME_HTML
     sw = _swarm()
     search = {"tf": 0, "sp": 0}

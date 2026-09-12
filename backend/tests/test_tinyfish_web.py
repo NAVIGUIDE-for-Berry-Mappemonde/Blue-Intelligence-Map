@@ -218,3 +218,19 @@ class TestTfPoeAgent:
         assert "cargo-only" in purpose
         assert "yacht" in purpose
         assert "excise" in purpose or "kartelë" in purpose
+
+
+class TestProjectsAgents:
+    def test_listing_and_fiche_goals_are_distinct(self):
+        listing = tf.listing_goal("Save Our Seas")
+        fiche = tf.discovery_goal("Save Our Seas")
+        assert listing != fiche
+        assert "listing agent" in listing.lower()
+        assert "do not collect individual" in listing.lower()
+        assert "one individual" in fiche.lower()
+        assert "listing_url" in tf.LISTING_SCHEMA["required"]
+        assert "projects" in tf.DISCOVERY_SCHEMA["required"]
+        assert tf.PROJECTS_LISTING_PURPOSE != tf.PROJECTS_DISCOVERY_PURPOSE
+        assert "index page" in tf.PROJECTS_LISTING_PURPOSE.lower()
+        assert "not an individual" in tf.PROJECTS_LISTING_PURPOSE.lower()
+        assert tf.LISTING_AGENT_DURATION_S < tf.FICHE_AGENT_DURATION_S

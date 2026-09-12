@@ -29,6 +29,15 @@ PROJECTS_DISCOVERY_PURPOSE = (
     "(project, campaign, initiative, programme). Ignore news, donations and events."
 )
 
+PROJECTS_LISTING_PURPOSE = (
+    "Index page that lists this organization's marine conservation projects, "
+    "campaigns, programmes or hope spots (for example /projects/, /hope-spots/, "
+    "/campaigns/). Not an individual project page, not news, not the homepage."
+)
+
+LISTING_AGENT_DURATION_S = 180
+FICHE_AGENT_DURATION_S = 300
+
 # Une retry 429 ; monkeypatchable dans les tests.
 SEARCH_RETRY_SLEEP_S = 2.0
 FETCH_LEVEL = "N3-mirror-tinyfish"
@@ -58,6 +67,15 @@ POE_JUDGE_SCHEMA = {
     "required": ["is_poe", "confidence", "reason"],
 }
 
+LISTING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "listing_url": {"type": "string"},
+        "title": {"type": "string"},
+    },
+    "required": ["listing_url"],
+}
+
 DISCOVERY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -84,6 +102,18 @@ EXTRACT_SCHEMA = {
     },
     "required": ["title", "description"],
 }
+
+
+def listing_goal(org_name: str) -> str:
+    return (
+        f"You are a maritime OSINT listing agent for Blue Intelligence, exploring the website of '{org_name}'. "
+        "Find the SINGLE index page that lists this organization's marine conservation projects, "
+        "campaigns, programmes or hope spots (paths such as /projects/, /hope-spots/, /campaigns/, "
+        "/projets/, /where-we-work/). "
+        "Return that listing_url and its visible page title. "
+        "Do NOT collect individual project pages. Do not follow news, donate, about, jobs or external sites. "
+        "Do not invent URLs. If no listing exists, return an empty listing_url."
+    )
 
 
 def discovery_goal(org_name: str, known_urls=None) -> str:
