@@ -774,34 +774,6 @@
       "group": "budget"
     },
     {
-      "id": "projects.serper_max_per_run",
-      "mode": "projects",
-      "kind": "budget",
-      "value": 1800,
-      "unit": "credits",
-      "interval": [
-        0,
-        2089
-      ],
-      "vary": true,
-      "settings_key": "serper_max_per_run",
-      "principle": "1 requête Serper par graine, en parallèle de TinyFish Search. Plafond dur sous le stock de crédits.",
-      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8.1",
-      "code": [
-        "app/config.py",
-        "app/services/swarm_pipeline.py"
-      ],
-      "title": {
-        "fr": "Plafond Serper par run Projets",
-        "en": "Serper cap per Projects run"
-      },
-      "help": {
-        "fr": "1 crédit Serper par graine (num=10). Au plafond, TinyFish Search continue, Serper s'arrête. Pas de 2e requête EN/FR.",
-        "en": "1 Serper credit per seed (num=10). At the cap, TinyFish Search continues and Serper stops. No second EN/FR query."
-      },
-      "group": "budget"
-    },
-    {
       "id": "projects.extract_concurrency",
       "mode": "projects",
       "kind": "budget",

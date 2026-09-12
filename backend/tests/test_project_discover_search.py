@@ -56,7 +56,6 @@ def _swarm(settings=None):
         "tinyfish_api_key": "tf-test",
         "serper_api_key": "sp-test",
         "allow_tinyfish_agent": True,
-        "serper_max_per_run": 1800,
         "follow_the_money": True,
         "max_partner_orgs": 5,
         **(settings or {}),
@@ -264,10 +263,10 @@ def test_n1_and_fetch_empty_runs_tf_and_serper_in_parallel(monkeypatch, tmp_path
     msgs = " ".join(e["msg"] for e in packed["items"])
     assert "N1: 0 fiches" in msgs
     assert "Fetch:" in msgs
-    assert "Search: TinyFish 1 + Serper 3 → 2 after filter (serper 1/1800)" in msgs
+    assert "Search: TinyFish 1 + Serper 3 → 2 after filter (serper 1)" in msgs
 
 
-def test_serper_ceiling_skips_serper_keeps_tf_search(monkeypatch):
+def test_no_serper_hard_cap_still_calls_serper(monkeypatch):
     sw = _swarm()
     sw._serper_queries = 1800
     seen = {"tf": 0, "sp": 0}
@@ -284,7 +283,7 @@ def test_serper_ceiling_skips_serper_keeps_tf_search(monkeypatch):
 
     async def fake_sp(query, key, **kw):
         seen["sp"] += 1
-        return [{"url": "https://example.org/projects/should-not"}]
+        return [{"url": "https://example.org/projects/also-ok"}]
 
     monkeypatch.setattr(sw, "_crawl_discover", fake_crawl)
     import app.services.swarm_pipeline as sp
@@ -294,11 +293,11 @@ def test_serper_ceiling_skips_serper_keeps_tf_search(monkeypatch):
     monkeypatch.setattr(sw, "_tinyfish_discover", fake_crawl)
 
     queued = _run(_queued(sw))
-    assert [i["url"] for i in queued] == ["https://example.org/projects/still-ok"]
+    assert "https://example.org/projects/still-ok" in [i["url"] for i in queued]
+    assert "https://example.org/projects/also-ok" in [i["url"] for i in queued]
     assert seen["tf"] == 1
-    assert seen["sp"] == 0
-    assert sw._serper_queries == 1800
-    assert any("Serper ceiling" in e["msg"] for e in sw.logs)
+    assert seen["sp"] == 1
+    assert sw._serper_queries == 1801
 
 
 def test_home_internal_links_are_not_n1_fiches(monkeypatch):

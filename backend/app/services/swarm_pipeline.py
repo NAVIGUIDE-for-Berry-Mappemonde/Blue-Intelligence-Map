@@ -62,9 +62,6 @@ def pick_image(full_soup, content_soup, base_url):
     return None
 
 
-SERPER_MAX_PER_RUN_DEFAULT = 1800
-
-
 def _hit_url(hit) -> str:
     if isinstance(hit, str):
         return hit.strip()
@@ -207,7 +204,6 @@ class Swarm:
         self.wrote_projects = False
         self._journal_seq = 0
         self._serper_queries = 0
-        self._serper_capped = False
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -362,19 +358,6 @@ class Swarm:
     def _serper_key(self):
         return serper_api_key(self.settings)
 
-    def _serper_max(self) -> int:
-        raw = self.settings.get("serper_max_per_run")
-        if raw is None:
-            try:
-                from app.core.run_rules import get_rule
-                raw = get_rule("projects.serper_max_per_run", SERPER_MAX_PER_RUN_DEFAULT)
-            except Exception:
-                raw = SERPER_MAX_PER_RUN_DEFAULT
-        try:
-            return max(0, int(raw))
-        except (TypeError, ValueError):
-            return SERPER_MAX_PER_RUN_DEFAULT
-
     # ---------- lifecycle ----------
     def _bump_saturation(self, new_project: bool):
         if new_project:
@@ -407,7 +390,6 @@ class Swarm:
         self.logs.clear()
         self._journal_seq = 0
         self._serper_queries = 0
-        self._serper_capped = False
         self.no_new_streak = 0
         self.saturated = False
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
@@ -619,10 +601,9 @@ class Swarm:
                     search_err = f"{type(e).__name__}: {str(e)[:80]}"
                     self.agent_log(aid, f"Search échec: {search_err}")
                     urls, n_tf, n_sp = [], 0, 0
-                max_n = self._serper_max()
                 line = (
                     f"Search: TinyFish {n_tf} + Serper {n_sp} → {len(urls)} "
-                    f"after filter (serper {self._serper_queries}/{max_n})"
+                    f"after filter (serper {self._serper_queries})"
                 )
                 self.agent_log(aid, line)
                 self.log(f"[{seed['name']}] {line}")
@@ -793,16 +774,6 @@ class Swarm:
         key = self._serper_key()
         if not key:
             return []
-        max_n = self._serper_max()
-        if self._serper_queries >= max_n:
-            if not self._serper_capped:
-                self._serper_capped = True
-                self.log(
-                    f"Serper ceiling {max_n} reached — skipping Serper "
-                    f"(TinyFish Search continues)",
-                    "warn",
-                )
-            return []
         self._serper_queries += 1
         return await serper_search(query, key, log=log or (lambda m: None))
 
@@ -824,10 +795,9 @@ class Swarm:
             self._serper_discover(query, log=log),
         )
         site = official_site_from_hits(list(tf_hits or []) + list(sp_hits or []))
-        max_n = self._serper_max()
         self.log(
             f"Follow the Money: Search '{name}' → {site or 'aucun site'} "
-            f"(serper {self._serper_queries}/{max_n})"
+            f"(serper {self._serper_queries})"
         )
         return site
 
