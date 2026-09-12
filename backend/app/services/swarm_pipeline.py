@@ -33,8 +33,11 @@ from app.services.run_journal import (
     AGENT_LIVE_TAIL,
     JOURNAL_KIND_AGENT,
     JOURNAL_KIND_LOG,
+    JOURNAL_KIND_META,
     append_journal,
+    header_summary,
     mongo_insert_journal,
+    public_run_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,6 +231,28 @@ class Swarm:
         except RuntimeError:
             pass
 
+    async def _write_journal_header(self):
+        """Première ligne du journal : paramètres + règles. Après reset seq."""
+        rid = self.run_id
+        if not rid:
+            return
+        params = {}
+        try:
+            doc = await self.db.project_runs.find_one({"_id": rid}, {"params": 1})
+            if doc and isinstance(doc.get("params"), dict):
+                params = doc["params"]
+        except Exception as exc:
+            logger.warning("journal header load failed run_id=%s: %s", rid, exc)
+        pub = public_run_params(params)
+        self._persist_journal({
+            "kind": JOURNAL_KIND_META,
+            "level": "info",
+            "msg": header_summary(pub),
+            "params": params,
+            "profile": pub.get("profile"),
+            "hash": pub.get("hash"),
+        })
+
     def new_agent(self, engine, mode, url, source=""):
         self.agent_seq += 1
         aid = f"A{self.agent_seq:03d}"
@@ -392,6 +417,7 @@ class Swarm:
         self._serper_queries = 0
         self.no_new_streak = 0
         self.saturated = False
+        await self._write_journal_header()
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
         self.log(
             f"Deploying Swarm — mode: {mode.upper()} | N1 → Fetch → Search "

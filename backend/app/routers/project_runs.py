@@ -171,20 +171,26 @@ async def project_run_journal(run_id: str, skip: int = 0, limit: int = 2000,
         JOURNAL_DOWNLOAD_MAX,
         JOURNAL_LIMIT_DEFAULT,
         JOURNAL_LIMIT_MAX,
+        enrich_journal_payload,
         iter_journal_file,
         journal_to_jsonl,
         journal_to_text,
         load_journal,
+        params_from_journal,
     )
     try:
         packed = await load_journal(
             db, run_id, skip=skip, limit=limit, kind=kind, tail=tail)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    exists = await db.project_runs.find_one({"_id": run_id}, {"_id": 1})
-    if not exists and packed["total"] == 0:
+    doc = await db.project_runs.find_one({"_id": run_id}, {"params": 1})
+    if not doc and packed["total"] == 0:
         raise HTTPException(404, f"Run {run_id} unknown")
     packed["limit"] = max(1, min(JOURNAL_LIMIT_MAX, int(limit or JOURNAL_LIMIT_DEFAULT)))
+    params = (doc or {}).get("params") if isinstance((doc or {}).get("params"), dict) else None
+    if not params:
+        params = params_from_journal(run_id)
+    enrich_journal_payload(packed, params)
     fmt = (format or "json").lower()
     if fmt in ("txt", "text", "jsonl"):
         items = list(iter_journal_file(run_id, kind=kind))
@@ -196,11 +202,11 @@ async def project_run_journal(run_id: str, skip: int = 0, limit: int = 2000,
         headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
         if fmt == "jsonl":
             return PlainTextResponse(
-                journal_to_jsonl(items),
+                journal_to_jsonl(items, params=params),
                 media_type="application/x-ndjson; charset=utf-8",
                 headers=headers)
         return PlainTextResponse(
-            journal_to_text(run_id, items),
+            journal_to_text(run_id, items, params=params),
             media_type="text/plain; charset=utf-8",
             headers=headers)
     return packed

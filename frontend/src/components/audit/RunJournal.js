@@ -82,7 +82,7 @@ export default function RunJournalViewer({ t, runId }) {
     return <p className="font-mono text-[10px] text-slate-500">{t("journalEmpty")}</p>;
   }
 
-  const items = pack?.items || [];
+  const items = (pack?.items || []).filter((l) => l.kind !== "meta");
   return (
     <div className="space-y-2" data-testid="run-journal-viewer">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -95,6 +95,15 @@ export default function RunJournalViewer({ t, runId }) {
         <JournalDownloadButton t={t} runId={runId} />
       </div>
       <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("journalCompleteHint")}</p>
+      {pack?.header_text ? (
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">{t("journalParamsTitle")}</p>
+          <pre
+            data-testid="run-journal-params"
+            className="console-scanlines bg-black/60 border border-line rounded-sm max-h-80 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap"
+          >{pack.header_text}</pre>
+        </div>
+      ) : null}
       <div
         className="console-scanlines bg-black/60 border border-line rounded-sm h-64 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed"
         data-testid="run-journal-stream"

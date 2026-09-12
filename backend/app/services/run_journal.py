@@ -6,11 +6,15 @@ les lignes (récit swarm + agents TinyFish) sont conservées sans plafond :
 
   - fichier ``backend/data/runs/<run_id>.journal.jsonl`` (artefact disque) ;
   - collection Mongo ``project_run_journal`` (sauvegardes quotidiennes VPS) ;
-  - rétrocompat : les lignes ``kind=log`` sont aussi ajoutées à
-    ``<run_id>.swarm.jsonl`` (déjà produit par les runs en cours).
+  - rétrocompat : les lignes ``kind=log`` et ``kind=meta`` sont aussi
+    ajoutées à ``<run_id>.swarm.jsonl`` (déjà produit par les runs en cours).
 
-L'API ``GET /api/projects/runs/{run_id}/journal`` relit ce journal. La carte
-live ``projects`` n'est jamais écrite.
+La première ligne (``kind=meta``, seq=1) consigne les **paramètres et
+règles** du run (profil, hash, `chosen`, empreinte code — aucun secret).
+L'API JSON renvoie toujours ``params`` + ``header_text`` (même en
+``tail=true``). Les runs déjà finis sans ligne meta sont reconstruits
+depuis ``project_runs.params``. La carte live ``projects`` n'est jamais
+écrite.
 """
 from __future__ import annotations
 
@@ -30,7 +34,10 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 
 JOURNAL_KIND_LOG = "log"
 JOURNAL_KIND_AGENT = "agent"
-JOURNAL_KINDS = frozenset({JOURNAL_KIND_LOG, JOURNAL_KIND_AGENT})
+JOURNAL_KIND_META = "meta"
+JOURNAL_KINDS = frozenset({JOURNAL_KIND_LOG, JOURNAL_KIND_AGENT, JOURNAL_KIND_META})
+
+_SECRET_KEY_RE = re.compile(r"(api_key|secret|password|token|passwd)", re.I)
 
 JOURNAL_LIMIT_DEFAULT = 2000
 JOURNAL_LIMIT_MAX = 10_000
@@ -71,10 +78,168 @@ def _jsonl_paths(run_id: str) -> list[Path]:
     return []
 
 
+def _strip_secrets(obj):
+    """Retire les clés type api_key / secret. Aucun secret dans le journal."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _SECRET_KEY_RE.search(str(k)):
+                continue
+            out[k] = _strip_secrets(v)
+        return out
+    if isinstance(obj, list):
+        return [_strip_secrets(x) for x in obj]
+    return obj
+
+
+def _chosen_rules(p: dict) -> tuple[dict, str | None, str | None, dict | None]:
+    """Accepte le snapshot Mongo (``rules.chosen``) ou la forme déjà publique."""
+    rules = p.get("rules") if isinstance(p.get("rules"), dict) else {}
+    if isinstance(rules.get("chosen"), dict):
+        return (
+            rules["chosen"],
+            rules.get("profile") or p.get("profile"),
+            rules.get("hash") or p.get("hash"),
+            rules.get("counts") or p.get("counts"),
+        )
+    chosen = {
+        k: v for k, v in rules.items()
+        if isinstance(v, dict) and "value" in v
+    }
+    return (
+        chosen,
+        p.get("profile") or rules.get("profile"),
+        p.get("hash") or rules.get("hash"),
+        p.get("counts") if isinstance(p.get("counts"), dict) else rules.get("counts"),
+    )
+
+
+def public_run_params(params: dict | None) -> dict:
+    """Paramètres + règles du run, sans secrets. wrote_projects reste false."""
+    p = params if isinstance(params, dict) else {}
+    chosen, profile, digest, counts = _chosen_rules(p)
+    code = p.get("code") if isinstance(p.get("code"), dict) else {}
+    out = {
+        "mode": p.get("mode"),
+        "label": p.get("label"),
+        "force_rescan": p.get("force_rescan"),
+        "from_scratch": p.get("from_scratch") if p.get("from_scratch") is not None
+        else p.get("force_rescan"),
+        "wrote_projects": False,
+        "profile": profile,
+        "hash": digest,
+        "counts": counts,
+        "code": {
+            "git_sha": code.get("git_sha"),
+            "git_dirty": code.get("git_dirty"),
+            "tinyfish_configured": code.get("tinyfish_configured"),
+            "serper_configured": code.get("serper_configured"),
+            "openrouter_configured": code.get("openrouter_configured"),
+            "nvidia_configured": code.get("nvidia_configured"),
+            "claude_enabled": code.get("claude_enabled"),
+        },
+        "rules": _strip_secrets(chosen),
+    }
+    return _strip_secrets(out)
+
+
+def header_summary(pub: dict | None) -> str:
+    pub = pub or {}
+    bits = [
+        f"profile={pub.get('profile') or '—'}",
+        f"hash={pub.get('hash') or '—'}",
+        f"mode={pub.get('mode') or '—'}",
+        f"force_rescan={pub.get('force_rescan')}",
+        "wrote_projects: false",
+    ]
+    return "Run params " + " ".join(bits)
+
+
+def _rule_title(rule_id: str) -> str:
+    try:
+        from app.core.run_rules import get_rule_def
+        loc = (get_rule_def(rule_id).get("title") or {})
+        return loc.get("fr") or loc.get("en") or rule_id
+    except Exception:
+        return rule_id
+
+
+def journal_header_to_text(params: dict | None) -> str:
+    """Bloc lisible : paramètres + chaque règle utilisée."""
+    pub = public_run_params(params) if params else {}
+    if not pub.get("profile") and not pub.get("rules") and not pub.get("mode"):
+        return ""
+    code = pub.get("code") or {}
+    lines = [
+        "# --- Paramètres ---",
+        f"# mode: {pub.get('mode')}",
+        f"# label: {pub.get('label') or '—'}",
+        f"# force_rescan: {pub.get('force_rescan')}",
+        f"# from_scratch: {pub.get('from_scratch')}",
+        f"# profile: {pub.get('profile')}",
+        f"# hash: {pub.get('hash')}",
+        f"# git_sha: {code.get('git_sha')}",
+        f"# git_dirty: {code.get('git_dirty')}",
+        f"# tinyfish_configured: {code.get('tinyfish_configured')}",
+        f"# serper_configured: {code.get('serper_configured')}",
+        f"# openrouter_configured: {code.get('openrouter_configured')}",
+        f"# nvidia_configured: {code.get('nvidia_configured')}",
+        f"# claude_enabled: {code.get('claude_enabled')}",
+        "# wrote_projects: false",
+    ]
+    rules = pub.get("rules") or {}
+    n = len(rules) if isinstance(rules, dict) else 0
+    counts = pub.get("counts") or {}
+    lines.append(f"# --- Règles ({counts.get('total') or n}) ---")
+    for rid in sorted(rules):
+        rec = rules[rid] if isinstance(rules[rid], dict) else {"value": rules[rid]}
+        unit = rec.get("unit") or ""
+        kind = rec.get("kind") or ""
+        source = rec.get("source") or ""
+        val = rec.get("value")
+        title = _rule_title(rid)
+        extra = f"  ({source})" if source else ""
+        unit_s = f" {unit}" if unit and unit not in ("bool", "ratio") else ""
+        lines.append(
+            f"# [{kind}] {rid} = {val}{unit_s}{extra}  — {title}".rstrip()
+        )
+    return "\n".join(lines) + "\n"
+
+
+def params_from_items(items: list[dict] | None) -> dict | None:
+    for e in items or []:
+        if e.get("kind") == JOURNAL_KIND_META and isinstance(e.get("params"), dict):
+            return e["params"]
+    return None
+
+
+def params_from_journal(run_id: str) -> dict | None:
+    """Première ligne ``kind=meta`` du fichier (les runs anciens n'en ont pas)."""
+    try:
+        for e in iter_journal_file(run_id):
+            if e.get("kind") == JOURNAL_KIND_META and isinstance(e.get("params"), dict):
+                return e["params"]
+            return None
+    except ValueError:
+        return None
+    return None
+
+
+def enrich_journal_payload(packed: dict, params: dict | None = None) -> dict:
+    """Ajoute ``params`` + ``header_text`` même si ``tail=true`` saute seq=1."""
+    raw = params
+    if not raw:
+        raw = params_from_items(packed.get("items") or [])
+    packed["params"] = public_run_params(raw) if raw else {}
+    packed["header_text"] = journal_header_to_text(raw) if raw else ""
+    packed["wrote_projects"] = False
+    return packed
+
+
 def _public_entry(entry: dict) -> dict:
     out = {}
     for key in ("seq", "ts", "kind", "level", "msg", "agent", "engine",
-                "source", "url", "status"):
+                "source", "url", "status", "params", "profile", "hash"):
         val = entry.get(key)
         if val is not None and val != "":
             out[key] = val
@@ -82,6 +247,8 @@ def _public_entry(entry: dict) -> dict:
         out["kind"] = JOURNAL_KIND_LOG
     if "level" not in out:
         out["level"] = "info"
+    if out.get("kind") == JOURNAL_KIND_META and "params" in out:
+        out["params"] = public_run_params(out["params"])
     return out
 
 
@@ -100,7 +267,7 @@ def append_journal(run_id: str, entry: dict, seq: int | None = None) -> dict:
     with _LOCK:
         with primary.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
-        if rec.get("kind") == JOURNAL_KIND_LOG:
+        if rec.get("kind") in (JOURNAL_KIND_LOG, JOURNAL_KIND_META):
             # Même récit que les runs déjà en cours (fichier .swarm.jsonl).
             with swarm_log_path(rid).open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -160,17 +327,23 @@ def read_journal_file(run_id: str, *, skip: int = 0, limit: int = JOURNAL_LIMIT_
     }
 
 
-def journal_to_text(run_id: str, items: list[dict] | None = None) -> str:
-    """Récit lisible pour téléchargement / analyse ultérieure."""
+def journal_to_text(run_id: str, items: list[dict] | None = None,
+                    params: dict | None = None) -> str:
+    """Récit lisible : paramètres + règles, puis le flux horodaté."""
     if items is None:
         items = list(iter_journal_file(run_id))
+    raw = params or params_from_items(items)
+    header = journal_header_to_text(raw)
+    stream = [e for e in items if e.get("kind") != JOURNAL_KIND_META]
     lines = [
         f"# Journal run Projets {run_id}",
         f"# wrote_projects: false",
         f"# lignes: {len(items)}",
         "",
     ]
-    for e in items:
+    if header:
+        lines.extend([header.rstrip(), "", "# --- Récit ---"])
+    for e in stream:
         ts = str(e.get("ts") or "")
         clock = ts[11:19] if len(ts) >= 19 else ts
         level = str(e.get("level") or "info").upper()
@@ -184,9 +357,21 @@ def journal_to_text(run_id: str, items: list[dict] | None = None) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def journal_to_jsonl(items: list[dict]) -> str:
+def journal_to_jsonl(items: list[dict], params: dict | None = None) -> str:
+    rows = list(items or [])
+    if params and not any(e.get("kind") == JOURNAL_KIND_META for e in rows):
+        pub = public_run_params(params)
+        rows.insert(0, {
+            "kind": JOURNAL_KIND_META,
+            "level": "info",
+            "msg": header_summary(pub),
+            "params": pub,
+            "profile": pub.get("profile"),
+            "hash": pub.get("hash"),
+            "wrote_projects": False,
+        })
     return "".join(
-        json.dumps(e, ensure_ascii=False, default=str) + "\n" for e in items
+        json.dumps(e, ensure_ascii=False, default=str) + "\n" for e in rows
     )
 
 
