@@ -39,6 +39,25 @@ bash infra/vps/deploy-app.sh
 Le `proxy_pass` nginx doit viser `127.0.0.1:8001` (voir
 `nginx-blue-intelligence.conf`, copie de référence).
 
+## Mémoire du VPS (8 Go, pas de marge)
+
+Le VPS n'a **pas de swap** d'origine. NAVIGUIDE préchargeait les ZEE mondiales
+en RAM (~3,5 Go) et un `npm run build` / `uv pip` saturait la machine.
+
+Une fois, hors run Complet :
+
+```bash
+bash infra/vps/setup-memory.sh
+# Swap 4 Go + swappiness 10 + cache Mongo plafonné (restart mongod plus tard)
+sudo cp infra/vps/blue-intelligence.service /etc/systemd/system/
+sudo cp infra/vps/naviguide/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart naviguide-api   # libère le cache ZEE ; Blue Intelligence inchangé
+```
+
+`MemoryMax` systemd : 3 Go (Blue Intelligence), 1 Go (naviguide-api), 512 Mo
+(orchestrateur / polar). Le Complet Projets n'a pas besoin de NAVIGUIDE.
+
 ## Redéployer après une mise à jour du code
 
 ```bash
@@ -46,6 +65,11 @@ cd ~/blue-intelligence-map
 # code à jour (rsync depuis un poste, ou git pull si un remote est configuré)
 bash infra/vps/deploy-app.sh
 ```
+
+Avec peu de RAM libre : d'abord `bash infra/vps/setup-memory.sh`, puis rsync
+du code et `sudo systemctl restart blue-intelligence` (sans `npm`/`uv` si
+les dépendances n'ont pas changé). Ne pas lancer `deploy-app.sh` pendant un
+run Complet — il redémarre le service.
 
 ## Resynchroniser les données depuis Atlas — ⛔ NE PLUS JAMAIS FAIRE
 

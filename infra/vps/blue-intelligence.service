@@ -12,6 +12,8 @@ ExecStart=/home/ubuntu/blue-intelligence-map/backend/.venv/bin/uvicorn server:ap
 Restart=always
 RestartSec=3
 TimeoutStartSec=180
+MemoryHigh=2G
+MemoryMax=3G
 
 [Install]
 WantedBy=multi-user.target

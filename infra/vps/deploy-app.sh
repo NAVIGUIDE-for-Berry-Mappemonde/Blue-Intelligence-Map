@@ -13,6 +13,13 @@ command -v "$UV" >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh |
 
 cd "$APP/backend"
 [ -d .venv ] || "$UV" venv --python 3.12 .venv
+free_mb=$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+if [ "$free_mb" -lt 1200 ]; then
+  echo "RAM dispo ${free_mb} Mo — trop juste pour pip/npm. Lancer d'abord :"
+  echo "  bash $APP/infra/vps/setup-memory.sh"
+  echo "Puis relancer ce script, ou rsync + systemctl restart seulement."
+  exit 1
+fi
 "$UV" pip install --python .venv/bin/python -r requirements.txt \
   --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 sudo .venv/bin/python -m playwright install-deps chromium >/dev/null 2>&1 || true

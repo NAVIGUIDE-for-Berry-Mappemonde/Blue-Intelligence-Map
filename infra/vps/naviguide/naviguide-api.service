@@ -11,6 +11,8 @@ ExecStart=/home/ubuntu/blue-intelligence-map/naviguide/.venv/bin/uvicorn main:ap
 Restart=always
 RestartSec=3
 TimeoutStartSec=180
+MemoryHigh=512M
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

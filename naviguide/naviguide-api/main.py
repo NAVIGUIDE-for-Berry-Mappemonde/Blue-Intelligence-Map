@@ -18,6 +18,10 @@ from copernicus.getWind import get_wind_data_at_position
 from copernicus.getWave import get_wave_data_at_position
 from copernicus.getCurrent import get_current_data_at_position
 from utils.addWindProperties import add_wind_properties_to_route
+from mem_limits import (
+    ROUTE_CACHE_MAX, ZEE_CACHE_MAX_BYTES, ZEE_MAX_FEATURES_CAP,
+    ZEE_NO_BBOX_MAX_FEATURES, ZEE_RESPONSE_MAX_BYTES, lru_set, too_large,
+)
 
 try:
     from global_land_mask import globe as _globe
@@ -652,38 +656,16 @@ def searoute_with_exact_end(start, end):
     route["geometry"]["coordinates"] = coords
 
     # Store in bidirectional cache so the reverse leg reuses this result
-    _route_cache[cache_key] = (copy.deepcopy(route), canonical_start)
+    lru_set(_route_cache, cache_key, (copy.deepcopy(route), canonical_start),
+            max_items=ROUTE_CACHE_MAX)
 
     return route
 
 
-async def _preload_zee():
-    """Précharge ZEE en arrière-plan au démarrage (VLIZ lent)."""
-    global _zee_cache
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.get(
-                "https://geo.vliz.be/geoserver/MarineRegions/wfs",
-                params={
-                    "service": "WFS",
-                    "version": "1.1.0",
-                    "request": "GetFeature",
-                    "typeName": "eez",
-                    "outputFormat": "application/json",
-                    "maxFeatures": 500,
-                },
-            )
-            if resp.status_code == 200:
-                _zee_cache["data"] = resp.json()
-                _zee_cache["ts"] = time.time()
-                print("✅ ZEE préchargé (cache 24 h)")
-    except Exception as e:
-        print(f"⚠️ ZEE préchargement: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app):
-    asyncio.create_task(_preload_zee())
+    # Ne pas précharger les ZEE mondiales en RAM : 500 polygones VLIZ
+    # haute résolution occupent ~3,5 Go sur le VPS 8 Go.
     yield
 
 
@@ -889,8 +871,8 @@ def get_current(request: PositionRequest):
 _wpi_cache: dict = {"data": None, "ts": 0.0}
 _WPI_CACHE_TTL = 86_400  # seconds
 
-# Cache ZEE (VLIZ très lent — 30–60 s). 24 h TTL.
-_zee_cache: dict = {"data": None, "ts": 0.0}
+# Cache ZEE par bbox seulement (jamais le monde entier — plusieurs Go).
+_zee_cache: dict = {"entries": {}}
 _ZEE_CACHE_TTL = 86_400
 
 # DMS coordinate pattern: e.g. "30°20'00\"N" or "48°17'00\"E"
@@ -969,15 +951,25 @@ async def proxy_zee(
         None,
         description="Viewport bounding box as minlon,minlat,maxlon,maxlat (CRS:84)",
     ),
-    maxFeatures: int = Query(500, ge=1, le=500, description="Max EEZ polygons to return"),
+    maxFeatures: int = Query(80, ge=1, le=ZEE_MAX_FEATURES_CAP, description="Max EEZ polygons to return"),
 ):
     """
     Proxy pour l'API WFS VLIZ Marine Regions — ZEE (Zones Économiques Exclusives).
-    Cache 24 h côté serveur (VLIZ très lent). Premier chargement ~30–60 s.
+    Uniquement par bbox (la carte envoie déjà la vue). Sans bbox, petit échantillon
+    de test seulement — jamais un cache mondial en RAM.
     """
-    # Cache global (sans bbox) — couverture mondiale
-    if not bbox and _zee_cache["data"] and (time.time() - _zee_cache["ts"] < _ZEE_CACHE_TTL):
-        return JSONResponse(content=_zee_cache["data"])
+    if not bbox and maxFeatures > ZEE_NO_BBOX_MAX_FEATURES:
+        raise HTTPException(
+            400,
+            "bbox (minlon,minlat,maxlon,maxlat) requis pour les ZEE "
+            "(le cache mondial saturait la RAM du VPS)",
+        )
+
+    cache_key = bbox or f"nobbox:{maxFeatures}"
+    cached = _zee_cache.get("entries") or {}
+    hit = cached.get(cache_key)
+    if hit and (time.time() - hit["ts"] < _ZEE_CACHE_TTL):
+        return JSONResponse(content=hit["data"])
 
     params: dict = {
         "service": "WFS",
@@ -996,11 +988,19 @@ async def proxy_zee(
                 params=params,
             )
             resp.raise_for_status()
+            raw = resp.content or b""
+            if too_large(len(raw), ZEE_RESPONSE_MAX_BYTES):
+                raise HTTPException(
+                    502, f"ZEE upstream trop volumineux ({len(raw)} octets)")
             data = resp.json()
-            if not bbox:
-                _zee_cache["data"] = data
-                _zee_cache["ts"] = time.time()
+            if bbox and not too_large(len(raw), ZEE_CACHE_MAX_BYTES):
+                if "entries" not in _zee_cache:
+                    _zee_cache["entries"] = {}
+                lru_set(_zee_cache["entries"], cache_key,
+                        {"data": data, "ts": time.time()}, max_items=4)
             return JSONResponse(content=data)
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"ZEE upstream HTTP error: {exc.response.status_code}")
     except Exception as exc:
