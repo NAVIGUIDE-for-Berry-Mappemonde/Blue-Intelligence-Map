@@ -385,6 +385,11 @@ class Swarm:
 
     # ---------- lifecycle ----------
     def _bump_saturation(self, new_project: bool):
+        # From scratch re-extrait les URLs déjà sur la carte live : beaucoup
+        # d'unlocated / merged d'affilée. L'Auto-Stop global (conçu pour un
+        # listing épuisé) couperait un run mondial au bout de ~50 extraits.
+        if getattr(self, "force_rescan", False):
+            return
         if new_project:
             self.no_new_streak = 0
             return
@@ -423,7 +428,13 @@ class Swarm:
             f"Deploying Swarm — mode: {mode.upper()} | N1 → Fetch → Search "
             f"(Serper ∥ TinyFish, 1/seed) → Agent (wrote_projects: false)"
         )
-        self.log(f"Auto-Stop armed: shutdown after {int(settings.get('saturation_limit', 50))} extractions without new project")
+        if force_rescan:
+            self.log("Auto-Stop disarmed — from scratch (known URLs are re-extracted)")
+        else:
+            self.log(
+                f"Auto-Stop armed: shutdown after "
+                f"{int(settings.get('saturation_limit', 50))} extractions without new project"
+            )
         self.log(f"TinyFish key: {'ACTIVE (N3 last-resort only)' if self._tf_key() else 'MISSING → N1/N2 only'}",
                  "info")
         self.log(f"LLM pipeline: {'ACTIVE' if has_llm(settings) else 'MISSING → heuristic gatekeeper/extractor'}",
