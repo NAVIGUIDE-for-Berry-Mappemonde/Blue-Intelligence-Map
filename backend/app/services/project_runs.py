@@ -4,7 +4,8 @@ project_runs — Runs isolés du swarm Projets (CDC v2, phase B).
 Un run écrit uniquement dans :
   - project_runs            : méta (params, progression, résumé)
   - project_run_projects    : sites / projets extraits {run_id, …}
-  - project_run_events      : journal (RunRecorder, events_coll dédiée)
+  - project_run_events      : micro-étapes (RunRecorder)
+  - project_run_journal     : récit complet (logs swarm + agents), sans plafond
 
 La collection v1 `projects` n'est JAMAIS écrite (wrote_projects: false).
 Promotion carte = phase D, manuelle, hors de ce module.
@@ -33,6 +34,8 @@ async def ensure_run_indexes(db):
         await db.project_run_projects.create_index("run_id")
         await db.project_run_events.create_index([("run_id", 1), ("seq", 1)])
         await db.project_run_events.create_index([("run_id", 1), ("step", 1)])
+        await db.project_run_journal.create_index([("run_id", 1), ("seq", 1)])
+        await db.project_run_journal.create_index([("run_id", 1), ("kind", 1)])
         await db.project_runs.create_index("created_at")
     except Exception:
         pass
@@ -142,11 +145,20 @@ async def finalize_run(db, run_id: str, *, cancelled: bool = False, error: str |
     doc = await db.project_runs.find_one({"_id": run_id}) or {}
     counters = doc.get("counters") or empty_counters()
     n_sites = await db.project_run_projects.count_documents({"run_id": run_id, "verdict": "site"})
+    from app.services.run_journal import count_journal_file, load_journal
+    try:
+        journal_lines = count_journal_file(run_id)
+        if journal_lines == 0:
+            packed = await load_journal(db, run_id, skip=0, limit=1)
+            journal_lines = packed.get("total") or 0
+    except Exception:
+        journal_lines = 0
     summary = {
         "run_id": run_id,
         "wrote_projects": False,
         "counters": counters,
         "sites_in_run": n_sites,
+        "journal_lines": journal_lines,
         "cancelled": cancelled,
         **(extra or {}),
     }
@@ -156,6 +168,7 @@ async def finalize_run(db, run_id: str, *, cancelled: bool = False, error: str |
         "finished_at": now_iso(),
         "error": error,
         "summary": summary,
+        "journal_lines": journal_lines,
         "wrote_projects": False,
     }})
     await rec.event("run_done", **summary)
@@ -218,6 +231,7 @@ async def build_run_report(db, run_id: str) -> dict:
         "by_verdict": by_verdict,
         "events_total": len(events),
         "events_by_step": by_step,
+        "journal_lines": run.get("journal_lines") or (run.get("summary") or {}).get("journal_lines") or 0,
         "summary": run.get("summary"),
         "diff": diff.get("summary"),
     }
@@ -239,6 +253,7 @@ def report_to_markdown(rep: dict) -> str:
         f"- failed : {counters.get('failed', 0)}",
         f"- déjà en v1 (seen/merged) : {counters.get('seen_v1', 0)} / {counters.get('merged_v1', 0)}",
         f"- événements : {rep.get('events_total', 0)}",
+        f"- journal : {rep.get('journal_lines', 0)} lignes",
         f"- diff vs carte : +{diff.get('added', 0)} nouveaux, "
         f"{diff.get('already_in_v1', 0)} déjà connus, "
         f"{diff.get('unlocated_or_rejected', 0)} écartés",

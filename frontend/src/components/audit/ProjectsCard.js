@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Play, Square } from "lucide-react";
 import api from "../../api";
 import { invalidateRuns } from "../../lib/runCache";
+import { JournalDownloadButton } from "./RunJournal";
 
 export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
   const [swarmMode, setSwarmMode] = useState("test");
@@ -96,9 +97,15 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
         {t("isolatedRunHint")}
       </p>
       {runId && (
-        <p className="font-mono text-[10px] text-sonar/80" data-testid="project-run-id">
-          {t("currentRun")} {runId} · {t("wroteProjectsFalse")}
-        </p>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="font-mono text-[10px] text-sonar/80" data-testid="project-run-id">
+            {t("currentRun")} {runId} · {t("wroteProjectsFalse")}
+            {status?.journal_lines != null && (
+              <span className="text-slate-500"> · {t("journalLines").replace("{n}", String(status.journal_lines))}</span>
+            )}
+          </p>
+          <JournalDownloadButton t={t} runId={runId} />
+        </div>
       )}
       <button
         data-testid="stop-swarm-btn"
@@ -121,6 +128,7 @@ export default function ProjectsCard({ t, status, refresh, rulesPayload }) {
         ))}
         {running && <span className="text-bio cursor-blink">▊</span>}
       </div>
+      <p className="font-mono text-[9px] text-slate-500 leading-relaxed">{t("journalCompleteHint")}</p>
     </div>
   );
 }

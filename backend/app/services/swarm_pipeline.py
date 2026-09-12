@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import time
@@ -25,7 +24,14 @@ from app.services.master_seeds import (
 )
 from app.core.tinyfish import (DISCOVERY_SCHEMA, discovery_goal, find_live_url,
                              tf_get_run, tf_run_async, tf_run_sse)
-from app.core.events import RUNS_DIR, HeartbeatWatch
+from app.core.events import HeartbeatWatch
+from app.services.run_journal import (
+    AGENT_LIVE_TAIL,
+    JOURNAL_KIND_AGENT,
+    JOURNAL_KIND_LOG,
+    append_journal,
+    mongo_insert_journal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,20 +83,30 @@ class Swarm:
         self.recorder = None
         self.force_rescan = False
         self.wrote_projects = False
+        self._journal_seq = 0
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
-        entry = {"ts": now_iso(), "msg": msg, "level": level}
+        entry = {"ts": now_iso(), "msg": msg, "level": level, "kind": JOURNAL_KIND_LOG}
         self.logs.append(entry)
+        self._persist_journal(entry)
+
+    def _persist_journal(self, entry: dict):
+        """Écrit le récit complet (fichier + Mongo). La carte live n'est pas touchée."""
         rid = self.run_id
-        if rid:
-            try:
-                RUNS_DIR.mkdir(parents=True, exist_ok=True)
-                path = RUNS_DIR / f"{rid}.swarm.jsonl"
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            except Exception as exc:
-                logger.warning("swarm JSONL append failed run_id=%s: %s", rid, exc)
+        if not rid:
+            return
+        self._journal_seq += 1
+        try:
+            rec = append_journal(rid, entry, seq=self._journal_seq)
+        except Exception as exc:
+            logger.warning("swarm journal append failed run_id=%s: %s", rid, exc)
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(mongo_insert_journal(self.db, rec))
+        except RuntimeError:
+            pass
 
     def new_agent(self, engine, mode, url, source=""):
         self.agent_seq += 1
@@ -106,9 +122,22 @@ class Swarm:
 
     def agent_log(self, aid, msg):
         a = self.agents.get(aid)
+        clock = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        line = f"[{clock}] {msg}"
         if a:
-            a["logs"].append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
-            a["logs"] = a["logs"][-8:]
+            a["logs"].append(line)
+            a["logs"] = a["logs"][-AGENT_LIVE_TAIL:]
+        self._persist_journal({
+            "ts": now_iso(),
+            "kind": JOURNAL_KIND_AGENT,
+            "level": "info",
+            "msg": msg,
+            "agent": aid,
+            "engine": (a or {}).get("engine"),
+            "source": (a or {}).get("source"),
+            "url": (a or {}).get("url"),
+            "status": (a or {}).get("status"),
+        })
 
     def set_agent(self, aid, **kw):
         a = self.agents.get(aid)
@@ -187,6 +216,7 @@ class Swarm:
 
     def status(self):
         agents = list(self.agents.values())[::-1][:20]
+        rid = self.run_id
         return {
             "running": self.running,
             "mode": self.mode,
@@ -196,8 +226,10 @@ class Swarm:
             "queued": self.queued_count,
             "agents": agents,
             "logs": list(self.logs)[-200:],
-            "run_id": self.run_id,
+            "run_id": rid,
             "wrote_projects": False,
+            "journal_lines": self._journal_seq,
+            "journal_url": f"/api/projects/runs/{rid}/journal" if rid else None,
         }
 
     def _tf_key(self):
@@ -233,6 +265,7 @@ class Swarm:
         self.wrote_projects = False
         self.running = True
         self.logs.clear()
+        self._journal_seq = 0
         self.no_new_streak = 0
         self.saturated = False
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")

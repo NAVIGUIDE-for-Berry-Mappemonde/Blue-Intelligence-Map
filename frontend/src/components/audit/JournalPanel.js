@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Zap } from "lucide-react";
 import api from "../../api";
 import AgentConsole from "../AgentConsole";
+import RunJournalViewer from "./RunJournal";
 
 const STATUS_COLORS = {
   SUCCESS: "text-bio",
@@ -25,6 +26,7 @@ export default function JournalPanel({ t, mode, status }) {
   const [failed, setFailed] = useState([]);
   const [forcing, setForcing] = useState({});
   const [runStatus, setRunStatus] = useState(null);
+  const [journalRunId, setJournalRunId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -40,8 +42,19 @@ export default function JournalPanel({ t, mode, status }) {
       setTelemetry(tm.data);
       setFailed(f.data);
       if (run) setRunStatus(run.data);
+      if ((mode || "projects") === "projects") {
+        const liveId = run?.data?.run_id || status?.run_id;
+        if (liveId) {
+          setJournalRunId(liveId);
+        } else {
+          try {
+            const { data } = await api.get("/projects/runs");
+            setJournalRunId(data.active_run_id || data.items?.[0]?.id || data.items?.[0]?._id || null);
+          } catch (_) { /* ignore */ }
+        }
+      }
     } catch (e) { /* transient */ }
-  }, [mode]);
+  }, [mode, status?.run_id]);
 
   useEffect(() => {
     load();
@@ -62,6 +75,12 @@ export default function JournalPanel({ t, mode, status }) {
       {(status?.running || (status?.agents || []).length > 0) && (
         <div className="border border-line bg-surface overflow-hidden">
           <AgentConsole t={t} agents={status?.agents || []} />
+        </div>
+      )}
+      {(mode || "projects") === "projects" && (
+        <div className="border border-line bg-surface p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-2">{t("consoleTabJournal")}</p>
+          <RunJournalViewer t={t} runId={journalRunId || status?.run_id} />
         </div>
       )}
       <div className="grid grid-cols-3 gap-px bg-line border border-line" data-testid="journal-run-kpis">

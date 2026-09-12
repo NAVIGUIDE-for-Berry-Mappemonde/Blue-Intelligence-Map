@@ -97,6 +97,7 @@ async def project_run_detail(run_id: str):
         "kind": doc.get("mode") or "projects",
         "error": doc.get("error"),
         "summary": doc.get("counters"),
+        "journal_lines": doc.get("journal_lines") or (doc.get("summary") or {}).get("journal_lines") or 0,
         "wrote_projects": False,
         "chosen": rules.get("chosen") or {},
         "params": {"rules": rules},
@@ -159,6 +160,50 @@ async def project_run_events(run_id: str, step: str | None = None,
     docs = await db.project_run_events.find(q).sort("seq", 1).skip(skip).to_list(min(limit, 2000))
     return {"total": total, "skip": skip, "count": len(docs), "items": docs,
             "wrote_projects": False}
+
+
+@router.get("/projects/runs/{run_id}/journal")
+async def project_run_journal(run_id: str, skip: int = 0, limit: int = 2000,
+                              kind: str | None = None, tail: bool = False,
+                              format: str = "json"):
+    """Journal complet du run (récit swarm + agents). Pas la carte live."""
+    from app.services.run_journal import (
+        JOURNAL_DOWNLOAD_MAX,
+        JOURNAL_LIMIT_DEFAULT,
+        JOURNAL_LIMIT_MAX,
+        iter_journal_file,
+        journal_to_jsonl,
+        journal_to_text,
+        load_journal,
+    )
+    try:
+        packed = await load_journal(
+            db, run_id, skip=skip, limit=limit, kind=kind, tail=tail)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    exists = await db.project_runs.find_one({"_id": run_id}, {"_id": 1})
+    if not exists and packed["total"] == 0:
+        raise HTTPException(404, f"Run {run_id} unknown")
+    packed["limit"] = max(1, min(JOURNAL_LIMIT_MAX, int(limit or JOURNAL_LIMIT_DEFAULT)))
+    fmt = (format or "json").lower()
+    if fmt in ("txt", "text", "jsonl"):
+        items = list(iter_journal_file(run_id, kind=kind))
+        if not items:
+            dumped = await load_journal(
+                db, run_id, skip=0, limit=JOURNAL_DOWNLOAD_MAX, kind=kind)
+            items = dumped["items"]
+        filename = f"run-{run_id}-journal.{'txt' if fmt != 'jsonl' else 'jsonl'}"
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        if fmt == "jsonl":
+            return PlainTextResponse(
+                journal_to_jsonl(items),
+                media_type="application/x-ndjson; charset=utf-8",
+                headers=headers)
+        return PlainTextResponse(
+            journal_to_text(run_id, items),
+            media_type="text/plain; charset=utf-8",
+            headers=headers)
+    return packed
 
 
 @router.get("/projects/runs/{run_id}/diff")
