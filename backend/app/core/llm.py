@@ -237,6 +237,7 @@ def heuristic_extract(title: str, text: str, meta_desc: str, settings: dict) -> 
     gk = heuristic_gatekeeper(f"{title} {text}", settings)
     return {"title": title[:200], "description": desc, "location": None,
             "latitude": None, "longitude": None, "s_ocean": gk["score"],
+            "partners": [],
             "engine": "Heuristic Extractor"}
 
 

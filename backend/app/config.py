@@ -43,6 +43,7 @@ DEFAULT_SETTINGS = {
     "max_markers": 1000,
     "follow_the_money": True,
     "max_partner_orgs": 5,
+    "discover_concurrency": 8,
     "saturation_limit": 50,
     "rescan_after_days": 7,
     "marina_search_radius_nm": 10.0,
