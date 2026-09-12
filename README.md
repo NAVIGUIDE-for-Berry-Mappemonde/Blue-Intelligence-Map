@@ -1,8 +1,15 @@
 # Blue Intelligence
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE-MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
+[![NVIDIA Nemotron](https://img.shields.io/badge/NVIDIA-Nemotron-76B900.svg)](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/)
+[![Nebius Token Factory](https://img.shields.io/badge/Nebius-Token%20Factory-0B1F3A.svg)](https://tokenfactory.nebius.com/)
+
 **Blue Intelligence** transforme le web vivant des données maritimes en une base géospatiale exploitable, présentée sur une carte mondiale interactive.
 
 Application publiée sur **[blueintelligence.online](https://blueintelligence.online)** — un projet [Berry-Mappemonde](https://berrymappemonde.org).
+
+Les complétions LLM passent par des API compatibles OpenAI : **NVIDIA NIM** et **[Nebius Token Factory](https://tokenfactory.nebius.com/)**, y compris la famille **[NVIDIA Nemotron](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/)** (Nano, Super, Ultra, Lightning). Le code de ce dépôt est en **double licence MIT / Apache-2.0** (`LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`).
 
 > [!WARNING]
 > **Ne convient pas à la navigation**
@@ -80,12 +87,14 @@ blue-intelligence/
 └── naviguide/          NAVIGUIDE — planificateur de route de l'expédition (application autonome, voir `naviguide/README.md`)
 ```
 
-### Intelligence artificielle : NIM pour l'inférence, OpenRouter pour le web
+### Intelligence artificielle : NIM / Token Factory, Nemotron, OpenRouter pour le web
 
-Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par **[NVIDIA NIM](https://build.nvidia.com)** si `NVIDIA_API_KEY` est présente, sinon par **[OpenRouter](https://openrouter.ai)**. La recherche web groundée (`:online`) reste OpenRouter :
+Les complétions JSON (gatekeeper, extraction, géocodage, juge PoE) passent par une API **compatible OpenAI** : **[NVIDIA NIM](https://build.nvidia.com)** si `NVIDIA_API_KEY` est présente, sinon par **[OpenRouter](https://openrouter.ai)**. Le même contrat HTTP sert aussi **[Nebius Token Factory](https://tokenfactory.nebius.com/)** (endpoint `https://api.tokenfactory.us-central1.nebius.com/v1/`) pour déployer les modèles **NVIDIA Nemotron** sans cluster GPU. La recherche web groundée (`:online`) reste OpenRouter :
 
 - **Complétions** : `NVIDIA_API_KEY` (hosted NIM — chaînes par usage dans `nvidia.CHAINS`) si présente ; sinon OpenRouter ;
-- **Recherche web** : `OPENROUTER_API_KEY` uniquement (`:online`) — NIM n'a pas de plugin web ;
+- **Nemotron** : ids du catalogue `nvidia/nemotron-*` (Nano 30B, Super 120B, Ultra 550B, Lightning 30B, Omni) — épinglables via `NVIDIA_MODEL` / `NVIDIA_MODEL_CHAIN_*` ; l'étiquette persistée est `nvidia-nemotron` (`backend/app/core/nvidia.py`) ;
+- **Token Factory** : [Nebius Token Factory](https://tokenfactory.nebius.com/) sert les mêmes modèles Nemotron derrière l'API compatible OpenAI (`https://api.tokenfactory.us-central1.nebius.com/v1/`) ; l'adaptateur NIM parle déjà ce contrat ;
+- **Recherche web** : `OPENROUTER_API_KEY` uniquement (`:online`) — NIM / Token Factory n'ont pas de plugin web ;
 - **Modèle OpenRouter** : `OPENROUTER_MODEL` (défaut `openai/gpt-4o-mini`) ;
 - **Sans clé**, l'application reste fonctionnelle en mode dégradé : heuristiques par mots-clés + modèles ML locaux (TF-IDF, spaCy NER) sans aucun appel réseau IA.
 
@@ -146,9 +155,9 @@ Le serveur de dev CRA (port 3000) reste disponible pour le hot reload pendant le
 | `MONGO_URL` | ✅ | Chaîne de connexion MongoDB |
 | `DB_NAME` | ✅ | Nom de la base MongoDB |
 | `CORS_ORIGINS` | ✅ | Origines autorisées, séparées par des virgules (`https://blueintelligence.online` en prod) |
-| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — chaînes par usage (`nvidia.CHAINS`) |
+| `NVIDIA_API_KEY` | recommandé | Clé NVIDIA NIM (`nvapi-…`) — chaînes par usage (`nvidia.CHAINS`), y compris un id [Nemotron](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/) épinglé via `NVIDIA_MODEL` |
 | `LLM_PROVIDER` | optionnel | `auto` (défaut : NVIDIA si clé), `nvidia`, ou `openrouter` |
-| `NVIDIA_MODEL` | optionnel | Préfixe de chaîne (hors `legal`) ; défaut déjà en tête : Pro-0813 |
+| `NVIDIA_MODEL` | optionnel | Préfixe de chaîne (hors `legal`) ; défaut déjà en tête : Pro-0813. Pour Nemotron : `nvidia/nemotron-3-nano-30b-a3b` (ou Super / Ultra / Lightning) |
 | `NVIDIA_MODEL_SECONDARY` | optionnel | Remplace Muse **là où il apparaît** dans `CHAINS` (3ᵉ) |
 | `NVIDIA_MODEL_LEGAL` | optionnel | Tête de la chaîne `legal` (défaut `moonshotai/kimi-k3`) |
 | `NVIDIA_MODEL_CHAIN_JUDGE` | optionnel | Surcharge complète, ids séparés par des virgules (idem `_EXTRACT`, `_PAGE`, …) |
@@ -211,6 +220,19 @@ Le référentiel des 285 ZEE se construit depuis la Console (mode Formalités �
 cd backend && source .venv/bin/activate
 python -m pytest tests/ -x -q          # certains tests exigent le serveur lancé (REACT_APP_BACKEND_URL)
 ```
+
+## Licence
+
+Le **code** de Blue Intelligence (ce dépôt) est sous **double licence MIT / Apache License 2.0**. Vous pouvez choisir l'une ou l'autre :
+
+- [MIT License](LICENSE-MIT) — aussi recopiée dans [`LICENSE`](LICENSE) (fichier que GitHub affiche)
+- [Apache License 2.0](LICENSE-APACHE)
+
+`SPDX-License-Identifier: MIT OR Apache-2.0`
+
+Les **poids** des modèles [NVIDIA Nemotron](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/) éventuellement invoqués via NIM ou [Token Factory](https://tokenfactory.nebius.com/) restent régis par la [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/) — distincte de la licence du code.
+
+Les données cartographiques (OSM, Marine Regions, Seamap, etc.) conservent leurs licences d'origine, listées ci-dessous.
 
 ## Données & attributions
 

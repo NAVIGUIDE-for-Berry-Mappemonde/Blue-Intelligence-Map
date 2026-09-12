@@ -2,6 +2,7 @@
   "name": "blue-intelligence-frontend",
   "version": "1.0.0",
   "private": true,
+  "license": "(MIT OR Apache-2.0)",
   "dependencies": {
     "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "axios": "^1.7.9",
