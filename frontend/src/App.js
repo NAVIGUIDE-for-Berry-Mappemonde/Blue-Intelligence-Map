@@ -8,6 +8,7 @@ import CapitaineriesPanel from "./components/CapitaineriesPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
 import AmpPanel from "./components/AmpPanel";
 import SciencePanel from "./components/SciencePanel";
+import ClimatologyPanel from "./components/ClimatologyPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import ReviewView from "./components/ReviewView";
@@ -36,11 +37,11 @@ function latLngsFromFc(fc) {
   return pts;
 }
 
-// Read the persisted mode on boot. Default = "projects". (6 modes)
+// Read the persisted mode on boot. Default = "projects". (7 modes)
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries" || v === "amp" || v === "science") return v;
+    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries" || v === "amp" || v === "science" || v === "climatology") return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -81,7 +82,7 @@ export default function App() {
         if (e?.response?.status === 401) clearAdminKey();
       });
   }, []);
-  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp' | 'science'
+  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp' | 'science' | 'climatology'
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
   const [projects, setProjects] = useState({ type: "FeatureCollection", features: [] });
@@ -171,7 +172,7 @@ export default function App() {
     lastFitKeyRef.current = "";
     setModeRaw(m);
     try { localStorage.setItem("bi.mode", m); } catch (_) { /* ignore */ }
-    if (m === "science" && viewRef.current === "review") setView("map");
+    if ((m === "science" || m === "climatology") && viewRef.current === "review") setView("map");
   }, []);
 
   useEffect(() => {
@@ -498,7 +499,7 @@ export default function App() {
 
   // Couche Map par défaut = run isolé du mode (contrat §8). Formalités inchangée.
   useEffect(() => {
-    if (mode === "formalities" || mode === "science") return undefined;
+    if (mode === "formalities" || mode === "science" || mode === "climatology") return undefined;
     const ep = RUNS_LIST_EP[mode];
     if (!ep) return undefined;
     let alive = true;
@@ -689,6 +690,9 @@ export default function App() {
             onToggleWms={toggleScienceWms}
           />
         )}
+        {view !== "review" && mode === "climatology" && (
+          <ClimatologyPanel t={t} />
+        )}
         <main className="flex-1 relative min-w-0">
           <div
             className={view === "map" ? "absolute inset-0" : "absolute inset-0 invisible pointer-events-none"}
@@ -736,6 +740,12 @@ export default function App() {
               <div className="h-full flex items-center justify-center p-8" data-testid="review-science-placeholder">
                 <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
                   {t("reviewScienceUnavailable")}
+                </p>
+              </div>
+            ) : mode === "climatology" ? (
+              <div className="h-full flex items-center justify-center p-8" data-testid="review-climatology-placeholder">
+                <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
+                  {t("reviewClimatologyUnavailable")}
                 </p>
               </div>
             ) : (

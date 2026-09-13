@@ -84,6 +84,10 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
       alert(t("importUnsupportedAmp"));
       return;
     }
+    if (currentMode === "climatology") {
+      alert(t("importUnsupportedClimatology"));
+      return;
+    }
     setImporting(true);
     const importUrl = IMPORT_URLS[currentMode] || IMPORT_URLS.projects;
     const totalKey = IMPORT_TOTAL_KEY[currentMode] || IMPORT_TOTAL_KEY.projects;
@@ -133,7 +137,8 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
   };
 
   const currentMode = mode || "projects";
-  const exportUrl = EXPORT_URLS[currentMode] || EXPORT_URLS.projects;
+  const exportBlocked = currentMode === "climatology";
+  const exportUrl = exportBlocked ? null : (EXPORT_URLS[currentMode] || EXPORT_URLS.projects);
 
   return (
     <aside className="w-[320px] shrink-0 border-l border-line bg-surface overflow-y-auto" data-testid="settings-panel">
@@ -183,7 +188,13 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
           )}
           {/* Phase 6 — single contextual export button. URL follows the active mode. */}
           <button data-testid="settings-export-btn"
-            onClick={() => window.open(`${BACKEND_URL}${exportUrl}`, "_blank")}
+            onClick={() => {
+              if (exportBlocked || !exportUrl) {
+                alert(t("exportUnsupportedClimatology"));
+                return;
+              }
+              window.open(`${BACKEND_URL}${exportUrl}`, "_blank");
+            }}
             className="w-full flex items-center justify-center gap-1.5 py-2 mt-2 text-xs font-semibold border border-accent/40 text-accent rounded-sm hover:bg-accent/10"
             title={t("exportGeoJsonTooltip")}
           >

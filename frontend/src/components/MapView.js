@@ -188,7 +188,11 @@ export default function MapView({
     else if (mode === "science") {
       map.addLayer(scienceCluster);
       map.addLayer(scienceTracks);
-    } else map.addLayer(cluster);
+    } else if (mode === "climatology") {
+      // C0 : aucune couche de mode (l'atlas arrive en C5).
+    } else if (mode === "projects") {
+      map.addLayer(cluster);
+    }
 
     const allGroups = () => [cluster, marinaCluster, capitainerieCluster, scienceCluster, anchorCluster, poeCluster];
     map.on("zoomstart", () => { zoomingRef.current = true; });
@@ -284,7 +288,9 @@ export default function MapView({
       map.addLayer(formCluster);
     } else if (mode === "amp") {
       if (amp) map.addLayer(amp);
-    } else {
+    } else if (mode === "climatology") {
+      // C0 : aucune couche de mode (l'atlas arrive en C5).
+    } else if (mode === "projects") {
       map.addLayer(proj);
     }
     map.closePopup();
@@ -379,6 +385,7 @@ export default function MapView({
     if (mode === "capitaineries") return capitaineries?.features?.length || 0;
     if (mode === "formalities") return poePorts?.features?.length || 0;
     if (mode === "science") return science?.features?.length || 0;
+    if (mode === "climatology") return 0;
     return -1;
   })();
 

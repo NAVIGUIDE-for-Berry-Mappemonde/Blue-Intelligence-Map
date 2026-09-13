@@ -21,7 +21,7 @@ Les complétions LLM passent par des API compatibles OpenAI : **NVIDIA NIM** et 
 > cartes marines officielles et les publications gouvernementales avant toute
 > décision en mer.
 
-## Les six modes
+## Les sept modes
 
 | Mode | Couleur | Contenu |
 |------|---------|---------|
@@ -31,6 +31,7 @@ Les complétions LLM passent par des API compatibles OpenAI : **NVIDIA NIM** et 
 | **Formalités** | ambre | Les ~285 Zones Économiques Exclusives mondiales (Marine Regions v12) et leurs **Ports d'Entrée officiels** pour la plaisance, extraits des sources gouvernementales |
 | **AMP** | vert | Polygones ProtectedSeas Navigator + **deux URL séparées** : site du gestionnaire (`manager_url`) et procédures de visite / d'entrée (`visit_url`). L'URL de visite n'est jamais une copie du Website ProtectedSeas. |
 | **Science** | violet | Jeux de données océanographiques localisés sur la carte avec lien direct vers leur fiche portail : catalogues **Sextant/SISMER** (Ifremer) et **ODATIS** (API JSON GeoNetwork), **EDMED** SeaDataNet (SPARQL), **flotteurs Argo** actifs (ERDDAP Coriolis) et **tracés de campagnes CSR** (SPARQL Ifremer). Couches WMS EMODnet (bathymétrie, nature des fonds, câbles). Profondeur d'approche EMODnet dans les popups marinas/mouillages. API structurées uniquement — pas de LLM, pas de scraping, upsert non destructif. |
+| **Climatologie** | orange | Atlas mensuel (vent, houle, courant, cyclones) — chantier, snapshot hors VPS. |
 
 S'y ajoute une **Console de supervision** (déclencheurs batch, télémétrie, KPIs), un onglet **Review** (relecture puis Gold — voir `docs/CAHIER_DES_CHARGES_REVIEW.md` et `docs/CONTRATS_REVIEW_PAR_MODE.md`) et des exports/imports GeoJSON contextuels.
 

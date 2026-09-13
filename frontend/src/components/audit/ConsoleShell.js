@@ -21,6 +21,7 @@ const BORDER = {
   formalities: "border-amberx/40",
   amp: "border-[#4ade80]/40",
   science: "border-[#a78bfa]/40",
+  climatology: "border-[#fb923c]/40",
 };
 
 const TABS = [
@@ -133,6 +134,10 @@ export default function ConsoleShell({
       <AmpCard t={t} rulesPayload={rulesPayload} />
     ) : mode === "science" ? (
       <ScienceCard t={t} rulesPayload={rulesPayload} />
+    ) : mode === "climatology" ? (
+      <p className="text-sm text-slate-400 leading-relaxed p-2" data-testid="console-climatology-placeholder">
+        {t("consoleClimatologyPlaceholder")}
+      </p>
     ) : (
       <ProjectsCard t={t} status={status} refresh={refresh} rulesPayload={rulesPayload} />
     )

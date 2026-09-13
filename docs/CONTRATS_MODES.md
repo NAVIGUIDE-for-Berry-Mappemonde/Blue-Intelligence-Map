@@ -14,6 +14,7 @@ Les cinq modes ont été câblés séparément. Des jobs qui posent **la même q
 | **Capitaineries** | Recenser les **bureaux** (le bâtiment, pas le plan d’eau ni la marina), en tirer téléphone et VHF, sans jamais les rattacher aux marinas. |
 | **AMP** | Polygones ProtectedSeas sur une **façade** (pas le monde), et **deux URL distinctes** : gestionnaire (`manager_url`) vs visite / entrée / permis / mouillage (`visit_url`). La visite n’est jamais la homepage gestionnaire. |
 | **Science** | Localiser les jeux de données océanographiques des catalogues officiels (Sextant/SISMER, ODATIS, EDMED SeaDataNet), les flotteurs Argo actifs et les tracés de campagnes CSR, chacun avec le **lien direct vers sa fiche portail**. Couches WMS EMODnet en fond (bathymétrie, substrat, câbles). Moisson par API structurées (JSON GeoNetwork, SPARQL, ERDDAP) — jamais de LLM ni de scraping. |
+| **Climatologie** | Atlas mensuel sourcé (CMEMS + IBTrACS) : vent (roses), houle P50/P90, courant de surface, pistes cycloniques. Chaque objet porte `kind: climatology`. Pas de LLM ni de prévision déguisée. Pas de Review / Gold en V1. |
 
 Légende des jobs web : **P** Projets swarm · **TD** PoE top-down · **BU** PoE bottom-up · **MM** Marinas Maps · **ME** Marinas enrich · **CE** Capitaineries enrich · **AV** AMP visit.
 
