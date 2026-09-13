@@ -56,6 +56,10 @@ from app.services.run_journal import (
 
 logger = logging.getLogger(__name__)
 
+# Attente max après cancel : SSE TinyFish + extracteurs + journal. Au-delà
+# on finalise quand même le document Mongo (plus de run fantôme).
+STOP_DRAIN_S = 12.0
+
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
 
@@ -282,6 +286,11 @@ class Swarm:
         self._journal_seq = 0
         self._serper_queries = 0
         self._tf_live_runs: dict[str, str] = {}
+        self.stopping = False
+        self._finalized = False
+        self._journal_tasks: list[asyncio.Task] = []
+        self._stop_lock: asyncio.Lock | None = None
+        self._heartbeat = None
 
     # ---------- state helpers ----------
     def log(self, msg, level="info"):
@@ -302,7 +311,8 @@ class Swarm:
             return
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(mongo_insert_journal(self.db, rec))
+            self._journal_tasks = [t for t in self._journal_tasks if not t.done()]
+            self._journal_tasks.append(loop.create_task(mongo_insert_journal(self.db, rec)))
         except RuntimeError:
             pass
 
@@ -439,6 +449,7 @@ class Swarm:
         rid = self.run_id
         return {
             "running": self.running,
+            "stopping": self.stopping,
             "mode": self.mode,
             "llm": has_llm(self.settings),
             "tinyfish": bool(self._tf_key()),
@@ -457,6 +468,16 @@ class Swarm:
 
     def _serper_key(self):
         return serper_api_key(self.settings)
+
+    def _halted(self) -> bool:
+        """Stop en cours, ou run déjà arrêté (tâches Follow the Money orphelines).
+
+        Les tests unitaires appellent ``_discover`` / ``_process_url`` sans
+        ``main_task`` : on ne les bloque pas.
+        """
+        if self.stopping:
+            return True
+        return self.main_task is not None and not self.running
 
     # ---------- lifecycle ----------
     def _bump_saturation(self, new_project: bool):
@@ -479,6 +500,8 @@ class Swarm:
                      run_id: str | None = None, recorder=None):
         if self.running:
             raise ValueError("swarm already running")
+        if self.stopping:
+            raise ValueError("swarm is stopping")
         self.settings = settings
         self.mode = mode
         self.force_rescan = force_rescan
@@ -492,12 +515,17 @@ class Swarm:
                 mode=mode, settings=settings, force_rescan=force_rescan)
         self.wrote_projects = False
         self.running = True
+        self.stopping = False
+        self._finalized = False
+        self._journal_tasks = []
+        self.recursive_tasks = []
         self.logs.clear()
         self._journal_seq = 0
         self._serper_queries = 0
         self._tf_live_runs = {}
         self.no_new_streak = 0
         self.saturated = False
+        self._heartbeat = None
         await self._write_journal_header()
         self.log(f"Isolated run {self.run_id} — writes project_run_* only (wrote_projects: false)")
         self.log(
@@ -542,27 +570,102 @@ class Swarm:
                 logger.warning("tf cancel on stop failed run=%s: %s", rid, exc)
         self._tf_live_runs.clear()
 
-    async def stop(self):
-        self.log("Stop requested — cancelling agents and flushing queue", "warn")
-        for a in self.agents.values():
-            if a["status"] in ("PENDING", "RUNNING"):
-                a["status"] = "CANCELLED"
-        await self._tf_cancel_live_runs()
-        if self.main_task:
-            self.main_task.cancel()
-        for w in self.workers:
-            w.cancel()
-        self.workers = []
-        if self.queue:
-            while not self.queue.empty():
-                try:
-                    self.queue.get_nowait()
-                    self.queue.task_done()
-                except asyncio.QueueEmpty:
-                    break
+    def _flush_queue(self):
+        if not self.queue:
+            self.queued_count = 0
+            return
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+            except asyncio.QueueEmpty:
+                break
         self.queued_count = 0
+
+    async def _cancel_tasks(self, tasks, timeout=STOP_DRAIN_S):
+        current = asyncio.current_task()
+        live = [t for t in tasks if t and not t.done() and t is not current]
+        for t in live:
+            t.cancel()
+        if not live:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*live, return_exceptions=True), timeout=timeout)
+        except asyncio.TimeoutError:
+            left = sum(1 for t in live if not t.done())
+            self.log(f"Stop drain timeout {timeout:g}s — {left} tâche(s) encore live", "warn")
+
+    async def _flush_journal_tasks(self, timeout=2.0):
+        pending = [t for t in self._journal_tasks if not t.done()]
+        if not pending:
+            self._journal_tasks = []
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("journal flush timeout run_id=%s n=%s", self.run_id, len(pending))
+        self._journal_tasks = [t for t in self._journal_tasks if not t.done()]
+
+    async def _finalize_once(self, *, cancelled: bool = False, error: str | None = None):
+        if self._finalized or not self.run_id:
+            return
+        self._finalized = True
+        from app.services.project_runs import finalize_run
+        try:
+            await finalize_run(
+                self.db, self.run_id, cancelled=cancelled, error=error)
+        except Exception:
+            self._finalized = False
+            logger.exception("finalize_run failed run_id=%s", self.run_id)
+            self.log("finalize_run failed — run Mongo encore ouvert", "error")
+            raise
+
+    async def stop(self):
+        if self._stop_lock is None:
+            self._stop_lock = asyncio.Lock()
+        async with self._stop_lock:
+            await self._stop_locked()
+
+    async def _stop_locked(self):
+        already = self.stopping and not self.running
+        self.stopping = True
         self.running = False
-        self.log("Swarm stopped")
+        if not already:
+            self.log("Stop requested — cancelling agents and flushing queue", "warn")
+            for a in self.agents.values():
+                if a["status"] in ("PENDING", "RUNNING"):
+                    a["status"] = "CANCELLED"
+            await self._tf_cancel_live_runs()
+            rec = list(self.recursive_tasks or [])
+            workers = list(self.workers or [])
+            self.workers = []
+            self.recursive_tasks = []
+            hb = self._heartbeat
+            await self._cancel_tasks(rec + workers + ([self.main_task] if self.main_task else []))
+            if hb is not None:
+                try:
+                    await hb.aclose()
+                except Exception:
+                    pass
+                if self._heartbeat is hb:
+                    self._heartbeat = None
+            self._flush_queue()
+            await self._flush_journal_tasks()
+        err = None
+        try:
+            await self._finalize_once(cancelled=True)
+        except Exception as exc:
+            err = exc
+        self.stopping = False
+        if not already:
+            if err is None:
+                self.log("Swarm stopped")
+            else:
+                self.log("Swarm stopped — finalize Mongo à réessayer", "error")
+        if err is not None:
+            raise err
 
     async def _run(self):
         cancelled = False
@@ -577,6 +680,7 @@ class Swarm:
                 None,
             ),
         })
+        self._heartbeat = hb
         try:
             extras = []
             try:
@@ -653,8 +757,12 @@ class Swarm:
                     await self._discover(seed, max_urls)
 
             await asyncio.gather(*[guarded(s) for s in seeds], return_exceptions=True)
+            if self._halted():
+                raise asyncio.CancelledError
             self.log("Discovery phase complete — waiting for extraction queue to drain")
             while True:
+                if self._halted():
+                    raise asyncio.CancelledError
                 await self.queue.join()
                 pending = [t for t in self.recursive_tasks if not t.done()]
                 if not pending:
@@ -679,17 +787,24 @@ class Swarm:
             error = str(e)
             self.log(f"Pipeline error: {e}", "error")
         finally:
-            from app.services.project_runs import finalize_run
+            if self.stopping:
+                cancelled = True
             try:
-                await finalize_run(
-                    self.db, self.run_id, cancelled=cancelled, error=error)
+                await self._finalize_once(cancelled=cancelled, error=error)
+            except Exception:
+                logger.exception("finalize_run in _run.finally failed run_id=%s", self.run_id)
+            if self._heartbeat is hb:
+                self._heartbeat = None
+            try:
+                await hb.aclose()
             except Exception:
                 pass
-            await hb.aclose()
             self.running = False
 
     # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
+        if self._halted():
+            return
         seed = dict(seed or {})
         if needs_official_home(seed):
             home = await self._resolve_official_home(seed)
@@ -723,6 +838,8 @@ class Swarm:
             if force:
                 self.log(f"[{seed['name']}] from scratch — TTL et URLs déjà connues non sautés")
 
+        if self._halted():
+            return
         if needs_listing_hop(seed):
             found = await self._resolve_listing(seed)
             if found:
@@ -748,10 +865,14 @@ class Swarm:
                 self.log(
                     f"[{seed['name']}] delta scan — {len(known_urls)} known URLs excluded from mission"
                 )
+        if self._halted():
+            return
         await self._discover_fiches(seed, max_urls, depth, known_urls)
 
     async def _resolve_official_home(self, seed):
         """Hub partagé ou pas d'URL → vrai site de l'organisme, puis hop listing."""
+        if self._halted():
+            return None
         name = (seed.get("name") or "").strip()
         if not name:
             self.log("[?] site officiel — nom manquant", "warn")
@@ -807,6 +928,8 @@ class Swarm:
 
     async def _resolve_listing(self, seed):
         """Home → une URL catalogue. N'écrit pas de fiches. Pas d'échec run si 0."""
+        if self._halted():
+            return None
         name = seed.get("name") or seed.get("url")
         key = self._tf_key()
         aid = self.new_agent("Listing N1", "listing", seed["url"], seed["name"])
@@ -894,6 +1017,9 @@ class Swarm:
                             aid, f"Listing juge: aucune des {len(pool)} URLs")
                         self.log(f"[{name}] Listing juge: aucune des {len(pool)} URLs")
 
+            if self._halted():
+                self.set_agent(aid, status="CANCELLED")
+                return None
             if not found and key and self.settings.get("allow_tinyfish_agent", True):
                 if not agent_host_is_worthwhile(seed.get("url") or "", seed.get("name") or ""):
                     reason = (
@@ -1010,6 +1136,8 @@ class Swarm:
             pass
 
     async def _discover_fiches(self, seed, max_urls, depth=0, known_urls=None):
+        if self._halted():
+            return
         known_urls = list(known_urls or [])
         key = self._tf_key()
         aid = self.new_agent("Crawler N1", "discover", seed["url"], seed["name"])
@@ -1063,6 +1191,9 @@ class Swarm:
                 self.agent_log(aid, line)
                 self.log(f"[{seed['name']}] {line}")
 
+            if self._halted():
+                self.set_agent(aid, status="CANCELLED")
+                return
             if not urls and key and self.settings.get("allow_tinyfish_agent", True):
                 host_ok = agent_host_is_worthwhile(
                     seed.get("url") or "", seed.get("name") or "")
@@ -1099,11 +1230,14 @@ class Swarm:
                 "TinyFish Fetch": "Fetch",
                 "Search": "Search",
             }.get(used_engine, "N1")
+            if self._halted():
+                self.set_agent(aid, status="CANCELLED")
+                return
             await self._emit(
                 "discover_urls", seed=seed.get("name"), n=len(urls),
                 engine=engine_code, depth=depth,
             )
-            if depth == 0 and (urls or known_urls):
+            if depth == 0 and (urls or known_urls) and not self._halted():
                 new_count = len([u for u in urls if u not in set(known_urls)])
                 await self.db.discovery_state.update_one(
                     {"seed_url": seed["url"]},
@@ -1113,10 +1247,16 @@ class Swarm:
                     upsert=True,
                 )
             if urls:
+                if self._halted():
+                    self.set_agent(aid, status="CANCELLED")
+                    return
                 self.set_agent(aid, status="SUCCESS")
                 self.agent_log(aid, f"{len(urls)} project URLs discovered ({used_engine})")
                 self.log(f"[{seed['name']}] {len(urls)} project pages found via {used_engine} → DeepLinkCache + queue")
                 for u in urls:
+                    if self._halted():
+                        self.set_agent(aid, status="CANCELLED")
+                        return
                     await self.db.deeplink_pages.update_one(
                         {"url": u}, {"$set": {"url": u, "funder": seed["name"], "source": seed["url"], "ts": now_iso()},
                                      "$setOnInsert": {"_id": str(uuid.uuid4())}}, upsert=True)
@@ -1164,6 +1304,8 @@ class Swarm:
                 self.agent_log(aid, f"status {st} — même run TinyFish")
 
         def should_stop():
+            if self._halted():
+                return True
             a = self.agents.get(aid) or {}
             return a.get("status") == "CANCELLED"
 
@@ -1171,6 +1313,8 @@ class Swarm:
 
     async def _tf_agent_run(self, aid, seed, key, goal, schema, max_duration_s):
         """SSE ; 429 → pause + retry ; flux coupé → poll ; plafond → cancel."""
+        if self._halted():
+            return {}
         cfg = public_agent_config({"max_duration_seconds": max_duration_s})
         run_id = {"id": None}
         inner = self._tf_agent_on_event(aid)
@@ -1283,6 +1427,8 @@ class Swarm:
 
     async def _tinyfish_listing_discover(self, aid, seed, key):
         """Agent TinyFish n°1 : une URL catalogue, pas de fiches individuelles."""
+        if self._halted():
+            return None
         self.set_agent(aid, status="RUNNING")
         goal = listing_goal(seed["name"])
         result = await self._tf_agent_run(
@@ -1296,6 +1442,8 @@ class Swarm:
 
     async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
         """Agent TinyFish n°2 : fiches individuelles (SSE puis poll du même run)."""
+        if self._halted():
+            return []
         self.set_agent(aid, status="RUNNING")
         goal = discovery_goal(seed["name"], known_urls)
         result = await self._tf_agent_run(
@@ -1474,7 +1622,15 @@ class Swarm:
     # ---------- extraction ----------
     async def _extract_worker(self, idx):
         while True:
+            if self._halted():
+                return
             item = await self.queue.get()
+            if self._halted():
+                try:
+                    self.queue.task_done()
+                except ValueError:
+                    pass
+                return
             self.queued_count = max(0, self.queued_count - 1)
             try:
                 await self._process_url(item)
@@ -1490,7 +1646,7 @@ class Swarm:
                     pass
 
     def _queue_partner(self, name: str, purl: str):
-        if not self.running or not self.settings.get("follow_the_money", True):
+        if self._halted() or not self.running or not self.settings.get("follow_the_money", True):
             return
         domain = domain_of(purl)
         if not domain:
@@ -1535,7 +1691,7 @@ class Swarm:
         self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
 
     async def _follow_the_money(self, proj: dict, depth: int):
-        if depth != 0:
+        if depth != 0 or self._halted():
             return
         seeds = self.master_seeds or MASTER_SEEDS
         for p in (proj.get("partners") or []):
@@ -1557,6 +1713,8 @@ class Swarm:
     async def _process_url(self, item):
         if not self.run_id:
             raise RuntimeError("isolated run required — no write to projects")
+        if self._halted():
+            return {"status": "cancelled", "url": item.get("url")}
         url, funder, source = item["url"], item["funder"], item["source"]
         depth = item.get("depth", 0)
         force = bool(item.get("force") or getattr(self, "force_rescan", False))

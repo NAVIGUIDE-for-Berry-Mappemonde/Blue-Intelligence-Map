@@ -119,10 +119,17 @@ async def project_run_status(run_id: str):
 
 @router.post("/projects/runs/{run_id}/cancel")
 async def project_run_cancel(run_id: str):
-    if swarm.run_id != run_id or not swarm.running:
-        raise HTTPException(409, f"Run {run_id} is not running")
-    await swarm.stop()
-    return {"cancelling": True, "run_id": run_id, "wrote_projects": False}
+    try:
+        out = await project_runs.request_cancel(db, run_id, swarm)
+    except KeyError:
+        raise HTTPException(404, f"Run {run_id} unknown") from None
+    except project_runs.RunNotRunning:
+        raise HTTPException(409, f"Run {run_id} is not running") from None
+    st = RUN_STATES.get(run_id)
+    if st is not None:
+        st.cancel = True
+        st.finish()
+    return out
 
 
 @router.get("/projects/runs/{run_id}/projects")
