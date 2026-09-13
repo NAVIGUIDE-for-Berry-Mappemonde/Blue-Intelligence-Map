@@ -194,3 +194,46 @@ CORS, aucun appel réseau externe. Journaux : `sudo journalctl -u naviguide-api 
 (idem `-orchestrator`, `-polar`). Ports 9000/9004/9008 réservés à NAVIGUIDE
 (8001 = Blue Intelligence). `naviguide-weather-routing` (3010) n'est pas
 déployé : le frontend ne l'appelle pas.
+
+## NAVIGUIDE simulator — simulator.naviguide.fr (même VPS)
+
+Sous-domaine **séparé** : le site skipper `www.naviguide.fr` et ses API
+(`:9000` / `:9004` avec chat / `:9008`) ne sont pas réutilisés.
+
+```
+Internet → nginx (443, Let's Encrypt, SAN + simulator.naviguide.fr)
+   simulator.naviguide.fr  → /var/www/naviguide-simulator
+   /route /wind /wave …    → uvicorn 127.0.0.1:8010  (naviguide-simulator)
+   /api/v1/*               → le même :8010 (polar sans chat)
+   /bi/*                   → uvicorn 127.0.0.1:8001  (Blue Intelligence, lecture)
+```
+
+| Quoi | Où |
+|------|-----|
+| Code | `~/blue-intelligence-map/naviguide-simulator/` (venv `.venv/` dédié) |
+| Frontend nginx | `/var/www/naviguide-simulator` |
+| Secrets optionnels (Copernicus seulement) | `~/.config/naviguide/simulator.env` |
+| Service | `naviguide-simulator` (systemd, `MemoryMax=1G`) |
+| Reverse proxy | `/etc/nginx/sites-available/naviguide-simulator` |
+
+DNS : enregistrement **A** `simulator` → `135.125.226.16` (zone `naviguide.fr`,
+gratuit). Premier déploiement depuis une machine avec Node + SSH (build Vite
+local, pas de `npm` sur le VPS) :
+
+```bash
+cd /chemin/vers/Blue-Intelligence-Map
+bash infra/vps/naviguide/publish-simulator-from-mac.sh
+```
+
+Le script étend le certificat existant (`certbot --expand`, gratuit) s'il
+ne contient pas encore `simulator.naviguide.fr`. Il ne réécrit pas
+`sites-available/naviguide` et ne redémarre pas les services skipper / BI.
+
+Retour arrière nginx (le site www redevient le seul vhost NAVIGUIDE) :
+
+```bash
+ssh ubuntu@135.125.226.16
+sudo rm -f /etc/nginx/sites-enabled/naviguide-simulator
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl disable --now naviguide-simulator
+```

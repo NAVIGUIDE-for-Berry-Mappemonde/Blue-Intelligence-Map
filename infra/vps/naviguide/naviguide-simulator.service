@@ -1,0 +1,18 @@
+[Unit]
+Description=NAVIGUIDE simulator — searoute + polar sans chat (simulator.naviguide.fr)
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/blue-intelligence-map/naviguide-simulator
+EnvironmentFile=-/home/ubuntu/.config/naviguide/simulator.env
+ExecStart=/home/ubuntu/blue-intelligence-map/naviguide-simulator/.venv/bin/uvicorn server.main:app --host 127.0.0.1 --port 8010
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+MemoryHigh=512M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

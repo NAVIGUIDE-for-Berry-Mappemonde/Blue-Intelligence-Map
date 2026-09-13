@@ -3,7 +3,9 @@
 Sous-dossier **hors production** : le cockpit de l’expédition Berry-Mappemonde <!-- pragma: allowlist secret -->
 (carte Leaflet, boutons de couches, bateau qui avance, searoute, polaires).
 
-`naviguide.fr` et `blueintelligence.online` ne sont **pas** concernés.
+`www.naviguide.fr` et `blueintelligence.online` ne sont **pas** le même
+site. Publication prévue : **https://simulator.naviguide.fr** (sous-domaine
+gratuit, même VPS, nginx à part).
 
 Plan : [`docs/PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md`](../docs/PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md) (v3.0)
 
@@ -26,6 +28,21 @@ npm run dev
 ```
 
 Ouvrir `http://localhost:5174`.
+
+## Publier sur le VPS
+
+Quand le DNS `simulator.naviguide.fr` pointe déjà vers `135.125.226.16`
+(depuis le Mac, ou toute machine avec Node + SSH) :
+
+```bash
+cd /chemin/vers/Blue-Intelligence-Map
+bash infra/vps/naviguide/publish-simulator-from-mac.sh
+```
+
+Ça construit le site sur le Mac, copie uniquement ce dossier et les
+fichiers infra simulateur, puis sur le VPS : venv Python, service `:8010`, nginx **séparé**,
+certificat Let's Encrypt étendu (gratuit). `www.naviguide.fr` n'est pas
+redéployé. Détail : `infra/vps/README.md` (section simulator).
 
 | Ça marche | Ça n’existe pas encore |
 |---|---|
