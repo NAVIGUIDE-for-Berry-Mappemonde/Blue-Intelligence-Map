@@ -14,10 +14,11 @@ Les cinq modes ont été câblés séparément. Des jobs qui posent **la même q
 | **Capitaineries** | Recenser les **bureaux** (le bâtiment, pas le plan d’eau ni la marina), en tirer téléphone et VHF, sans jamais les rattacher aux marinas. |
 | **AMP** | Polygones ProtectedSeas sur une **façade** (pas le monde), et **deux URL distinctes** : gestionnaire (`manager_url`) vs visite / entrée / permis / mouillage (`visit_url`). La visite n’est jamais la homepage gestionnaire. |
 | **Science** | Localiser les jeux de données océanographiques des catalogues officiels (Sextant/SISMER, ODATIS, EDMED SeaDataNet), les flotteurs Argo actifs et les tracés de campagnes CSR, chacun avec le **lien direct vers sa fiche portail**. Couches WMS EMODnet en fond (bathymétrie, substrat, câbles). Moisson par API structurées (JSON GeoNetwork, SPARQL, ERDDAP) — jamais de LLM ni de scraping. |
+| **Climatologie** | Servir un **atlas mensuel versionné** (roses 8 secteurs, Hs P50/P90, courant de surface, pistes IBTrACS) avec `kind: "climatology"`, période et DOI nommés. Snapshot + API, **pas un swarm**, pas un LLM, pas une prévision. `null` sur terre / pixel NaN / échantillon trop pauvre. Blue Intelligence **montre** l’atlas (7ᵉ mode) ; NAVIGUIDE **s’en sert** sans le peindre. |
 
 Légende des jobs web : **P** Projets swarm · **TD** PoE top-down · **BU** PoE bottom-up · **MM** Marinas Maps · **ME** Marinas enrich · **CE** Capitaineries enrich · **AV** AMP visit.
 
-Les dumps OSM (marinas, capitaineries, mouillages), les polygones AMP et la moisson Science n’enchaînent pas les 7 familles. Ce n’est pas un trou : ce n’est pas le même objet.
+Les dumps OSM (marinas, capitaineries, mouillages), les polygones AMP, la moisson Science et les snapshots Climatologie n’enchaînent pas les 7 familles. Ce n’est pas un trou : ce n’est pas le même objet.
 
 ---
 

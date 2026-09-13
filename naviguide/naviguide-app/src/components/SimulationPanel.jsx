@@ -70,7 +70,7 @@ function PrevNextButtons({ onPrev, canPrev, onNext, canNext }) {
 
 // ── Composant principal ──────────────────────────────────────────────────────
 
-export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, canNext }) {
+export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, canNext, month, onMonth }) {
   const { t } = useLang();
 
   if (!legContext) {
@@ -142,7 +142,7 @@ export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, 
             </span>
           </div>
           <span className="text-sm font-bold text-white">{formatEta(etaHours)}</span>
-          <span className="text-[9px] text-slate-500">@ {speedKnots} kt</span>
+          <span className="text-[9px] text-slate-500">@ {speedKnots} kt · {t("climoKind")}</span>
         </div>
 
         {/* NM parcourus */}
@@ -168,6 +168,23 @@ export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, 
         </div>
 
       </div>
+
+      {typeof month === "number" && onMonth && (
+        <div className="px-3 pt-2" data-testid="simulation-month">
+          <label className="flex items-center justify-between text-[9px] text-slate-400 uppercase tracking-wider">
+            <span>{t("climoMonth")}</span>
+            <span className="text-cyan-300 font-semibold">{month}</span>
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={12}
+            value={month}
+            onChange={(e) => onMonth(Number(e.target.value))}
+            className="w-full mt-1"
+          />
+        </div>
+      )}
 
       {/* Boutons Précédent / Suivant */}
       <PrevNextButtons onPrev={onPrev} canPrev={canPrev} onNext={onNext} canNext={canNext} />

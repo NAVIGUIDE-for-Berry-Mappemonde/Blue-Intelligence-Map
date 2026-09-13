@@ -2510,6 +2510,443 @@
         "en": "CSR cruises with a track (most recent first). Default 500."
       },
       "group": "budget"
+    },
+    {
+      "id": "climatology.kind_is_climatology",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": true,
+      "unit": "bool",
+      "vary": false,
+      "principle": "kind climatology ≠ forecast. L'atlas mensuel n'est jamais présenté comme le vent de demain. Deux kind distincts ; getWind / getWave / getCurrent restent NRT / ANFC.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §5 §14",
+      "code": [
+        "app/routers/climatology.py",
+        "app/services/climatology_common.py"
+      ],
+      "title": {
+        "fr": "Climatologie ≠ prévision",
+        "en": "Climatology is not a forecast"
+      },
+      "help": {
+        "fr": "Loi. Un champ kind: climatology. Jamais GFS/IFS en V1.",
+        "en": "Law. kind: climatology. No GFS/IFS in V1."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.no_llm_for_numbers",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": true,
+      "unit": "bool",
+      "vary": false,
+      "principle": "Un LLM ne produit ni vent, ni Hs, ni compteur cyclone. Les chiffres viennent du snapshot ou sont null.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §4 §14",
+      "code": [
+        "app/routers/climatology.py",
+        "naviguide/naviguide-api/agents/meteo_agent.py"
+      ],
+      "title": {
+        "fr": "Pas de LLM pour un vent / une Hs / un cyclone",
+        "en": "No LLM for wind / Hs / cyclone counts"
+      },
+      "help": {
+        "fr": "Loi. Un entier IBTrACS, pas « saison des ouragans » inventée.",
+        "en": "Law. An IBTrACS integer, not an invented hurricane season."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.wind_calm_kn",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 3,
+      "unit": "kn",
+      "interval": [
+        2,
+        4
+      ],
+      "vary": true,
+      "principle": "Calme Beaufort 0–1 (OpenCPN climatology_pi) : centre bleu de la rose ≤ 3 kn.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §14",
+      "code": [
+        "scripts/climatology/gen_wind_atlas.py",
+        "app/services/climatology_wind.py"
+      ],
+      "title": {
+        "fr": "Seuil calme (kn)",
+        "en": "Calm threshold (kn)"
+      },
+      "help": {
+        "fr": "≤ 3 kn = calme. Centre bleu de la rose.",
+        "en": "≤ 3 kn = calm. Blue rose centre."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.wind_gale_kn",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 34,
+      "unit": "kn",
+      "interval": [
+        34,
+        41
+      ],
+      "vary": true,
+      "principle": "Gale Beaufort 8. Centre rouge de la rose ≥ 34 kn.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §14",
+      "code": [
+        "scripts/climatology/gen_wind_atlas.py",
+        "app/services/climatology_wind.py"
+      ],
+      "title": {
+        "fr": "Seuil gale (kn)",
+        "en": "Gale threshold (kn)"
+      },
+      "help": {
+        "fr": "≥ 34 kn = gale. Centre rouge.",
+        "en": "≥ 34 kn = gale. Red centre."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.wind_sectors",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": 8,
+      "unit": "secteurs",
+      "vary": false,
+      "principle": "Rose à 8 secteurs de 45°. Pas 16 en V1 (bins 40+ kn hors périmètre).",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §10 §14",
+      "code": [
+        "app/services/climatology_wind.py"
+      ],
+      "title": {
+        "fr": "Rose à 8 secteurs",
+        "en": "8-sector rose"
+      },
+      "help": {
+        "fr": "Loi. 45° par secteur.",
+        "en": "Law. 45° per sector."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.wind_min_sector_pct",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 2.5,
+      "unit": "%",
+      "interval": [
+        1,
+        5
+      ],
+      "vary": true,
+      "principle": "Un secteur < 2,5 % du temps est du bruit : on l'écrit 0.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §10 §14",
+      "code": [
+        "app/services/climatology_wind.py"
+      ],
+      "title": {
+        "fr": "Bruit de secteur (%)",
+        "en": "Sector noise floor (%)"
+      },
+      "help": {
+        "fr": "Sous 2,5 % le secteur disparaît.",
+        "en": "Below 2.5 % the sector is dropped."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.wind_grid_deg",
+      "mode": "climatology",
+      "kind": "budget",
+      "value": 0.5,
+      "unit": "deg",
+      "interval": [
+        0.25,
+        1
+      ],
+      "vary": true,
+      "principle": "Maille stockée de l'atlas. 0,5° tient sur le VPS ; 0,25° = plus lourd.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §10 §14",
+      "code": [
+        "scripts/climatology/gen_wind_atlas.py"
+      ],
+      "title": {
+        "fr": "Maille atlas vent (°)",
+        "en": "Wind atlas grid (deg)"
+      },
+      "help": {
+        "fr": "0,5° par défaut. Généré sur le Mac.",
+        "en": "Default 0.5°. Generated on the Mac."
+      },
+      "group": "budget"
+    },
+    {
+      "id": "climatology.wave_nogo_m",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 2.5,
+      "unit": "m",
+      "interval": [
+        2.0,
+        4.0
+      ],
+      "vary": true,
+      "principle": "Seuil overWave. Le no-go isochrone utilise le P90, jamais une moyenne labellée P90.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §11 §14",
+      "code": [
+        "app/services/climatology_wave.py"
+      ],
+      "title": {
+        "fr": "No-go houle P90 (m)",
+        "en": "Wave P90 no-go (m)"
+      },
+      "help": {
+        "fr": "Hs P90 > 2,5 m = no-go. Pas une moyenne.",
+        "en": "Hs P90 > 2.5 m = no-go. Not a mean."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.wave_stat",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": "P90=nogo P50=typical",
+      "unit": null,
+      "vary": false,
+      "principle": "P90 = no-go, P50 = typique. Interdit de labeller une moyenne P1M comme P90.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §11 §14",
+      "code": [
+        "app/services/climatology_wave.py"
+      ],
+      "title": {
+        "fr": "P90 = no-go, P50 = typique",
+        "en": "P90 = no-go, P50 = typical"
+      },
+      "help": {
+        "fr": "Loi. Une moyenne porte stat: mean.",
+        "en": "Law. A mean carries stat: mean."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.wave_period",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": "1993-2019",
+      "unit": null,
+      "vary": false,
+      "principle": "Fenêtre WAVERYS climatology_P1M-m / percentiles PT3H. Écrite à l'écran.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §11 §14",
+      "code": [
+        "app/services/climatology_common.py"
+      ],
+      "title": {
+        "fr": "Période houle 1993–2019",
+        "en": "Wave period 1993–2019"
+      },
+      "help": {
+        "fr": "Loi. Période nominative WAVERYS.",
+        "en": "Law. Named WAVERYS window."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.current_min_kn",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 0.15,
+      "unit": "kn",
+      "interval": [
+        0.05,
+        0.3
+      ],
+      "vary": true,
+      "principle": "Sous le seuil : vecteur 0 et flag below_threshold, pas un null silencieux (OpenCPN jetait < 0,2 kn sans le nommer).",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §12 §14",
+      "code": [
+        "app/services/climatology_current.py"
+      ],
+      "title": {
+        "fr": "Seuil courant (kn)",
+        "en": "Current threshold (kn)"
+      },
+      "help": {
+        "fr": "Sous 0,15 kn : 0 + below_threshold.",
+        "en": "Below 0.15 kn: 0 + below_threshold."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.current_depth_m",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": 0.5,
+      "unit": "m",
+      "vary": false,
+      "principle": "Premier niveau GLORYS ≈ 0,494 m, comme getCurrent.py (minimum_depth=0.5).",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §12 §14",
+      "code": [
+        "app/services/climatology_current.py"
+      ],
+      "title": {
+        "fr": "Profondeur courant 0,5 m",
+        "en": "Current depth 0.5 m"
+      },
+      "help": {
+        "fr": "Loi. Surface GLORYS, pas un niveau profond.",
+        "en": "Law. GLORYS surface, not a deep level."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.current_period",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": "1993-2016",
+      "unit": null,
+      "vary": false,
+      "principle": "Dataset climatology PUM GLORYS12 : 12 moyennes 1993–2016.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §12 §14",
+      "code": [
+        "app/services/climatology_common.py"
+      ],
+      "title": {
+        "fr": "Période courant 1993–2016",
+        "en": "Current period 1993–2016"
+      },
+      "help": {
+        "fr": "Loi. Fenêtre PUM climatology_P1M-m.",
+        "en": "Law. PUM climatology_P1M-m window."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.cyclone_first_year",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": 1980,
+      "unit": "year",
+      "vary": false,
+      "principle": "Fichier ibtracs.since1980.list.v04r01.csv. Pas Unisys.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §13 §14",
+      "code": [
+        "app/services/climatology_cyclones.py",
+        "scripts/climatology/gen_cyclones.py"
+      ],
+      "title": {
+        "fr": "IBTrACS depuis 1980",
+        "en": "IBTrACS since 1980"
+      },
+      "help": {
+        "fr": "Loi. Fichier since1980, TRACK_TYPE=main.",
+        "en": "Law. since1980 file, TRACK_TYPE=main."
+      },
+      "group": "contracts"
+    },
+    {
+      "id": "climatology.cyclone_dayrange",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 21,
+      "unit": "jours",
+      "interval": [
+        7,
+        45
+      ],
+      "vary": true,
+      "principle": "Fenêtre autour du jour de route pour CycloneTrackCrossings.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §13 §14",
+      "code": [
+        "app/services/climatology_cyclones.py"
+      ],
+      "title": {
+        "fr": "Fenêtre crossings (jours)",
+        "en": "Crossings window (days)"
+      },
+      "help": {
+        "fr": "±21 jours autour du jour de jambe.",
+        "en": "±21 days around the leg day."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.cyclone_radius_nm",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 120,
+      "unit": "NM",
+      "interval": [
+        60,
+        200
+      ],
+      "vary": true,
+      "principle": "Couloir autour de la jambe pour compter une piste « proche ».",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §13 §14",
+      "code": [
+        "app/services/climatology_cyclones.py"
+      ],
+      "title": {
+        "fr": "Rayon crossings (NM)",
+        "en": "Crossings radius (NM)"
+      },
+      "help": {
+        "fr": "120 NM de part et d'autre de la jambe.",
+        "en": "120 NM either side of the leg."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.cyclone_min_kn",
+      "mode": "climatology",
+      "kind": "geometrie",
+      "value": 34,
+      "unit": "kn",
+      "interval": [
+        34,
+        64
+      ],
+      "vary": true,
+      "principle": "Afficher au moins une tempête tropicale. Hors V1 : rayons R34.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §13 §14",
+      "code": [
+        "app/services/climatology_cyclones.py"
+      ],
+      "title": {
+        "fr": "Vent min affiché (kn)",
+        "en": "Min displayed wind (kn)"
+      },
+      "help": {
+        "fr": "34 kn = tempête tropicale.",
+        "en": "34 kn = tropical storm."
+      },
+      "group": "space"
+    },
+    {
+      "id": "climatology.avoid_cyclone_tracks",
+      "mode": "climatology",
+      "kind": "loi",
+      "value": true,
+      "unit": "bool",
+      "vary": false,
+      "principle": "En simulation isochrone, un pas qui croise une piste (crossings>0) est jeté.",
+      "cdc": "PLAN_IMPLEMENTATION_CLIMATOLOGIE.md §13 §14",
+      "code": [
+        "naviguide/naviguide_workspace/naviguide_weather_routing/isochrone.py"
+      ],
+      "title": {
+        "fr": "Éviter les pistes en simulation",
+        "en": "Avoid tracks in simulation"
+      },
+      "help": {
+        "fr": "Loi en simulation. crossings>0 jette le pas.",
+        "en": "Law in simulation. crossings>0 drops the step."
+      },
+      "group": "contracts"
     }
   ],
   "groups": [

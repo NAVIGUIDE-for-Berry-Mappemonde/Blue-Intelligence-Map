@@ -5,8 +5,9 @@ LangGraph StateGraph — Pipeline:
   prepare_context → fetch_stormglass → llm_generate → END
 
 Domain: Departure windows, wind regimes (trades/ITCZ/monsoon),
-        cyclone seasons, sea state forecasts, optimal routing timing.
-Sources: StormGlass API (optional, degrades gracefully), LLM training data.
+        IBTrACS crossing counts, sea state. Climatology = kind climatology.
+Sources: IBTrACS snapshot (required integer). StormGlass is optional NRT
+         only — never the source of the climatology mode.
 """
 
 from __future__ import annotations
@@ -34,10 +35,14 @@ class MeteoAgentState(TypedDict):
     to_stop:      str
     lat:          float
     lon:          float
+    dest_lat:     Optional[float]
+    dest_lon:     Optional[float]
+    month:        Optional[int]
     nm_remaining: float
     language:     str
     # Internal
     weather_obs:  Optional[dict]
+    ibtracs:      Optional[dict]
     prompt:       str
     messages:     List
     # Outputs
@@ -53,7 +58,31 @@ def prepare_context_node(state: MeteoAgentState) -> MeteoAgentState:
     msg = HumanMessage(
         content=f"[meteo_agent] Preparing weather brief for {state['from_stop']} → {state['to_stop']}"
     )
-    return {**state, "weather_obs": None, "messages": [msg], "error": None}
+    return {**state, "weather_obs": None, "ibtracs": None, "messages": [msg], "error": None}
+
+
+def fetch_ibtracs_node(state: MeteoAgentState) -> MeteoAgentState:
+    """Entier IBTrACS — jamais une saison inventée par le LLM."""
+    month = int(state.get("month") or datetime.now().month)
+    dest_lat = state.get("dest_lat")
+    dest_lon = state.get("dest_lon")
+    if dest_lat is None or dest_lon is None:
+        dest_lat, dest_lon = state["lat"], state["lon"]
+    try:
+        from pathlib import Path
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        backend = root.parent / "backend"
+        if backend.is_dir() and str(backend) not in sys.path:
+            sys.path.insert(0, str(backend))
+        from app.services.climatology_cyclones import crossings
+        ib = crossings(state["lat"], state["lon"], float(dest_lat), float(dest_lon), month)
+    except Exception as exc:
+        ib = {"kind": "climatology", "count": None, "storms": [], "error": str(exc), "month": month}
+    msg = AIMessage(
+        content=f"[meteo_agent] IBTrACS crossings month={month}: {ib.get('count')}"
+    )
+    return {**state, "ibtracs": ib, "messages": [msg]}
 
 
 # ── Node 2: fetch_stormglass ───────────────────────────────────────────────────
@@ -127,7 +156,20 @@ def _build_meteo_prompt(state: MeteoAgentState) -> str:
     """
     lang_full = "French" if state["language"] == "fr" else "English"
     obs       = state.get("weather_obs")
-    now_month = datetime.now().strftime("%B")
+    ib        = state.get("ibtracs") or {}
+    month_n   = int(state.get("month") or datetime.now().month)
+    now_month = datetime(2000, month_n, 1).strftime("%B")
+    ib_count  = ib.get("count")
+    ib_block  = (
+        f"IBTrACS v04r01 (kind: climatology, since 1980) — crossings on this leg "
+        f"in month {month_n}: {ib_count if ib_count is not None else 'snapshot missing'}. "
+        f"Cite this integer. Do not invent a cyclone season or a wind/Hs number.\n"
+    )
+    if ib.get("storms"):
+        names = ", ".join(
+            f"{s.get('name') or s.get('sid')} {s.get('season')}" for s in ib["storms"][:8]
+        )
+        ib_block += f"Sample storms: {names}\n"
 
     if obs:
         ws_kts = round(obs["wind_speed_ms"] * 1.944, 1) if obs.get("wind_speed_ms") else "N/A"
@@ -151,18 +193,16 @@ def _build_meteo_prompt(state: MeteoAgentState) -> str:
         f"• Current month  : {now_month}\n"
         f"• Response lang  : {lang_full}\n\n"
         f"{obs_block}"
+        f"{ib_block}\n"
         f"Provide a weather routing briefing covering:\n"
-        f"1. **Current conditions** — wind regime, sea state, visibility at position\n"
-        f"2. **Departure window** — optimal timing to depart for {state['to_stop']} "
-        f"considering {now_month} climatology\n"
-        f"3. **Wind regime** — dominant wind system for this leg "
-        f"(trade winds, ITCZ, monsoon, westerlies — with typical direction & speed)\n"
-        f"4. **Cyclone/hazard season** — is this leg in a tropical cyclone season? "
-        f"Safe window advice\n"
-        f"5. **Routing tips** — optimal waypoint strategy to maximise VMG "
-        f"(go north/south of rhumb line? avoid calms?)\n\n"
+        f"1. **Current conditions** — if [Live] NRT is present, use it; otherwise say climatology, not forecast\n"
+        f"2. **Departure window** — {now_month} climatology for {state['to_stop']}\n"
+        f"3. **Wind regime** — name the system; do not invent kn / Hs\n"
+        f"4. **Cyclones** — cite the IBTrACS crossing integer above. "
+        f"Do not write 'hurricane season' without that number.\n"
+        f"5. **Routing tips** — VMG, calms, P90 no-go if mentioned as climatology\n\n"
         f"Format in **Markdown**, practical for offshore crew. Max 350 words. "
-        f"Mark live data with [Live] and forecast data with [Fcst]."
+        f"Mark live NRT with [Live] and climatology with [Climo]."
     )
 
 
@@ -189,9 +229,9 @@ def llm_generate_node(state: MeteoAgentState) -> MeteoAgentState:
         freshness = "training_only"
 
     final_freshness = "live" if obs else llm_freshness or "training_only"
-    sources = ["deploy_ai_llm", "noaa_climatology_training"]
+    sources = ["ibtracs_v04r01", "deploy_ai_llm"]
     if obs:
-        sources.insert(0, "stormglass_live")
+        sources.insert(0, "stormglass_nrt")
 
     msg = AIMessage(
         content=f"[meteo_agent] ✅ Weather brief generated (freshness={final_freshness})"
@@ -211,10 +251,12 @@ def build_meteo_agent():
     """Compile and return the Meteo (Weather) LangGraph."""
     graph = StateGraph(MeteoAgentState)
     graph.add_node("prepare_context",  prepare_context_node)
+    graph.add_node("fetch_ibtracs",    fetch_ibtracs_node)
     graph.add_node("fetch_stormglass", fetch_stormglass_node)
     graph.add_node("llm_generate",     llm_generate_node)
     graph.set_entry_point("prepare_context")
-    graph.add_edge("prepare_context",  "fetch_stormglass")
+    graph.add_edge("prepare_context",  "fetch_ibtracs")
+    graph.add_edge("fetch_ibtracs",    "fetch_stormglass")
     graph.add_edge("fetch_stormglass", "llm_generate")
     graph.add_edge("llm_generate",     END)
     return graph.compile()
@@ -229,6 +271,9 @@ def run_meteo_agent(
     lon:          float,
     nm_remaining: float,
     language:     str = "fr",
+    dest_lat:     Optional[float] = None,
+    dest_lon:     Optional[float] = None,
+    month:        Optional[int] = None,
 ) -> dict:
     """Invoke the Meteo agent and return a serialisable AgentResponse dict."""
     agent = build_meteo_agent()
@@ -237,9 +282,13 @@ def run_meteo_agent(
         "to_stop":      to_stop,
         "lat":          lat,
         "lon":          lon,
+        "dest_lat":     dest_lat,
+        "dest_lon":     dest_lon,
+        "month":        month,
         "nm_remaining": nm_remaining,
         "language":     language,
         "weather_obs":  None,
+        "ibtracs":      None,
         "prompt":       "",
         "messages":     [],
         "content":      "",
@@ -265,20 +314,27 @@ def get_streaming_prompt(
     lon:          float,
     nm_remaining: float,
     language:     str = "fr",
+    dest_lat:     Optional[float] = None,
+    dest_lon:     Optional[float] = None,
+    month:        Optional[int] = None,
 ) -> str:
     """
     Run the data-fetch pipeline and return the built LLM prompt without calling the LLM.
-    Used by the /agents/meteo SSE endpoint: StormGlass fetch runs synchronously in a
-    threadpool, then the prompt is streamed token-by-token via deploy_ai.stream_llm().
+    Used by the /agents/meteo SSE endpoint: IBTrACS integer first, then optional
+    StormGlass NRT. The LLM must cite the crossing count — never invent a season.
     """
     initial = {
         "from_stop":    from_stop,
         "to_stop":      to_stop,
         "lat":          lat,
         "lon":          lon,
+        "dest_lat":     dest_lat,
+        "dest_lon":     dest_lon,
+        "month":        month,
         "nm_remaining": nm_remaining,
         "language":     language,
         "weather_obs":  None,
+        "ibtracs":      None,
         "prompt":       "",
         "messages":     [],
         "content":      "",
@@ -287,5 +343,6 @@ def get_streaming_prompt(
         "error":        None,
     }
     state = prepare_context_node(initial)
+    state = fetch_ibtracs_node(state)
     state = fetch_stormglass_node(state)
     return _build_meteo_prompt(state)

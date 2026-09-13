@@ -13,6 +13,7 @@ export const RUNS_API = {
   formalities: { list: "/poe/runs", detail: (id) => `/poe/runs/${id}` },
   amp: { list: "/amp/runs", detail: (id) => `/amp/runs/${id}` },
   science: { list: "/science/runs", detail: (id) => `/science/runs/${id}` },
+  climatology: { list: "/climatology/meta", detail: () => "/climatology/meta" },
 };
 
 export function loc(obj, lang) {

@@ -11,6 +11,7 @@ import MarinasCard from "./MarinasCard";
 import CapitaineriesCard from "./CapitaineriesCard";
 import ProjectsCard from "./ProjectsCard";
 import ScienceCard from "./ScienceCard";
+import ClimatologyCard from "./ClimatologyCard";
 import ExplainPanel from "./ExplainPanel";
 import { buildLaunchPayload, matchingProfile } from "../../lib/runRules";
 
@@ -21,6 +22,7 @@ const BORDER = {
   formalities: "border-amberx/40",
   amp: "border-[#4ade80]/40",
   science: "border-[#a78bfa]/40",
+  climatology: "border-[#2dd4bf]/40",
 };
 
 const TABS = [
@@ -133,6 +135,8 @@ export default function ConsoleShell({
       <AmpCard t={t} rulesPayload={rulesPayload} />
     ) : mode === "science" ? (
       <ScienceCard t={t} rulesPayload={rulesPayload} />
+    ) : mode === "climatology" ? (
+      <ClimatologyCard t={t} />
     ) : (
       <ProjectsCard t={t} status={status} refresh={refresh} rulesPayload={rulesPayload} />
     )

@@ -26,6 +26,7 @@ const EXPORT_URLS = {
   formalities: "/api/export/poe.geojson",
   amp:         "/api/export/amp.geojson",
   science:     "/api/export/science.geojson",
+  climatology: "/api/climatology/cyclones.geojson?month=9",
 };
 
 // 2026-08-24 bug-fix — import endpoint per mode. Formalities (PoE) data is
@@ -82,6 +83,10 @@ export default function SettingsPanel({ t, mode, settings, isAdmin = false, onSa
     }
     if (currentMode === "amp") {
       alert(t("importUnsupportedAmp"));
+      return;
+    }
+    if (currentMode === "climatology") {
+      alert(t("reviewClimatologyUnavailable"));
       return;
     }
     setImporting(true);

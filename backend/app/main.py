@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db import client
-from app.routers import amp, capitaineries, exports, formalities, marinas, misc, ml, project_runs, projects, review, runs, science, swarm
+from app.routers import amp, capitaineries, climatology, exports, formalities, marinas, misc, ml, project_runs, projects, review, runs, science, swarm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_BUILD = _REPO_ROOT / "frontend" / "build"
@@ -70,7 +70,7 @@ async def _admin_gate(request, call_next):
     return await call_next(request)
 
 
-for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, science, runs, review, ml, misc, exports):
+for module in (project_runs, projects, swarm, marinas, capitaineries, formalities, amp, science, climatology, runs, review, ml, misc, exports):
     app.include_router(module.router)
 
 

@@ -430,13 +430,17 @@ def get_wind_climatology(
     month: int   = Query(1,   ge=1,    le=12),
 ):
     """Return the climatological wind for a given position and month."""
+    from .atlas_bridge import atlas_wind
+    atlas = atlas_wind(lat, lon, month)
     spd, direction = wind_at(lat, lon, month)
     return {
+        "kind":            "climatology",
         "lat":             lat,
         "lon":             lon,
         "month":           month,
         "wind_speed_knots": spd,
         "wind_direction_from": direction,
+        "source":          "atlas" if atlas else "zone_fallback",
     }
 
 

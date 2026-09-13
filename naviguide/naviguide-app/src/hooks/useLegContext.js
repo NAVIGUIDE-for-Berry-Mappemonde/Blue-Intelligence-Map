@@ -18,13 +18,14 @@
  *   toStopIndex       — index du prochain point
  *   nmCovered         — miles nautiques parcourus depuis le départ (total route)
  *   nmRemainingToStop — miles nautiques restants jusqu'au prochain point
- *   etaHours          — ETA estimée (vitesse constante par défaut)
+ *   etaHours          — ETA estimée (vitesse climatologique du mois, sinon 7 kn)
  *   bearing           — cap actuel en degrés (0–360)
  *   snappedPosition   — [lon, lat] — position projetée sur la route
  */
 
 import { useMemo } from "react";
 import { nextEscaleStop } from "../utils/escales";
+import { boatSpeedFromClimatology } from "../utils/climatologyWind";
 
 // Vitesse par défaut du catamaran (nœuds)
 const DEFAULT_SPEED_KNOTS = 7;
@@ -117,8 +118,9 @@ function buildMonotonicStopIndices(stops, polyline) {
  * @param {number|null} catamaranLon    — longitude du catamaran
  * @param {Array}       routeSegments   — segments calculés par App.jsx [ {coords: [[lon,lat],...], nonMaritime?} ]
  * @param {Array}       itineraryPoints — ITINERARY_POINTS (escales + points intermédiaires)
- * @param {number}      speedKnots      — vitesse en nœuds (optionnel)
+ * @param {number}      speedKnots      — vitesse en nœuds (optionnel ; ignorée si month est fourni)
  * @param {number|null} simulationStep  — index dans simTargets (contraint le snap à la bonne portion)
+ * @param {number|null} month           — mois 1–12 de la jambe (climatologie, pas une couche carte)
  *
  * Layout de simTargets (généré par App.jsx) :
  *   step 0            → départ = début du segment maritime 0
@@ -133,6 +135,7 @@ export function useLegContext(
   itineraryPoints,
   speedKnots = DEFAULT_SPEED_KNOTS,
   simulationStep = null,
+  month = null,
 ) {
   return useMemo(() => {
     if (catamaranLat == null || catamaranLon == null) return null;
@@ -315,20 +318,30 @@ export function useLegContext(
     const [bearBLon, bearBLat] = polyline[bearingSegIdx + 1];
     const bearing = initialBearing(bearALat, bearALon, bearBLat, bearBLon);
 
-    // ── 8. ETA ───────────────────────────────────────────────────────────────
-    const etaHours = speedKnots > 0 ? nmRemainingToStop / speedKnots : 0;
+    // ── 8. ETA — le mois de la jambe, sans couche climatologie à l'écran ──
+    const clim = month
+      ? boatSpeedFromClimatology(snapLat, snapLon, month)
+      : null;
+    const usedSpeed = clim?.speedKnots || speedKnots;
+    const etaHours = usedSpeed > 0 ? nmRemainingToStop / usedSpeed : 0;
 
     return {
       fromStopIndex:     fromIdx,
       fromStop:          fromStop?.name ?? "Départ",
       toStopIndex:       toIdx,
       toStop:            toStop?.name  ?? "Arrivée",
+      toStopLat:         toStop?.lat ?? null,
+      toStopLon:         toStop?.lon ?? null,
       nmCovered:         Math.round(nmCoveredTotal),
       nmRemainingToStop: Math.round(nmRemainingToStop),
       etaHours:          Math.round(etaHours),
       bearing:           Math.round(bearing),
       snappedPosition:   [snapLon, snapLat],
-      speedKnots,
+      speedKnots:        usedSpeed,
+      month:             month || null,
+      windKnots:         clim?.windKnots ?? null,
+      windSource:        clim?.source ?? null,
+      kind:              clim?.kind ?? null,
     };
-  }, [catamaranLat, catamaranLon, routeSegments, itineraryPoints, speedKnots, simulationStep]);
+  }, [catamaranLat, catamaranLon, routeSegments, itineraryPoints, speedKnots, simulationStep, month]);
 }

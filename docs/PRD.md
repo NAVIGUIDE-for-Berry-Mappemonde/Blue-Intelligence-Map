@@ -55,6 +55,14 @@ Application OSINT de cartographie à deux pipelines : (1) scraper de Ports d'Ent
   - Tests : tests/test_science.py (unitaires, fetchers injectés — bbox antiméridien, dédup EDMED, dernier profil Argo, isolation d'erreur par source, re-run 100 % updated) + tests/test_depth.py (parseur EMODnet + cache).
   - Compléments 2026-09-10 (soir) : profondeur d'approche `GET /api/depth` (REST EMODnet Bathymetry, cache `depth_samples`, popups marinas/mouillages) ; couches WMS togglables (bathymétrie ombrée `mean_multicolour`, substrat `seabed_substrate_1m`, câbles `telecablesactual`+`powercables`) ; tracés de campagnes CSR SeaDataNet (SPARQL `https://sparql.ifremer.fr/csr/query`, `hasTrack` WKT sous-échantillonné à 160 points, règle `science.csr_max_records`=500). EDMERP (3628 projets européens) n'a **aucune** géométrie (`dct:spatial` = 0) : non cartographié ; les organismes et zones d'étude restent ceux des fiches catalogue + CSR.
 
+- [2026-09-13] Mode Climatologie (7e mode, teal #2dd4bf) — atlas mensuel sourcé, pas une prévision :
+  - Phrase : **BI montre l’atlas. NAVIGUIDE s’en sert.** `kind: "climatology"` partout. Deux kind distincts : getWind/getWave/getCurrent restent NRT/ANFC.
+  - Backend : `GET /api/climatology/{meta,point,crossings,wind|wave|current|cyclones.geojson}`. `null` sur terre / snapshot manquant / NaN. Snapshots dans `backend/data/climatology/` (IBTrACS v04r01 commité ; vent/houle/courant CMEMS générés sur le Mac). `export_meta` étendu (`period`, `month`, `source_ids`, `doi`).
+  - Règles : famille `climatology.*` (18) — lois `kind_is_climatology`, `no_llm_for_numbers`, `wave_stat` (interdit de labeller une moyenne P90), périodes écrites.
+  - Frontend : bouton `data-testid="mode-toggle-climatology"`, ClimatologyPanel (curseur 1–12, filtres Vent/Houle/Courant/Cyclones), panes `climatology-raster@250` / `climatology-vector@260` (`pointer-events: none`), useClimatologyLayer uniquement si `mode === "climatology"`. Review / Gold non branchés (C8, comme Science).
+  - NAVIGUIDE : pastilles ZEE/WPI hors UI (données encore fetchables) ; ETA simulation selon le mois ; isochrone MOST_LIKELY + courant + no-go P90 + crossings ; agent météo cite un entier IBTrACS. Pas de 8ᵉ pastille « Climatologie ».
+  - Hors V1 : GFS/IFS/ICON/AIFS, Review/Gold, cubes horaires sur le VPS, StormGlass comme source du mode.
+
 ## Conformité spec (Document sans titre (6).md)
 - ✅ 23/25 items pleinement conformes (classifieur SERP maintenant fait).
 - ⚠️ Partiels : traduction NLP requêtes (matrice statique 16 langues au lieu d'opus-mt local) ; crowdsourcing PoE avec lien de loi (le module existant couvre les projets).

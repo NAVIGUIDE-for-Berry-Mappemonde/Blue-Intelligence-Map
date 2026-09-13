@@ -95,6 +95,7 @@ export default function App() {
   const [simulationMode, setSimulationMode] = useState(false);
   const [catamaranPos,   setCatamaranPos]   = useState(null);  // { lat, lon }
   const [simulationStep, setSimulationStep] = useState(0);
+  const [simulationMonth, setSimulationMonth] = useState(() => new Date().getMonth() + 1);
 
   // Route perso déclarée tôt : la simulation s'aligne sur la route affichée.
   const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
@@ -165,8 +166,9 @@ export default function App() {
     simulationMode ? activeCatamaranPos.lon : null,
     activeSegments,
     activeStops,
-    undefined,                               // speedKnots — valeur par défaut
+    undefined,                               // speedKnots — dérivé du mois
     simulationMode ? simulationStep : null,  // contrainte chronologique
+    simulationMonth,                         // climatologie : ETA qui bouge
   );
 
   // After each Next/Prev step, fly to the SNAPPED position (not the raw target)
@@ -860,6 +862,8 @@ export default function App() {
         onPrev={handleSimPrev}
         canPrev={simulationMode && simulationStep > 0}
         legContext={legContext}
+        simulationMonth={simulationMonth}
+        onSimulationMonth={setSimulationMonth}
       />
       <ExportSidebar
         segments={customRoute ? featuresToSegments(customRoute) : segments}

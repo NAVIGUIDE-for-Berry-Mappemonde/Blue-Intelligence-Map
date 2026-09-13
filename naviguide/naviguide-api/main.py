@@ -1242,6 +1242,41 @@ def _find_active_leg(
     }
 
 
+# ── Climatology (N1) — same snapshots as Blue Intelligence, no MapLibre paint ─
+
+@app.get("/climatology/meta", summary="Climatology snapshot status (kind climatology)")
+def climatology_meta(month: int = Query(1, ge=1, le=12)):
+    from climatology_query import meta
+    return meta(month)
+
+
+@app.get("/climatology/point", summary="Climatology point — no map overlay")
+def climatology_point(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    month: int = Query(..., ge=1, le=12),
+    dest_lat: Optional[float] = Query(None),
+    dest_lon: Optional[float] = Query(None),
+    day: Optional[int] = Query(None, ge=1, le=31),
+):
+    from climatology_query import point
+    return point(lat, lon, month, dest_lat=dest_lat, dest_lon=dest_lon, day=day)
+
+
+@app.get("/climatology/crossings", summary="IBTrACS crossings on a leg (integer)")
+def climatology_crossings(
+    lat1: float = Query(..., ge=-90, le=90),
+    lon1: float = Query(..., ge=-180, le=180),
+    lat2: float = Query(..., ge=-90, le=90),
+    lon2: float = Query(..., ge=-180, le=180),
+    month: int = Query(..., ge=1, le=12),
+    day: Optional[int] = Query(None, ge=1, le=31),
+    dayrange: Optional[int] = Query(None, ge=7, le=45),
+):
+    from climatology_query import crossings
+    return crossings(lat1, lon1, lat2, lon2, month, day=day, dayrange=dayrange)
+
+
 # ── Simulation Mode — Pydantic Models ────────────────────────────────────────
 
 class SimulationStop(BaseModel):
@@ -1263,6 +1298,9 @@ class AgentRequest(BaseModel):
     to_stop:      str
     lat:          float
     lon:          float
+    dest_lat:     Optional[float] = None
+    dest_lon:     Optional[float] = None
+    month:        Optional[int] = None
     nm_remaining: float
     language:     str = "fr"
 
@@ -1441,6 +1479,9 @@ async def agent_meteo(req: AgentRequest):
                 lon=req.lon,
                 nm_remaining=req.nm_remaining,
                 language=req.language,
+                dest_lat=req.dest_lat,
+                dest_lon=req.dest_lon,
+                month=req.month,
             ),
         )
 
@@ -1459,7 +1500,9 @@ async def agent_meteo(req: AgentRequest):
                 f"⚠️ **LLM service temporarily unavailable.**\n\n"
                 f"**Recommended resources:**\n"
                 f"- 🌐 [Windy](https://www.windy.com) — real-time weather\n"
-                f"- 📡 NavTex / SSB weatherfax\n\n"
+                f"- 📡 NavTex / SSB weatherfax\n"
+                f"- IBTrACS crossings: GET /climatology/crossings "
+                f"(kind climatology — integer, not a season name)\n\n"
                 f"Distance remaining: **{req.nm_remaining:.0f} nm**."
             )
             yield f"data: {json.dumps({'token': fallback})}\n\n"

@@ -1,4 +1,4 @@
-import { Anchor, ClipboardCheck, Compass, FlaskConical, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Ship, Sun, UserPlus, Waves } from "lucide-react";
+import { Anchor, ClipboardCheck, Compass, FlaskConical, Map as MapIcon, Moon, Radar, Radio, ScrollText, Settings, Shield, Ship, Sun, UserPlus, Waves, Wind } from "lucide-react";
 import RunSelector from "./RunSelector";
 import { HELLOASSO_MEMBERSHIP_URL } from "../config/helloasso";
 import { nextBasemap } from "./map/basemaps";
@@ -39,7 +39,7 @@ export default function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
-        {/* Six-mode switch — projects / marinas / capitaineries / formalities / amp / science */}
+        {/* Seven-mode switch — projects / marinas / capitaineries / formalities / amp / science / climatology */}
         <div
           className="flex border border-line rounded-sm overflow-hidden"
           title={t("modeSwitchTitle")}
@@ -54,7 +54,7 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <Compass size={13} /> {t("modeProjects")}
+            <Compass size={13} /> <span className="hidden xl:inline">{t("modeProjects")}</span>
           </button>
           <button
             data-testid="mode-toggle-marinas"
@@ -65,7 +65,7 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <Anchor size={13} /> {t("modeMarinas")}
+            <Anchor size={13} /> <span className="hidden xl:inline">{t("modeMarinas")}</span>
           </button>
           <button
             data-testid="mode-toggle-capitaineries"
@@ -76,7 +76,7 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <Radio size={13} /> {t("modeCapitaineries")}
+            <Radio size={13} /> <span className="hidden xl:inline">{t("modeCapitaineries")}</span>
           </button>
           <button
             data-testid="mode-toggle-formalities"
@@ -87,7 +87,7 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <ScrollText size={13} /> {t("modeFormalities")}
+            <ScrollText size={13} /> <span className="hidden xl:inline">{t("modeFormalities")}</span>
           </button>
           <button
             data-testid="mode-toggle-amp"
@@ -98,18 +98,29 @@ export default function Header({
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <Shield size={13} /> {t("modeAmp")}
+            <Shield size={13} /> <span className="hidden xl:inline">{t("modeAmp")}</span>
           </button>
           <button
             data-testid="mode-toggle-science"
             onClick={() => setMode("science")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors border-r border-line ${
               mode === "science"
                 ? "bg-[#a78bfa]/15 text-[#a78bfa]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-raised"
             }`}
           >
-            <FlaskConical size={13} /> {t("modeScience")}
+            <FlaskConical size={13} /> <span className="hidden xl:inline">{t("modeScience")}</span>
+          </button>
+          <button
+            data-testid="mode-toggle-climatology"
+            onClick={() => setMode("climatology")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-colors ${
+              mode === "climatology"
+                ? "bg-[#2dd4bf]/15 text-[#2dd4bf]"
+                : "text-slate-400 hover:text-slate-200 hover:bg-raised"
+            }`}
+          >
+            <Wind size={13} /> <span className="hidden xl:inline">{t("modeClimatology")}</span>
           </button>
         </div>
         <div className="flex border border-line rounded-sm overflow-hidden">
@@ -123,7 +134,7 @@ export default function Header({
           {/* "Runs ›" — sélecteur du run affiché sur la carte (par mode).
               Masqué en mode Science : la moisson écrit directement la carte
               live (pas de geojson par run). */}
-          {mode !== "science" && (
+          {mode !== "science" && mode !== "climatology" && (
             <RunSelector
               mode={mode}
               mapRun={mapRun}
@@ -141,7 +152,7 @@ export default function Header({
               <Radar size={13} /> {t("audit")}
             </button>
           )}
-          {isAdmin && mode !== "science" && (
+          {isAdmin && mode !== "science" && mode !== "climatology" && (
             <button
               data-testid="view-toggle-review"
               onClick={() => setView("review")}

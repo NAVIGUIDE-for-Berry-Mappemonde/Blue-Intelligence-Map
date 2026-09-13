@@ -43,7 +43,12 @@ def content_fingerprint(features: list) -> str:
 
 
 def versioned_fc(fc: dict, dataset: str, *, license_note: str | None = None,
-                 now: datetime | None = None) -> dict:
+                 now: datetime | None = None,
+                 period: str | None = None,
+                 month: int | None = None,
+                 source_ids: list | None = None,
+                 doi: str | None = None,
+                 extra_metadata: dict | None = None) -> dict:
     """Retourne une copie superficielle de ``fc`` avec le bloc ``metadata``.
 
     Les features ne sont jamais modifiées ; les clés existantes de la
@@ -65,6 +70,17 @@ def versioned_fc(fc: dict, dataset: str, *, license_note: str | None = None,
     }
     if license_note:
         out["metadata"]["license"] = license_note
+    if period:
+        out["metadata"]["period"] = period
+    if month is not None:
+        out["metadata"]["month"] = month
+    if source_ids:
+        out["metadata"]["source_ids"] = list(source_ids)
+    if doi:
+        out["metadata"]["doi"] = doi
+    if extra_metadata:
+        for key, value in extra_metadata.items():
+            out["metadata"].setdefault(key, value)
     return out
 
 

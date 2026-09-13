@@ -81,6 +81,17 @@
   --marker-fill: #a78bfa;
   --marker-stroke: #0f172a;
 }
+[data-mode="climatology"] {
+  --accent-rgb: 45 212 191;        /* #2dd4bf — teal-400 */
+  --accent-glow: rgba(45, 212, 191, 0.35);
+  --accent-tint: rgba(45, 212, 191, 0.05);
+  --accent-tint-strong: rgba(45, 212, 191, 0.10);
+  --surface-rgb: 12 24 24;         /* slate-900 tinted teal */
+  --raised-rgb: 20 40 40;
+  --line-rgb: 36 74 72;
+  --marker-fill: #2dd4bf;
+  --marker-stroke: #0f172a;
+}
 
 html, body, #root {
   height: 100%;

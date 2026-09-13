@@ -13,6 +13,8 @@ describe("ordre des panes (verrouillé)", () => {
   test("la liste exacte des panes ne bouge pas sans casser ce test", () => {
     expect(PANES.map((p) => `${p.name}@${p.zIndex}`)).toEqual([
       "basemap-gl@190",
+      "climatology-raster@250",
+      "climatology-vector@260",
       "route@380",
       "amp@420",
       "formalities-escales@500",
@@ -49,7 +51,12 @@ describe("ordre des panes (verrouillé)", () => {
     createPanes(fakeMap);
     PANES.forEach((p) => {
       expect(panes[p.name].style.zIndex).toBe(String(p.zIndex));
+      if (p.pointerEvents) {
+        expect(panes[p.name].style.pointerEvents).toBe(p.pointerEvents);
+      }
     });
+    expect(PANES.find((p) => p.name === "climatology-raster").pointerEvents).toBe("none");
+    expect(PANES.find((p) => p.name === "climatology-vector").pointerEvents).toBe("none");
   });
 });
 

@@ -2,7 +2,9 @@
 
 Le cahier `docs/CAHIER_DES_CHARGES_REVIEW.md` v1.1 est le **contrat de relecture des PoE** : une fiche par polygone VLIZ, toutes les preuves déjà payées, choix garder / écarter, puis **Gold**. Les autres modes n’y ont qu’une esquisse (§7.1, §7.3, §9.2, §11.1).
 
-Ce document propose le **même geste Review**, adapté à chaque mode produit. Il n’invente pas un sixième mode. Review reste le **troisième onglet** (Map / Console / Review) : il ouvre la file du **mode actif**.
+Ce document propose le **même geste Review**, adapté à chaque mode produit. Review reste le **troisième onglet** (Map / Console / Review) : il ouvre la file du **mode actif**.
+
+**Science** et **Climatologie** n’ont **pas** de file Review en V1 (plan C8) : moisson / snapshot, pas un run Gold. L’onglet Review y affiche un placeholder. Ce document ne les couvre pas.
 
 Hérite de : `docs/CAHIER_DES_CHARGES_REVIEW.md`, `docs/CONTRATS_MODES.md`, `docs/CAHIER_DES_CHARGES_POE.md`, `docs/CAHIER_DES_CHARGES_PROJETS.md`.
 
@@ -300,6 +302,7 @@ Pas de régime « publication exclusive Formalités ». Pas de « filtre skipper
 - Crowdsourcing skipper depuis Review.
 - Relance de crawl depuis Review.
 - SearXNG sur marina / capitainerie / AMP.
+- Review / Gold des modes **Science** et **Climatologie** (C8).
 
 ---
 
