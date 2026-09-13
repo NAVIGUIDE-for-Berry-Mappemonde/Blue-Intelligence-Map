@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cmems_auth import open_dataset
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "backend" / "data" / "climatology" / "current"
@@ -26,17 +30,15 @@ def main() -> int:
     ap.add_argument("--spacing", type=float, default=0.25, help="maille stockée (°)")
     args = ap.parse_args()
     try:
-        import copernicusmarine
         import numpy as np
-        import xarray as xr
     except ImportError as exc:
         raise SystemExit(
-            "Prérequis Mac : pip install copernicusmarine xarray netCDF4 numpy"
+            "Prérequis : pip install copernicusmarine xarray netCDF4 numpy"
         ) from exc
 
     args.out.mkdir(parents=True, exist_ok=True)
-    print("subset", DATASET, file=__import__("sys").stderr)
-    ds = copernicusmarine.open_dataset(
+    print("subset", DATASET, file=sys.stderr)
+    ds = open_dataset(
         dataset_id=DATASET,
         variables=["uo", "vo"],
         minimum_depth=0.0,

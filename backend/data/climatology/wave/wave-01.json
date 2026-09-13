@@ -1,0 +1,12 @@
+{
+  "kind": "climatology",
+  "month": 1,
+  "period": "1993-2019",
+  "source_ids": [
+    "GLOBAL_MULTIYEAR_WAV_001_032"
+  ],
+  "doi": "10.48670/moi-00022",
+  "stat": "mean",
+  "note": "V0 mean overlay \u2014 not a P90. Direction absent from P1M climatology.",
+  "generated_at": "2026-09-13T11:13:46Z"
+}

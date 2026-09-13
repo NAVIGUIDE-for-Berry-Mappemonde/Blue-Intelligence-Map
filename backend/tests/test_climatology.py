@@ -37,11 +37,34 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture
+def no_cmems_snapshots(tmp_path, monkeypatch):
+    """Isole les tests « snapshot absent » des grilles CMEMS commitées."""
+    root = tmp_path / "climatology"
+    for name in ("wind", "wave", "current", "cyclones"):
+        (root / name).mkdir(parents=True)
+    src = Path(common.CLIMATOLOGY_DIR) / "cyclones" / "ibtracs_since1980.json"
+    if src.is_file():
+        (root / "cyclones" / "ibtracs_since1980.json").symlink_to(src)
+    monkeypatch.setattr(common, "CLIMATOLOGY_DIR", root)
+    monkeypatch.setattr(common, "climatology_dir", lambda: root)
+    monkeypatch.setattr(wind_mod, "wind_dir", lambda: root / "wind")
+    monkeypatch.setattr(wave_mod, "wave_dir", lambda: root / "wave")
+    monkeypatch.setattr(current_mod, "current_dir", lambda: root / "current")
+    wind_mod._load_month.cache_clear()
+    wave_mod._load_month.cache_clear()
+    current_mod._load_month.cache_clear()
+    yield root
+    wind_mod._load_month.cache_clear()
+    wave_mod._load_month.cache_clear()
+    current_mod._load_month.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # Contrats HTTP
 # ---------------------------------------------------------------------------
 
-def test_meta_kind_and_periods():
+def test_meta_kind_and_periods(no_cmems_snapshots):
     data = _client().get("/api/climatology/meta", params={"month": 9}).json()
     assert data["kind"] == KIND
     assert data["month"] == 9
@@ -56,7 +79,7 @@ def test_meta_kind_and_periods():
     assert "IBTrACS" in data["attribution"]["ibtracs"]
 
 
-def test_point_sea_without_cmems_snapshot_is_null_not_invented():
+def test_point_sea_without_cmems_snapshot_is_null_not_invented(no_cmems_snapshots):
     data = _client().get("/api/climatology/point", params={
         "lat": 15.0, "lon": -25.0, "month": 3,
     }).json()
@@ -78,7 +101,7 @@ def test_point_land_blocks_null():
     assert data["current"] is None
 
 
-def test_geojson_kind_and_empty_wind_without_snapshot():
+def test_geojson_kind_and_empty_wind_without_snapshot(no_cmems_snapshots):
     data = _client().get("/api/climatology/wind.geojson", params={"month": 3}).json()
     assert data["type"] == "FeatureCollection"
     assert data["features"] == []
@@ -156,7 +179,7 @@ def test_ibtracs_basin_recipe():
 # Snapshots CMEMS honnêtes + fixtures locales
 # ---------------------------------------------------------------------------
 
-def test_atlas_absent_returns_none():
+def test_atlas_absent_returns_none(no_cmems_snapshots):
     assert wind_mod.atlas_at(15.0, -25.0, 3) is None
     assert wind_mod.wind_at(15.0, -25.0, 3) is None
     assert wave_mod.wave_at(-40.0, 10.0, 7) is None
@@ -275,6 +298,44 @@ def test_current_below_threshold_flagged(tmp_path, monkeypatch):
     assert rec["speed_knots"] == 0.0
 
 
+def test_wind_average_is_not_labelled_rose(tmp_path, monkeypatch):
+    wind_dir = tmp_path / "wind"
+    wind_dir.mkdir()
+    lats = np.array([14.5, 15.0, 15.5])
+    lons = np.array([-25.5, -25.0, -24.5])
+    # Alizé : u négatif (vers l'ouest), v négatif (vers le sud) → vient du NE
+    _write_grid(
+        wind_dir / "wind-03.npz",
+        lats=lats, lons=lons,
+        u_mean=np.full((3, 3), -3.0),
+        v_mean=np.full((3, 3), -3.0),
+        sea_mask=np.ones((3, 3), dtype=bool),
+        sample_count=np.full((3, 3), 27, dtype=int),
+        stat=np.array(["average"]),
+    )
+    (wind_dir / "wind-03.atlas.json").write_text(
+        '{"stat":"average","source_ids":["WIND_GLO_PHY_CLIMATE_L4_MY_012_003"]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(wind_mod, "wind_dir", lambda: wind_dir)
+    wind_mod._load_month.cache_clear()
+    rose = wind_mod.atlas_at(15.0, -25.0, 3)
+    assert rose is not None
+    assert rose["stat"] == "average"
+    assert rose["most_likely"] is None
+    assert rose["directions_from"] == []
+    assert rose["vector_mean"]["speed_knots"] > 5
+    assert 20 < rose["vector_mean"]["dir_deg"] < 70
+    kn, coming = wind_mod.wind_at(15.0, -25.0, 3, mode="most_likely")
+    assert kn == rose["vector_mean"]["speed_knots"]
+    assert coming == rose["vector_mean"]["dir_deg"]
+    fc = wind_mod.wind_geojson(3, spacing_deg=0.5)
+    assert fc["_climatology"]["stat"] == "average"
+    assert fc["features"]
+    assert fc["features"][0]["properties"]["stat"] == "average"
+    assert fc["features"][0]["properties"]["directions_from"] == []
+
+
 def test_current_gulf_stream_fixture(tmp_path, monkeypatch):
     cur_dir = tmp_path / "current"
     cur_dir.mkdir()
@@ -369,6 +430,36 @@ def test_naviguide_query_not_painted():
     assert pt["cyclone"]["crossings_if_leg"]["count"] > 0
     mar = nq.crossings(14.6, -61.0, 38.7, -27.2, 3)
     assert mar["count"] == 0
+
+
+def test_live_cmems_snapshots_are_honest():
+    """Recette A sur les grilles commitées — skip si la génération n'a pas tourné."""
+    if not (wind_mod.has_snapshot(3) and wave_mod.has_snapshot(7) and current_mod.has_snapshot(2)):
+        pytest.skip("snapshots CMEMS absents")
+    wind_mod._load_month.cache_clear()
+    wave_mod._load_month.cache_clear()
+    current_mod._load_month.cache_clear()
+    rose = wind_mod.atlas_at(15.0, -25.0, 3)
+    assert rose is not None
+    assert rose["stat"] in ("average", "rose")
+    if rose["stat"] == "average":
+        assert rose["most_likely"] is None
+        assert rose["vector_mean"]["speed_knots"] > 5
+    else:
+        assert rose["most_likely"]["dir_deg"] in (0, 45, 90)
+    assert wind_mod.atlas_at(23.0, 5.0, 3) is None
+    wave = wave_mod.wave_at(-40.0, 10.0, 7)
+    assert wave is not None
+    if wave["stat"] == "mean":
+        assert wave["hs_p90_m"] is None
+        assert wave["hs_mean_m"] > 1
+        assert wave_mod.is_wave_hazard(-40.0, 10.0, 7) is None
+    else:
+        assert wave["hs_p90_m"] >= wave["hs_p50_m"] > 0
+    cur = current_mod.current_at(26.0, -80.0, 2)
+    assert cur is not None
+    assert cur["speed_knots"] > 1.0
+    assert current_mod.current_at(23.0, 5.0, 2) is None
 
 
 def test_meteo_agent_cites_ibtracs_integer():

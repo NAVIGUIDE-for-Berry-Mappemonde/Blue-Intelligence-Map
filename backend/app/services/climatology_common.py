@@ -5,6 +5,7 @@ VPS (Mac). Ici on les sert, on n'invente pas un vent / une Hs / un courant.
 """
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,10 @@ CYCLONE_PERIOD = "1980-present"
 
 PROVENANCE = {
     "wind": "CMEMS WIND_GLO_PHY_L4_MY_012_006 · cmems_obs-wind_glo_phy_my_l4_0.25deg_PT1H",
+    "wind_average": (
+        "CMEMS WIND_GLO_PHY_CLIMATE_L4_MY_012_003 · "
+        "cmems_obs-wind_glo_phy_my_l4_P1M · AVERAGE only (not a rose)"
+    ),
     "wave": "WAVERYS GLOBAL_MULTIYEAR_WAV_001_032",
     "current": "GLORYS12 GLOBAL_MULTIYEAR_PHY_001_030 climatology_P1M-m",
     "cyclone": "IBTrACS v04r01 since1980 · NOAA NCEI",
@@ -211,17 +216,36 @@ def empty_blocks() -> dict:
     }
 
 
+def _sidecar_stat(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    stat = data.get("stat")
+    return str(stat) if stat else None
+
+
 def snapshot_status() -> dict:
     root = climatology_dir()
     wind_dir = root / "wind"
     wave_dir = root / "wave"
     current_dir = root / "current"
     cyc = root / "cyclones" / "ibtracs_since1980.json"
+    wind_present = (wind_dir / "wind-01.npz").is_file()
+    wave_present = (wave_dir / "wave-01.npz").is_file()
+    wind_stat = _sidecar_stat(wind_dir / "wind-01.atlas.json")
+    if wind_present and not wind_stat:
+        wind_stat = "rose"
+    wave_stat = _sidecar_stat(wave_dir / "wave-01.json")
     return {
-        "wind": (wind_dir / "wind-01.npz").is_file(),
-        "wave": (wave_dir / "wave-01.npz").is_file(),
+        "wind": wind_present,
+        "wave": wave_present,
         "current": (current_dir / "current-01.npz").is_file(),
         "cyclones": cyc.is_file(),
+        "wind_stat": wind_stat,
+        "wave_stat": wave_stat,
     }
 
 
@@ -238,13 +262,22 @@ def product_meta(product: str) -> dict:
         "current": DOI["current"],
         "cyclone": None,
     }
+    snaps = snapshot_status()
+    provenance = PROVENANCE[product]
+    source_id = SOURCE_IDS[product]
+    doi = dois[product]
+    if product == "wind" and snaps.get("wind_stat") == "average":
+        provenance = PROVENANCE["wind_average"]
+        source_id = "WIND_GLO_PHY_CLIMATE_L4_MY_012_003"
+        doi = None
     return {
         "kind": KIND,
-        "source_id": SOURCE_IDS[product],
-        "provenance": PROVENANCE[product],
+        "source_id": source_id,
+        "provenance": provenance,
         "period": periods[product],
-        "doi": dois[product],
-        "snapshot_present": snapshot_status()[
-            "cyclones" if product == "cyclone" else product
-        ],
+        "doi": doi,
+        "snapshot_present": snaps["cyclones" if product == "cyclone" else product],
+        "stat": snaps.get("wind_stat" if product == "wind" else (
+            "wave_stat" if product == "wave" else None
+        )),
     }

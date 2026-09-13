@@ -32,7 +32,7 @@ export default function ClimatologyPanel({
   t, lang = "fr",
   month = 1, onMonth,
   filters, onToggleFilter,
-  waveStat = "p90", onWaveStat,
+  waveStat = "mean", onWaveStat,
   meta, point,
 }) {
   const monthLabel = MONTHS[month - 1];
@@ -89,7 +89,7 @@ export default function ClimatologyPanel({
 
         {filters?.wave && (
           <div className="flex flex-wrap gap-1 mb-3" data-testid="climatology-wave-stat">
-            {["p50", "p90"].map((s) => (
+            {(snaps.wave_stat === "p50_p90" ? ["p50", "p90"] : ["mean"]).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -101,7 +101,7 @@ export default function ClimatologyPanel({
                     : "border-line text-slate-500 hover:text-slate-300"
                 }`}
               >
-                {s === "p50" ? t("climoWaveP50") : t("climoWaveP90")}
+                {s === "p50" ? t("climoWaveP50") : s === "p90" ? t("climoWaveP90") : t("climoWaveMean")}
               </button>
             ))}
           </div>
@@ -180,10 +180,17 @@ function PointCard({ t, point }) {
       <Block title={t("climoFilterWind")} empty={!w} emptyLabel={t("climoNoValue")}>
         {w && (
           <>
-            <Row k="MOST_LIKELY" v={`${w.most_likely?.speed_knots} kn / ${w.most_likely?.dir_deg}°`} />
-            <Row k="AVERAGE" v={`${w.vector_mean?.speed_knots} kn / ${w.vector_mean?.dir_deg}°`} />
-            <Row k="calm / gale" v={`${w.calm_pct}% / ${w.gale_pct}%`} />
-            <Row k="n" v={String(w.sample_count ?? "—")} />
+            <Row k="stat" v={w.stat || (w.most_likely ? "rose" : "average")} />
+            {w.most_likely && (
+              <Row k="MOST_LIKELY" v={`${w.most_likely.speed_knots} kn / ${w.most_likely.dir_deg}°`} />
+            )}
+            {w.vector_mean && (
+              <Row k="AVERAGE" v={`${w.vector_mean.speed_knots} kn / ${w.vector_mean.dir_deg}°`} />
+            )}
+            {w.calm_pct != null && (
+              <Row k="calm / gale" v={`${w.calm_pct}% / ${w.gale_pct}%`} />
+            )}
+            {w.sample_count != null && <Row k="n" v={String(w.sample_count)} />}
           </>
         )}
       </Block>

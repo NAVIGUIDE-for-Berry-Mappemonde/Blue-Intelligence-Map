@@ -1,0 +1,11 @@
+{
+  "kind": "climatology",
+  "month": 12,
+  "period": "1993-2016",
+  "source_ids": [
+    "GLOBAL_MULTIYEAR_PHY_001_030"
+  ],
+  "doi": "10.48670/moi-00021",
+  "dataset": "cmems_mod_glo_phy_my_0.083deg-climatology_P1M-m",
+  "generated_at": "2026-09-13T11:12:56Z"
+}

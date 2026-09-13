@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cmems_auth import open_dataset
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "backend" / "data" / "climatology" / "wave"
@@ -34,10 +38,9 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
     try:
-        import copernicusmarine
         import numpy as np
     except ImportError as exc:
-        raise SystemExit("Prérequis Mac : copernicusmarine xarray netCDF4 numpy") from exc
+        raise SystemExit("Prérequis : copernicusmarine xarray netCDF4 numpy") from exc
 
     args.out.mkdir(parents=True, exist_ok=True)
     stacked = []
@@ -48,7 +51,7 @@ def main() -> int:
         start = f"{year}-{args.month:02d}-01T00:00:00"
         end = f"{year + 1}-01-01T00:00:00" if args.month == 12 else f"{year}-{args.month + 1:02d}-01T00:00:00"
         print("subset", year, args.month, file=__import__("sys").stderr)
-        ds = copernicusmarine.open_dataset(
+        ds = open_dataset(
             dataset_id=DATASET,
             variables=["VHM0", "VTM02", "VMDR"],
             start_datetime=start,

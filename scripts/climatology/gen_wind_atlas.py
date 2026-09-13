@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cmems_auth import open_dataset
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "backend" / "data" / "climatology" / "wind"
@@ -37,11 +41,10 @@ def main() -> int:
     if args.month < 1 or args.month > 12:
         raise SystemExit("month 1–12")
     try:
-        import copernicusmarine
         import numpy as np
     except ImportError as exc:
         raise SystemExit(
-            "Prérequis Mac : pip install copernicusmarine xarray netCDF4 numpy"
+            "Prérequis : pip install copernicusmarine xarray netCDF4 numpy"
         ) from exc
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -55,7 +58,7 @@ def main() -> int:
         else:
             end = f"{year}-{args.month + 1:02d}-01T00:00:00"
         print("subset", year, args.month, file=__import__("sys").stderr)
-        ds = copernicusmarine.open_dataset(
+        ds = open_dataset(
             dataset_id=DATASET,
             variables=["eastward_wind", "northward_wind"],
             start_datetime=start,

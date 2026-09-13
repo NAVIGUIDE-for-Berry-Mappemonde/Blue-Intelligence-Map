@@ -7,7 +7,8 @@ libres). Ils écrivent `backend/data/climatology/` :
 |--------|---------|--------|
 | `gen_cyclones.py` | IBTrACS v04r01 since1980 | `cyclones/ibtracs_since1980.json` |
 | `gen_current.py` | GLORYS12 climatology_P1M-m | `current/current-MM.npz` |
-| `gen_wind_atlas.py` | CMEMS wind MY L4 0,25° 6 h | `wind/wind-MM.npz` + `.atlas.json` |
+| `gen_wind_mean.py` | CMEMS wind climate P1M 1994–2020 | `wind/wind-MM.npz` (`stat: average`) |
+| `gen_wind_atlas.py` | CMEMS wind MY L4 0,25° 6 h | `wind/wind-MM.npz` + roses |
 | `gen_wave_mean.py` | WAVERYS climatology_P1M-m | `wave/wave-MM.npz` (`stat: mean`) |
 | `gen_wave_pct.py` | WAVERYS PT3H, un mois à la fois | `wave/wave-MM.npz` (`hs_p50` / `hs_p90`) |
 
@@ -21,6 +22,9 @@ python3 scripts/climatology/gen_cyclones.py
 
 # Courant (12 NetCDF surface — le plus simple CMEMS)
 python3 scripts/climatology/gen_current.py
+
+# Vent AVERAGE (climatologie mensuelle — V0 visible, pas une rose)
+python3 scripts/climatology/gen_wind_mean.py
 
 # Vent roses (subset 6 h × 1994–2020, un mois calendaire à la fois)
 python3 scripts/climatology/gen_wind_atlas.py --month 3

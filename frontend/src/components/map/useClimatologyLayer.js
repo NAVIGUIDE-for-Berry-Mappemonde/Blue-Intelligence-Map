@@ -61,12 +61,18 @@ function waveColor(hs, stat) {
 function popupHtml(kind, p, t) {
   const rows = [];
   if (kind === "wind") {
-    rows.push(`${esc(t("climoMostLikely"))}: ${esc(p.wind_speed_knots)} kn / ${esc(p.wind_direction_from_deg)}°`);
-    rows.push(`${esc(t("climoAverage"))}: ${esc(p.vector_mean_knots)} kn / ${esc(p.vector_mean_from_deg)}°`);
-    rows.push(`calm ${esc(p.calm_pct)}% · gale ${esc(p.gale_pct)}% · n=${esc(p.sample_count)}`);
+    if (p.stat === "average" || !p.directions_from?.length) {
+      rows.push(`${esc(t("climoAverage"))}: ${esc(p.vector_mean_knots ?? p.wind_speed_knots)} kn / ${esc(p.vector_mean_from_deg ?? p.wind_direction_from_deg)}°`);
+      rows.push(esc(t("climoWindAverageHint")));
+    } else {
+      rows.push(`${esc(t("climoMostLikely"))}: ${esc(p.wind_speed_knots)} kn / ${esc(p.wind_direction_from_deg)}°`);
+      rows.push(`${esc(t("climoAverage"))}: ${esc(p.vector_mean_knots)} kn / ${esc(p.vector_mean_from_deg)}°`);
+      rows.push(`calm ${esc(p.calm_pct)}% · gale ${esc(p.gale_pct)}% · n=${esc(p.sample_count)}`);
+    }
   } else if (kind === "wave") {
     rows.push(`Hs ${esc(p.stat)}: ${esc(p.hs_m)} m`);
     if (p.stat === "p90") rows.push(esc(t("climoWaveP90Hint")));
+    if (p.stat === "mean") rows.push(esc(t("climoWaveMeanHint")));
   } else if (kind === "current") {
     rows.push(`${esc(p.speed_knots)} kn → ${esc(p.direction_to_deg)}°`);
     if (p.below_threshold) rows.push("below_threshold");

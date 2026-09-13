@@ -62,6 +62,29 @@ def _nearest_index(arr, value) -> int:
     return int(abs(arr - value).argmin())
 
 
+def _bundle_stat(bundle: dict) -> str:
+    if "stat" in bundle:
+        raw = bundle["stat"]
+        try:
+            return str(raw[0])
+        except Exception:
+            return str(raw)
+    if "sector_pct" in bundle:
+        return "rose"
+    return "average"
+
+
+def _sample_count(bundle: dict, i: int, j: int) -> int | None:
+    count = bundle.get("sample_count")
+    if count is None:
+        return None
+    ndim = getattr(count, "ndim", 2)
+    if ndim == 0:
+        return int(count)
+    n = int(count[i, j])
+    return n
+
+
 def _sample_cell(bundle: dict, lat: float, lon: float) -> dict | None:
     lats = bundle["lats"]
     lons = bundle["lons"]
@@ -71,32 +94,63 @@ def _sample_cell(bundle: dict, lat: float, lon: float) -> dict | None:
     # Refus si la maille est trop loin (terre / trou / hors grille)
     if abs(float(lats[i]) - lat) > 0.75 or abs(wrap_lon(float(lons[j]) - lon)) > 0.75:
         return None
-    count = bundle.get("sample_count")
-    if count is not None:
-        n = int(count[i, j])
-        if n <= 0:
-            return None
-    else:
-        n = None
+    n = _sample_count(bundle, i, j)
+    if n is not None and n <= 0:
+        return None
     sea = bundle.get("sea_mask")
     if sea is not None and not bool(sea[i, j]):
         return None
+    u = float(bundle["u_mean"][i, j])
+    v = float(bundle["v_mean"][i, j])
+    if np is not None and (np.isnan(u) or np.isnan(v)):
+        return None
+    stat = _bundle_stat(bundle)
+    if stat == "average" or "sector_pct" not in bundle:
+        return {
+            "stat": "average",
+            "pct": None,
+            "spd": None,
+            "calm_pct": None,
+            "gale_pct": None,
+            "u_mean": u,
+            "v_mean": v,
+            "sample_count": n,
+        }
     pct = [float(x) for x in bundle["sector_pct"][i, j]]
     spd = [float(x) for x in bundle["sector_spd"][i, j]]
     if all(p <= 0 for p in pct) and (n is None or n == 0):
         return None
     return {
+        "stat": "rose",
         "pct": pct,
         "spd": spd,
         "calm_pct": float(bundle["calm_pct"][i, j]),
         "gale_pct": float(bundle["gale_pct"][i, j]),
-        "u_mean": float(bundle["u_mean"][i, j]),
-        "v_mean": float(bundle["v_mean"][i, j]),
+        "u_mean": u,
+        "v_mean": v,
         "sample_count": n,
     }
 
 
-def _rose_from_cell(cell: dict) -> dict:
+def _rose_from_cell(cell: dict) -> dict | None:
+    mean_kn, mean_from = wind_from_uv(cell["u_mean"], cell["v_mean"])
+    vector_mean = {
+        "dir_deg": round(mean_from, 1),
+        "speed_knots": round(mean_kn, 1),
+    }
+    if cell.get("stat") == "average" or cell.get("pct") is None:
+        if mean_kn <= 0:
+            return None
+        return {
+            "stat": "average",
+            "sectors_deg": SECTOR_DEG,
+            "directions_from": [],
+            "calm_pct": None,
+            "gale_pct": None,
+            "most_likely": None,
+            "vector_mean": vector_mean,
+            "sample_count": cell["sample_count"],
+        }
     min_pct = float(rule("climatology.wind_min_sector_pct", 2.5))
     directions = []
     for k, (pct, spd) in enumerate(zip(cell["pct"], cell["spd"])):
@@ -110,8 +164,8 @@ def _rose_from_cell(cell: dict) -> dict:
     if not directions:
         return None
     dominant = max(directions, key=lambda d: (d["pct"], d["speed_knots"]))
-    mean_kn, mean_from = wind_from_uv(cell["u_mean"], cell["v_mean"])
     return {
+        "stat": "rose",
         "sectors_deg": SECTOR_DEG,
         "directions_from": directions,
         "calm_pct": round(cell["calm_pct"], 1),
@@ -120,10 +174,7 @@ def _rose_from_cell(cell: dict) -> dict:
             "dir_deg": dominant["dir_deg"],
             "speed_knots": dominant["speed_knots"],
         },
-        "vector_mean": {
-            "dir_deg": round(mean_from, 1),
-            "speed_knots": round(mean_kn, 1),
-        },
+        "vector_mean": vector_mean,
         "sample_count": cell["sample_count"],
     }
 
@@ -143,12 +194,20 @@ def atlas_at(lat: float, lon: float, month: int) -> dict | None:
 
 
 def wind_at(lat: float, lon: float, month: int, mode: str = "most_likely") -> tuple[float, float] | None:
-    """(kn, dir_from) depuis l'atlas. ``None`` si la grille manque — pas le repli zones."""
+    """(kn, dir_from) depuis l'atlas. ``None`` si la grille manque — pas le repli zones.
+
+    Un snapshot V0 ``stat=average`` n'a pas de MOST_LIKELY : on sert le vecteur
+    moyen, sans le relabeller rose.
+    """
     rose = atlas_at(lat, lon, month)
     if not rose:
         return None
-    key = "vector_mean" if mode == "average" else "most_likely"
-    block = rose[key]
+    if rose.get("stat") == "average" or rose.get("most_likely") is None:
+        block = rose.get("vector_mean")
+    else:
+        block = rose["vector_mean"] if mode == "average" else rose["most_likely"]
+    if not block:
+        return None
     return float(block["speed_knots"]), float(block["dir_deg"])
 
 
@@ -175,15 +234,16 @@ def wind_geojson(month: int, spacing_deg: float = 1.0) -> dict:
                     rose = _rose_from_cell(cell)
                     if not rose:
                         continue
-                    ml = rose["most_likely"]
+                    shown = rose["most_likely"] or rose["vector_mean"]
                     features.append({
                         "type": "Feature",
                         "geometry": {"type": "Point", "coordinates": [round(lon, 4), round(lat, 4)]},
                         "properties": {
                             "kind": KIND,
                             "month": month,
-                            "wind_speed_knots": ml["speed_knots"],
-                            "wind_direction_from_deg": ml["dir_deg"],
+                            "stat": rose.get("stat") or "rose",
+                            "wind_speed_knots": shown["speed_knots"],
+                            "wind_direction_from_deg": shown["dir_deg"],
                             "calm_pct": rose["calm_pct"],
                             "gale_pct": rose["gale_pct"],
                             "sample_count": rose["sample_count"],
@@ -192,15 +252,18 @@ def wind_geojson(month: int, spacing_deg: float = 1.0) -> dict:
                             "directions_from": rose["directions_from"],
                         },
                     })
+    prod = product_meta("wind")
+    side = atlas_sidecar(month) or {}
+    stat = side.get("stat") or ("rose" if has_snapshot(month) else None)
     meta_extra = {
         "kind": KIND,
         "month": month,
         "period": WIND_PERIOD,
-        "source_ids": [SOURCE_IDS["wind"]],
-        "doi": product_meta("wind")["doi"],
+        "source_ids": [prod["source_id"]],
+        "doi": prod["doi"],
         "grid_spacing_deg": spacing,
         "snapshot_present": has_snapshot(month),
-        "stat": "most_likely",
+        "stat": stat or "most_likely",
     }
     return {
         "type": "FeatureCollection",

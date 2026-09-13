@@ -129,19 +129,19 @@ export default function App() {
   const [climoMonth, setClimoMonth] = useState(() => new Date().getMonth() + 1);
   const [climoFilters, setClimoFilters] = useState(() => {
     try {
-      const raw = localStorage.getItem("bi.climoFilters");
-      if (raw) return { wind: true, wave: false, current: false, cyclones: true, ...JSON.parse(raw) };
+      const raw = localStorage.getItem("bi.climoFilters.v2");
+      if (raw) return { wind: true, wave: true, current: true, cyclones: true, ...JSON.parse(raw) };
     } catch (_) { /* ignore */ }
-    return { wind: true, wave: false, current: false, cyclones: true };
+    return { wind: true, wave: true, current: true, cyclones: true };
   });
   const toggleClimoFilter = useCallback((id, on) => {
     setClimoFilters((prev) => {
       const next = { ...prev, [id]: !!on };
-      try { localStorage.setItem("bi.climoFilters", JSON.stringify(next)); } catch (_) { /* ignore */ }
+      try { localStorage.setItem("bi.climoFilters.v2", JSON.stringify(next)); } catch (_) { /* ignore */ }
       return next;
     });
   }, []);
-  const [climoWaveStat, setClimoWaveStat] = useState("p90");
+  const [climoWaveStat, setClimoWaveStat] = useState("mean");
   const [climoMeta, setClimoMeta] = useState(null);
   const [climoPoint, setClimoPoint] = useState(null);
   // Phase 8 — Anchorages (mouillages) layer
@@ -317,6 +317,11 @@ export default function App() {
     try {
       const { data } = await api.get("/climatology/meta", { params: { month } });
       setClimoMeta(data);
+      const st = data?.snapshot?.wave_stat;
+      if (st === "mean") setClimoWaveStat("mean");
+      else if (st === "p50_p90") {
+        setClimoWaveStat((prev) => (prev === "mean" ? "p90" : prev));
+      }
     } catch (e) { /* transient */ }
   }, []);
 
