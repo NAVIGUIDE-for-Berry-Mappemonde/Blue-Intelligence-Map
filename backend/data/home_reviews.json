@@ -146,6 +146,13 @@
       "action": "reject",
       "rejected_url": "https://www.thegef.org/",
       "note": "Deux organismes, une seule porte GEF"
+    },
+    {
+      "name": "Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)",
+      "action": "keep",
+      "home_url": "https://seyccat.org/",
+      "listing_kind": "home_only",
+      "note": "Home officielle ; plus de hub Global Fund for Coral Reefs"
     }
   ]
 }
