@@ -626,7 +626,7 @@
       ],
       "vary": true,
       "settings_key": "max_partner_orgs",
-      "principle": "Plafond Follow the Money pour les organismes *nouveaux* dont le site répond. Un certificat cassé ou un Search vide ne brûle pas le quota. Le catalogue (WWF…) n'est pas plafonné.",
+      "principle": "Plafond Follow the Money pour les organismes *nouveaux* dont le site répond. Tickets dépensés après classement de l'inbox (pas le premier A–C). Listing vide rembourse. Un certificat cassé ou un Search vide ne brûle pas le quota. Le catalogue (WWF…) n'est pas plafonné.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §14 C5 · §18",
       "code": [
         "app/config.py"
@@ -636,10 +636,38 @@
         "en": "Max partner organisations"
       },
       "help": {
-        "fr": "Plafond Follow the Money (nouveaux organismes joignables). Plus bas, on s'arrête tôt ; plus haut, on dérive hors listing.",
-        "en": "Follow-the-Money cap (reachable new orgs). Lower stops early; higher drifts off the listing."
+        "fr": "Tickets FTM après classement de l'inbox (mentions + S_ocean). Un listing vide rend le ticket. Plus bas, on s'arrête tôt ; plus haut, on dérive hors listing.",
+        "en": "FTM tickets after inbox ranking (mentions + S_ocean). Empty listing refunds the ticket. Lower stops early; higher drifts off the listing."
       },
       "group": "budget"
+    },
+    {
+      "id": "projects.ftm_min_s_ocean",
+      "mode": "projects",
+      "kind": "score",
+      "value": 0.7,
+      "unit": "ratio",
+      "interval": [
+        0.4,
+        0.95
+      ],
+      "vary": true,
+      "settings_key": "ftm_min_s_ocean",
+      "principle": "Follow the Money ne vote que depuis un site publié avec S_ocean suffisant. Une notice CDC ou une page unlocated ne dépense pas de ticket.",
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §18 · §19",
+      "code": [
+        "app/config.py",
+        "app/services/swarm_pipeline.py"
+      ],
+      "title": {
+        "fr": "S_ocean minimum pour Follow the Money",
+        "en": "Minimum S_ocean for Follow the Money"
+      },
+      "help": {
+        "fr": "Sous ce seuil, les partenaires de la page vont à la poubelle. Plus haut, on ne vote que sur les fiches très marines.",
+        "en": "Below this, page partners are ignored. Higher keeps only strongly marine pages."
+      },
+      "group": "qualification"
     },
     {
       "id": "projects.test_max_urls_per_seed",

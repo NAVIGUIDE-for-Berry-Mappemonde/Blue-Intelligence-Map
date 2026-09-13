@@ -87,6 +87,7 @@ def test_defaults_match_code_constants():
     assert catalog_default("projects.tinyfish_agents") == 2
     assert catalog_default("projects.listing_judge_concurrency") == 1
     assert catalog_default("projects.max_partner_orgs") == 15
+    assert catalog_default("projects.ftm_min_s_ocean") == 0.7
     assert catalog_default("projects.extract_concurrency") == 2
     assert catalog_default("projects.nvidia_max_concurrency") == 2
     assert catalog_default("shared.extract_agree_sim") == 0.55

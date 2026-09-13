@@ -15,6 +15,7 @@ from app.services.project_listing import (
 )
 from app.services.seed_catalog import (
     FTM_DISCOVER, FTM_SEARCH, FTM_SKIP, accept_partner_url,
+    ftm_page_allows_collect, rank_ftm_inbox,
     append_search_journal, apply_compound_splits, apply_home_review,
     apply_listing_result, apply_official_site_result, assign_queue,
     build_enriched_master_seeds, classify_home, classify_name,
@@ -713,3 +714,49 @@ def test_decide_ftm_name_and_search_gates():
     assert wwf["action"] == FTM_DISCOVER
     assert wwf["reason"] == "catalog"
     assert "worldwildlife.org" in wwf["seed"]["url"]
+
+
+def test_ftm_page_allows_collect_gates():
+    assert ftm_page_allows_collect(False, 0.95) is False
+    assert ftm_page_allows_collect(True, 0.5, 0.7) is False
+    assert ftm_page_allows_collect(True, 0.8, 0.7) is True
+    assert ftm_page_allows_collect(True, None, 0.7) is True
+
+
+def test_rank_ftm_inbox_votes_and_demotes_university():
+    ranked = rank_ftm_inbox([
+        {"name": "USGS", "url": "https://usgs.gov/", "s_ocean": 0.9},
+        {"name": "HCMR", "url": "https://hcmr.gr/", "s_ocean": 0.92},
+        {"name": "HCMR", "url": "https://hcmr.gr/", "s_ocean": 0.88},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.91},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.9},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.9},
+    ])
+    names = [r["name"] for r in ranked]
+    assert names[0] == "HCMR"
+    assert names[-1] == "University of Maryland"
+    assert ranked[0]["mentions"] == 2
+
+
+def test_seyccat_review_makes_catalog_crawl_ready():
+    seed = {
+        "name": "Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)",
+        "url": None,
+        "home_status": "borrowed_hub",
+        "queue": "resolve",
+        "name_status": "ok",
+        "borrowed_domain": "globalfundcoralreefs.org",
+    }
+    apply_home_review(seed, {
+        "name": seed["name"],
+        "action": "keep",
+        "home_url": "https://seyccat.org/",
+        "listing_kind": "home_only",
+    })
+    assert seed["queue"] == "crawl"
+    assert seed["home_status"] == "official"
+    assert seed["url"] == "https://seyccat.org/"
+    assert is_crawl_ready(seed)
+    hit = decide_follow_the_money_partner(seed["name"], None, catalog=[seed])
+    assert hit["action"] == FTM_DISCOVER
+    assert hit["reason"] == "catalog"

@@ -547,10 +547,20 @@ def _without_priority(seed: dict) -> dict:
 
 
 def seeds_for_run(seeds: list[dict]) -> list[dict]:
-    """File Complet : home officielle ou page-liste déjà classée. Pas les hubs."""
+    """File Complet : curés d'abord, puis gros project_count. Pas d'alphabet A–Z.
+
+    FTM dépense ses tickets sur les partenaires des vrais portails (Pew, WWF),
+    pas sur la première page « Alpha / Brevard » du JSON.
+    """
     from app.services.seed_catalog import is_crawl_ready
     ready = [s for s in seeds if is_crawl_ready(s)]
-    return sorted(ready, key=lambda s: (s.get("name") or "").lower())
+
+    def _key(s: dict) -> tuple:
+        curated = 0 if (s.get("source") or "") == "curated" else 1
+        count = -int(s.get("project_count") or 0)
+        return (curated, count, (s.get("name") or "").lower())
+
+    return sorted(ready, key=_key)
 
 
 def is_known_funder(seeds: list[dict], name: str | None = None, url: str | None = None) -> bool:
