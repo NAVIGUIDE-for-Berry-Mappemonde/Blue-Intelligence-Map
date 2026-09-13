@@ -96,6 +96,12 @@ class TestSerperSearch:
         _FakeClient.queue = [_FakeResp(402, {"message": "credits"})]
         assert _run(sp.serper_search("ports", "k")) == []
 
+    def test_400_returns_empty(self):
+        notes = []
+        _FakeClient.queue = [_FakeResp(400, {"message": "bad request"})]
+        assert _run(sp.serper_search("ports", "k", log=notes.append)) == []
+        assert any("400" in m for m in notes)
+
     def test_429_retry_then_ok(self):
         _FakeClient.queue = [
             _FakeResp(429, {}),

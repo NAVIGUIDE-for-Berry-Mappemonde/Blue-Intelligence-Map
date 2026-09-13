@@ -6,6 +6,8 @@ import inspect
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core import judge as yn  # noqa: E402
@@ -121,6 +123,43 @@ class TestAskYesNoCascade:
         assert yes.accepted is True
         assert yes.engine == "nvidia-deepseek"
         assert yes.raw["score"] == 0.9
+
+    def test_complete_json_cascade_nvidia_429_then_openrouter(self, monkeypatch):
+        from app.core import nvidia
+
+        order = []
+
+        async def nv_429(*a, **k):
+            order.append("nvidia")
+            raise RuntimeError("nvidia HTTP 429: too many requests")
+
+        async def or_ok(*a, **k):
+            order.append("openrouter")
+            return {"accept": True, "reason": "or-ok"}
+
+        monkeypatch.setattr(nvidia, "nvidia_enabled", lambda s=None: True)
+        monkeypatch.setattr(nvidia, "complete_json_nvidia_tracked", nv_429)
+        monkeypatch.setattr(llm, "get_llm_key", lambda s=None: "sk-or")
+        monkeypatch.setattr(llm, "_json_openrouter", or_ok)
+
+        data, engine = _run(yn.complete_json_cascade("sys", "user"))
+        assert data["reason"] == "or-ok"
+        assert engine == "openrouter"
+        assert order == ["nvidia", "openrouter"]
+
+    def test_listing_judge_raises_quota_on_429(self, monkeypatch):
+        async def fake_yes(*a, **k):
+            log = k.get("log")
+            if log:
+                log("nvidia JSON épuisé: nvidia HTTP 429: rate")
+            return yn.empty_yes_no()
+
+        monkeypatch.setattr(yn, "ask_yes_no", fake_yes)
+        with pytest.raises(pl.ListingJudgeQuotaError):
+            _run(pl.llm_judge_listing(
+                {"name": "Example Ocean", "url": "https://example.org/"},
+                ["https://example.org/what-we-do"],
+            ))
 
 
 class TestCallersKeepOwnPrompts:

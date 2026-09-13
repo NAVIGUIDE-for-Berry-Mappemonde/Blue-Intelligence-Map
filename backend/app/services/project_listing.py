@@ -20,6 +20,10 @@ from app.services.master_seeds import (
 from app.static_data.seeds import CRAWL_BLACKLIST, CURATED_SEEDS, URL_PATTERNS
 
 LISTING_JUDGE_CAP = 5
+
+
+class ListingJudgeQuotaError(Exception):
+    """NVIDIA / OpenRouter / Claude 429 : pas d'Agent TinyFish derrière."""
 _FILE_EXTS = frozenset({
     "pdf", "jpg", "jpeg", "png", "gif", "zip", "svg", "mp4", "webp", "css", "js",
 })
@@ -209,6 +213,20 @@ def apply_learned_listings(seeds: list[dict], extras: list[dict] | None) -> list
                 learned = None
             else:
                 learned = by_domain.get(d)
+        learned_d = domain_of(learned) if learned else ""
+        official_d = domain_of(item.get("home_url") or item.get("url"))
+        if (
+            learned
+            and (item.get("home_status") or "") == "official"
+            and official_d
+            and learned_d
+            and learned_d != official_d
+        ):
+            learned = None
+        if learned and is_shared_hub(learned_d) and not name_owns_hub(
+            item.get("name") or "", learned_d
+        ):
+            learned = None
         if learned:
             item["url"] = learned
             item["listing_url"] = learned
@@ -584,18 +602,34 @@ async def llm_judge_listing(
         return None
     from app.core.judge import ask_yes_no
 
+    notes: list[str] = []
+
+    def _log(msg):
+        notes.append(str(msg or ""))
+        if log:
+            log(msg)
+
     home = (seed or {}).get("url")
-    yes = await ask_yes_no(
-        LISTING_JUDGE_SYSTEM,
-        listing_judge_prompt(seed or {}, packed),
-        settings=settings,
-        log=log,
-        role="json",
-        max_tokens=400,
-        allowed_urls=packed,
-        forbidden_urls=[home] if home else None,
-        on_empty="inconclusive",
-    )
+    try:
+        yes = await ask_yes_no(
+            LISTING_JUDGE_SYSTEM,
+            listing_judge_prompt(seed or {}, packed),
+            settings=settings,
+            log=_log,
+            role="json",
+            max_tokens=400,
+            allowed_urls=packed,
+            forbidden_urls=[home] if home else None,
+            on_empty="inconclusive",
+        )
+    except Exception as e:
+        blob = f"{e} {' '.join(notes)}"
+        if "429" in blob:
+            raise ListingJudgeQuotaError(str(e)[:160]) from e
+        raise
     if yes.accepted and yes.url:
         return yes.url
+    blob = f"{yes.reason} {yes.engine} {' '.join(notes)}"
+    if (not yes.engine or yes.reason == "llm_error") and "429" in blob:
+        raise ListingJudgeQuotaError(blob[:160])
     return None

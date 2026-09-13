@@ -21,7 +21,7 @@ from app.core.tinyfish import (
 )
 from app.services.swarm_pipeline import agent_host_is_worthwhile
 from app.services.project_listing import (
-    accept_listing_url, apply_learned_listings,
+    ListingJudgeQuotaError, accept_listing_url, apply_learned_listings,
     filter_listing_urls, hygiene_listing_urls, infer_listing_from_project_urls,
     is_homepage_url, is_listing_path, is_listing_url, listing_hygiene_ok,
     listing_search_query, listing_search_retry_query,
@@ -215,6 +215,53 @@ def test_apply_learned_listings_overlays_v1_home():
     assert out[0]["url"] == "https://example.org/projects/"
     assert out[0]["listing_kind"] == "projects_index"
     assert needs_listing_hop(out[0]) is False
+
+
+def test_apply_learned_listings_keeps_official_home_not_hub():
+    seeds = [{
+        "name": "Aker Biomarine",
+        "url": "https://www.akerbiomarine.com/",
+        "home_url": "https://www.akerbiomarine.com/",
+        "home_status": "official",
+        "queue": "crawl",
+        "listing_kind": "homepage",
+    }]
+    extras = [{
+        "name": "Aker Biomarine",
+        "url": "https://hubocean.earth/projects/",
+        "domain": "hubocean.earth",
+        "listing_kind": "projects_index",
+    }]
+    out = apply_learned_listings(seeds, extras)
+    assert out[0]["url"] == "https://www.akerbiomarine.com/"
+    assert out[0]["listing_kind"] == "homepage"
+
+
+def test_discover_uses_official_home_instead_of_skip(monkeypatch):
+    sw = _swarm()
+    seed = {
+        "name": "Aker Biomarine",
+        "url": "https://hubocean.earth/",
+        "home_url": "https://www.akerbiomarine.com/",
+        "home_status": "official",
+        "queue": "crawl",
+        "listing_kind": "homepage",
+    }
+    seen = []
+
+    async def fake_listing(s):
+        seen.append(s["url"])
+        return None
+
+    async def fake_fiches(s, *a, **k):
+        seen.append("fiches:" + (s.get("url") or ""))
+
+    monkeypatch.setattr(sw, "_resolve_listing", fake_listing)
+    monkeypatch.setattr(sw, "_discover_fiches", fake_fiches)
+    _run(sw._discover(seed, 6))
+    assert seen[0] == "https://www.akerbiomarine.com/"
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "home déjà classée" not in msgs
 
 
 def test_apply_learned_listings_does_not_stamp_hub_on_hosted_org():
@@ -501,8 +548,14 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
             return []
         return []
 
+    async def fake_search(*a, **k):
+        return ["https://example.org/what-we-do"], 1, 0
+
     async def empty_search(*a, **k):
         return [], 0, 0
+
+    async def fake_judge(*a, **k):
+        return None
 
     async def fake_sse(url, goal, schema, key, **kw):
         calls.append({
@@ -520,7 +573,9 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
     monkeypatch.setattr(sw, "_crawl_listing", empty)
     monkeypatch.setattr(sw, "_fetch_listing", empty)
     monkeypatch.setattr(sw, "_infer_listing_from_live", empty)
-    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_search_listing", fake_search)
+    import app.services.swarm_pipeline as sp_two
+    monkeypatch.setattr(sp_two, "llm_judge_listing", fake_judge)
     monkeypatch.setattr(sw, "_crawl_discover", empty)
     monkeypatch.setattr(sw, "_fetch_discover", empty)
     monkeypatch.setattr(sw, "_search_discover", empty_search)
@@ -550,6 +605,77 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
     assert "TinyFish Agent listing" in msgs
     assert "TinyFish Agent fiches" in msgs
     assert "Search vide → TinyFish Agent" not in msgs
+
+
+def test_listing_zero_hits_skips_agent(monkeypatch):
+    sw = _swarm()
+    listing_agent = {"n": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def empty_search(*a, **k):
+        return [], 0, 0
+
+    async def boom_listing(*a, **k):
+        listing_agent["n"] += 1
+        raise AssertionError("0 hit must not start TinyFish Agent listing")
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", empty)
+    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+    monkeypatch.setattr(sw, "_search_discover", empty_search)
+    monkeypatch.setattr(sw, "_tinyfish_listing_discover", boom_listing)
+    monkeypatch.setattr(sw, "_tinyfish_discover", empty)
+
+    queued = _run(_queued(sw, HOME))
+    assert queued == []
+    assert listing_agent["n"] == 0
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "aucun candidat" in msgs
+
+
+def test_listing_judge_429_skips_agent(monkeypatch):
+    sw = _swarm()
+    listing_agent = {"n": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def fake_search(*a, **k):
+        return ["https://example.org/what-we-do"], 1, 0
+
+    async def quota(*a, **k):
+        raise ListingJudgeQuotaError("nvidia HTTP 429: rate limited")
+
+    async def boom_listing(*a, **k):
+        listing_agent["n"] += 1
+        raise AssertionError("429 must not start TinyFish Agent listing")
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", empty)
+    monkeypatch.setattr(sw, "_search_listing", fake_search)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+    async def empty_fiche_search(*a, **k):
+        return [], 0, 0
+
+    monkeypatch.setattr(sw, "_search_discover", empty_fiche_search)
+    monkeypatch.setattr(sw, "_tinyfish_listing_discover", boom_listing)
+    monkeypatch.setattr(sw, "_tinyfish_discover", empty)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "llm_judge_listing", quota)
+
+    queued = _run(_queued(sw, HOME))
+    assert queued == []
+    assert listing_agent["n"] == 0
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "429" in msgs
+    assert "pas d'Agent" in msgs or "quota juge" in msgs
 
 
 def test_listing_judge_picks_our_programmes_skips_agent(monkeypatch):
@@ -723,6 +849,12 @@ def test_sse_drop_after_started_polls_same_run(monkeypatch):
     async def empty_search(*a, **k):
         return [], 0, 0
 
+    async def pool_search(*a, **k):
+        return ["https://example.org/what-we-do"], 1, 0
+
+    async def fake_judge(*a, **k):
+        return None
+
     async def fake_sse(url, goal, schema, key, on_event=None, **kw):
         assert "max_steps" not in (kw.get("agent_config") or {})
         if on_event:
@@ -744,9 +876,10 @@ def test_sse_drop_after_started_polls_same_run(monkeypatch):
     monkeypatch.setattr(sw, "_crawl_listing", empty)
     monkeypatch.setattr(sw, "_fetch_listing", empty)
     monkeypatch.setattr(sw, "_infer_listing_from_live", none)
-    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_search_listing", pool_search)
     monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
     import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "llm_judge_listing", fake_judge)
     monkeypatch.setattr(sp, "tf_run_sse", fake_sse)
     monkeypatch.setattr(sp, "tf_run_async", boom_async)
     monkeypatch.setattr(sp, "tf_poll_run", fake_poll_run)
@@ -773,6 +906,12 @@ def test_sse_wall_clock_cancels_same_run(monkeypatch):
     async def empty_search(*a, **k):
         return [], 0, 0
 
+    async def pool_search(*a, **k):
+        return ["https://example.org/what-we-do"], 1, 0
+
+    async def fake_judge(*a, **k):
+        return None
+
     async def hang_sse(url, goal, schema, key, on_event=None, **kw):
         if on_event:
             await on_event({"type": "STARTED", "run_id": "run_wall_1"})
@@ -792,11 +931,12 @@ def test_sse_wall_clock_cancels_same_run(monkeypatch):
     monkeypatch.setattr(sw, "_crawl_listing", empty)
     monkeypatch.setattr(sw, "_fetch_listing", empty)
     monkeypatch.setattr(sw, "_infer_listing_from_live", none)
-    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_search_listing", pool_search)
     monkeypatch.setattr(sw, "_crawl_discover", empty)
     monkeypatch.setattr(sw, "_fetch_discover", empty)
     monkeypatch.setattr(sw, "_search_discover", empty_search)
     import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "llm_judge_listing", fake_judge)
     monkeypatch.setattr(sp, "tf_run_sse", hang_sse)
     monkeypatch.setattr(sp, "tf_run_async", boom_async)
     monkeypatch.setattr(sp, "tf_cancel_run", fake_cancel)
@@ -847,6 +987,12 @@ def test_sse_429_retries_then_skips_second_run(monkeypatch):
     async def empty_search(*a, **k):
         return [], 0, 0
 
+    async def pool_search(*a, **k):
+        return ["https://example.org/what-we-do"], 1, 0
+
+    async def fake_judge(*a, **k):
+        return None
+
     async def fake_sse(*a, **k):
         seen["sse"] += 1
         req = httpx.Request("POST", "https://agent.tinyfish.ai/v1/automation/run-sse")
@@ -863,11 +1009,12 @@ def test_sse_429_retries_then_skips_second_run(monkeypatch):
     monkeypatch.setattr(sw, "_crawl_listing", empty)
     monkeypatch.setattr(sw, "_fetch_listing", empty)
     monkeypatch.setattr(sw, "_infer_listing_from_live", none)
-    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_search_listing", pool_search)
     monkeypatch.setattr(sw, "_crawl_discover", empty)
     monkeypatch.setattr(sw, "_fetch_discover", empty)
     monkeypatch.setattr(sw, "_search_discover", empty_search)
     import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "llm_judge_listing", fake_judge)
     monkeypatch.setattr(sp, "tf_run_sse", fake_sse)
     monkeypatch.setattr(sp, "tf_run_async", boom_async)
     monkeypatch.setattr(sp, "retry_after_s", lambda *a, **k: 0)

@@ -618,7 +618,7 @@
       "id": "projects.max_partner_orgs",
       "mode": "projects",
       "kind": "budget",
-      "value": 5,
+      "value": 15,
       "unit": "orgs",
       "interval": [
         3,
@@ -626,7 +626,7 @@
       ],
       "vary": true,
       "settings_key": "max_partner_orgs",
-      "principle": "Plafond Follow the Money pour éviter la dérive, pas pour exclure une fondation déjà vue en v1. Le CDC dit : plus de plafond 5 en dur — settings.",
+      "principle": "Plafond Follow the Money pour les organismes *nouveaux* dont le site répond. Un certificat cassé ou un Search vide ne brûle pas le quota. Le catalogue (WWF…) n'est pas plafonné.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §14 C5 · §18",
       "code": [
         "app/config.py"
@@ -636,8 +636,8 @@
         "en": "Max partner organisations"
       },
       "help": {
-        "fr": "Plafond Follow the Money. Plus bas, on s'arrête tôt ; plus haut, on dérive hors listing.",
-        "en": "Follow-the-Money cap. Lower stops early; higher drifts off the listing."
+        "fr": "Plafond Follow the Money (nouveaux organismes joignables). Plus bas, on s'arrête tôt ; plus haut, on dérive hors listing.",
+        "en": "Follow-the-Money cap (reachable new orgs). Lower stops early; higher drifts off the listing."
       },
       "group": "budget"
     },
@@ -832,7 +832,7 @@
       "id": "projects.listing_judge_concurrency",
       "mode": "projects",
       "kind": "budget",
-      "value": 2,
+      "value": 1,
       "unit": "judges",
       "interval": [
         1,
@@ -840,7 +840,7 @@
       ],
       "vary": true,
       "settings_key": "listing_judge_concurrency",
-      "principle": "Le juge listing appelle NVIDIA. 8 en parallèle → HTTP 429. 2 calme la file sans tuer le hop.",
+      "principle": "Le juge listing appelle NVIDIA. 8 en parallèle → HTTP 429. 1 calme la file ; un 429 n'enchaîne plus l'Agent TinyFish.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8",
       "code": [
         "app/services/swarm_pipeline.py",
@@ -851,8 +851,8 @@
         "en": "Parallel NVIDIA listing judges"
       },
       "help": {
-        "fr": "1 à 4. Un 429 saute tout de suite à gpt-oss / Muse (plus de retry 5/12/25 s sur Pro).",
-        "en": "1 to 4. A 429 hops immediately to gpt-oss / Muse (no more 5/12/25 s Pro retries)."
+        "fr": "1 à 4. Un juge à la fois est le défaut : un 429 n'enchaîne plus l'Agent TinyFish.",
+        "en": "1 to 4. Default is one judge: a 429 no longer starts the TinyFish listing Agent."
       },
       "group": "budget"
     },
