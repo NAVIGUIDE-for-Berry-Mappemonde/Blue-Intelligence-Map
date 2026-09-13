@@ -208,7 +208,11 @@ def test_loaded_catalog_has_v1_scale():
     assert all("priority" not in s for s in CURATED_SEEDS)
     queues = {s.get("queue") for s in MASTER_SEEDS}
     assert "crawl" in queues and "resolve" in queues
-    assert sum(1 for s in MASTER_SEEDS if s.get("queue") == "crawl") < 400
+    crawl = [s for s in MASTER_SEEDS if s.get("queue") == "crawl"]
+    # Étape B : homes Search officielles — plus de plafond artificiel < 400.
+    assert len(crawl) >= 500
+    assert not any((s.get("home_status") or "") == "borrowed_hub" for s in crawl)
+    assert sum(1 for s in MASTER_SEEDS if s.get("home_source") == "search") >= 500
 
 
 def test_follow_the_money_caps_only_new_orgs():
