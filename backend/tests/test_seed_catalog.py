@@ -14,11 +14,12 @@ from app.services.project_listing import (
     is_listing_url, listing_from_hits, needs_listing_hop, parent_listing_url,
 )
 from app.services.seed_catalog import (
-    append_search_journal, apply_compound_splits, apply_listing_result,
-    apply_official_site_result, assign_queue, build_enriched_master_seeds,
-    classify_home, classify_name, dump_catalog, infer_listings_onto_official_homes,
-    infer_own_listing, is_crawl_ready, journal_done_names, listing_candidates,
-    load_search_journal, overlay_listing_results, overlay_search_results,
+    append_search_journal, apply_compound_splits, apply_home_review,
+    apply_listing_result, apply_official_site_result, assign_queue,
+    build_enriched_master_seeds, classify_home, classify_name, dump_catalog,
+    infer_listings_onto_official_homes, infer_own_listing, is_crawl_ready,
+    journal_done_names, listing_candidates, load_search_journal,
+    overlay_home_reviews, overlay_listing_results, overlay_search_results,
     search_candidates, split_compound_parts, write_audit,
 )
 from app.static_data.seeds import CURATED_SEEDS
@@ -464,3 +465,65 @@ def test_split_compounds_merge_create_and_reclassify():
     assert "CEA" in by and "CNRS" in by
     assert assign_queue(by["Fondation de la Mer"]) == "crawl"
     assert "Fondation de la Mer, Fondation Ecoalf" in report["split_sources"]
+
+
+def test_home_review_reject_keep_and_no_projects():
+    assert is_listing_url("https://www.monacoexplorations.org/missions/")
+    monaco = {
+        "name": "Monaco",
+        "home_status": "official",
+        "home_source": "search",
+        "home_url": "https://www.asmonaco.com/",
+        "url": "https://www.asmonaco.com/",
+        "queue": "crawl",
+        "name_status": "ok",
+        "listing_kind": "homepage",
+    }
+    apply_home_review(monaco, {"name": "Monaco", "action": "reject"})
+    assert monaco["home_status"] == "unknown"
+    assert monaco["queue"] == "resolve"
+    assert monaco["home_url"] is None
+    assert not is_crawl_ready(monaco)
+    expl = {
+        "name": "Monaco Explorations",
+        "home_status": "official",
+        "home_source": "search",
+        "home_url": "https://www.monacoexplorations.org/",
+        "url": "https://www.monacoexplorations.org/",
+        "queue": "crawl",
+        "name_status": "ok",
+        "listing_kind": "homepage",
+    }
+    apply_home_review(expl, {
+        "name": "Monaco Explorations",
+        "action": "keep",
+        "home_url": "https://www.monacoexplorations.org/",
+        "listing_url": "https://www.monacoexplorations.org/missions/",
+    })
+    assert expl["listing_url"] == "https://www.monacoexplorations.org/missions/"
+    assert expl["listing_kind"] == "projects_index"
+    assert expl["queue"] == "crawl"
+    assert is_crawl_ready(expl)
+    drake = {
+        "name": "Drake Enterprise Foundation",
+        "home_status": "official",
+        "home_url": "https://drakespm.com/",
+        "url": "https://drakespm.com/",
+        "queue": "crawl",
+        "name_status": "ok",
+    }
+    apply_home_review(drake, {
+        "name": "Drake Enterprise Foundation",
+        "action": "no_projects",
+        "home_url": "https://drakespm.com/",
+    })
+    assert drake["listing_kind"] == "home_only"
+    assert drake["queue"] == "skip"
+    assert not is_crawl_ready(drake)
+    seeds = [monaco]
+    overlay_search_results(seeds, journal={
+        "Monaco": {"name": "Monaco", "site": "https://www.asmonaco.com/", "ok": True},
+    })
+    overlay_home_reviews(seeds, [{"name": "Monaco", "action": "reject"}])
+    assert seeds[0]["home_status"] == "unknown"
+    assert search_candidates(seeds) == []

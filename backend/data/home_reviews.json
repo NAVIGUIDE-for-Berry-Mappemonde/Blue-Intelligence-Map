@@ -1,0 +1,151 @@
+{
+  "generated_at": "2026-09-13T06:18:00+00:00",
+  "source": "revue manuelle homes B",
+  "reviews": [
+    {
+      "name": "Monaco Explorations",
+      "action": "keep",
+      "home_url": "https://www.monacoexplorations.org/",
+      "listing_url": "https://www.monacoexplorations.org/missions/",
+      "note": "Home officielle ; catalogue = /missions/"
+    },
+    {
+      "name": "Drake Enterprise Foundation",
+      "action": "no_projects",
+      "home_url": "https://drakespm.com/",
+      "note": "Site réel, aucun projet à crawler"
+    },
+    {
+      "name": "Monaco",
+      "action": "reject",
+      "rejected_url": "https://www.asmonaco.com/",
+      "note": "Club de foot, pas l'État"
+    },
+    {
+      "name": "Office de l'Environnement Corse",
+      "action": "reject",
+      "rejected_url": "https://www.emploi-environnement.com/",
+      "note": "Site d'offres d'emploi"
+    },
+    {
+      "name": "Pyrénées-Orientales General Council",
+      "action": "reject",
+      "rejected_url": "https://wordtype.org/",
+      "note": "Rien à voir"
+    },
+    {
+      "name": "Kaho'olawe Island Reserve Commission",
+      "action": "reject",
+      "rejected_url": "https://www.islandconservation.org/",
+      "note": "Autre ONG"
+    },
+    {
+      "name": "Museum of the World Ocean",
+      "action": "reject",
+      "rejected_url": "https://museum-of-the-world-ocean.vercel.app/",
+      "note": "Maquette / démo"
+    },
+    {
+      "name": "Indo-Norwegian collaboration",
+      "action": "reject",
+      "rejected_url": "https://cit-hib-incp2014.com/",
+      "note": "Vieux site de projet, pas un organisme"
+    },
+    {
+      "name": "Jordan (Royal directives)",
+      "action": "reject",
+      "rejected_url": "http://jordantimes.com/",
+      "note": "Journal, pas le royaume"
+    },
+    {
+      "name": "Instituto de Ciencias del Mar y Limnología – UNAM",
+      "action": "reject",
+      "rejected_url": "https://uninmar.icmyl.unam.mx/",
+      "note": "Page d'un seul projet, pas la home"
+    },
+    {
+      "name": "Instituto de Ciencias del Mar y Limnología, Universidad Nacional Autónoma de México",
+      "action": "reject",
+      "rejected_url": "https://cienciasmarinas.com.mx/",
+      "note": "Revue, pas l'institut"
+    },
+    {
+      "name": "UK Government Blue Belt Programme",
+      "action": "reject",
+      "rejected_url": "https://www.gov.uk/",
+      "note": "Portail UK entier, pas le programme"
+    },
+    {
+      "name": "The UK's Blue Planet Fund",
+      "action": "reject",
+      "rejected_url": "https://icai.independent.gov.uk/",
+      "note": "Organisme de contrôle, pas le fonds"
+    },
+    {
+      "name": "UK's Blue Planet Fund",
+      "action": "reject",
+      "rejected_url": "https://icai.independent.gov.uk/",
+      "note": "Organisme de contrôle, pas le fonds"
+    },
+    {
+      "name": "UNESCO Category II Regional Education and Research Centre on Oceanography for West Asia (RCOWA)",
+      "action": "reject",
+      "rejected_url": "https://unesdoc.unesco.org/",
+      "note": "Bibliothèque de PDF UNESCO"
+    },
+    {
+      "name": "GEF-UNDP-UNESCO-IOC",
+      "action": "reject",
+      "rejected_url": "https://unesdoc.unesco.org/",
+      "note": "Bibliothèque de PDF UNESCO"
+    },
+    {
+      "name": "UNESCO-IOC IOCARIBE",
+      "action": "reject",
+      "rejected_url": "https://unesdoc.unesco.org/",
+      "note": "Bibliothèque de PDF UNESCO"
+    },
+    {
+      "name": "EU Green Deal",
+      "action": "reject",
+      "rejected_url": "https://learning-corner.learning.europa.eu/",
+      "note": "Coin pédagogique, pas le Green Deal"
+    },
+    {
+      "name": "Fisheries and Oceans Canada",
+      "action": "reject",
+      "rejected_url": "https://science-libraries.canada.ca/",
+      "note": "Bibliothèque, pas Pêches et Océans"
+    },
+    {
+      "name": "Kitasoo Xai'xais First Nation",
+      "action": "reject",
+      "rejected_url": "https://coastalfirstnations.ca/",
+      "note": "Alliance côtière, pas la nation"
+    },
+    {
+      "name": "Euro-Mediterranean Centre on Climate Change Foundation",
+      "action": "reject",
+      "rejected_url": "https://climate-pact.europa.eu/",
+      "note": "Mauvaise porte Europa"
+    },
+    {
+      "name": "EU-Funded Project AANChOR",
+      "action": "reject",
+      "rejected_url": "https://www.interregnorthsea.eu/",
+      "note": "Mauvais programme Interreg"
+    },
+    {
+      "name": "European Commission",
+      "action": "reject",
+      "rejected_url": "https://european-union.europa.eu/",
+      "note": "Portail UE, pas la Commission"
+    },
+    {
+      "name": "GEF/World Bank",
+      "action": "reject",
+      "rejected_url": "https://www.thegef.org/",
+      "note": "Deux organismes, une seule porte GEF"
+    }
+  ]
+}

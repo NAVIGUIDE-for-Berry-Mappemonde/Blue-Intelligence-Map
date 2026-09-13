@@ -41,8 +41,13 @@ SEARCH_PROGRESS_PATH = DATA_DIR / "official_homes_search.progress.json"
 LISTING_JOURNAL_PATH = DATA_DIR / "official_listings_search.jsonl"
 LISTING_PROGRESS_PATH = DATA_DIR / "official_listings_search.progress.json"
 SPLITS_REPORT_PATH = DATA_DIR / "compound_splits.json"
+HOME_REVIEW_PATH = DATA_DIR / "home_reviews.json"
 AUDIT_PATH = DATA_DIR / "master_seeds_audit.json"
 HOME_SOURCE_SEARCH = "search"
+HOME_SOURCE_REVIEW = "review"
+REVIEW_REJECT = "reject"
+REVIEW_NO_PROJECTS = "no_projects"
+REVIEW_KEEP = "keep"
 LISTING_SOURCE_SEARCH = "search"
 LISTING_SOURCE_V1 = "v1_url"
 MIN_SPLIT_PART = 3
@@ -429,6 +434,7 @@ def audit_rows(seeds: list[dict]) -> list[dict]:
             "home_source": s.get("home_source") or "",
             "listing_source": s.get("listing_source") or "",
             "split_into": ", ".join(s.get("split_into") or []),
+            "review_action": s.get("review_action") or "",
         })
     rows.sort(key=lambda r: (-int(r["project_count"] or 0), (r["name"] or "").lower()))
     return rows
@@ -545,6 +551,8 @@ def search_candidates(
             continue
         source = (s.get("home_source") or "").strip()
         status = (s.get("home_status") or "").strip()
+        if source == HOME_SOURCE_REVIEW:
+            continue
         if source == HOME_SOURCE_SEARCH:
             if retry_unknown and status == HOME_STATUS_UNKNOWN:
                 pass
@@ -731,8 +739,75 @@ def infer_listings_onto_official_homes(seeds: list[dict], projects: list[dict] |
     return n
 
 
+def apply_home_review(seed: dict, rec: dict) -> dict:
+    """Revue humaine d'une home B. Gagne sur Search."""
+    action = (rec.get("action") or REVIEW_REJECT).strip()
+    seed["review_action"] = action
+    seed["home_source"] = HOME_SOURCE_REVIEW
+    note = (rec.get("note") or "").strip()
+    if note:
+        seed["review_note"] = note
+    if action == REVIEW_REJECT:
+        seed["home_url"] = None
+        seed["url"] = None
+        seed["listing_url"] = None
+        seed["listing_kind"] = "unknown"
+        seed["listing_source"] = ""
+        seed["home_status"] = HOME_STATUS_UNKNOWN
+        seed["queue"] = QUEUE_RESOLVE
+        return seed
+    home = (rec.get("home_url") or seed.get("home_url") or "").strip() or None
+    listing = (rec.get("listing_url") or "").strip() or None
+    seed["home_url"] = home
+    if listing:
+        seed["listing_url"] = listing
+        seed["url"] = listing
+        seed["listing_kind"] = "projects_index"
+        seed["listing_source"] = HOME_SOURCE_REVIEW
+    elif rec.get("listing_kind") == "home_only" or action == REVIEW_NO_PROJECTS:
+        seed["listing_url"] = None
+        seed["url"] = home
+        seed["listing_kind"] = "home_only"
+        seed["listing_source"] = HOME_SOURCE_REVIEW
+    if home:
+        seed["home_status"] = HOME_STATUS_OFFICIAL
+    if action == REVIEW_NO_PROJECTS:
+        seed["queue"] = QUEUE_SKIP
+    else:
+        seed["queue"] = assign_queue(seed)
+    return seed
+
+
+def overlay_home_reviews(seeds: list[dict], reviews: list[dict] | Path | None) -> int:
+    """Réapplique la revue manuelle (gagne sur B/C)."""
+    if reviews is None:
+        return 0
+    if isinstance(reviews, Path):
+        if not reviews.is_file():
+            return 0
+        payload = json.loads(reviews.read_text(encoding="utf-8"))
+        rows = payload.get("reviews") if isinstance(payload, dict) else payload
+    else:
+        rows = reviews
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    n = 0
+    for rec in rows or []:
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        apply_home_review(cur, rec)
+        n += 1
+    return n
+
+
 def assign_queue(seed: dict) -> str:
     """Étape E : file Complet = home officielle ou page-liste, nom simple."""
+    action = (seed.get("review_action") or "").strip()
+    if action == REVIEW_REJECT:
+        return QUEUE_RESOLVE
+    if action == REVIEW_NO_PROJECTS:
+        return QUEUE_SKIP
     if seed.get("split_into"):
         return QUEUE_SKIP
     name_status = (seed.get("name_status") or NAME_OK).strip()

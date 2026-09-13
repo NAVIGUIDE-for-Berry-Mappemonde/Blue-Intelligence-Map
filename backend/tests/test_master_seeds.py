@@ -212,7 +212,10 @@ def test_loaded_catalog_has_v1_scale():
     # Étape B : homes Search officielles — plus de plafond artificiel < 400.
     assert len(crawl) >= 500
     assert not any((s.get("home_status") or "") == "borrowed_hub" for s in crawl)
-    assert sum(1 for s in MASTER_SEEDS if s.get("home_source") == "search") >= 500
+    assert sum(
+        1 for s in MASTER_SEEDS
+        if s.get("home_source") in {"search", "review"}
+    ) >= 500
 
 
 def test_follow_the_money_caps_only_new_orgs():
