@@ -38,6 +38,41 @@ def test_unknown_funder_is_not_a_seed():
     assert sos["project_count"] == 2
 
 
+def test_listing_url_skips_shared_hubs():
+    urls = [
+        "https://oceandecade.org/actions/alpha",
+        "https://oceandecade.org/actions/beta",
+        "https://oceandecade.org/actions/gamma",
+    ]
+    assert ms.listing_url_from_project_urls(urls, "BMKG") is None
+    mixed = urls + ["https://www.bmkg.go.id/project/1"]
+    assert ms.listing_url_from_project_urls(mixed, "BMKG") == "https://bmkg.go.id/"
+
+
+def test_shared_hub_home_not_for_owner():
+    bmkg = {
+        "name": "Agency for Meteorology Climatology and Geophysics (BMKG) – Indonesia",
+        "url": "https://oceandecade.org/",
+    }
+    decade = {"name": "Ocean Decade", "url": "https://oceandecade.org/"}
+    team = {"name": "Ocean Decade Team", "url": "https://oceandecade.org/"}
+    aker = {"name": "Aker Biomarine", "url": "https://hubocean.earth/"}
+    hub = {"name": "HUB Ocean, Microsoft, Accenture", "url": "https://hubocean.earth/"}
+    own = {"name": "Example Ocean", "url": "https://example.org/"}
+    assert ms.is_shared_hub_home(bmkg) is True
+    assert ms.is_shared_hub_home(decade) is False
+    assert ms.is_shared_hub_home(team) is False
+    assert ms.is_shared_hub_home(aker) is True
+    assert ms.is_shared_hub_home(hub) is False
+    assert ms.is_shared_hub_home(own) is False
+    assert ms.official_site_query(bmkg["name"]) == f'"{bmkg["name"]}" official site'
+    assert ms.official_site_retry_query(bmkg["name"]) == '"BMKG" official website'
+    assert ms.is_known_funder(
+        [decade], "BMKG", "https://oceandecade.org/actions/x") is False
+    assert ms.is_known_funder(
+        [decade], "Ocean Decade", "https://oceandecade.org/") is True
+
+
 def test_listing_url_prefers_funder_domain():
     urls = [
         "https://news.example.com/a",
@@ -66,15 +101,16 @@ def test_merge_curated_alias_no_priority():
     assert "priority" not in by["Blue Marine Foundation"]
 
 
-def test_seeds_for_run_skips_empty_url_and_ignores_legacy_priority():
+def test_seeds_for_run_keeps_name_only_skips_blank():
     seeds = [
         {"name": "P2-big", "url": "https://b.org/", "priority": 2, "project_count": 99},
         {"name": "P1", "url": "https://a.org/", "priority": 1, "project_count": 1},
         {"name": "NoURL", "url": None, "priority": 2, "project_count": 50},
+        {"name": "", "url": None, "project_count": 1},
         {"name": "Alpha", "url": "https://z.org/", "project_count": 0},
     ]
     queued = ms.seeds_for_run(seeds)
-    assert [s["name"] for s in queued] == ["Alpha", "P1", "P2-big"]
+    assert [s["name"] for s in queued] == ["Alpha", "NoURL", "P1", "P2-big"]
 
 
 def test_dump_and_load_strip_legacy_priority(tmp_path):

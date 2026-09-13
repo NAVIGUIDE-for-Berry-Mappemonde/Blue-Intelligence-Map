@@ -801,6 +801,34 @@
       "group": "budget"
     },
     {
+      "id": "projects.listing_judge_concurrency",
+      "mode": "projects",
+      "kind": "budget",
+      "value": 2,
+      "unit": "judges",
+      "interval": [
+        1,
+        4
+      ],
+      "vary": true,
+      "settings_key": "listing_judge_concurrency",
+      "principle": "Le juge listing appelle NVIDIA. 8 en parallèle → HTTP 429. 2 calme la file sans tuer le hop.",
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8",
+      "code": [
+        "app/services/swarm_pipeline.py",
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Juges listing NVIDIA en parallèle",
+        "en": "Parallel NVIDIA listing judges"
+      },
+      "help": {
+        "fr": "1 à 4. 8 juges ensemble saturent deepseek-v4-pro (429 + retries 5/12/25 s). 2 est le défaut.",
+        "en": "1 to 4. Eight judges at once saturate deepseek-v4-pro (429 + 5/12/25 s retries). Default is 2."
+      },
+      "group": "budget"
+    },
+    {
       "id": "projects.tinyfish_agents",
       "mode": "projects",
       "kind": "budget",

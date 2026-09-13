@@ -26,6 +26,27 @@ SKIP_LISTING_NETLOCS = {
     "tinyurl.com", "t.co", "goo.gl", "maps.google.com",
 }
 
+# Catalogues partagés : beaucoup de financeurs v1 ont cette « home » parce
+# que leurs fiches vivent sur le hub (Decade Actions, HUB Ocean), pas sur
+# le site de l'organisme. Ce n'est pas une home à crawler.
+SHARED_HUB_NETLOCS = {
+    "oceandecade.org",
+    "hubocean.earth",
+}
+
+# Le hub EST la home de ces noms (le secrétariat, pas un organisme hébergé).
+HUB_OWNER_TOKENS = {
+    "oceandecade.org": (
+        "ocean decade",
+        "un ocean decade",
+        "ocean decade team",
+    ),
+    "hubocean.earth": (
+        "hub ocean",
+        "hubocean",
+    ),
+}
+
 
 def _curated_seeds() -> list[dict]:
     from app.static_data.seeds import CURATED_SEEDS
@@ -62,6 +83,56 @@ def is_noise_name(name: str) -> bool:
     return False
 
 
+def is_shared_hub(url_or_domain: str | None) -> bool:
+    """True si l'hôte est un catalogue partagé (Decade, HUB Ocean…)."""
+    d = domain_of(url_or_domain)
+    if not d:
+        raw = (url_or_domain or "").strip().lower().replace("www.", "")
+        d = raw.split("/")[0]
+    return bool(d) and d in SHARED_HUB_NETLOCS
+
+
+def name_owns_hub(name: str, url_or_domain: str | None) -> bool:
+    """Le financeur *est* le hub (Ocean Decade, HUB Ocean), pas un hébergé."""
+    d = domain_of(url_or_domain)
+    if not d:
+        raw = (url_or_domain or "").strip().lower().replace("www.", "")
+        d = raw.split("/")[0]
+    n = norm_name(name)
+    if not n or d not in HUB_OWNER_TOKENS:
+        return False
+    for owner in HUB_OWNER_TOKENS[d]:
+        on = norm_name(owner)
+        if not on:
+            continue
+        if n == on or n.startswith(on + " ") or n.endswith(" " + on):
+            return True
+    return False
+
+
+def is_shared_hub_home(seed: dict | None) -> bool:
+    """Home enregistrée = hub, mais l'organisme n'est pas le hub."""
+    seed = seed or {}
+    url = (seed.get("url") or "").strip()
+    if not is_shared_hub(url):
+        return False
+    return not name_owns_hub(seed.get("name") or "", url)
+
+
+def official_site_query(name: str) -> str:
+    """Un shot : « "BMKG" official site ». Pas de site:hub."""
+    n = (name or "").strip()
+    return f'"{n}" official site' if n else ""
+
+
+def official_site_retry_query(name: str) -> str | None:
+    """2ᵉ shot si le nom long ne donne rien : acronyme entre parenthèses."""
+    m = re.search(r"\(([A-Z][A-Z0-9]{1,7})\)", name or "")
+    if not m:
+        return None
+    return f'"{m.group(1)}" official website'
+
+
 def names_match(a: str, b: str, aliases: list | None = None) -> bool:
     if not a or not b:
         return False
@@ -79,7 +150,7 @@ def listing_url_from_project_urls(urls: list[str], funder_name: str = "") -> str
     counts: Counter[str] = Counter()
     for u in urls:
         d = domain_of(u)
-        if d and d not in SKIP_LISTING_NETLOCS:
+        if d and d not in SKIP_LISTING_NETLOCS and d not in SHARED_HUB_NETLOCS:
             counts[d] += 1
     if not counts:
         return None
@@ -182,8 +253,11 @@ def _without_priority(seed: dict) -> dict:
 
 
 def seeds_for_run(seeds: list[dict]) -> list[dict]:
-    """Tous les listings MasterSeeds avec URL, même rang, ordre stable par nom."""
-    ready = [s for s in seeds if (s.get("url") or "").strip()]
+    """Portails à visiter : URL, ou nom seul (home hub à résoudre)."""
+    ready = [
+        s for s in seeds
+        if (s.get("url") or "").strip() or (s.get("name") or "").strip()
+    ]
     return sorted(ready, key=lambda s: (s.get("name") or "").lower())
 
 
@@ -191,7 +265,7 @@ def is_known_funder(seeds: list[dict], name: str | None = None, url: str | None 
     domain = domain_of(url)
     n = norm_name(name or "")
     for s in seeds:
-        if domain and domain_of(s.get("url")) == domain:
+        if domain and domain_of(s.get("url")) == domain and not is_shared_hub(domain):
             return True
         aliases = s.get("aliases") or []
         if n and names_match(s.get("name") or "", name or "", aliases):
