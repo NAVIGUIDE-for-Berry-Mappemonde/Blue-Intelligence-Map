@@ -155,14 +155,14 @@ def _ocean_page(title="Hope Spot Azores"):
     }
 
 
-def _ocean_proj(title="Hope Spot Azores", lat=45.5, lon=-5.0):
+def _ocean_proj(title="Hope Spot Azores", lat=45.5, lon=-5.0, s_ocean=0.91):
     return {
         "title": title,
         "description": "A visitable marine site.",
         "location": "Azores",
         "latitude": lat,
         "longitude": lon,
-        "s_ocean": 0.91,
+        "s_ocean": s_ocean,
         "engine": "heuristic",
         "category": "MPA",
         "partners": [],
@@ -330,6 +330,88 @@ def test_force_rescan_reextracts_url_already_on_live_map(monkeypatch):
             "run_id": opened["run_id"], "url": "https://example.org/pew-hq",
         })
         assert row["verdict"] == "unlocated"
+
+    asyncio.run(run())
+
+
+def test_low_s_ocean_after_extract_rejected_even_if_gatekeeper_accepts(monkeypatch):
+    """CDC §10 : après extract, S_ocean 0,1 (Dana Point) est jeté malgré un GPS côtier."""
+    import app.services.swarm_pipeline as sp
+
+    _patch_extract(
+        monkeypatch,
+        gk={
+            "accepted": True,
+            "reason": "ML gatekeeper: high-confidence marine",
+            "engine": "ML Gatekeeper (local)",
+        },
+        proj=_ocean_proj(
+            title="Engineering Permit Center (City of Dana Point)",
+            lat=33.467,
+            lon=-117.698,
+            s_ocean=0.1,
+        ),
+    )
+
+    async def run():
+        db = _FakeDB(projects=[_v1_treasure()])
+        before = await db.projects.count_documents({})
+        opened = await project_runs.open_run(
+            db, mode="test", settings={}, to_file=False)
+        sw = Swarm(db)
+        sw.run_id = opened["run_id"]
+        sw.recorder = opened["recorder"]
+        sw.settings = {}
+        out = await sw._process_url({
+            "url": "https://example.org/dana-point-permits",
+            "funder": "City of Dana Point",
+            "source": "test",
+        })
+        assert out["status"] == "rejected"
+        assert await db.projects.count_documents({}) == before
+        assert await db.projects.find_one(
+            {"url": "https://example.org/dana-point-permits"}) is None
+        row = await db.project_run_projects.find_one({
+            "run_id": opened["run_id"],
+            "url": "https://example.org/dana-point-permits",
+        })
+        assert row["verdict"] == "rejected"
+        assert row["s_ocean"] == 0.1
+        assert "min_marine_score" in row["reason"]
+        assert "0.1" in row["reason"]
+        run_doc = await db.project_runs.find_one({"_id": opened["run_id"]})
+        assert run_doc["counters"]["rejected"] == 1
+        assert run_doc["counters"]["sites"] == 0
+        failed = await db.failed.find_one(
+            {"url": "https://example.org/dana-point-permits"})
+        assert failed["stage"] == "s_ocean"
+        assert sp.geocode_project_site.await_count == 0
+
+    asyncio.run(run())
+
+
+def test_s_ocean_at_min_marine_score_stays_site(monkeypatch):
+    _patch_extract(monkeypatch, proj=_ocean_proj(s_ocean=0.5))
+
+    async def run():
+        db = _FakeDB(projects=[_v1_treasure()])
+        opened = await project_runs.open_run(
+            db, mode="test", settings={}, to_file=False)
+        sw = Swarm(db)
+        sw.run_id = opened["run_id"]
+        sw.recorder = opened["recorder"]
+        sw.settings = {}
+        out = await sw._process_url({
+            "url": "https://example.org/threshold-site",
+            "funder": "Mission Blue",
+            "source": "test",
+        })
+        assert out["status"] == "site"
+        row = await db.project_run_projects.find_one({
+            "run_id": opened["run_id"],
+            "url": "https://example.org/threshold-site",
+        })
+        assert row["verdict"] == "site"
 
     asyncio.run(run())
 

@@ -543,10 +543,11 @@
       ],
       "vary": true,
       "settings_key": "min_marine_score",
-      "principle": "Coupe à l'entrée du faisceau S_ocean 0–1. 0,5 = majorité de signaux marins. Recalibrer sur le Gold (phase D), pas avant.",
+      "principle": "Coupe le faisceau S_ocean 0–1 : au gatekeeper et après extract. 0,5 = majorité de signaux marins. Un Permit Center à 0,1 est rejeté même si le GPS est côtier. Recalibrer sur le Gold (phase D), pas avant.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §10 · §23",
       "code": [
-        "app/core/llm.py"
+        "app/core/llm.py",
+        "app/services/swarm_pipeline.py"
       ],
       "title": {
         "fr": "Score marin minimum (S_ocean)",

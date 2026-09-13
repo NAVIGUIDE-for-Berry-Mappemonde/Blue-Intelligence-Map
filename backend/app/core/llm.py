@@ -183,10 +183,20 @@ def heuristic_gatekeeper(text: str, settings: dict) -> dict:
     land = sum(low.count(k) for k in LAND_KW)
     score = marine / (marine + land * 1.5 + 1e-9) if marine else 0.0
     score = round(min(1.0, score), 3)
-    accepted = marine >= 3 and score >= float(settings.get("min_marine_score", 0.5))
+    accepted = marine >= 3 and s_ocean_meets_min(score, settings)
     return {"accepted": accepted, "score": score,
             "reason": f"heuristic: {marine} marine / {land} terrestrial keyword hits",
             "engine": "Heuristic Gatekeeper"}
+
+
+def s_ocean_meets_min(s_ocean, settings: dict | None = None) -> bool:
+    """CDC §10 : le seuil coupe le faisceau S_ocean, après extract aussi."""
+    try:
+        score = float(s_ocean)
+    except (TypeError, ValueError):
+        return False
+    floor = float((settings or {}).get("min_marine_score", 0.5))
+    return score >= floor
 
 
 async def gatekeeper_check(title: str, text: str, settings: dict) -> dict:
@@ -223,8 +233,7 @@ Return JSON: {{"marine": true/false, "score": 0.0-1.0, "reason": "<short reason>
         yes = await ask_yes_no(
             JSON_SYSTEM, prompt, settings=settings, role="json", max_tokens=400)
         score = float((yes.raw or {}).get("score") or 0)
-        accepted = bool(yes.accepted) and score >= float(
-            settings.get("min_marine_score", 0.5))
+        accepted = bool(yes.accepted) and s_ocean_meets_min(score, settings)
         return {"accepted": accepted, "score": round(score, 3),
                 "reason": (yes.reason or "")[:300],
                 "engine": _public_engine(yes.engine, "Gatekeeper")}
