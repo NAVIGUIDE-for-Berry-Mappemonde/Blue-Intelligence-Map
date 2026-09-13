@@ -20,9 +20,9 @@ from app.static_data.seeds import (
     CRAWL_BLACKLIST, CURATED_SEEDS, MASTER_SEEDS, TEST_SEED_COUNT, URL_PATTERNS,
 )
 from app.services.master_seeds import (
-    SKIP_LISTING_NETLOCS, domain_of, is_known_funder, is_shared_hub,
-    is_shared_hub_home, listing_url_for_name, name_owns_hub, norm_name,
-    official_site_query, official_site_retry_query, seeds_for_run,
+    SKIP_LISTING_NETLOCS, domain_matches_org, domain_of, is_known_funder,
+    is_publisher_host, is_shared_hub, is_shared_hub_home, listing_url_for_name,
+    name_owns_hub, official_site_query, official_site_retry_query, seeds_for_run,
 )
 from app.core.tinyfish import (
     AGENT_CREDIT_CAP, DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S,
@@ -162,12 +162,11 @@ def filter_discover_urls(hits, seed, max_urls, *, exclude_urls=None) -> list[str
 
 
 def official_site_from_hits(hits, funder_name: str = "") -> str:
-    """Premier hit hors réseaux / hubs partagés → origine du site.
+    """Vrai site de l'organisme : jeton du nom (ou acronyme) dans le domaine.
 
-    Si le nom a des jetons (≥4 lettres) présents dans un domaine, ce hit
-    gagne (BMKG → bmkg.go.id plutôt que oceandecade.org).
+    Jamais le 1er hit SERP « parce qu'il reste » (BMKG ≠ nature.com).
+    Journaux / éditeurs et hubs partagés exclus. Rien de propre → vide.
     """
-    tokens = [t for t in norm_name(funder_name).split() if len(t) >= 4]
     scored: list[tuple[int, int, str]] = []
     for i, hit in enumerate(hits or []):
         raw = _hit_url(hit)
@@ -175,19 +174,29 @@ def official_site_from_hits(hits, funder_name: str = "") -> str:
             continue
         href = raw.split("#")[0].split("?")[0]
         d = domain_of(href)
-        if _is_skip_listing_domain(d) or is_shared_hub(d):
+        if _is_skip_listing_domain(d) or is_shared_hub(d) or is_publisher_host(d):
             continue
         parsed = urlparse(href)
         if not parsed.netloc:
             continue
+        if not domain_matches_org(href, funder_name):
+            continue
         scheme = parsed.scheme or "https"
-        compact = d.replace(".", "").replace("-", "")
-        bonus = 2 if any(t in compact for t in tokens) else 0
-        scored.append((bonus, -i, f"{scheme}://{parsed.netloc}/"))
+        scored.append((2, -i, f"{scheme}://{parsed.netloc}/"))
     if not scored:
         return ""
     scored.sort(reverse=True)
     return scored[0][-1]
+
+
+def agent_host_is_worthwhile(url: str, name: str) -> bool:
+    """L'Agent TinyFish ne part que si l'hôte est (probablement) l'organisme."""
+    if not (url or "").strip():
+        return False
+    d = domain_of(url)
+    if not d or _is_skip_listing_domain(d) or is_shared_hub(d) or is_publisher_host(d):
+        return False
+    return domain_matches_org(url, name)
 
 
 def _links_from_fetch_record(rec: dict | None, base_url: str) -> list[str]:
@@ -531,19 +540,27 @@ class Swarm:
                 self.partner_domains.add(d)
             self.partner_count = 0
             self.new_partner_count = 0
-            concurrency = max(1, min(20, int(self.settings.get("extract_concurrency", 6))))
-            discover_n = max(1, min(12, int(self.settings.get("discover_concurrency", 8))))
             from app.core.run_rules import get_rule
+            from app.core import nvidia as nvidia_core
+            concurrency = max(1, min(20, int(get_rule(
+                "projects.extract_concurrency",
+                self.settings.get("extract_concurrency", 2)))))
+            discover_n = max(1, min(12, int(self.settings.get("discover_concurrency", 8))))
             judge_n = max(1, min(4, int(get_rule(
                 "projects.listing_judge_concurrency",
                 self.settings.get("listing_judge_concurrency", 2)))))
+            nv_n = max(1, min(4, int(get_rule(
+                "projects.nvidia_max_concurrency",
+                self.settings.get("nvidia_max_concurrency", 2)))))
+            nvidia_core.configure_concurrency(nv_n)
             self.workers = [asyncio.create_task(self._extract_worker(i)) for i in range(concurrency)]
             self.log(
                 f"MasterSeeds loaded: {len(seeds)} portals in queue "
                 f"(catalog={len(self.master_seeds)}, "
                 f"discover_concurrency={discover_n}, "
                 f"listing_judge_concurrency={judge_n}, "
-                f"extract_concurrency={concurrency})"
+                f"extract_concurrency={concurrency}, "
+                f"nvidia_max_concurrency={nv_n})"
             )
 
             if self.mode == "full" and not getattr(self, "force_rescan", False):
@@ -812,23 +829,31 @@ class Swarm:
                         self.log(f"[{name}] Listing juge: aucune des {len(pool)} URLs")
 
             if not found and key and self.settings.get("allow_tinyfish_agent", True):
-                used_engine = "TinyFish listing"
-                self.set_agent(aid, engine="TinyFish Agent listing")
-                if (n_tf + n_sp) == 0 and not crawled and not fetched:
-                    reason = "Listing Search: 0 hit → TinyFish Agent listing"
-                elif pool:
-                    reason = "Listing juge: aucune → TinyFish Agent listing"
+                if not agent_host_is_worthwhile(seed.get("url") or "", seed.get("name") or ""):
+                    reason = (
+                        "TinyFish Agent listing sauté — "
+                        "site absent ou pas l'organisme"
+                    )
+                    self.agent_log(aid, reason)
+                    self.log(f"[{name}] {reason}")
                 else:
-                    reason = "Listing Search: hits hygiène 0 → TinyFish Agent listing"
-                self.agent_log(aid, reason)
-                self.log(f"[{name}] {reason}")
-                try:
-                    sem = self._tf_sem or asyncio.Semaphore(1)
-                    async with sem:
-                        found = await self._tinyfish_listing_discover(aid, seed, key)
-                except Exception as e:
-                    self.agent_log(aid, f"TinyFish Agent listing failed: {str(e)[:120]}")
-                    self.log(f"TinyFish listing failed on {name}: {str(e)[:120]}", "error")
+                    used_engine = "TinyFish listing"
+                    self.set_agent(aid, engine="TinyFish Agent listing")
+                    if (n_tf + n_sp) == 0 and not crawled and not fetched:
+                        reason = "Listing Search: 0 hit → TinyFish Agent listing"
+                    elif pool:
+                        reason = "Listing juge: aucune → TinyFish Agent listing"
+                    else:
+                        reason = "Listing Search: hits hygiène 0 → TinyFish Agent listing"
+                    self.agent_log(aid, reason)
+                    self.log(f"[{name}] {reason}")
+                    try:
+                        sem = self._tf_sem or asyncio.Semaphore(1)
+                        async with sem:
+                            found = await self._tinyfish_listing_discover(aid, seed, key)
+                    except Exception as e:
+                        self.agent_log(aid, f"TinyFish Agent listing failed: {str(e)[:120]}")
+                        self.log(f"TinyFish listing failed on {name}: {str(e)[:120]}", "error")
 
             if found:
                 self.set_agent(aid, status="SUCCESS")
@@ -973,24 +998,35 @@ class Swarm:
                 self.log(f"[{seed['name']}] {line}")
 
             if not urls and key and self.settings.get("allow_tinyfish_agent", True):
-                used_engine = "TinyFish"
-                self.set_agent(aid, engine="TinyFish Agent fiches")
-                reason = (
-                    "Search: 0 hit → TinyFish Agent fiches"
-                    if (n_tf + n_sp) == 0
-                    else "Search: hits filtrés (0 fiches) → TinyFish Agent fiches"
-                )
-                self.agent_log(aid, reason)
-                self.log(f"[{seed['name']}] {reason}")
-                try:
-                    sem = self._tf_sem or asyncio.Semaphore(1)
-                    async with sem:
-                        urls = await self._tinyfish_discover(
-                            aid, seed, key, max_urls, known_urls)
-                except Exception as e:
-                    tf_err = str(e)[:120]
-                    self.agent_log(aid, f"TinyFish Agent fiches failed: {tf_err}")
-                    self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
+                host_ok = agent_host_is_worthwhile(
+                    seed.get("url") or "", seed.get("name") or "")
+                if not host_ok:
+                    reason = (
+                        "TinyFish Agent fiches sauté — "
+                        "site absent ou pas l'organisme"
+                    )
+                    tf_err = "skipped: host not the organization"
+                    self.agent_log(aid, reason)
+                    self.log(f"[{seed['name']}] {reason}")
+                else:
+                    used_engine = "TinyFish"
+                    self.set_agent(aid, engine="TinyFish Agent fiches")
+                    reason = (
+                        "Search: 0 hit → TinyFish Agent fiches"
+                        if (n_tf + n_sp) == 0
+                        else "Search: hits filtrés (0 fiches) → TinyFish Agent fiches"
+                    )
+                    self.agent_log(aid, reason)
+                    self.log(f"[{seed['name']}] {reason}")
+                    try:
+                        sem = self._tf_sem or asyncio.Semaphore(1)
+                        async with sem:
+                            urls = await self._tinyfish_discover(
+                                aid, seed, key, max_urls, known_urls)
+                    except Exception as e:
+                        tf_err = str(e)[:120]
+                        self.agent_log(aid, f"TinyFish Agent fiches failed: {tf_err}")
+                        self.log(f"TinyFish discovery failed on {seed['name']}: {tf_err}", "error")
             urls = urls[:max_urls]
             engine_code = {
                 "TinyFish": "N3",

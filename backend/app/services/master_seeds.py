@@ -26,6 +26,22 @@ SKIP_LISTING_NETLOCS = {
     "tinyurl.com", "t.co", "goo.gl", "maps.google.com",
 }
 
+# Journaux / éditeurs : un hit SERP n'est pas le site de l'organisme (BMKG ≠ nature.com).
+PUBLISHER_NETLOCS = {
+    "nature.com", "springer.com", "springerlink.com", "springernature.com",
+    "wiley.com", "onlinelibrary.wiley.com", "sciencedirect.com", "elsevier.com",
+    "tandfonline.com", "taylorandfrancis.com", "mdpi.com", "frontiersin.org",
+    "hindawi.com", "researchgate.net", "academia.edu", "theconversation.com",
+    "phys.org", "eurekalert.org", "science.org", "sciencemag.org", "pnas.org",
+    "cell.com", "lancet.com", "nejm.org", "sciencedaily.com", "newscientist.com",
+    "academic.oup.com", "iop.org", "iopscience.iop.org",
+}
+
+_INITIAL_STOP = {
+    "the", "of", "for", "and", "de", "la", "le", "et", "a", "an", "in", "on",
+    "at", "to", "by", "or", "und", "der", "die", "das",
+}
+
 # Catalogues partagés : beaucoup de financeurs v1 ont cette « home » parce
 # que leurs fiches vivent sur le hub (Decade Actions, HUB Ocean), pas sur
 # le site de l'organisme. Ce n'est pas une home à crawler.
@@ -131,6 +147,51 @@ def official_site_retry_query(name: str) -> str | None:
     if not m:
         return None
     return f'"{m.group(1)}" official website'
+
+
+def is_publisher_host(url_or_domain: str | None) -> bool:
+    """True si l'hôte est un journal / éditeur, pas l'organisme."""
+    d = domain_of(url_or_domain)
+    if not d:
+        raw = (url_or_domain or "").strip().lower().replace("www.", "")
+        d = raw.split("/")[0]
+    if not d:
+        return False
+    for pub in PUBLISHER_NETLOCS:
+        if d == pub or d.endswith("." + pub):
+            return True
+    return False
+
+
+def official_name_tokens(name: str) -> list[str]:
+    """Jetons pour matcher un domaine : mots ≥4, acronyme (BMKG), initiales (AWI)."""
+    tokens = [t for t in norm_name(name).split() if len(t) >= 4]
+    m = re.search(r"\(([A-Z][A-Z0-9]{1,7})\)", name or "")
+    if m:
+        ac = m.group(1).lower()
+        if len(ac) >= 2 and ac not in tokens:
+            tokens.append(ac)
+    words = [
+        w for w in re.findall(r"[A-Za-z][A-Za-z0-9]+", name or "")
+        if w.lower() not in _INITIAL_STOP
+    ]
+    while words and words[-1].lower() in {"inc", "ltd", "llc", "gmbh"}:
+        words.pop()
+    if 2 <= len(words) <= 5:
+        initials = "".join(w[0] for w in words).lower()
+        if 3 <= len(initials) <= 6 and initials not in tokens:
+            tokens.append(initials)
+    return tokens
+
+
+def domain_matches_org(url_or_domain: str | None, name: str) -> bool:
+    """Le domaine porte un jeton du nom (bmkg.go.id / BMKG, awi.de / AWI)."""
+    d = domain_of(url_or_domain)
+    if not d:
+        return False
+    compact = d.replace(".", "").replace("-", "")
+    tokens = official_name_tokens(name)
+    return bool(tokens) and any(t in compact for t in tokens)
 
 
 def names_match(a: str, b: str, aliases: list | None = None) -> bool:

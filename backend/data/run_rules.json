@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-12",
+  "updated": "2026-09-13",
   "principle": "Un chiffre n'est pas une opinion. Il est soit une loi (contrat métier, jamais modulable), soit une mesure (phénomène physique + intervalle de validité), soit une calibration (jeu étiqueté / courbe précision-rappel), soit un budget (quota ou argent). L'intervalle dit encore de quoi on parle ; le défaut est le point d'opération. Un run ne peut bouger que dans l'intervalle. Hors intervalle, ce n'est plus la même règle.",
   "kinds": {
     "loi": {
@@ -777,7 +777,7 @@
       "id": "projects.extract_concurrency",
       "mode": "projects",
       "kind": "budget",
-      "value": 6,
+      "value": 2,
       "unit": "workers",
       "interval": [
         1,
@@ -785,7 +785,7 @@
       ],
       "vary": true,
       "settings_key": "extract_concurrency",
-      "principle": "Parallélisme d'extraction. Borné par Nominatim 1 req/s et les quotas LLM.",
+      "principle": "Parallélisme d'extraction. 6 + juge saturent deepseek-v4-pro (429). 2 calme la file NVIDIA.",
       "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8",
       "code": [
         "app/config.py"
@@ -795,8 +795,36 @@
         "en": "Parallel extraction workers"
       },
       "help": {
-        "fr": "Borné par Nominatim 1 req/s et les quotas LLM. Plus haut n'accélère pas le géocode.",
-        "en": "Bounded by Nominatim 1 req/s and LLM quotas. Higher does not speed up geocoding."
+        "fr": "2 est le défaut. Plus haut n'accélère pas : Nominatim 1 req/s et le quota NVIDIA (429).",
+        "en": "Default is 2. Higher does not help: Nominatim 1 req/s and the NVIDIA quota (429)."
+      },
+      "group": "budget"
+    },
+    {
+      "id": "projects.nvidia_max_concurrency",
+      "mode": "projects",
+      "kind": "budget",
+      "value": 2,
+      "unit": "calls",
+      "interval": [
+        1,
+        4
+      ],
+      "vary": true,
+      "settings_key": "nvidia_max_concurrency",
+      "principle": "File globale NIM (juge + extraction). 1–2 appels. Un 429 saute au modèle suivant, sans retry Pro.",
+      "cdc": "CAHIER_DES_CHARGES_PROJETS.md §8",
+      "code": [
+        "app/core/nvidia.py",
+        "app/config.py"
+      ],
+      "title": {
+        "fr": "Appels NVIDIA NIM en parallèle",
+        "en": "Parallel NVIDIA NIM calls"
+      },
+      "help": {
+        "fr": "1 à 4. Juge et extraction partagent cette file. 2 est le défaut.",
+        "en": "1 to 4. Judge and extraction share this queue. Default is 2."
       },
       "group": "budget"
     },
@@ -823,8 +851,8 @@
         "en": "Parallel NVIDIA listing judges"
       },
       "help": {
-        "fr": "1 à 4. 8 juges ensemble saturent deepseek-v4-pro (429 + retries 5/12/25 s). 2 est le défaut.",
-        "en": "1 to 4. Eight judges at once saturate deepseek-v4-pro (429 + 5/12/25 s retries). Default is 2."
+        "fr": "1 à 4. Un 429 saute tout de suite à gpt-oss / Muse (plus de retry 5/12/25 s sur Pro).",
+        "en": "1 to 4. A 429 hops immediately to gpt-oss / Muse (no more 5/12/25 s Pro retries)."
       },
       "group": "budget"
     },

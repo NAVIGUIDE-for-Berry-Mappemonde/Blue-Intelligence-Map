@@ -233,4 +233,6 @@ class TestProjectsAgents:
         assert tf.PROJECTS_LISTING_PURPOSE != tf.PROJECTS_DISCOVERY_PURPOSE
         assert "index page" in tf.PROJECTS_LISTING_PURPOSE.lower()
         assert "not an individual" in tf.PROJECTS_LISTING_PURPOSE.lower()
-        assert tf.LISTING_AGENT_DURATION_S < tf.FICHE_AGENT_DURATION_S
+        assert 60 <= tf.LISTING_AGENT_DURATION_S <= 90
+        assert 60 <= tf.FICHE_AGENT_DURATION_S <= 90
+        assert tf.LISTING_AGENT_DURATION_S <= tf.FICHE_AGENT_DURATION_S

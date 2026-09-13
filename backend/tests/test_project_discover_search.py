@@ -141,7 +141,7 @@ def test_official_site_skips_facebook():
         {"url": "https://www.facebook.com/wildoysters"},
         {"url": "https://wild-oysters.org/about"},
     ]
-    assert official_site_from_hits(hits) == "https://wild-oysters.org/"
+    assert official_site_from_hits(hits, "Wild Oysters") == "https://wild-oysters.org/"
 
 
 def test_official_site_skips_shared_hub_prefers_name_domain():
@@ -155,6 +155,49 @@ def test_official_site_skips_shared_hub_prefers_name_domain():
     ) == "https://www.bmkg.go.id/"
     only_hub = [{"url": "https://hubocean.earth/use-cases"}]
     assert official_site_from_hits(only_hub, "Aker Biomarine") == ""
+
+
+def test_official_site_rejects_publisher_and_first_serp():
+    name = "Agency for Meteorology (BMKG) – Indonesia"
+    assert official_site_from_hits(
+        [{"url": "https://www.nature.com/articles/s41586-bmkg"}], name
+    ) == ""
+    assert official_site_from_hits(
+        [
+            {"url": "https://www.nature.com/articles/s41586-bmkg"},
+            {"url": "https://www.usgs.gov/centers/"},
+        ],
+        name,
+    ) == ""
+    assert official_site_from_hits(
+        [
+            {"url": "https://www.nature.com/articles/s41586-bmkg"},
+            {"url": "https://www.bmkg.go.id/"},
+        ],
+        name,
+    ) == "https://www.bmkg.go.id/"
+
+
+def test_official_site_matches_short_acronym():
+    hits = [
+        {"url": "https://www.helmholtz.de/en/"},
+        {"url": "https://www.awi.de/en/"},
+    ]
+    assert official_site_from_hits(
+        hits, "Alfred Wegener Institute (AWI)"
+    ) == "https://www.awi.de/"
+    assert official_site_from_hits(
+        hits, "Alfred Wegener Institute"
+    ) == "https://www.awi.de/"
+
+
+def test_official_site_nature_org_not_nature_com():
+    assert official_site_from_hits(
+        [{"url": "https://www.nature.com/"}], "The Nature Conservancy"
+    ) == ""
+    assert official_site_from_hits(
+        [{"url": "https://www.nature.org/"}], "The Nature Conservancy"
+    ) == "https://www.nature.org/"
 
 
 def test_purpose_is_projects_not_poe():

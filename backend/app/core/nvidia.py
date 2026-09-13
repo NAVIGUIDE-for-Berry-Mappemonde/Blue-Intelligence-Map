@@ -70,6 +70,30 @@ _ALIASES = {
 
 # Ordre = canari 2026-09-09 (qualité puis latence, 529/429 en queue).
 # Muse n'est plus 2ᵉ par héritage : gpt-oss a été plus rapide à qualité égale.
+# File globale juge + extraction. 6 extracteurs + 2 juges sur le même Pro = 429.
+_nvidia_limit = 2
+_nvidia_gate: asyncio.Semaphore | None = None
+
+
+def configure_concurrency(n=None) -> int:
+    """1–4 appels NIM en parallèle (juge et extraction partagent la file)."""
+    global _nvidia_limit, _nvidia_gate
+    raw = n if n is not None else os.environ.get("NVIDIA_MAX_CONCURRENCY", _nvidia_limit)
+    try:
+        _nvidia_limit = max(1, min(4, int(raw)))
+    except (TypeError, ValueError):
+        _nvidia_limit = 2
+    _nvidia_gate = asyncio.Semaphore(_nvidia_limit)
+    return _nvidia_limit
+
+
+def _nvidia_sem() -> asyncio.Semaphore:
+    global _nvidia_gate
+    if _nvidia_gate is None:
+        configure_concurrency()
+    return _nvidia_gate
+
+
 CHAINS = {
     "judge": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL, FLASH_MODEL),
     "extract": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
@@ -425,7 +449,11 @@ async def _complete_one(key: str, payload: dict, *,
             if log:
                 log(f"nvidia {used['model']}: json_object rejeté, retry sans format")
             continue
-        if r.status_code in (429, 500, 502, 503) and delay is not None:
+        if r.status_code == 429:
+            # Quota Pro : 3 retries 5/12/25 s sur le même modèle = tempête.
+            # La chaîne (gpt-oss / Muse) part tout de suite.
+            raise RuntimeError(f"nvidia HTTP 429: {(r.text or '')[:160]}")
+        if r.status_code in (500, 502, 503) and delay is not None:
             wait = _retry_wait(r, delay)
             if log:
                 log(f"nvidia {used['model']}: HTTP {r.status_code}, retry in {wait:.0f}s")
@@ -468,20 +496,21 @@ async def complete_json_nvidia_tracked(
         (_usable_nim(model or primary_model()),)
     )
     last_err = "nvidia exhausted chain"
-    for used in chain:
-        payload = chat_payload(used, system, prompt, max_tokens, role=role)
-        try:
-            data = await _complete_one(key, payload, max_tokens=max_tokens, log=log)
-            return data, used
-        except RuntimeError as e:
-            last_err = str(e)
-            more = fallback and used != chain[-1]
-            if log:
-                nxt = " → suivant" if more else ""
-                log(f"nvidia {used}: {last_err[:120]}{nxt}")
-            if not more:
-                break
-            continue
+    async with _nvidia_sem():
+        for used in chain:
+            payload = chat_payload(used, system, prompt, max_tokens, role=role)
+            try:
+                data = await _complete_one(key, payload, max_tokens=max_tokens, log=log)
+                return data, used
+            except RuntimeError as e:
+                last_err = str(e)
+                more = fallback and used != chain[-1]
+                if log:
+                    nxt = " → suivant" if more else ""
+                    log(f"nvidia {used}: {last_err[:120]}{nxt}")
+                if not more:
+                    break
+                continue
     raise RuntimeError(last_err)
 
 
@@ -520,33 +549,34 @@ async def complete_text_nvidia(system: str, prompt: str,
         "Accept": "application/json",
     }
     timeout = httpx.Timeout(120.0, connect=20.0)
-    for used in chain:
-        payload = chat_payload(
-            used, system, prompt, max_tokens, json_object=False, role=role)
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                r = await client.post(NVIDIA_URL, headers=headers, json=payload)
-        except httpx.TimeoutException as e:
-            last_err = f"nvidia timeout: {type(e).__name__}"
-            if log:
-                log(f"nvidia {used}: {last_err}")
+    async with _nvidia_sem():
+        for used in chain:
+            payload = chat_payload(
+                used, system, prompt, max_tokens, json_object=False, role=role)
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    r = await client.post(NVIDIA_URL, headers=headers, json=payload)
+            except httpx.TimeoutException as e:
+                last_err = f"nvidia timeout: {type(e).__name__}"
+                if log:
+                    log(f"nvidia {used}: {last_err}")
+                if not fallback or used == chain[-1]:
+                    break
+                continue
+            if r.status_code >= 400:
+                last_err = f"nvidia HTTP {r.status_code}: {(r.text or '')[:160]}"
+                if log:
+                    log(f"nvidia {used}: {last_err[:120]}")
+                if not fallback or used == chain[-1]:
+                    break
+                continue
+            msg = ((r.json().get("choices") or [{}])[0].get("message") or {})
+            text = _message_text(msg).strip()
+            if text:
+                return text
+            last_err = "nvidia: empty text"
             if not fallback or used == chain[-1]:
                 break
-            continue
-        if r.status_code >= 400:
-            last_err = f"nvidia HTTP {r.status_code}: {(r.text or '')[:160]}"
-            if log:
-                log(f"nvidia {used}: {last_err[:120]}")
-            if not fallback or used == chain[-1]:
-                break
-            continue
-        msg = ((r.json().get("choices") or [{}])[0].get("message") or {})
-        text = _message_text(msg).strip()
-        if text:
-            return text
-        last_err = "nvidia: empty text"
-        if not fallback or used == chain[-1]:
-            break
     raise RuntimeError(last_err)
 
 

@@ -67,6 +67,13 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_shared_hub_home(own) is False
     assert ms.official_site_query(bmkg["name"]) == f'"{bmkg["name"]}" official site'
     assert ms.official_site_retry_query(bmkg["name"]) == '"BMKG" official website'
+    assert ms.is_publisher_host("https://www.nature.com/articles/x") is True
+    assert ms.is_publisher_host("https://www.bmkg.go.id/") is False
+    assert "bmkg" in ms.official_name_tokens(bmkg["name"])
+    assert ms.domain_matches_org("https://www.bmkg.go.id/", bmkg["name"]) is True
+    assert ms.domain_matches_org("https://www.nature.com/", bmkg["name"]) is False
+    assert "awi" in ms.official_name_tokens("Alfred Wegener Institute (AWI)")
+    assert "awi" in ms.official_name_tokens("Alfred Wegener Institute")
     assert ms.is_known_funder(
         [decade], "BMKG", "https://oceandecade.org/actions/x") is False
     assert ms.is_known_funder(

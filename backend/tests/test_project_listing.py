@@ -13,7 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.core.tinyfish import LISTING_SCHEMA, PROJECTS_LISTING_PURPOSE
+from app.core.tinyfish import (
+    FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S, LISTING_SCHEMA,
+    PROJECTS_LISTING_PURPOSE,
+)
+from app.services.swarm_pipeline import agent_host_is_worthwhile
 from app.services.project_listing import (
     accept_listing_url, apply_learned_listings,
     filter_listing_urls, hygiene_listing_urls, infer_listing_from_project_urls,
@@ -474,8 +478,10 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
     assert calls[1]["required"] == ["projects"]
     assert "one individual" in calls[1]["goal"].lower()
     assert calls[1]["url"] == "https://example.org/projects/"
-    assert calls[0]["cfg"].get("max_duration_seconds") == 180
-    assert calls[1]["cfg"].get("max_duration_seconds") == 300
+    assert calls[0]["cfg"].get("max_duration_seconds") == LISTING_AGENT_DURATION_S
+    assert calls[1]["cfg"].get("max_duration_seconds") == FICHE_AGENT_DURATION_S
+    assert 60 <= LISTING_AGENT_DURATION_S <= 90
+    assert 60 <= FICHE_AGENT_DURATION_S <= 90
     assert LISTING_SCHEMA["required"] == ["listing_url"]
     assert sw.db.projects.docs == []
     assert sw.wrote_projects is False
@@ -641,6 +647,47 @@ def test_listing_judge_none_then_agent_keeps_our_programmes(monkeypatch):
     assert "TinyFish Agent listing" in msgs
     remembered = sw.db.master_seeds.docs
     assert any(d.get("url") == "https://example.org/our-programmes" for d in remembered)
+
+
+def test_publisher_or_missing_host_skips_tinyfish_agents(monkeypatch):
+    sw = _swarm()
+    seed = {
+        "name": "Agency for Meteorology (BMKG) – Indonesia",
+        "url": "https://www.nature.com/articles/s41586-bmkg",
+        "listing_kind": "homepage",
+    }
+    assert agent_host_is_worthwhile(seed["url"], seed["name"]) is False
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def empty_search(*a, **k):
+        return [], 0, 0
+
+    async def boom_listing(*a, **k):
+        raise AssertionError("listing Agent must not run on a publisher host")
+
+    async def boom_fiche(*a, **k):
+        raise AssertionError("fiche Agent must not run on a publisher host")
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+    monkeypatch.setattr(sw, "_search_discover", empty_search)
+    monkeypatch.setattr(sw, "_tinyfish_listing_discover", boom_listing)
+    monkeypatch.setattr(sw, "_tinyfish_discover", boom_fiche)
+
+    queued = _run(_queued(sw, seed))
+    assert queued == []
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "TinyFish Agent listing sauté" in msgs
+    assert "TinyFish Agent fiches sauté" in msgs
 
 
 def test_parse_listing_judge_rejects_invented():

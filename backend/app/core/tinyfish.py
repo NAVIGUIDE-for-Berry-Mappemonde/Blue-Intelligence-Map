@@ -35,8 +35,9 @@ PROJECTS_LISTING_PURPOSE = (
     "/campaigns/). Not an individual project page, not news, not the homepage."
 )
 
-LISTING_AGENT_DURATION_S = 180
-FICHE_AGENT_DURATION_S = 300
+# Agent = scalpel. 180/300 s brûlait le chrono sur un mauvais hôte (SSE drop).
+LISTING_AGENT_DURATION_S = 75
+FICHE_AGENT_DURATION_S = 90
 
 # Une retry 429 ; monkeypatchable dans les tests.
 SEARCH_RETRY_SLEEP_S = 2.0
