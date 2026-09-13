@@ -104,94 +104,102 @@ export default function useClimatologyLayer({
     let cancelled = false;
     const popupOpts = { ...POPUP_OPTS, maxWidth: 300 };
 
+    const silent = (fn) => fn().catch(() => undefined);
+
+    const loadWind = async () => {
+      const { data } = await api.get("/climatology/wind.geojson", { params: { month, spacing_deg: 2 } });
+      if (cancelled) return;
+      const group = L.layerGroup();
+      (data.features || []).forEach((f) => {
+        const [lon, lat] = f.geometry?.coordinates || [];
+        const p = f.properties || {};
+        const icon = L.divIcon({
+          className: "bi-climo-rose",
+          html: roseSvg(p),
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+        });
+        const m = L.marker([lat, lon], { icon, pane: "climatology-vector", interactive: false });
+        m.bindPopup(() => popupHtml("wind", p, tRef.current), popupOpts);
+        group.addLayer(m);
+      });
+      layersRef.current.wind = group;
+      group.addTo(map);
+    };
+
+    const loadWave = async () => {
+      const { data } = await api.get("/climatology/wave.geojson", {
+        params: { month, stat: waveStat, spacing_deg: 2 },
+      });
+      if (cancelled) return;
+      const group = L.layerGroup();
+      (data.features || []).forEach((f) => {
+        const [lon, lat] = f.geometry?.coordinates || [];
+        const p = f.properties || {};
+        const c = L.circleMarker([lat, lon], {
+          pane: "climatology-raster",
+          radius: 5,
+          color: waveColor(Number(p.hs_m) || 0, p.stat),
+          fillColor: waveColor(Number(p.hs_m) || 0, p.stat),
+          fillOpacity: 0.55,
+          weight: 0,
+          interactive: false,
+        });
+        c.bindPopup(() => popupHtml("wave", p, tRef.current), popupOpts);
+        group.addLayer(c);
+      });
+      layersRef.current.wave = group;
+      group.addTo(map);
+    };
+
+    const loadCurrent = async () => {
+      const { data } = await api.get("/climatology/current.geojson", { params: { month, spacing_deg: 2 } });
+      if (cancelled) return;
+      const group = L.layerGroup();
+      (data.features || []).forEach((f) => {
+        const [lon, lat] = f.geometry?.coordinates || [];
+        const p = f.properties || {};
+        if (p.below_threshold) return;
+        const m = L.marker([lat, lon], {
+          icon: currentIcon(p),
+          pane: "climatology-vector",
+          interactive: false,
+        });
+        m.bindPopup(() => popupHtml("current", p, tRef.current), popupOpts);
+        group.addLayer(m);
+      });
+      layersRef.current.current = group;
+      group.addTo(map);
+    };
+
+    const loadCyclones = async () => {
+      const { data } = await api.get("/climatology/cyclones.geojson", { params: { month } });
+      if (cancelled) return;
+      const group = L.layerGroup();
+      (data.features || []).forEach((f) => {
+        const coords = (f.geometry?.coordinates || []).map(([ln, lt]) => [lt, ln]);
+        if (coords.length < 2) return;
+        const p = f.properties || {};
+        const line = L.polyline(coords, {
+          pane: "climatology-vector",
+          color: p.color || COLOR,
+          weight: 1.6,
+          opacity: 0.75,
+          interactive: false,
+        });
+        line.bindPopup(() => popupHtml("cyclones", p, tRef.current), popupOpts);
+        group.addLayer(line);
+      });
+      layersRef.current.cyclones = group;
+      group.addTo(map);
+    };
+
     const load = async () => {
       const jobs = [];
-      if (filters?.wind) {
-        jobs.push(api.get("/climatology/wind.geojson", { params: { month, spacing_deg: 2 } }).then(({ data }) => {
-          if (cancelled) return;
-          const group = L.layerGroup();
-          (data.features || []).forEach((f) => {
-            const [lon, lat] = f.geometry?.coordinates || [];
-            const p = f.properties || {};
-            const icon = L.divIcon({
-              className: "bi-climo-rose",
-              html: roseSvg(p),
-              iconSize: [32, 32],
-              iconAnchor: [16, 16],
-            });
-            const m = L.marker([lat, lon], { icon, pane: "climatology-vector", interactive: false });
-            m.bindPopup(() => popupHtml("wind", p, tRef.current), popupOpts);
-            group.addLayer(m);
-          });
-          layersRef.current.wind = group;
-          group.addTo(map);
-        }).catch(() => {});
-      }
-      if (filters?.wave) {
-        jobs.push(api.get("/climatology/wave.geojson", { params: { month, stat: waveStat, spacing_deg: 2 } }).then(({ data }) => {
-          if (cancelled) return;
-          const group = L.layerGroup();
-          (data.features || []).forEach((f) => {
-            const [lon, lat] = f.geometry?.coordinates || [];
-            const p = f.properties || {};
-            const c = L.circleMarker([lat, lon], {
-              pane: "climatology-raster",
-              radius: 5,
-              color: waveColor(Number(p.hs_m) || 0, p.stat),
-              fillColor: waveColor(Number(p.hs_m) || 0, p.stat),
-              fillOpacity: 0.55,
-              weight: 0,
-              interactive: false,
-            });
-            c.bindPopup(() => popupHtml("wave", p, tRef.current), popupOpts);
-            group.addLayer(c);
-          });
-          layersRef.current.wave = group;
-          group.addTo(map);
-        }).catch(() => {});
-      }
-      if (filters?.current) {
-        jobs.push(api.get("/climatology/current.geojson", { params: { month, spacing_deg: 2 } }).then(({ data }) => {
-          if (cancelled) return;
-          const group = L.layerGroup();
-          (data.features || []).forEach((f) => {
-            const [lon, lat] = f.geometry?.coordinates || [];
-            const p = f.properties || {};
-            if (p.below_threshold) return;
-            const m = L.marker([lat, lon], {
-              icon: currentIcon(p),
-              pane: "climatology-vector",
-              interactive: false,
-            });
-            m.bindPopup(() => popupHtml("current", p, tRef.current), popupOpts);
-            group.addLayer(m);
-          });
-          layersRef.current.current = group;
-          group.addTo(map);
-        }).catch(() => {});
-      }
-      if (filters?.cyclones) {
-        jobs.push(api.get("/climatology/cyclones.geojson", { params: { month } }).then(({ data }) => {
-          if (cancelled) return;
-          const group = L.layerGroup();
-          (data.features || []).forEach((f) => {
-            const coords = (f.geometry?.coordinates || []).map(([ln, lt]) => [lt, ln]);
-            if (coords.length < 2) return;
-            const p = f.properties || {};
-            const line = L.polyline(coords, {
-              pane: "climatology-vector",
-              color: p.color || COLOR,
-              weight: 1.6,
-              opacity: 0.75,
-              interactive: false,
-            });
-            line.bindPopup(() => popupHtml("cyclones", p, tRef.current), popupOpts);
-            group.addLayer(line);
-          });
-          layersRef.current.cyclones = group;
-          group.addTo(map);
-        }).catch(() => {});
-      }
+      if (filters && filters.wind) jobs.push(silent(loadWind));
+      if (filters && filters.wave) jobs.push(silent(loadWave));
+      if (filters && filters.current) jobs.push(silent(loadCurrent));
+      if (filters && filters.cyclones) jobs.push(silent(loadCyclones));
       await Promise.all(jobs);
     };
     load();
