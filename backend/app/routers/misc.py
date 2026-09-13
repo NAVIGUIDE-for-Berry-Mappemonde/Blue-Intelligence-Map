@@ -84,6 +84,7 @@ class SettingsBody(BaseModel):
     max_markers: int | None = None
     follow_the_money: bool | None = None
     max_partner_orgs: int | None = None
+    ftm_min_s_ocean: float | None = None
     discover_concurrency: int | None = None
     listing_judge_concurrency: int | None = None
     saturation_limit: int | None = None

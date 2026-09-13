@@ -386,7 +386,7 @@ def _strip_name_articles(n: str) -> str:
 
 
 def names_soft_match(a: str, b: str, aliases: list | None = None) -> bool:
-    """Même organisme : articles / suffixe Foundation, pas un domaine partagé."""
+    """Même organisme : articles / suffixe Foundation, acronyme alias (WWF)."""
     if names_match(a, b, aliases):
         return True
     na = _strip_name_articles(norm_name(a))
@@ -398,7 +398,49 @@ def names_soft_match(a: str, b: str, aliases: list | None = None) -> bool:
             continue
         if y.startswith(x + " ") and y[len(x):] in _NAME_SUFFIXES:
             return True
+    for al in aliases or []:
+        nal = norm_name(al)
+        if not nal or " " in nal or not (2 <= len(nal) <= 6):
+            continue
+        # Les deux noms doivent porter l'acronyme. Sinon « WWF Oceans »
+        # (alias WWF) collerait n'importe quel partenaire.
+        a_has = na == nal or na.startswith(nal + " ")
+        b_has = nb == nal or nb.startswith(nal + " ")
+        if a_has and b_has:
+            return True
+    wa = re.findall(r"[A-Za-zÀ-ÿ0-9]+", a or "")
+    wb = re.findall(r"[A-Za-zÀ-ÿ0-9]+", b or "")
+    if (
+        wa and wb
+        and len(wa) >= 2 and len(wb) >= 2
+        and wa[0].lower() == wb[0].lower()
+        and wa[0].isupper() and wb[0].isupper()
+        and 2 <= len(wa[0]) <= 5
+        and wa[0].lower() not in _GENERIC_ORG_TOKENS
+        and wa[0].lower() not in _INITIAL_STOP
+    ):
+        return True
     return False
+
+
+def prefer_official_home(seed: dict | None) -> dict:
+    """Si la home est officielle, ne pas crawler un hub recollé (Mongo / v1)."""
+    item = dict(seed or {})
+    name = item.get("name") or ""
+    home = (item.get("home_url") or "").strip()
+    url = (item.get("url") or "").strip()
+    if (item.get("home_status") or "").strip().lower() != "official":
+        return item
+    official = home or url
+    if not official:
+        return item
+    if url and is_shared_hub(url) and not name_owns_hub(name, url):
+        item["url"] = home or official
+        if domain_of(url) != domain_of(item["url"]):
+            item["listing_kind"] = "homepage"
+            if domain_of(item.get("listing_url") or "") != domain_of(item["url"]):
+                item["listing_url"] = None
+    return item
 
 
 def listing_url_from_project_urls(urls: list[str], funder_name: str = "") -> str | None:
@@ -505,10 +547,20 @@ def _without_priority(seed: dict) -> dict:
 
 
 def seeds_for_run(seeds: list[dict]) -> list[dict]:
-    """File Complet : home officielle ou page-liste déjà classée. Pas les hubs."""
+    """File Complet : curés d'abord, puis gros project_count. Pas d'alphabet A–Z.
+
+    FTM dépense ses tickets sur les partenaires des vrais portails (Pew, WWF),
+    pas sur la première page « Alpha / Brevard » du JSON.
+    """
     from app.services.seed_catalog import is_crawl_ready
     ready = [s for s in seeds if is_crawl_ready(s)]
-    return sorted(ready, key=lambda s: (s.get("name") or "").lower())
+
+    def _key(s: dict) -> tuple:
+        curated = 0 if (s.get("source") or "") == "curated" else 1
+        count = -int(s.get("project_count") or 0)
+        return (curated, count, (s.get("name") or "").lower())
+
+    return sorted(ready, key=_key)
 
 
 def is_known_funder(seeds: list[dict], name: str | None = None, url: str | None = None) -> bool:

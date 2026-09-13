@@ -15,14 +15,16 @@ from app.services.project_listing import (
 )
 from app.services.seed_catalog import (
     FTM_DISCOVER, FTM_SEARCH, FTM_SKIP, accept_partner_url,
+    ftm_page_allows_collect, rank_ftm_inbox,
     append_search_journal, apply_compound_splits, apply_home_review,
     apply_listing_result, apply_official_site_result, assign_queue,
     build_enriched_master_seeds, classify_home, classify_name,
     decide_follow_the_money_partner, dump_catalog,
     infer_listings_onto_official_homes, infer_own_listing, is_crawl_ready,
-    journal_done_names, listing_candidates, load_search_journal,
-    overlay_home_reviews, overlay_listing_results, overlay_search_results,
-    search_candidates, split_compound_parts, write_audit,
+    is_wide_corporate_home, journal_done_names, listing_candidates,
+    load_search_journal, name_needs_official_search, overlay_home_reviews,
+    overlay_listing_results, overlay_search_results, search_candidates,
+    split_compound_parts, write_audit,
 )
 from app.static_data.seeds import CURATED_SEEDS
 
@@ -40,6 +42,13 @@ def test_classify_name_keeps_single_org_and():
     assert classify_name("International Association of Oil and Gas Producers (IOGP)") == "ok"
     assert classify_name("Arctic and Antarctic Research Institute (AARI)") == "ok"
     assert classify_name("Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)") == "ok"
+    assert classify_name("BlueInvest, Bpifrance") == "compound"
+    assert classify_name("Oceana, Google") == "compound"
+    assert classify_name("La chasse en France") == "exclude"
+    assert classify_name("Hunting Association") == "exclude"
+    assert classify_name(
+        "Alfred-Wegener-Institut, Helmholtz-Zentrum für Polar- und Meeresforschung (AWI)"
+    ) == "ok"
 
 
 def test_classify_home_borrowed_vs_owner():
@@ -155,6 +164,51 @@ def test_names_soft_match_foundation_suffix():
     assert ms.names_soft_match("Pure Ocean", "Pure Ocean Foundation")
     assert ms.names_soft_match("The Ocean Foundation", "Ocean Foundation")
     assert not ms.names_soft_match("Horizon Europe", "CORDIS Europe")
+    assert ms.names_soft_match("WWF Oceans", "WWF International", ["WWF"])
+    assert ms.names_soft_match("WWF Oceans", "WWF", ["WWF"])
+    assert not ms.names_soft_match("WWF Oceans", "Horizon Europe", ["WWF"])
+    assert not ms.names_soft_match("Rare Fish Forever", "Wild Oysters", ["Rare"])
+    assert not ms.names_soft_match("CEA and CNRS", "CEA")
+    assert not ms.names_soft_match("Wild Trust", "Wild Oysters")
+
+
+def test_name_needs_official_search_short_or_one_syllable():
+    assert name_needs_official_search("Wacan") is True
+    assert name_needs_official_search("WWF") is True
+    assert name_needs_official_search("Shell") is True
+    assert name_needs_official_search("Mawimbi") is False
+    assert name_needs_official_search("Save Our Seas Foundation") is False
+
+
+def test_wide_corporate_home_and_queue():
+    axa = {
+        "name": "AXA Atout Coeur",
+        "url": "https://www.axa.com/",
+        "home_url": "https://www.axa.com/",
+        "home_status": "official",
+        "name_status": "ok",
+        "listing_kind": "homepage",
+    }
+    assert is_wide_corporate_home(axa) is True
+    assert assign_queue(axa) == "resolve"
+    assert is_crawl_ready(axa) is False
+    bloom = {
+        "name": "Bloomberg Philanthropies",
+        "url": "https://www.bloomberg.org/",
+        "home_url": "https://www.bloomberg.org/",
+        "home_status": "official",
+        "name_status": "ok",
+    }
+    assert is_wide_corporate_home(bloom) is True
+    ocean = {
+        "name": "AXA Research Fund",
+        "url": "https://www.axa.com/en/about-us/axa-research-fund-ocean",
+        "home_url": "https://www.axa.com/",
+        "listing_kind": "projects_index",
+        "home_status": "official",
+        "name_status": "ok",
+    }
+    assert is_wide_corporate_home(ocean) is False
 
 
 def test_wcs_initials_match_domain():
@@ -627,3 +681,82 @@ def test_decide_ftm_name_and_search_gates():
         "Wild Oysters", None, searched_home="", did_search=True)
     assert empty["action"] == FTM_SKIP
     assert empty["reason"] == "search_empty"
+
+    hunt = decide_follow_the_money_partner(
+        "La chasse en France", "https://www.chasseurdefrance.com/")
+    assert hunt["action"] == FTM_SKIP
+    assert hunt["reason"] == "exclude"
+
+    wacan = decide_follow_the_money_partner(
+        "Wacan", "https://www.wacan.com/")
+    assert wacan["action"] == FTM_SEARCH
+    assert wacan["reason"] == "short_name"
+    assert wacan["needs_search"] is True
+
+    wacan_empty = decide_follow_the_money_partner(
+        "Wacan", "https://www.wacan.com/", searched_home="", did_search=True)
+    assert wacan_empty["action"] == FTM_SKIP
+    assert wacan_empty["reason"] == "search_empty"
+
+    wwf_cat = [{
+        "name": "WWF Oceans",
+        "url": "https://www.worldwildlife.org/initiatives/oceans",
+        "home_url": "https://worldwildlife.org/",
+        "home_status": "official",
+        "name_status": "ok",
+        "queue": "crawl",
+        "listing_kind": "projects_index",
+        "aliases": ["WWF"],
+        "source": "curated",
+    }]
+    wwf = decide_follow_the_money_partner(
+        "WWF International", "https://www.wwf.org/", catalog=wwf_cat)
+    assert wwf["action"] == FTM_DISCOVER
+    assert wwf["reason"] == "catalog"
+    assert "worldwildlife.org" in wwf["seed"]["url"]
+
+
+def test_ftm_page_allows_collect_gates():
+    assert ftm_page_allows_collect(False, 0.95) is False
+    assert ftm_page_allows_collect(True, 0.5, 0.7) is False
+    assert ftm_page_allows_collect(True, 0.8, 0.7) is True
+    assert ftm_page_allows_collect(True, None, 0.7) is True
+
+
+def test_rank_ftm_inbox_votes_and_demotes_university():
+    ranked = rank_ftm_inbox([
+        {"name": "USGS", "url": "https://usgs.gov/", "s_ocean": 0.9},
+        {"name": "HCMR", "url": "https://hcmr.gr/", "s_ocean": 0.92},
+        {"name": "HCMR", "url": "https://hcmr.gr/", "s_ocean": 0.88},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.91},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.9},
+        {"name": "University of Maryland", "url": "https://umaryland.edu/", "s_ocean": 0.9},
+    ])
+    names = [r["name"] for r in ranked]
+    assert names[0] == "HCMR"
+    assert names[-1] == "University of Maryland"
+    assert ranked[0]["mentions"] == 2
+
+
+def test_seyccat_review_makes_catalog_crawl_ready():
+    seed = {
+        "name": "Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)",
+        "url": None,
+        "home_status": "borrowed_hub",
+        "queue": "resolve",
+        "name_status": "ok",
+        "borrowed_domain": "globalfundcoralreefs.org",
+    }
+    apply_home_review(seed, {
+        "name": seed["name"],
+        "action": "keep",
+        "home_url": "https://seyccat.org/",
+        "listing_kind": "home_only",
+    })
+    assert seed["queue"] == "crawl"
+    assert seed["home_status"] == "official"
+    assert seed["url"] == "https://seyccat.org/"
+    assert is_crawl_ready(seed)
+    hit = decide_follow_the_money_partner(seed["name"], None, catalog=[seed])
+    assert hit["action"] == FTM_DISCOVER
+    assert hit["reason"] == "catalog"
