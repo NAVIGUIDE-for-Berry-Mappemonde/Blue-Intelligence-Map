@@ -259,6 +259,11 @@ class TestAgentConfigAndPoll:
         t = tf.sse_http_timeout()
         assert t.read is None
         assert t.connect == 30.0
+        assert tf.sse_wall_budget_s(75) == 75 + tf.POLL_GRACE_S
+        assert tf.sse_wall_budget_s(90) == 90 + tf.POLL_GRACE_S
+        assert tf.sse_wall_budget_s(75) == 120
+        assert tf.is_sse_stream_end(TimeoutError("SSE stream ended without COMPLETE event"))
+        assert tf.is_sse_stream_end(TimeoutError()) is False
 
     def test_poll_same_run_completes(self, monkeypatch):
         async def no_sleep(_):

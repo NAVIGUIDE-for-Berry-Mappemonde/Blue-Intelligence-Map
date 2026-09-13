@@ -52,6 +52,9 @@ AGENT_CONCURRENCY = 2
 # bêta-gate et TinyFish répond 403 FORBIDDEN (docs.tinyfish.ai/agent-api/reference).
 AGENT_CREDIT_CAP = 40
 POLL_GRACE_S = 45              # file PENDING + arrêt max_duration côté TinyFish
+# Doc Agent SSE : timeout client « N/A » (heartbeats). L'exemple raw HTTP
+# utilise timeout=120. On garde read=None et on coupe au mur
+# max_duration + POLL_GRACE (listing 75+45=120, fiches 90+45=135).
 FETCH_URL_CAP = 10             # max URLs / requête Fetch
 SEARCH_PAGE_CAP = 3            # ~10 hits/page → jusqu'à 30 URLs / graine
 SEARCH_PAGE_MAX = 10           # plafond API TinyFish
@@ -168,8 +171,22 @@ def public_agent_config(cfg: dict | None) -> dict | None:
     return {"max_duration_seconds": seconds}
 
 
+def sse_wall_budget_s(max_duration_s) -> float:
+    """Plafond client d'un Agent : max_duration + grâce (exemple raw TF = 120 s)."""
+    try:
+        seconds = int(max_duration_s or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    return float(max(1, seconds) + POLL_GRACE_S)
+
+
+def is_sse_stream_end(exc: BaseException) -> bool:
+    """True si le flux SSE s'est fermé sans COMPLETE (pas le plafond wait_for)."""
+    return isinstance(exc, TimeoutError) and "SSE stream ended" in str(exc)
+
+
 def sse_http_timeout(timeout=None) -> httpx.Timeout:
-    """Agent SSE : timeout client N/A (docs.tinyfish.ai/for-coding-agents)."""
+    """SSE : read=None pour les HEARTBEAT. Le plafond est sse_wall_budget_s."""
     if isinstance(timeout, httpx.Timeout):
         return timeout
     return httpx.Timeout(connect=30.0, read=None, write=60.0, pool=30.0)

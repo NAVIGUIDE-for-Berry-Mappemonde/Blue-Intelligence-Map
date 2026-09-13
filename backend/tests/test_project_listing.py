@@ -703,6 +703,80 @@ def test_sse_drop_after_started_polls_same_run(monkeypatch):
     assert "même run" in agent_text
 
 
+def test_sse_wall_clock_cancels_same_run(monkeypatch):
+    sw = _swarm()
+    seen = {"async": 0, "cancel": []}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def empty_search(*a, **k):
+        return [], 0, 0
+
+    async def hang_sse(url, goal, schema, key, on_event=None, **kw):
+        if on_event:
+            await on_event({"type": "STARTED", "run_id": "run_wall_1"})
+        await asyncio.sleep(30)
+
+    async def boom_async(*a, **k):
+        seen["async"] += 1
+        raise AssertionError("wall clock must not start run-async")
+
+    async def fake_cancel(run_id, key):
+        seen["cancel"].append(run_id)
+        return {"status": "CANCELLED"}
+
+    async def fake_get(run_id, key):
+        return {"status": "CANCELLED"}
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+    monkeypatch.setattr(sw, "_search_discover", empty_search)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_run_sse", hang_sse)
+    monkeypatch.setattr(sp, "tf_run_async", boom_async)
+    monkeypatch.setattr(sp, "tf_cancel_run", fake_cancel)
+    monkeypatch.setattr(sp, "tf_get_run", fake_get)
+    monkeypatch.setattr(sp, "sse_wall_budget_s", lambda *_: 0.05)
+
+    queued = _run(_queued(sw, HOME))
+    assert queued == []
+    assert seen["async"] == 0
+    assert "run_wall_1" in seen["cancel"]
+    agent_text = " ".join(
+        line for a in sw.agents.values() for line in (a.get("logs") or []))
+    assert "plafond" in agent_text
+    assert "pas de 2ᵉ Agent" in agent_text or "pas de 2e Agent" in agent_text
+
+
+def test_swarm_stop_cancels_live_tinyfish_runs(monkeypatch):
+    sw = _swarm()
+    sw._tf_live_runs = {"A1": "run_live_1"}
+    sw.agents["A1"] = {"id": "A1", "status": "RUNNING", "logs": []}
+    seen = []
+
+    async def fake_cancel(run_id, key):
+        seen.append(run_id)
+        return {"status": "CANCELLED"}
+
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_cancel_run", fake_cancel)
+    monkeypatch.setattr(sp, "tf_api_key", lambda *a, **k: "k")
+
+    _run(sw.stop())
+    assert seen == ["run_live_1"]
+    assert sw.agents["A1"]["status"] == "CANCELLED"
+    assert sw._tf_live_runs == {}
+    assert sw.running is False
+
+
 def test_sse_429_retries_then_skips_second_run(monkeypatch):
     sw = _swarm()
     seen = {"sse": 0, "async": 0}
