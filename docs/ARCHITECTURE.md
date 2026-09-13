@@ -40,7 +40,7 @@ effectué, (3) la proposition de rangement et de découpage cible.
 | `api.js` | Client axios vers `REACT_APP_BACKEND_URL/api` |
 | `i18n.js` | Dictionnaires EN/FR |
 | `components/MapView.js` | Carte Leaflet : clusters projets/marinas/mouillages, choroplèthe ZEE, popups, route officielle |
-| `components/Header.js` | Bascule de mode, dons, langue, thème clair/sombre |
+| `components/Header.js` | Bascule de mode (photo historique : 5 modes ; le contrat produit est **7** — voir README / `CONTRATS_MODES.md`), dons, langue, thème |
 | `components/ProjectList.js`, `MarinasPanel.js`, `FormalitiesPanel.js` | Bandeaux latéraux par mode (recherche, filtres, listes) |
 | `components/AuditView.js` + `BatchHub.js` + `AgentConsole.js` | Console opérateur : KPIs, télémétrie, déclencheurs batch, live view des agents |
 | `components/SettingsPanel.js` | Paramètres transverses (docs, import/export, carte, clés API) |

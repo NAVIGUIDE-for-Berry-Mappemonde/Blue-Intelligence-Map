@@ -14,6 +14,7 @@ import useProjectsLayer from "./map/useProjectsLayer";
 import useRouteLayer from "./map/useRouteLayer";
 import useScienceLayer from "./map/useScienceLayer";
 import useScienceWms, { ensureWmsPanes } from "./map/useScienceWms";
+import useClimatologyLayer from "./map/useClimatologyLayer";
 import { attachDepthOnPopup } from "./map/depthRow";
 import { applyPenRadii, makePointGroup, POPUP_OPTS } from "./map/points";
 
@@ -30,6 +31,10 @@ export default function MapView({
   flyToScience,
   scienceWms,
   scienceSourceFilter = "argo",
+  climoMonth = 1,
+  climoFilters = { wind: true, wave: true, current: true, cyclones: true },
+  climoWaveStat = "mean",
+  onClimoPoint,
   ampLfpFilter = "All",
   anchorages,
   showAnchorages = true,
@@ -188,7 +193,7 @@ export default function MapView({
     else if (mode === "science") {
       map.addLayer(scienceCluster);
       map.addLayer(scienceTracks);
-    } else map.addLayer(cluster);
+    } else if (mode !== "climatology") map.addLayer(cluster);
 
     const allGroups = () => [cluster, marinaCluster, capitainerieCluster, scienceCluster, anchorCluster, poeCluster];
     map.on("zoomstart", () => { zoomingRef.current = true; });
@@ -238,6 +243,10 @@ export default function MapView({
     science, tRef, sourceFilter: scienceSourceFilter,
   });
   useScienceWms({ mapObj, mode, enabled: scienceWms });
+  useClimatologyLayer({
+    mapObj, mode, month: climoMonth, filters: climoFilters,
+    waveStat: climoWaveStat, tRef, onPoint: onClimoPoint,
+  });
   useFormalitiesLayers({
     mapObj, eezLayerRef, eezLayersByMrgid, zoneItemsRef, poeClusterRef,
     poeMarkersById,
@@ -280,6 +289,8 @@ export default function MapView({
     } else if (mode === "science") {
       if (sci) map.addLayer(sci);
       if (sciTracks) map.addLayer(sciTracks);
+    } else if (mode === "climatology") {
+      /* roses / raster / pistes via useClimatologyLayer */
     } else if (mode === "formalities") {
       map.addLayer(formCluster);
     } else if (mode === "amp") {
@@ -379,6 +390,7 @@ export default function MapView({
     if (mode === "capitaineries") return capitaineries?.features?.length || 0;
     if (mode === "formalities") return poePorts?.features?.length || 0;
     if (mode === "science") return science?.features?.length || 0;
+    if (mode === "climatology") return -1;
     return -1;
   })();
 

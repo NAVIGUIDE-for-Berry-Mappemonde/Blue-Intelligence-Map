@@ -9,6 +9,7 @@ export default function ExplainPanel({ t, mode }) {
     formalities: "explainFormalities",
     amp: "explainAmp",
     science: "explainScience",
+    climatology: "explainClimatology",
   }[mode] || "explainProjects";
 
   return (

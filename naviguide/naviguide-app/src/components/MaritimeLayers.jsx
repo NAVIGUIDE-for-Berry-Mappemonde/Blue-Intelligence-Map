@@ -181,8 +181,8 @@ function useAmpPolygons(mapRef) {
 
 export function useMaritimeLayers(mapRef) {
   // Couches actives par défaut — chargement différé pour ne pas bloquer le rendu initial
-  const [showZee,      setShowZee]      = useState(true);
-  const [showPorts,    setShowPorts]    = useState(true);
+  const [showZee,      setShowZee]      = useState(false);
+  const [showPorts,    setShowPorts]    = useState(false);
   const [showBalisage, setShowBalisage] = useState(true);
 
   const [portsData, setPortsData] = useState(EMPTY_FC);
@@ -373,8 +373,6 @@ export function BalisageLayer({ show }) {
 // ── Toggle panel (render outside <Map>) ──────────────────────────────────────
 
 const LAYER_CONFIG = [
-  { key: "zee",      labelKey: "layerZee",      titleKey: "layerZeeTitle",      color: "#0e7490", showKey: "showZee",      toggleKey: "setShowZee",      loadingKey: "loadingZee",      errorKey: "errorZee" },
-  { key: "ports",    labelKey: "layerPorts",    titleKey: "layerPortsTitle",    color: "#f59e0b", showKey: "showPorts",    toggleKey: "setShowPorts",    loadingKey: "loadingPorts",    errorKey: "errorPorts" },
   { key: "balisage", labelKey: "layerBalisage", titleKey: "layerBalisageTitle", color: "#10b981", showKey: "showBalisage", toggleKey: "setShowBalisage", loadingKey: "loadingBalisage", errorKey: "errorBalisage" },
 ];
 

@@ -40,6 +40,7 @@ except ImportError:
 from .polar       import BoatPolar
 from .climatology import wind_at
 from .bathymetry  import is_shallow_hazard
+from .atlas_bridge import atlas_current, atlas_crossings, atlas_wave_hazard, cyclone_cells
 
 
 # ── Geodetic utilities ────────────────────────────────────────────────────────
@@ -206,6 +207,9 @@ def _propagate(
     time_step_h:       float,
     heading_step_deg:  int,
     current_time:      datetime,
+    wind_mode:         str = "most_likely",
+    storm_cells:       Optional[set] = None,
+    avoid_cyclones:    bool = True,
 ) -> List[IsoPoint]:
     """
     Expand one isochrone step: for every live point, try all headings.
@@ -216,7 +220,8 @@ def _propagate(
     result = []
 
     for pt in prev_points:
-        wind_spd, wind_dir = wind_at(pt.lat, pt.lon, month)
+        wind_spd, wind_dir = wind_at(pt.lat, pt.lon, month, mode=wind_mode)
+        current = atlas_current(pt.lat, pt.lon, month)
 
         for hdg in range(0, 360, heading_step_deg):
             # True Wind Angle
@@ -230,9 +235,19 @@ def _propagate(
 
             dist_nm = spd * time_step_h
             nlat, nlon = move_position(pt.lat, pt.lon, hdg, dist_nm)
+            if current and not current.get("below_threshold") and current.get("speed_knots", 0) > 0:
+                nlat, nlon = move_position(
+                    nlat, nlon,
+                    current["direction_to_deg"],
+                    current["speed_knots"] * time_step_h,
+                )
 
             # Bounds check
             if not (-85 <= nlat <= 85):
+                continue
+            if atlas_wave_hazard(nlat, nlon, month):
+                continue
+            if avoid_cyclones and storm_cells and (int(round(nlat)), int(round(nlon))) in storm_cells:
                 continue
             # Path-clear check: samples _PATH_SAMPLES points along the
             # full segment (not just the endpoint) to catch land-crossing
@@ -295,6 +310,8 @@ def run_isochrones(
     max_steps:        int   = 120,
     arrival_radius_nm:float = 50.0,
     prune_sectors:    int   = 72,
+    wind_mode:        str   = "most_likely",
+    avoid_cyclones:   bool  = True,
 ) -> dict:
     """
     Run the isochrone algorithm between (dep_lat, dep_lon) and (dst_lat, dst_lon).
@@ -313,6 +330,9 @@ def run_isochrones(
     start = IsoPoint(lat=dep_lat, lon=dep_lon, time=departure_time)
     current_iso = [start]
     all_isos: List[List[dict]] = [[start.to_dict()]]
+    month0 = departure_time.month
+    cells = cyclone_cells(month0) if avoid_cyclones else set()
+    crossings = atlas_crossings(dep_lat, dep_lon, dst_lat, dst_lon, month0)
 
     best_arrival: Optional[IsoPoint] = None
     steps_taken  = 0
@@ -322,8 +342,10 @@ def run_isochrones(
         current_time = departure_time + timedelta(hours=step * time_step_h)
 
         # --- propagate ---
-        candidates = _propagate(current_iso, polar, time_step_h,
-                                 heading_step_deg, current_time)
+        candidates = _propagate(
+            current_iso, polar, time_step_h, heading_step_deg, current_time,
+            wind_mode=wind_mode, storm_cells=cells, avoid_cyclones=avoid_cyclones,
+        )
         if not candidates:
             break
 
@@ -383,4 +405,7 @@ def run_isochrones(
         "distance_nm":     round(gc_dist, 1),
         "avg_speed_knots": round(avg_speed, 2),
         "steps_computed":  steps_taken,
+        "wind_mode":       wind_mode,
+        "kind":            "climatology",
+        "cyclone_crossings": crossings,
     }

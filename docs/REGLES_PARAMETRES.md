@@ -8,7 +8,7 @@ choisi.
 
 Catalogue machine : `backend/data/run_rules.json`.
 Moteur : `backend/app/core/run_rules.py`.
-API : `GET /api/run-rules?mode=projects|formalities|marinas|amp`.
+API : `GET /api/run-rules?mode=projects|formalities|marinas|amp|science|climatology`.
 
 ---
 
@@ -179,6 +179,41 @@ Un build marinas / mouillages écrit maintenant un document `marina_runs` avec l
 | `shared.claude_budget_usd` | 0 | budget |
 | `shared.nominatim_interval_s` | 1,1 s | budget **non modulable à la baisse** (ToS) |
 | `shared.tinyfish_search_rpm` / `fetch_rpm` | 30 / 150 | budget **plafonné par le fournisseur** |
+
+### 3.5 Science — catalogues + Argo + CSR
+
+Pas de Review / Gold. Moisson d’API structurées ; les chiffres sont des **budgets** de volume, pas des opinions.
+
+| Id | Défaut | Famille | Phénomène / ancrage |
+|----|--------|---------|---------------------|
+| `science.catalog_max_records` | 2000 | budget | Cap GeoNetwork / ES (plafond dur 10000). |
+| `science.argo_window_days` | 30 | budget | Dernier profil « actif ». |
+| `science.csr_max_records` | 500 | budget | Tracés CSR les plus récents. |
+
+### 3.6 Climatologie — atlas mensuel (`kind: climatology`)
+
+`docs/PLAN_IMPLEMENTATION_CLIMATOLOGIE.md` §14. **Pas** une prévision. Un LLM n’a pas le droit de produire un vent, une Hs ou un compteur cyclone.
+
+| Id | Défaut | Famille | Phénomène / ancrage |
+|----|--------|---------|---------------------|
+| `climatology.kind_is_climatology` | true | **loi** | `kind` climatologie ≠ prévision. getWind / getWave / getCurrent restent NRT / ANFC. |
+| `climatology.no_llm_for_numbers` | true | **loi** | Pas de vent / Hs / crossings inventés par un modèle de langue. |
+| `climatology.wind_calm_kn` | 3 kn | géométrie | Calme Beaufort 0–1 (OpenCPN). |
+| `climatology.wind_gale_kn` | 34 kn | géométrie | Gale Beaufort 8. |
+| `climatology.wind_sectors` | 8 | **loi** | Rose 45°. |
+| `climatology.wind_min_sector_pct` | 2,5 % | géométrie | Bruit de secteur. |
+| `climatology.wind_grid_deg` | 0,5° | budget | Maille atlas stockée. |
+| `climatology.wave_nogo_m` | 2,5 m | géométrie | Seuil `overWave` / no-go isochrone. |
+| `climatology.wave_stat` | P90 = no-go | **loi** | Interdit de labeller une moyenne P90. |
+| `climatology.wave_period` | `1993-2019` | **loi** | Fenêtre WAVERYS écrite à l’écran. |
+| `climatology.current_min_kn` | 0,15 kn | géométrie | En dessous : vecteur 0 **et** `below_threshold`. |
+| `climatology.current_depth_m` | 0,5 m | **loi** | Premier niveau GLORYS. |
+| `climatology.current_period` | `1993-2016` | **loi** | Dataset climatology PUM. |
+| `climatology.cyclone_first_year` | 1980 | **loi** | Fichier IBTrACS since1980. |
+| `climatology.cyclone_dayrange` | 21 j | géométrie | Fenêtre autour du jour de route. |
+| `climatology.cyclone_radius_nm` | 120 NM | géométrie | Compteur « proche de la jambe ». |
+| `climatology.cyclone_min_kn` | 34 kn | géométrie | Afficher au moins tempête tropicale. |
+| `climatology.avoid_cyclone_tracks` | true | **loi** | Contrainte isochrone. |
 
 ---
 

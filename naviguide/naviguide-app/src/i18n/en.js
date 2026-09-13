@@ -174,4 +174,6 @@ export default {
   // ── Nav buttons (SimulationPanel) ─────────────────────────────────────────
   previous: "Previous",
   next:     "Next",
+  climoMonth: "Month (climatology)",
+  climoKind: "climo",
 };

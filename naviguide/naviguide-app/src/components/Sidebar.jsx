@@ -448,6 +448,7 @@ export function Sidebar({
   canFinishDraw,
   isCockpit, polarData, maritimeLayers, simulationMode, onSimulationToggle,
   legContext, onNext, canNext, onPrev, canPrev, briefingLoading,
+  simulationMonth, onSimulationMonth,
 }) {
   const { t } = useLang();
   const briefing = plan?.executive_briefing || "";
@@ -569,6 +570,8 @@ export function Sidebar({
                 canPrev={canPrev}
                 onNext={onNext}
                 canNext={canNext}
+                month={simulationMonth}
+                onMonth={onSimulationMonth}
               />
               <AgentPanel
                 legContext={legContext}

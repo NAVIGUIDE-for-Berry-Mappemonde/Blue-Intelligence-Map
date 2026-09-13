@@ -190,6 +190,14 @@ def get_climatological_wind(
     return (10.0, 270.0)
 
 
-def wind_at(lat: float, lon: float, month: int) -> Tuple[float, float]:
-    """Public alias for get_climatological_wind."""
+def wind_at(lat: float, lon: float, month: int,
+            mode: str = "most_likely") -> Tuple[float, float]:
+    """Atlas CMEMS si le snapshot est là, sinon le repli zones (plus jamais la source)."""
+    try:
+        from .atlas_bridge import atlas_wind
+        hit = atlas_wind(lat, lon, month, mode=mode)
+        if hit:
+            return hit
+    except Exception:
+        pass
     return get_climatological_wind(lat, lon, month)

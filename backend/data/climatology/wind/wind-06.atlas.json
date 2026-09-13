@@ -1,0 +1,16 @@
+{
+  "kind": "climatology",
+  "month": 6,
+  "period": "1994-2020",
+  "source_ids": [
+    "WIND_GLO_PHY_CLIMATE_L4_MY_012_003"
+  ],
+  "doi": null,
+  "dataset": "cmems_obs-wind_glo_phy_my_l4_P1M",
+  "stat": "average",
+  "note": "V0 AVERAGE arrows \u2014 not a rose. Roses need gen_wind_atlas.py (6 h MY).",
+  "grid_spacing_deg": 0.5,
+  "years": "1994-2020",
+  "n_months_used": 26,
+  "generated_at": "2026-09-13T11:20:32Z"
+}

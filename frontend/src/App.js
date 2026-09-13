@@ -8,6 +8,7 @@ import CapitaineriesPanel from "./components/CapitaineriesPanel";
 import FormalitiesPanel from "./components/FormalitiesPanel";
 import AmpPanel from "./components/AmpPanel";
 import SciencePanel from "./components/SciencePanel";
+import ClimatologyPanel from "./components/ClimatologyPanel";
 import MapView from "./components/MapView";
 import AuditView from "./components/AuditView";
 import ReviewView from "./components/ReviewView";
@@ -36,11 +37,13 @@ function latLngsFromFc(fc) {
   return pts;
 }
 
-// Read the persisted mode on boot. Default = "projects". (6 modes)
+const MODES = ["projects", "marinas", "capitaineries", "formalities", "amp", "science", "climatology"];
+
+// Read the persisted mode on boot. Default = "projects". (7 modes)
 const readInitialMode = () => {
   try {
     const v = localStorage.getItem("bi.mode");
-    if (v === "marinas" || v === "projects" || v === "formalities" || v === "capitaineries" || v === "amp" || v === "science") return v;
+    if (MODES.includes(v)) return v;
   } catch (_) {
     /* localStorage disabled */
   }
@@ -81,7 +84,7 @@ export default function App() {
         if (e?.response?.status === 401) clearAdminKey();
       });
   }, []);
-  const [mode, setModeRaw] = useState(readInitialMode());   // 'projects' | 'marinas' | 'capitaineries' | 'formalities' | 'amp' | 'science'
+  const [mode, setModeRaw] = useState(readInitialMode());   // 7 modes incl. climatology
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState(null);
   const [projects, setProjects] = useState({ type: "FeatureCollection", features: [] });
@@ -123,6 +126,24 @@ export default function App() {
       return next;
     });
   }, []);
+  const [climoMonth, setClimoMonth] = useState(() => new Date().getMonth() + 1);
+  const [climoFilters, setClimoFilters] = useState(() => {
+    try {
+      const raw = localStorage.getItem("bi.climoFilters.v2");
+      if (raw) return { wind: true, wave: true, current: true, cyclones: true, ...JSON.parse(raw) };
+    } catch (_) { /* ignore */ }
+    return { wind: true, wave: true, current: true, cyclones: true };
+  });
+  const toggleClimoFilter = useCallback((id, on) => {
+    setClimoFilters((prev) => {
+      const next = { ...prev, [id]: !!on };
+      try { localStorage.setItem("bi.climoFilters.v2", JSON.stringify(next)); } catch (_) { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const [climoWaveStat, setClimoWaveStat] = useState("mean");
+  const [climoMeta, setClimoMeta] = useState(null);
+  const [climoPoint, setClimoPoint] = useState(null);
   // Phase 8 — Anchorages (mouillages) layer
   const [anchorages, setAnchorages] = useState({ type: "FeatureCollection", features: [] });
   const [showAnchorages, setShowAnchoragesRaw] = useState(() => {
@@ -171,7 +192,7 @@ export default function App() {
     lastFitKeyRef.current = "";
     setModeRaw(m);
     try { localStorage.setItem("bi.mode", m); } catch (_) { /* ignore */ }
-    if (m === "science" && viewRef.current === "review") setView("map");
+    if ((m === "science" || m === "climatology") && viewRef.current === "review") setView("map");
   }, []);
 
   useEffect(() => {
@@ -289,6 +310,18 @@ export default function App() {
     try {
       const { data } = await api.get("/science");
       setScience(data);
+    } catch (e) { /* transient */ }
+  }, []);
+
+  const fetchClimoMeta = useCallback(async (month) => {
+    try {
+      const { data } = await api.get("/climatology/meta", { params: { month } });
+      setClimoMeta(data);
+      const st = data?.snapshot?.wave_stat;
+      if (st === "mean") setClimoWaveStat("mean");
+      else if (st === "p50_p90") {
+        setClimoWaveStat((prev) => (prev === "mean" ? "p90" : prev));
+      }
     } catch (e) { /* transient */ }
   }, []);
 
@@ -443,6 +476,7 @@ export default function App() {
     fetchSettings();
     fetchMarinas();
     fetchScience();
+    fetchClimoMeta(new Date().getMonth() + 1);
     // Les 6 connexions HTTP/1.1 de Chrome vers cette origine saturent si
     // on lance tous les dumps en parallèle (marinas ~15 Mo + chunks maplibre).
     const later = setTimeout(() => {
@@ -487,7 +521,7 @@ export default function App() {
       clearInterval(s); clearInterval(p); clearInterval(c); clearInterval(m);
       clearInterval(cap); clearInterval(a); clearInterval(sci); clearInterval(z); clearInterval(pp);
     };
-  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchScience, fetchPoeZones, fetchPoePorts]);
+  }, [fetchStatus, fetchProjects, fetchSettings, fetchCategories, fetchMarinas, fetchCapitaineries, fetchAnchorages, fetchScience, fetchClimoMeta, fetchPoeZones, fetchPoePorts]);
 
   // Sélection d'un run à afficher (null = carte live) pour le mode courant.
   const handleSelectMapRun = useCallback((run) => {
@@ -498,7 +532,7 @@ export default function App() {
 
   // Couche Map par défaut = run isolé du mode (contrat §8). Formalités inchangée.
   useEffect(() => {
-    if (mode === "formalities" || mode === "science") return undefined;
+    if (mode === "formalities" || mode === "science" || mode === "climatology") return undefined;
     const ep = RUNS_LIST_EP[mode];
     if (!ep) return undefined;
     let alive = true;
@@ -582,6 +616,12 @@ export default function App() {
   const handleFlyToScience = useCallback((id, lat, lon) => {
     setFlyToScience({ id, lat, lon, ts: Date.now() });
   }, []);
+
+  useEffect(() => {
+    if (mode !== "climatology") return undefined;
+    fetchClimoMeta(climoMonth);
+    return undefined;
+  }, [mode, climoMonth, fetchClimoMeta]);
 
   // Refactor 2026-06 — Handler wired to the sidebar rows and the EEZ polygons:
   // selects the zone; when a bbox is supplied (sidebar click), also flies to it.
@@ -689,6 +729,20 @@ export default function App() {
             onToggleWms={toggleScienceWms}
           />
         )}
+        {view !== "review" && mode === "climatology" && (
+          <ClimatologyPanel
+            t={t}
+            lang={lang}
+            month={climoMonth}
+            onMonth={(m) => { setClimoMonth(m); setClimoPoint(null); }}
+            filters={climoFilters}
+            onToggleFilter={toggleClimoFilter}
+            waveStat={climoWaveStat}
+            onWaveStat={setClimoWaveStat}
+            meta={climoMeta}
+            point={climoPoint}
+          />
+        )}
         <main className="flex-1 relative min-w-0">
           <div
             className={view === "map" ? "absolute inset-0" : "absolute inset-0 invisible pointer-events-none"}
@@ -704,6 +758,10 @@ export default function App() {
               flyToScience={flyToScience}
               scienceWms={scienceWms}
               scienceSourceFilter={scienceSourceFilter}
+              climoMonth={climoMonth}
+              climoFilters={climoFilters}
+              climoWaveStat={climoWaveStat}
+              onClimoPoint={setClimoPoint}
               ampLfpFilter={ampLfpFilter}
               anchorages={anchorages}
               showAnchorages={showAnchorages}
@@ -732,10 +790,10 @@ export default function App() {
               showAnchorages={showAnchorages} setShowAnchorages={setShowAnchorages}
               anchoragesCount={anchorages?.features?.length || 0} />
           ) : view === "review" ? (
-            mode === "science" ? (
-              <div className="h-full flex items-center justify-center p-8" data-testid="review-science-placeholder">
+            mode === "science" || mode === "climatology" ? (
+              <div className="h-full flex items-center justify-center p-8" data-testid={mode === "science" ? "review-science-placeholder" : "review-climatology-placeholder"}>
                 <p className="max-w-md text-center text-sm text-slate-400 leading-relaxed">
-                  {t("reviewScienceUnavailable")}
+                  {t(mode === "science" ? "reviewScienceUnavailable" : "reviewClimatologyUnavailable")}
                 </p>
               </div>
             ) : (

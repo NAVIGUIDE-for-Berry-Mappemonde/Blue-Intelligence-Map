@@ -58,6 +58,9 @@ def test_cdc_numbers_are_catalogued():
         "formalities.peer_near_km", "formalities.listing_name_sim_mid",
         "shared.extract_agree_sim", "shared.llm_geocode_min_confidence",
         "shared.content_changed_sim",
+        "science.csr_max_records",
+        "climatology.kind_is_climatology", "climatology.no_llm_for_numbers",
+        "climatology.wave_nogo_m", "climatology.cyclone_first_year",
     ):
         assert rid in ids
 
