@@ -1304,3 +1304,85 @@ def decide_follow_the_money_partner(
         "action": FTM_SEARCH, "reason": "needs_official_site",
         "seed": None, "needs_search": True,
     }
+
+
+FTM_MIN_S_OCEAN = 0.7
+
+_UNI_NAME = re.compile(
+    r"\b(university|universit[eé]|universidad|school of medicine|"
+    r"institute of technology|indian institute)\b",
+    re.I,
+)
+
+
+def ftm_page_allows_collect(
+    published: bool,
+    s_ocean=None,
+    min_s_ocean: float = FTM_MIN_S_OCEAN,
+) -> bool:
+    """FTM ne vote que depuis un site publié. S_ocean absent = tests / extraits nus."""
+    if not published:
+        return False
+    if s_ocean is None or s_ocean == "":
+        return True
+    try:
+        score = float(s_ocean)
+    except (TypeError, ValueError):
+        return False
+    return score >= float(min_s_ocean)
+
+
+def _ftm_inbox_penalty(name: str, url: str | None) -> float:
+    """Univ / .edu : on ne jette pas, on recule dans le classement."""
+    penalty = 0.0
+    if _UNI_NAME.search(name or ""):
+        penalty += 20.0
+    host = domain_of(url) or ""
+    if host.endswith(".edu") or ".ac." in host:
+        penalty += 20.0
+    return penalty
+
+
+def rank_ftm_inbox(entries: list[dict]) -> list[dict]:
+    """Une ligne par organisme : mentions × 10 + URL + max S_ocean − univ."""
+    groups: dict[str, dict] = {}
+    for raw in entries or []:
+        seed = raw.get("seed") if isinstance(raw.get("seed"), dict) else {}
+        name = (seed.get("name") or raw.get("name") or "").strip()
+        if not name:
+            continue
+        key = norm_name(name)
+        url = (seed.get("url") or raw.get("url") or "").strip()
+        try:
+            s_ocean = float(raw.get("s_ocean") or 0)
+        except (TypeError, ValueError):
+            s_ocean = 0.0
+        cur = groups.get(key)
+        if not cur:
+            cur = {
+                "name": name,
+                "seed": dict(seed) if seed else None,
+                "url": url,
+                "mentions": 0,
+                "max_s_ocean": s_ocean,
+                "has_url": bool(url),
+            }
+            groups[key] = cur
+        cur["mentions"] += 1
+        cur["max_s_ocean"] = max(float(cur.get("max_s_ocean") or 0), s_ocean)
+        if url and not cur.get("url"):
+            cur["url"] = url
+        if seed and (not cur.get("seed") or (seed.get("url") and not (cur["seed"] or {}).get("url"))):
+            cur["seed"] = dict(seed)
+        cur["has_url"] = bool(cur.get("url") or (cur.get("seed") or {}).get("url"))
+    ranked = list(groups.values())
+    for row in ranked:
+        url = row.get("url") or (row.get("seed") or {}).get("url")
+        row["score"] = (
+            int(row["mentions"]) * 10
+            + (1.0 if row.get("has_url") else 0.0)
+            + float(row.get("max_s_ocean") or 0)
+            - _ftm_inbox_penalty(row.get("name") or "", url)
+        )
+    ranked.sort(key=lambda r: (-float(r["score"]), (r.get("name") or "").lower()))
+    return ranked

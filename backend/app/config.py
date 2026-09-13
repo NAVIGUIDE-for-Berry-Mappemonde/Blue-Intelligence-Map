@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "max_markers": 1000,
     "follow_the_money": True,
     "max_partner_orgs": 15,
+    "ftm_min_s_ocean": 0.7,
     "discover_concurrency": 8,
     "listing_judge_concurrency": 1,
     "saturation_limit": 50,

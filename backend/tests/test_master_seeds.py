@@ -163,7 +163,20 @@ def test_seeds_for_run_only_crawl_ready():
          "home_status": "borrowed_hub", "queue": "resolve"},
     ]
     queued = ms.seeds_for_run(seeds)
-    assert [s["name"] for s in queued] == ["Alpha", "P1", "P2-big"]
+    assert [s["name"] for s in queued] == ["P2-big", "P1", "Alpha"]
+
+
+def test_seeds_for_run_curated_first_then_project_count():
+    seeds = [
+        {"name": "Z-v1-big", "url": "https://z.org/", "home_status": "official",
+         "queue": "crawl", "source": "v1", "project_count": 80},
+        {"name": "A-curated", "url": "https://a.org/", "home_status": "official",
+         "queue": "crawl", "source": "curated", "project_count": 1},
+        {"name": "M-v1", "url": "https://m.org/", "home_status": "official",
+         "queue": "crawl", "source": "v1", "project_count": 3},
+    ]
+    queued = ms.seeds_for_run(seeds)
+    assert [s["name"] for s in queued] == ["A-curated", "Z-v1-big", "M-v1"]
 
 
 def test_merge_curated_keeps_hosted_on_cordis():
@@ -222,6 +235,9 @@ def test_loaded_catalog_has_v1_scale():
     # Virgules composées + sièges trop larges sortent de Complet, pas un cap artificiel.
     assert len(crawl) >= 450
     assert not any((s.get("home_status") or "") == "borrowed_hub" for s in crawl)
+    sey = next(s for s in MASTER_SEEDS if "SeyCCAT" in (s.get("name") or ""))
+    assert sey["queue"] == "crawl"
+    assert "seyccat.org" in (sey.get("home_url") or "")
     assert sum(
         1 for s in MASTER_SEEDS
         if s.get("home_source") in {"search", "review"}
@@ -388,3 +404,91 @@ def test_follow_the_money_unreachable_site_does_not_burn_cap(monkeypatch):
     msgs = " ".join(e["msg"] for e in sw.logs)
     assert "injoignable" in msgs
     assert "plafond intact" in msgs
+
+
+def test_ftm_new_org_goes_to_inbox_until_flush():
+    async def run():
+        sw = Swarm(_FakeDB())
+        sw.running = True
+        sw.settings = {"follow_the_money": True, "max_partner_orgs": 5}
+        sw.master_seeds = []
+        sw.partner_domains = set()
+        sw.recursive_tasks = []
+        discovered = []
+
+        async def fake_discover(seed, max_urls, depth=0):
+            discovered.append(seed["url"])
+            return 1
+
+        sw._discover = fake_discover
+        await sw._follow_the_money({
+            "partners": [{"name": "Wild Oysters", "url": "https://wild-oysters.org/"}],
+            "s_ocean": 0.9,
+        }, depth=0, published=True)
+        assert discovered == []
+        assert sw.new_partner_count == 0
+        assert sw.ftm_inbox
+        await sw._flush_ftm_inbox()
+        assert "https://wild-oysters.org/" in discovered
+        assert sw.new_partner_count == 1
+
+    asyncio.run(run())
+
+
+def test_ftm_flush_prefers_voted_org_and_refunds_empty():
+    async def run():
+        sw = Swarm(_FakeDB())
+        sw.running = True
+        sw.settings = {"follow_the_money": True, "max_partner_orgs": 1}
+        sw.master_seeds = []
+        sw.partner_domains = set()
+        sw.recursive_tasks = []
+        discovered = []
+
+        async def fake_discover(seed, max_urls, depth=0):
+            discovered.append(seed.get("url"))
+            return 1 if "wild-oysters.org" in (seed.get("url") or "") else 0
+
+        sw._discover = fake_discover
+        ghost = {"name": "Ghost Partner", "url": "https://ghost-partner.org/"}
+        wild = {"name": "Wild Oysters", "url": "https://wild-oysters.org/"}
+        await sw._follow_the_money(
+            {"partners": [ghost, wild], "s_ocean": 0.91}, depth=0)
+        await sw._follow_the_money(
+            {"partners": [ghost], "s_ocean": 0.88}, depth=0)
+        await sw._follow_the_money(
+            {"partners": [ghost], "s_ocean": 0.85}, depth=0)
+        await sw._flush_ftm_inbox()
+        assert any("ghost-partner.org" in (u or "") for u in discovered)
+        assert any("wild-oysters.org" in (u or "") for u in discovered)
+        assert sw.new_partner_count == 1
+        extras = sw.db.master_seeds.docs
+        assert any(d.get("domain") == "wild-oysters.org" for d in extras)
+        assert not any(d.get("domain") == "ghost-partner.org" for d in extras)
+        msgs = " ".join(e["msg"] for e in sw.logs)
+        assert "ticket remboursé" in msgs
+
+    asyncio.run(run())
+
+
+def test_ftm_skips_unlocated_and_low_s_ocean():
+    async def run():
+        sw = Swarm(_FakeDB())
+        sw.running = True
+        sw.settings = {
+            "follow_the_money": True,
+            "max_partner_orgs": 5,
+            "ftm_min_s_ocean": 0.7,
+        }
+        sw.master_seeds = []
+        sw.partner_domains = set()
+        sw.recursive_tasks = []
+        sw.ftm_inbox = []
+        partner = {"name": "Wild Oysters", "url": "https://wild-oysters.org/"}
+        await sw._follow_the_money(
+            {"partners": [partner], "s_ocean": 0.95}, depth=0, published=False)
+        await sw._follow_the_money(
+            {"partners": [partner], "s_ocean": 0.4}, depth=0, published=True)
+        assert sw.ftm_inbox == []
+
+    asyncio.run(run())
