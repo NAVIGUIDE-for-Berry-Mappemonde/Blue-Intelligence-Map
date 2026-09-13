@@ -113,7 +113,7 @@ export default function useClimatologyLayer({
     const silent = (fn) => fn().catch(() => undefined);
 
     const loadWind = async () => {
-      const { data } = await api.get("/climatology/wind.geojson", { params: { month, spacing_deg: 2 } });
+      const { data } = await api.get("/climatology/wind.geojson", { params: { month, spacing_deg: 4 } });
       if (cancelled) return;
       const group = L.layerGroup();
       (data.features || []).forEach((f) => {
@@ -135,7 +135,7 @@ export default function useClimatologyLayer({
 
     const loadWave = async () => {
       const { data } = await api.get("/climatology/wave.geojson", {
-        params: { month, stat: waveStat, spacing_deg: 2 },
+        params: { month, stat: waveStat, spacing_deg: 4 },
       });
       if (cancelled) return;
       const group = L.layerGroup();
@@ -144,7 +144,7 @@ export default function useClimatologyLayer({
         const p = f.properties || {};
         const c = L.circleMarker([lat, lon], {
           pane: "climatology-raster",
-          radius: 5,
+          radius: 3.5,
           color: waveColor(Number(p.hs_m) || 0, p.stat),
           fillColor: waveColor(Number(p.hs_m) || 0, p.stat),
           fillOpacity: 0.55,
@@ -159,7 +159,7 @@ export default function useClimatologyLayer({
     };
 
     const loadCurrent = async () => {
-      const { data } = await api.get("/climatology/current.geojson", { params: { month, spacing_deg: 2 } });
+      const { data } = await api.get("/climatology/current.geojson", { params: { month, spacing_deg: 4 } });
       if (cancelled) return;
       const group = L.layerGroup();
       (data.features || []).forEach((f) => {
