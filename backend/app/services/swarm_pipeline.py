@@ -28,8 +28,8 @@ from app.core.tinyfish import (
     DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S,
     LISTING_SCHEMA, POLL_GRACE_S, PROJECTS_DISCOVERY_PURPOSE,
     PROJECTS_LISTING_PURPOSE, discovery_goal, listing_goal, find_live_url,
-    public_agent_config, tf_fetch, tf_poll_run, tf_run_async, tf_run_sse,
-    tf_search,
+    await_agent_cooldown, is_http_status, mark_agent_429, public_agent_config,
+    retry_after_s, tf_fetch, tf_poll_run, tf_run_async, tf_run_sse, tf_search,
 )
 from app.services.project_listing import (
     LISTING_JUDGE_CAP, accept_listing_url, apply_learned_listings,
@@ -1105,10 +1105,11 @@ class Swarm:
         return on_run, should_stop
 
     async def _tf_agent_run(self, aid, seed, key, goal, schema, max_duration_s):
-        """SSE puis, si le flux coupe, poll du même run_id (doc TinyFish)."""
+        """SSE ; 429 → pause + retry ; flux coupé → poll du même run_id."""
         cfg = public_agent_config({"max_duration_seconds": max_duration_s})
         run_id = {"id": None}
         inner = self._tf_agent_on_event(aid)
+        log = lambda m: self.agent_log(aid, m)
 
         async def on_event(ev):
             rid = ev.get("run_id")
@@ -1116,26 +1117,52 @@ class Swarm:
                 run_id["id"] = rid
             await inner(ev)
 
+        last_err = None
+        for attempt in range(2):
+            await await_agent_cooldown(log)
+            run_id["id"] = None
+            try:
+                return await tf_run_sse(
+                    seed["url"], goal, schema, key,
+                    on_event=on_event, agent_config=cfg)
+            except (httpx.HTTPError, TimeoutError) as e:
+                last_err = e
+                if run_id["id"]:
+                    self.agent_log(
+                        aid,
+                        f"SSE coupé ({type(e).__name__}) → poll {run_id['id'][:8]} "
+                        f"(même run, pas un 2ᵉ Agent)")
+                    on_run, should_stop = self._tf_poll_hooks(aid)
+                    return await tf_poll_run(
+                        run_id["id"], key,
+                        budget_s=int(max_duration_s) + POLL_GRACE_S,
+                        log=log, on_run=on_run, should_stop=should_stop)
+                if is_http_status(e, 429) and attempt == 0:
+                    wait = retry_after_s(e)
+                    await mark_agent_429(wait)
+                    self.agent_log(
+                        aid,
+                        f"TinyFish Agent 429 — pause {wait:.0f}s, retry SSE "
+                        f"(pas de 2ᵉ run)")
+                    continue
+                break
+        if is_http_status(last_err, 429):
+            self.agent_log(aid, "TinyFish Agent 429 encore — sauté")
+            return {}
+        if is_http_status(last_err, 401) or is_http_status(last_err, 402):
+            self.agent_log(aid, f"SSE HTTP {last_err.response.status_code} — sauté")
+            return {}
+        self.agent_log(aid, f"SSE refusé ({str(last_err)[:80]}) → run-async")
         try:
-            return await tf_run_sse(
-                seed["url"], goal, schema, key,
-                on_event=on_event, agent_config=cfg)
-        except (httpx.HTTPError, TimeoutError) as e:
-            if run_id["id"]:
-                self.agent_log(
-                    aid,
-                    f"SSE coupé ({type(e).__name__}) → poll {run_id['id'][:8]} "
-                    f"(même run, pas un 2ᵉ Agent)")
-                on_run, should_stop = self._tf_poll_hooks(aid)
-                return await tf_poll_run(
-                    run_id["id"], key,
-                    budget_s=int(max_duration_s) + POLL_GRACE_S,
-                    log=lambda m: self.agent_log(aid, m),
-                    on_run=on_run, should_stop=should_stop)
-            self.agent_log(aid, f"SSE refusé ({str(e)[:80]}) → run-async")
             return await self._tinyfish_discover_poll(
                 aid, seed, key, goal, schema=schema,
                 max_duration_s=max_duration_s)
+        except httpx.HTTPStatusError as e:
+            if is_http_status(e, 429):
+                await mark_agent_429(retry_after_s(e))
+                self.agent_log(aid, "TinyFish run-async 429 — sauté")
+                return {}
+            raise
 
     async def _tinyfish_listing_discover(self, aid, seed, key):
         """Agent TinyFish n°1 : une URL catalogue, pas de fiches individuelles."""

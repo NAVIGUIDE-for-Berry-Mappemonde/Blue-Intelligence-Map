@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
+
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "bi_test_project_listing")
 
@@ -699,6 +701,56 @@ def test_sse_drop_after_started_polls_same_run(monkeypatch):
     agent_text = " ".join(
         line for a in sw.agents.values() for line in (a.get("logs") or []))
     assert "même run" in agent_text
+
+
+def test_sse_429_retries_then_skips_second_run(monkeypatch):
+    sw = _swarm()
+    seen = {"sse": 0, "async": 0}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def empty_search(*a, **k):
+        return [], 0, 0
+
+    async def fake_sse(*a, **k):
+        seen["sse"] += 1
+        req = httpx.Request("POST", "https://agent.tinyfish.ai/v1/automation/run-sse")
+        resp = httpx.Response(429, request=req)
+        raise httpx.HTTPStatusError("429", request=req, response=resp)
+
+    async def boom_async(*a, **k):
+        seen["async"] += 1
+        raise AssertionError("429 must not start run-async")
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_crawl_discover", empty)
+    monkeypatch.setattr(sw, "_fetch_discover", empty)
+    monkeypatch.setattr(sw, "_search_discover", empty_search)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_run_sse", fake_sse)
+    monkeypatch.setattr(sp, "tf_run_async", boom_async)
+    monkeypatch.setattr(sp, "retry_after_s", lambda *a, **k: 0)
+    monkeypatch.setattr(sp, "await_agent_cooldown", noop)
+    monkeypatch.setattr(sp, "mark_agent_429", noop)
+
+    queued = _run(_queued(sw, HOME))
+    assert queued == []
+    assert seen["sse"] >= 2
+    assert seen["async"] == 0
+    agent_text = " ".join(
+        line for a in sw.agents.values() for line in (a.get("logs") or []))
+    assert "429" in agent_text
+    assert "pas de 2ᵉ run" in agent_text or "pas de 2e run" in agent_text or "sauté" in agent_text
 
 
 def test_publisher_or_missing_host_skips_tinyfish_agents(monkeypatch):

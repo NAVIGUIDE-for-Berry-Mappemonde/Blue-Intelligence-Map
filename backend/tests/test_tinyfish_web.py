@@ -244,6 +244,13 @@ class TestProjectsAgents:
 
 
 class TestAgentConfigAndPoll:
+    def test_retry_after_from_header(self):
+        req = httpx.Request("POST", "https://agent.tinyfish.ai/v1/automation/run-sse")
+        resp = httpx.Response(429, request=req, headers={"Retry-After": "12"})
+        err = httpx.HTTPStatusError("429", request=req, response=resp)
+        assert tf.retry_after_s(err) == 12.0
+        assert tf.is_http_status(err, 429) is True
+
     def test_public_config_strips_beta_fields(self):
         assert tf.public_agent_config({
             "max_steps": 40, "mode": "strict", "max_duration_seconds": 75,

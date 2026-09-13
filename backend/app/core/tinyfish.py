@@ -336,14 +336,58 @@ class _TokenBucket:
 _search_bucket = _TokenBucket(SEARCH_RPM)
 _fetch_bucket = _TokenBucket(FETCH_RPM)
 _agent_sem = asyncio.Semaphore(AGENT_CONCURRENCY)
+_agent_cooldown_until = 0.0
+_agent_cd_lock = asyncio.Lock()
 
 
 def reset_rate_limits():
     """Réinitialise les buckets et le sémaphore Agent (tests)."""
-    global _search_bucket, _fetch_bucket, _agent_sem
+    global _search_bucket, _fetch_bucket, _agent_sem, _agent_cooldown_until
     _search_bucket = _TokenBucket(SEARCH_RPM)
     _fetch_bucket = _TokenBucket(FETCH_RPM)
     _agent_sem = asyncio.Semaphore(AGENT_CONCURRENCY)
+    _agent_cooldown_until = 0.0
+
+
+def is_http_status(exc, code: int) -> bool:
+    resp = getattr(exc, "response", None)
+    return resp is not None and getattr(resp, "status_code", None) == code
+
+
+def retry_after_s(exc, default: float = 20.0) -> float:
+    """429 TinyFish : header Retry-After ou error.retry_after (doc Runs)."""
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return default
+    raw = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+    if raw:
+        try:
+            return min(90.0, max(5.0, float(raw)))
+        except ValueError:
+            pass
+    try:
+        body = resp.json()
+        err = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err, dict) and err.get("retry_after") is not None:
+            return min(90.0, max(5.0, float(err["retry_after"])))
+    except Exception:
+        pass
+    return default
+
+
+async def mark_agent_429(wait: float) -> None:
+    global _agent_cooldown_until
+    async with _agent_cd_lock:
+        _agent_cooldown_until = max(_agent_cooldown_until, time.monotonic() + max(0.0, wait))
+
+
+async def await_agent_cooldown(log=None) -> None:
+    async with _agent_cd_lock:
+        left = _agent_cooldown_until - time.monotonic()
+    if left > 0:
+        if log:
+            log(f"TinyFish Agent: cooldown {left:.0f}s (429)")
+        await asyncio.sleep(left)
 
 
 def tf_api_key(settings=None) -> str:
