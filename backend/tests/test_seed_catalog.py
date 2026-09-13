@@ -10,12 +10,16 @@ os.environ.setdefault("DB_NAME", "bi_test_seed_catalog")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services import master_seeds as ms
-from app.services.project_listing import is_listing_url, needs_listing_hop
+from app.services.project_listing import (
+    is_listing_url, listing_from_hits, needs_listing_hop, parent_listing_url,
+)
 from app.services.seed_catalog import (
-    append_search_journal, apply_official_site_result, build_enriched_master_seeds,
-    classify_home, classify_name, dump_catalog, infer_own_listing, is_crawl_ready,
-    journal_done_names, load_search_journal, overlay_search_results,
-    search_candidates, write_audit,
+    append_search_journal, apply_compound_splits, apply_listing_result,
+    apply_official_site_result, assign_queue, build_enriched_master_seeds,
+    classify_home, classify_name, dump_catalog, infer_listings_onto_official_homes,
+    infer_own_listing, is_crawl_ready, journal_done_names, listing_candidates,
+    load_search_journal, overlay_listing_results, overlay_search_results,
+    search_candidates, split_compound_parts, write_audit,
 )
 from app.static_data.seeds import CURATED_SEEDS
 
@@ -30,6 +34,9 @@ def test_classify_name_keeps_single_org_and():
     assert classify_name("Unknown") == "exclude"
     assert classify_name("In-kind") == "exclude"
     assert classify_name("NEMA (partner)") == "ok"
+    assert classify_name("International Association of Oil and Gas Producers (IOGP)") == "ok"
+    assert classify_name("Arctic and Antarctic Research Institute (AARI)") == "ok"
+    assert classify_name("Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)") == "ok"
 
 
 def test_classify_home_borrowed_vs_owner():
@@ -317,3 +324,143 @@ def test_dump_catalog_atomic_and_overlay_survives_rebuild(tmp_path):
     assert bmkg["home_url"] == "https://bmkg.go.id/"
     assert bmkg["queue"] == "crawl"
     assert bmkg["borrowed_domain"] == "oceandecade.org"
+
+
+def test_listing_from_hits_same_host_and_parent_fiche():
+    seed = {"name": "Save Our Seas Foundation", "home_url": "https://saveourseas.com/"}
+    assert listing_from_hits(
+        [{"url": "https://other.org/projects/"}, {"url": "https://saveourseas.com/projects/"}],
+        seed,
+    ) == "https://saveourseas.com/projects/"
+    assert parent_listing_url("https://saveourseas.com/project/alpha") == "https://saveourseas.com/project/"
+    assert listing_from_hits(
+        [{"url": "https://saveourseas.com/project/alpha"}],
+        seed,
+    ) == "https://saveourseas.com/project/"
+    assert listing_from_hits([{"url": "https://saveourseas.com/about/"}], seed) == ""
+
+
+def test_listing_candidates_and_apply_and_resume(tmp_path):
+    seeds = [
+        {
+            "name": "SOS",
+            "name_status": "ok",
+            "home_status": "official",
+            "home_url": "https://saveourseas.com/",
+            "url": "https://saveourseas.com/",
+            "listing_kind": "homepage",
+            "queue": "crawl",
+        },
+        {
+            "name": "Ifremer",
+            "name_status": "ok",
+            "home_status": "official",
+            "home_url": "https://ifremer.fr/",
+            "url": "https://ifremer.fr/",
+            "listing_kind": "home_only",
+            "queue": "crawl",
+        },
+        {
+            "name": "Ocean Fdn",
+            "name_status": "ok",
+            "home_status": "official",
+            "listing_kind": "projects_index",
+            "listing_url": "https://oceanfdn.org/projects/",
+            "home_url": "https://oceanfdn.org/",
+            "url": "https://oceanfdn.org/projects/",
+            "queue": "crawl",
+        },
+    ]
+    assert [s["name"] for s in listing_candidates(seeds)] == ["SOS"]
+    apply_listing_result(seeds[0], "https://saveourseas.com/projects/")
+    assert seeds[0]["listing_kind"] == "projects_index"
+    assert seeds[0]["listing_source"] == "search"
+    assert seeds[0]["url"] == "https://saveourseas.com/projects/"
+    journal = tmp_path / "listings.jsonl"
+    append_search_journal(journal, {
+        "name": "SOS", "listing": "https://saveourseas.com/projects/", "ok": True,
+    })
+    rebuilt = [
+        {
+            "name": "SOS",
+            "name_status": "ok",
+            "home_status": "official",
+            "home_url": "https://saveourseas.com/",
+            "url": "https://saveourseas.com/",
+            "listing_kind": "homepage",
+            "queue": "crawl",
+        },
+    ]
+    overlay_listing_results(rebuilt, journal=journal)
+    assert rebuilt[0]["listing_url"] == "https://saveourseas.com/projects/"
+    done = journal_done_names(load_search_journal(journal), result_key="listing")
+    assert listing_candidates(rebuilt, done_names=done) == []
+
+
+def test_infer_listings_onto_new_official_home():
+    seeds = [{
+        "name": "Save Our Seas Foundation",
+        "name_status": "ok",
+        "home_status": "official",
+        "home_url": "https://saveourseas.com/",
+        "url": "https://saveourseas.com/",
+        "listing_kind": "homepage",
+        "queue": "crawl",
+    }]
+    n = infer_listings_onto_official_homes(seeds, [
+        {"url": "https://saveourseas.com/project/alpha", "funder": "Save Our Seas Foundation"},
+        {"url": "https://saveourseas.com/project/beta", "funder": "Save Our Seas Foundation"},
+    ])
+    assert n == 1
+    assert seeds[0]["listing_url"] == "https://saveourseas.com/project/"
+    assert seeds[0]["listing_source"] == "v1_url"
+
+
+def test_split_compounds_merge_create_and_reclassify():
+    assert split_compound_parts("CEA and CNRS") == ["CEA", "CNRS"]
+    assert split_compound_parts("Gordon and Betty Moore Foundation") is None
+    assert split_compound_parts(
+        "Government Secretariat of Science, Technology and Productive Innovation - Argentina"
+    ) is None
+    seeds = [
+        {
+            "name": "Fondation de la Mer",
+            "name_status": "ok",
+            "home_status": "official",
+            "home_url": "https://fondationdelamer.org/",
+            "url": "https://fondationdelamer.org/nos-programmes/",
+            "listing_kind": "projects_index",
+            "queue": "crawl",
+            "aliases": [],
+        },
+        {
+            "name": "Fondation de la Mer, Fondation Ecoalf",
+            "name_status": "compound",
+            "home_status": "borrowed_hub",
+            "queue": "resolve",
+        },
+        {
+            "name": "International Association of Oil and Gas Producers (IOGP)",
+            "name_status": "compound",
+            "home_status": "borrowed_hub",
+            "queue": "resolve",
+        },
+        {
+            "name": "CEA and CNRS",
+            "name_status": "compound",
+            "home_status": "unknown",
+            "queue": "resolve",
+        },
+    ]
+    report = apply_compound_splits(seeds)
+    by = {s["name"]: s for s in seeds}
+    assert by["International Association of Oil and Gas Producers (IOGP)"]["name_status"] == "ok"
+    assert by["International Association of Oil and Gas Producers (IOGP)"]["queue"] == "resolve"
+    assert by["Fondation de la Mer, Fondation Ecoalf"]["queue"] == "skip"
+    assert "Fondation Ecoalf" in by
+    assert by["Fondation Ecoalf"]["source"] == "split"
+    assert by["Fondation Ecoalf"]["queue"] == "resolve"
+    assert not is_crawl_ready(by["Fondation Ecoalf"])
+    assert "CEA" in by and "CNRS" in by
+    assert assign_queue(by["Fondation de la Mer"]) == "crawl"
+    assert "Fondation de la Mer, Fondation Ecoalf" in report["split_sources"]

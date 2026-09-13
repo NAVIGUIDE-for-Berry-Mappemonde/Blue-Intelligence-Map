@@ -476,6 +476,48 @@ def filter_listing_urls(hits, seed, max_urls=3, *, exclude_urls=None) -> list[st
     return urls[:cap] if cap else urls
 
 
+def parent_listing_url(url: str | None) -> str | None:
+    """`/projects/coral-restore` → `https://host/projects/` si le parent est un index."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return None
+    parsed = urlparse(raw.split("#")[0].split("?")[0])
+    host = domain_of(raw)
+    parts = path_parts(parsed.path)
+    if not host or len(parts) < 2:
+        return None
+    for cut in range(len(parts) - 1, 0, -1):
+        path = "/" + "/".join(parts[:cut]) + "/"
+        if is_listing_path(path):
+            scheme = parsed.scheme or "https"
+            return f"{scheme}://{parsed.netloc}{path}"
+    return None
+
+
+def listing_from_hits(hits, seed: dict | None = None) -> str:
+    """Page-liste sur le domaine de la home. Pas d'Agent, pas de juge LLM.
+
+    Accepte un hit `/projects/` ou remonte d'une fiche `/projects/slug`.
+    """
+    seed = seed or {}
+    host_seed = {
+        "url": (seed.get("home_url") or seed.get("url") or "").strip(),
+        "name": (seed.get("name") or "").strip(),
+    }
+    host = domain_of(host_seed["url"])
+    if not host:
+        return ""
+    found: list[str] = []
+    for href in _collect_same_host_hits(hits, host_seed):
+        if is_listing_url(href):
+            found.append(href)
+            continue
+        parent = parent_listing_url(href)
+        if parent and domain_of(parent) == host:
+            found.append(parent)
+    return pick_listing_url(found) or ""
+
+
 LISTING_JUDGE_SYSTEM = (
     "Tu juges des URL de catalogue de projets d'une organisation marine. "
     "Réponds uniquement en JSON strict : "

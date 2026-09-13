@@ -38,8 +38,14 @@ QUEUE_SKIP = "skip"
 
 SEARCH_JOURNAL_PATH = DATA_DIR / "official_homes_search.jsonl"
 SEARCH_PROGRESS_PATH = DATA_DIR / "official_homes_search.progress.json"
+LISTING_JOURNAL_PATH = DATA_DIR / "official_listings_search.jsonl"
+LISTING_PROGRESS_PATH = DATA_DIR / "official_listings_search.progress.json"
+SPLITS_REPORT_PATH = DATA_DIR / "compound_splits.json"
 AUDIT_PATH = DATA_DIR / "master_seeds_audit.json"
 HOME_SOURCE_SEARCH = "search"
+LISTING_SOURCE_SEARCH = "search"
+LISTING_SOURCE_V1 = "v1_url"
+MIN_SPLIT_PART = 3
 
 SEARCH_HOME_STATUSES = {
     HOME_STATUS_BORROWED,
@@ -86,6 +92,9 @@ _KEEP_AND = (
     "management and exploitation",
     "fisheries and oceans",
     "science and research",
+    "oil and gas",
+    "arctic and antarctic",
+    "conservation and climate",
 )
 
 _ORG_HINT = re.compile(
@@ -392,6 +401,13 @@ def catalog_summary(seeds: list[dict]) -> dict:
         "n_compound": _count("name_status", NAME_COMPOUND),
         "n_projects_index": _count("listing_kind", "projects_index"),
         "n_home_only": _count("listing_kind", "home_only"),
+        "n_homepage": _count("listing_kind", "homepage"),
+        "n_listing_search": sum(
+            1 for s in seeds
+            if (s.get("listing_source") or "") == LISTING_SOURCE_SEARCH
+            and (s.get("listing_kind") or "") == "projects_index"
+        ),
+        "n_split": sum(1 for s in seeds if (s.get("source") or "") == "split"),
     }
 
 
@@ -411,6 +427,8 @@ def audit_rows(seeds: list[dict]) -> list[dict]:
             "url": s.get("url") or "",
             "borrowed_domain": s.get("borrowed_domain") or "",
             "home_source": s.get("home_source") or "",
+            "listing_source": s.get("listing_source") or "",
+            "split_into": ", ".join(s.get("split_into") or []),
         })
     rows.sort(key=lambda r: (-int(r["project_count"] or 0), (r["name"] or "").lower()))
     return rows
@@ -483,13 +501,22 @@ def load_search_journal(path: Path) -> dict[str, dict]:
     return out
 
 
-def journal_done_names(records: dict[str, dict], *, retry_unknown: bool = False) -> set[str]:
+def journal_done_names(
+    records: dict[str, dict],
+    *,
+    retry_unknown: bool = False,
+    result_key: str | None = None,
+) -> set[str]:
     """Noms déjà Search-és. Les erreurs réseau ne sont pas « done » (reprise)."""
     done: set[str] = set()
     for name, rec in (records or {}).items():
-        if rec.get("error") and not rec.get("site"):
+        if result_key:
+            result = rec.get(result_key)
+        else:
+            result = rec.get("site") if "site" in rec else rec.get("listing")
+        if rec.get("error") and not result:
             continue
-        if rec.get("site"):
+        if result:
             done.add(norm_name(name))
         elif not retry_unknown:
             done.add(norm_name(name))
@@ -573,6 +600,288 @@ def overlay_search_results(
 def write_search_progress(path: Path, payload: dict) -> Path:
     body = {"updated_at": now_iso(), **payload}
     return _atomic_write_text(Path(path), json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+
+
+def apply_listing_result(seed: dict, listing: str | None, *, source: str = LISTING_SOURCE_SEARCH) -> dict:
+    """Pose une page-liste sur le domaine de la home. Miss → homepage, toujours crawlable."""
+    listing = (listing or "").strip()
+    home = (seed.get("home_url") or seed.get("url") or "").strip()
+    if listing:
+        if home and domain_of(listing) != domain_of(home):
+            listing = ""
+        elif not is_listing_url(listing):
+            listing = ""
+    if listing:
+        seed["listing_url"] = listing
+        seed["url"] = listing
+        seed["listing_kind"] = "projects_index"
+        seed["listing_source"] = source
+        if (seed.get("home_status") or "") == HOME_STATUS_OFFICIAL:
+            seed["queue"] = QUEUE_CRAWL
+        return seed
+    seed["listing_source"] = source
+    if not seed.get("listing_kind") or seed["listing_kind"] == "unknown":
+        seed["listing_kind"] = "homepage"
+    if home and not seed.get("url"):
+        seed["url"] = home
+    return seed
+
+
+def listing_candidates(
+    seeds: list[dict],
+    *,
+    done_names: set[str] | None = None,
+    retry_unknown: bool = False,
+) -> list[dict]:
+    """Homes officielles sans page-liste déjà qualifiée."""
+    done = {norm_name(n) for n in (done_names or set()) if n}
+    out = []
+    for s in seeds:
+        name = (s.get("name") or "").strip()
+        if not name:
+            continue
+        if (s.get("name_status") or NAME_OK) != NAME_OK:
+            continue
+        if (s.get("home_status") or "") != HOME_STATUS_OFFICIAL:
+            continue
+        if (s.get("queue") or "") == QUEUE_SKIP:
+            continue
+        if (s.get("listing_kind") or "") == "home_only":
+            continue
+        key = norm_name(name)
+        if key in done:
+            continue
+        listing = (s.get("listing_url") or "").strip()
+        kind = (s.get("listing_kind") or "").strip()
+        if kind == "projects_index" and listing and is_listing_url(listing):
+            continue
+        source = (s.get("listing_source") or "").strip()
+        if source == LISTING_SOURCE_SEARCH and not listing and not retry_unknown:
+            continue
+        host = domain_of(s.get("home_url") or s.get("url"))
+        if not host:
+            continue
+        if is_shared_hub(host) and not name_owns_hub(name, host):
+            continue
+        out.append(s)
+    return out
+
+
+def overlay_listing_results(
+    seeds: list[dict],
+    *,
+    previous: list[dict] | None = None,
+    journal: Path | dict | None = None,
+) -> int:
+    """Réapplique les pages-listes (catalogue précédent + journal C)."""
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    touched: set[str] = set()
+    for old in previous or []:
+        src = (old.get("listing_source") or "").strip()
+        if src not in {LISTING_SOURCE_SEARCH, LISTING_SOURCE_V1}:
+            continue
+        if (old.get("listing_kind") or "") != "projects_index":
+            continue
+        key = norm_name(old.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        apply_listing_result(cur, old.get("listing_url") or "", source=src)
+        touched.add(key)
+    if isinstance(journal, dict):
+        records = journal
+    elif journal is not None:
+        records = load_search_journal(Path(journal))
+    else:
+        records = {}
+    for rec in records.values():
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        if rec.get("error") and not rec.get("listing"):
+            continue
+        src = rec.get("source") or LISTING_SOURCE_SEARCH
+        apply_listing_result(cur, rec.get("listing") or "", source=src)
+        touched.add(key)
+    return len(touched)
+
+
+def infer_listings_onto_official_homes(seeds: list[dict], projects: list[dict] | None) -> int:
+    """C hors Search : préfixe commun des fiches v1 sur la home officielle."""
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for doc in projects or []:
+        url = (doc.get("url") or "").strip()
+        if not url:
+            continue
+        for name in funder_names_from_project(doc):
+            if is_noise_name(name):
+                continue
+            buckets[norm_name(name)].append(url)
+    n = 0
+    for seed in listing_candidates(seeds):
+        inferred = infer_own_listing(
+            seed.get("name") or "",
+            buckets.get(norm_name(seed.get("name") or ""), []),
+            seed.get("home_url"),
+        )
+        if inferred:
+            apply_listing_result(seed, inferred, source=LISTING_SOURCE_V1)
+            n += 1
+    return n
+
+
+def assign_queue(seed: dict) -> str:
+    """Étape E : file Complet = home officielle ou page-liste, nom simple."""
+    if seed.get("split_into"):
+        return QUEUE_SKIP
+    name_status = (seed.get("name_status") or NAME_OK).strip()
+    if name_status == NAME_EXCLUDE:
+        return QUEUE_SKIP
+    if name_status == NAME_COMPOUND:
+        return QUEUE_RESOLVE
+    status = (seed.get("home_status") or "").strip()
+    if status in {
+        HOME_STATUS_BORROWED, HOME_STATUS_PUBLISHER, HOME_STATUS_SOCIAL,
+        HOME_STATUS_EMPTY, HOME_STATUS_UNKNOWN,
+    }:
+        return QUEUE_RESOLVE
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    if status == HOME_STATUS_OFFICIAL and url:
+        return QUEUE_CRAWL
+    if url and status == HOME_STATUS_OFFICIAL:
+        return QUEUE_CRAWL
+    return QUEUE_RESOLVE
+
+
+def refresh_catalog_queues(seeds: list[dict]) -> list[dict]:
+    """Recalcule `queue` pour tout le catalogue (E)."""
+    for seed in seeds:
+        seed["queue"] = assign_queue(seed)
+    return seeds
+
+
+_AND_DELIM = re.compile(r"\s*(?:&|\band\b)\s*", re.I)
+_COMMA_DELIM = re.compile(r"\s*[,;]\s*")
+_ACRONYM_PART = re.compile(r"^[A-Z][A-Z0-9]{2,7}$")
+_ACRONYM_PREFIX = re.compile(r"^[A-Z]{2,8}\b")
+
+
+def _strip_partner(name: str) -> str:
+    return re.sub(r"\s*\(partner\)\s*$", "", (name or "").strip(), flags=re.I).strip()
+
+
+def _is_org_part(part: str, seeds: list[dict] | None = None) -> bool:
+    """Évite de scinder « Science, Technology and … » en faux organismes."""
+    part = _strip_partner(part)
+    if not part or classify_name(part) != NAME_OK:
+        return False
+    if seeds and _find_seed_by_name(seeds, part):
+        return True
+    if _ORG_HINT.search(part):
+        return True
+    if _ACRONYM_PART.match(part):
+        return True
+    if _ACRONYM_PREFIX.match(part) and len(part) >= 6:
+        return True
+    return False
+
+
+def split_compound_parts(name: str, seeds: list[dict] | None = None) -> list[str] | None:
+    """Découpe un nom collé. None si un seul organisme ou parties trop vagues."""
+    if classify_name(name) != NAME_COMPOUND:
+        return None
+    raw = _strip_partner(name)
+    and_parts = [p.strip(" .") for p in _AND_DELIM.split(raw) if p.strip(" .")]
+    if len(and_parts) >= 2 and all(_is_org_part(p, seeds) for p in and_parts):
+        return [_strip_partner(p) for p in and_parts]
+    comma_parts = [p.strip(" .") for p in _COMMA_DELIM.split(raw) if p.strip(" .")]
+    if len(comma_parts) >= 2 and all(_is_org_part(p, seeds) for p in comma_parts):
+        return [_strip_partner(p) for p in comma_parts]
+    return None
+
+
+def _find_seed_by_name(seeds: list[dict], name: str) -> dict | None:
+    for seed in seeds:
+        if names_soft_match(seed.get("name") or "", name, seed.get("aliases") or []):
+            return seed
+    return None
+
+
+def apply_compound_splits(seeds: list[dict]) -> dict:
+    """D : reclasse les faux composés, scinde les vrais, exclut la source scindée."""
+    report = {
+        "reclassified_ok": [],
+        "merged": [],
+        "created": [],
+        "split_sources": [],
+        "unsplittable": [],
+    }
+    for seed in list(seeds):
+        if (seed.get("name_status") or "") != NAME_COMPOUND:
+            continue
+        name = (seed.get("name") or "").strip()
+        if classify_name(name) == NAME_OK:
+            seed["name_status"] = NAME_OK
+            report["reclassified_ok"].append(name)
+            continue
+        parts = split_compound_parts(name, seeds)
+        if not parts:
+            report["unsplittable"].append(name)
+            continue
+        handled = []
+        leftover = []
+        for part in parts:
+            existing = _find_seed_by_name(seeds, part)
+            if existing:
+                aliases = list(existing.get("aliases") or [])
+                if name not in aliases and norm_name(name) != norm_name(existing.get("name") or ""):
+                    aliases.append(name)
+                    existing["aliases"] = aliases
+                report["merged"].append({"from": name, "into": existing.get("name"), "part": part})
+                handled.append(part)
+                continue
+            if len(norm_name(part)) < MIN_SPLIT_PART:
+                leftover.append(part)
+                continue
+            created = {
+                "name": part,
+                "url": None,
+                "listing_kind": "unknown",
+                "source": "split",
+                "project_count": 0,
+                "home_url": None,
+                "listing_url": None,
+                "home_status": HOME_STATUS_EMPTY,
+                "name_status": NAME_OK,
+                "queue": QUEUE_RESOLVE,
+                "borrowed_domain": None,
+                "home_source": "",
+                "split_from": name,
+            }
+            seeds.append(created)
+            report["created"].append({"from": name, "name": part})
+            handled.append(part)
+        if handled and not leftover and len(handled) == len(parts):
+            seed["split_into"] = parts
+            seed["queue"] = QUEUE_SKIP
+            report["split_sources"].append(name)
+        elif not handled:
+            report["unsplittable"].append(name)
+    refresh_catalog_queues(seeds)
+    report["counts"] = {
+        "reclassified_ok": len(report["reclassified_ok"]),
+        "merged": len(report["merged"]),
+        "created": len(report["created"]),
+        "split_sources": len(report["split_sources"]),
+        "unsplittable": len(report["unsplittable"]),
+        "n": len(seeds),
+    }
+    return report
 
 
 def persist_catalog(
