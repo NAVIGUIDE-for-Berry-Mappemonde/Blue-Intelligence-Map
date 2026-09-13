@@ -691,7 +691,30 @@ class Swarm:
     # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
         seed = dict(seed or {})
+        queue = (seed.get("queue") or "").strip().lower()
+        if queue in {"resolve", "skip"}:
+            self.log(
+                f"[{seed.get('name')}] skipped — file {queue} (pas d'Agent)",
+                "warn",
+            )
+            return
+        classified = bool(seed.get("home_status") or seed.get("queue"))
+        status = (seed.get("home_status") or "").strip().lower()
+        if classified and status in {
+            "borrowed_hub", "publisher", "social", "empty", "unknown",
+        }:
+            self.log(
+                f"[{seed.get('name')}] skipped — home_status={status}",
+                "warn",
+            )
+            return
         if needs_official_home(seed):
+            if classified:
+                self.log(
+                    f"[{seed.get('name')}] skipped — home déjà classée, pas de Search live",
+                    "warn",
+                )
+                return
             home = await self._resolve_official_home(seed)
             if home:
                 seed["url"] = home
@@ -984,23 +1007,32 @@ class Swarm:
         name = seed.get("name") or ""
         for item in self.master_seeds or []:
             same = domain and domain_of(item.get("url")) == domain
-            if same and is_shared_hub(domain) and not name_owns_hub(
-                    item.get("name") or "", domain):
+            if same and is_shared_hub(domain) and not (
+                name_owns_hub(item.get("name") or "", domain)
+                or domain_matches_org(domain, item.get("name") or "")
+            ):
                 same = False
             if same or (name and (item.get("name") or "") == name):
                 item["url"] = listing_url
+                item["listing_url"] = listing_url
                 item["listing_kind"] = "projects_index"
+                if item.get("queue") != "skip":
+                    item["queue"] = "crawl"
                 break
         if not domain:
             return
         try:
+            key = {"name": name} if name else {"domain": domain}
             await self.db.master_seeds.update_one(
-                {"domain": domain},
+                key,
                 {"$set": {
                     "name": name,
                     "url": listing_url,
+                    "listing_url": listing_url,
                     "domain": domain,
                     "listing_kind": "projects_index",
+                    "home_status": "official",
+                    "queue": "crawl",
                     "source": "listing_hop",
                     "ts": now_iso(),
                 },

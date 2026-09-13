@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Construit backend/data/master_seeds.json (CDC Projets C5).
+"""Audit + enrichissement hors Complet de backend/data/master_seeds.json.
 
-Préférer `enrich_master_seeds.py` : il classe homes / listes / file Complet.
-Cet export appelle le même enrichissement (plus le vote « domaine le plus
-fréquent » qui collait les organismes sur Decade / Surfrider).
+Ne touche pas `projects`. Classe homes / listes / noms, puis n'envoie en
+file Complet que les graines crawlables.
 
-Usage :
     python3 scripts/enrich_master_seeds.py --from-geojson ../seed/projects.geojson
-    python3 scripts/export_master_seeds.py --from-geojson ../seed/projects.geojson
 """
 from __future__ import annotations
 
@@ -20,13 +17,14 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from app.services.master_seeds import (  # noqa: E402
-    MASTER_SEEDS_PATH,
-    build_master_seeds,
-    dump_master_seeds,
-    fetch_production_projects,
-    projects_from_geojson,
+    MASTER_SEEDS_PATH, fetch_production_projects, projects_from_geojson,
     seeds_for_run,
 )
+from app.services.seed_catalog import (  # noqa: E402
+    build_enriched_master_seeds, catalog_summary, dump_catalog, write_audit,
+)
+
+AUDIT_PATH = BACKEND / "data" / "master_seeds_audit.json"
 
 
 def projects_from_mongo() -> list[dict]:
@@ -38,12 +36,13 @@ def projects_from_mongo() -> list[dict]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Export MasterSeeds (~861 financeurs v1 + 21 curés)")
+    p = argparse.ArgumentParser(description="Enrichit MasterSeeds sans crawler Complet")
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-geojson", type=Path, help="GeoJSON v1 (seed/projects.geojson)")
-    src.add_argument("--from-api", action="store_true", help="GET https://blueintelligence.online/api/projects")
-    src.add_argument("--from-mongo", action="store_true", help="Collection live projects (MONGO_URL)")
+    src.add_argument("--from-api", action="store_true")
+    src.add_argument("--from-mongo", action="store_true")
     p.add_argument("--out", type=Path, default=MASTER_SEEDS_PATH)
+    p.add_argument("--audit-out", type=Path, default=AUDIT_PATH)
     args = p.parse_args()
 
     if args.from_geojson:
@@ -57,13 +56,19 @@ def main() -> int:
         projects = projects_from_mongo()
         source = "mongo:projects"
 
-    seeds = build_master_seeds(projects)
-    path = dump_master_seeds(seeds, args.out, source=source)
+    seeds = build_enriched_master_seeds(projects)
+    path = dump_catalog(seeds, args.out, source=source)
+    audit = write_audit(seeds, args.audit_out, source=source)
+    summary = catalog_summary(seeds)
     queued = seeds_for_run(seeds)
+    print(f"Wrote {path} — {summary['n']} financeurs")
     print(
-        f"Wrote {path} — {len(seeds)} financeurs "
-        f"({len(queued)} file Complet / queue=crawl)"
+        f"  crawl={summary['n_crawl']} resolve={summary['n_resolve']} "
+        f"skip={summary['n_skip']} official={summary['n_official']} "
+        f"borrowed={summary['n_borrowed']} compound={summary['n_compound']}"
     )
+    print(f"  file Complet = {len(queued)} (queue=crawl)")
+    print(f"  audit {audit} + {audit.with_suffix('.csv')}")
     return 0
 
 

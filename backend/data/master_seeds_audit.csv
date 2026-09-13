@@ -1,0 +1,851 @@
+name,project_count,source,name_status,home_status,listing_kind,queue,home_url,listing_url,url,borrowed_domain,home_source
+Save Our Seas Foundation,434,v1,ok,official,projects_index,crawl,https://saveourseas.com/,https://saveourseas.com/project/,https://saveourseas.com/project/,mantatrust.org,v1_url
+Surfrider Foundation,359,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+Fondation de la Mer,274,curated,ok,official,projects_index,crawl,https://fondationdelamer.org/,https://www.fondationdelamer.org/nos-programmes/,https://www.fondationdelamer.org/nos-programmes/,,curated
+Shark Conservation Fund,152,v1,ok,official,projects_index,crawl,https://sharkconservationfund.org/,https://sharkconservationfund.org/project/,https://sharkconservationfund.org/project/,,v1_url
+Oceans 5,150,v1,ok,official,projects_index,crawl,https://oceans5.org/,https://oceans5.org/project/,https://oceans5.org/project/,oceans5.org,v1_url
+Packard Foundation,135,curated,ok,official,projects_index,crawl,https://packard.org/,https://www.packard.org/what-we-fund/ocean/,https://www.packard.org/what-we-fund/ocean/,,curated
+GEF,106,v1,ok,borrowed_hub,unknown,resolve,,,,iwlearn.net,
+Prince Albert II Foundation,99,curated,ok,official,projects_index,crawl,https://fpa2.org/,https://www.fpa2.org/en/projects/,https://www.fpa2.org/en/projects/,,curated
+Global Fund for Coral Reefs,84,v1,ok,official,projects_index,crawl,https://globalfundcoralreefs.org/,https://globalfundcoralreefs.org/reef-plus/,https://globalfundcoralreefs.org/reef-plus/,globalfundcoralreefs.org,v1_url
+The Ocean Foundation,51,curated,ok,official,projects_index,crawl,https://oceanfdn.org/,https://oceanfdn.org/projects/,https://oceanfdn.org/projects/,,curated
+Blue Marine Foundation,46,curated,ok,official,projects_index,crawl,https://bluemarinefoundation.com/,https://www.bluemarinefoundation.com/projects/,https://www.bluemarinefoundation.com/projects/,,curated
+Waitt Foundation,44,v1,ok,official,homepage,crawl,https://waittfoundation.org/,,https://waittfoundation.org/,,v1_url
+Ocean Conservancy,43,curated,ok,official,projects_index,crawl,https://oceanconservancy.org/,https://oceanconservancy.org/programs/,https://oceanconservancy.org/programs/,,curated
+Veolia Foundation,40,v1,ok,official,homepage,crawl,https://fondation.veolia.com/,,https://fondation.veolia.com/,fondation.veolia.com,v1_url
+Pure Ocean Foundation,37,curated,ok,official,projects_index,crawl,https://pure-ocean.org/,https://www.pure-ocean.org/nos-projets/,https://www.pure-ocean.org/nos-projets/,,curated
+MSC Ocean Stewardship Fund,36,v1,ok,official,homepage,crawl,https://msc.org/,,https://msc.org/,msc.org,v1_url
+National Fish and Wildlife Foundation - Coral Reef Conservation Fund,32,v1,ok,official,homepage,crawl,https://nfwf.org/,,https://nfwf.org/,,v1_url
+European Commission H2020,31,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Research Council (ERC),29,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Union - Horizon Europe,27,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Coral Reef Alliance,26,curated,ok,official,projects_index,crawl,https://coral.org/,https://coral.org/en/where-we-work/,https://coral.org/en/where-we-work/,,curated
+Horizon Europe,24,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Gordon and Betty Moore Foundation,23,v1,ok,official,homepage,crawl,https://moore.org/,,https://moore.org/,,v1_url
+National Fish and Wildlife Foundation,23,v1,ok,official,homepage,crawl,https://nfwf.org/,,https://nfwf.org/,,v1_url
+Minderoo Foundation,22,v1,ok,official,homepage,crawl,https://minderoo.org/,,https://minderoo.org/,minderoo.org,v1_url
+Belmont Forum,19,v1,ok,official,projects_index,crawl,https://belmontforum.org/,https://belmontforum.org/archives/projects/,https://belmontforum.org/archives/projects/,belmontforum.org,v1_url
+Monaco,19,v1,ok,unknown,unknown,resolve,,,,,
+Ocean Decade,19,v1,ok,official,projects_index,crawl,https://oceandecade.org/,https://oceandecade.org/actions/,https://oceandecade.org/actions/,oceandecade.org,v1_url
+JPI Oceans,18,v1,ok,official,homepage,crawl,https://jpi-oceans.eu/,,https://jpi-oceans.eu/,jpi-oceans.eu,v1_url
+Synchronicity Earth,18,v1,ok,official,homepage,crawl,https://synchronicityearth.org/,,https://synchronicityearth.org/,,v1_url
+Fondation de France,15,v1,ok,official,homepage,crawl,https://fondationdefrance.org/,,https://fondationdefrance.org/,fondationdefrance.org,v1_url
+BlueInvest,14,v1,ok,official,homepage,crawl,https://blueinvest-community.converve.io/,,https://blueinvest-community.converve.io/,blueinvest-community.converve.io,v1_url
+Oceana,14,curated,ok,official,projects_index,crawl,https://oceana.org/,https://oceana.org/campaigns/,https://oceana.org/campaigns/,,curated
+SeaLegacy,14,v1,ok,official,projects_index,crawl,https://sealegacy.org/,https://sealegacy.org/expedition/,https://sealegacy.org/expedition/,sealegacy.org,v1_url
+Blue Action Fund,13,v1,ok,official,homepage,crawl,https://blueactionfund.org/,,https://blueactionfund.org/,,v1_url
+European Research Council,13,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Union Horizon 2020,13,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Bertarelli Foundation,12,v1,ok,official,homepage,crawl,https://fondation-bertarelli.org/,,https://fondation-bertarelli.org/,fondation-bertarelli.org,v1_url
+IFREMER,12,curated,ok,official,home_only,crawl,https://ifremer.fr/,,https://www.ifremer.fr/fr,,curated
+Rare Fish Forever,12,curated,ok,official,projects_index,crawl,https://rare.org/,https://rare.org/program/fish-forever/,https://rare.org/program/fish-forever/,,curated
+U.S. Congress,12,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+European Union,11,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Fondation TotalEnergies,11,v1,ok,official,homepage,crawl,https://fondation.totalenergies.com/,,https://fondation.totalenergies.com/,,v1_url
+Pew Charitable Trusts,11,curated,ok,official,projects_index,crawl,https://pewtrusts.org/,https://www.pewtrusts.org/en/projects,https://www.pewtrusts.org/en/projects,,curated
+The Nippon Foundation,11,v1,ok,official,projects_index,crawl,https://nippon-foundation.or.jp/,https://nippon-foundation.or.jp/what/projects/,https://nippon-foundation.or.jp/what/projects/,nektonmission.org,v1_url
+Dalio Philanthropies,10,v1,ok,borrowed_hub,unknown,resolve,,,,archive.oceanx.org,
+"Fondation de la Mer, Fondation Ecoalf",10,v1,compound,official,homepage,resolve,https://fondationdelamer.org/,,https://fondationdelamer.org/,,v1_url
+OCEANS 5,10,v1,ok,official,projects_index,crawl,https://oceans5.org/,https://oceans5.org/project/,https://oceans5.org/project/,oceans5.org,v1_url
+European Commission,9,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+MSC Transition Assistance Fund,9,v1,ok,official,homepage,crawl,https://msc.org/,,https://msc.org/,msc.org,v1_url
+Ocean14 Capital,9,v1,ok,official,homepage,crawl,https://ocean14capital.com/,,https://ocean14capital.com/,,v1_url
+UNESCO,9,v1,ok,official,homepage,crawl,https://ioc.unesco.org/,,https://ioc.unesco.org/,oceandecade.org,v1_url
+World Bank,9,v1,ok,official,homepage,crawl,https://projects.worldbank.org/,,https://projects.worldbank.org/,,v1_url
+European Commission - Horizon 2020,8,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+NOAA,8,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+AXA Research Fund,7,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Government of Canada,7,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Khaled bin Sultan Living Oceans Foundation,7,v1,ok,official,homepage,crawl,https://livingoceansfoundation.org/,,https://livingoceansfoundation.org/,,v1_url
+The Pew Charitable Trusts and Dona Bertarelli,7,v1,compound,official,homepage,resolve,https://pew.org/,,https://pew.org/,pew.org,v1_url
+European Commission - Horizon Europe,6,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Fisheries and Oceans Canada,6,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MSC Ocean Stewardship Fund - Science and Research Fund,6,v1,ok,official,homepage,crawl,https://msc.org/,,https://msc.org/,msc.org,v1_url
+Surfrider Foundation Miami Chapter,6,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+The UK's Blue Planet Fund,6,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+UMR MARBEC (partner),6,v1,ok,official,homepage,crawl,https://umr-marbec.fr/,,https://umr-marbec.fr/,,v1_url
+WildAid Marine,6,v1,ok,official,projects_index,crawl,https://marine.wildaid.org/,https://marine.wildaid.org/projects/,https://marine.wildaid.org/projects/,marine.wildaid.org,v1_url
+Wildlife Conservation Society Marine,6,curated,ok,official,projects_index,crawl,https://wcs.org/,https://www.wcs.org/our-work/oceans,https://www.wcs.org/our-work/oceans,,curated
+日本財団 (The Nippon Foundation),6,v1,ok,official,projects_index,crawl,https://nippon-foundation.or.jp/,https://nippon-foundation.or.jp/what/projects/,https://nippon-foundation.or.jp/what/projects/,,v1_url
+European Union - Horizon 2020,5,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Fondation Bertarelli,5,v1,ok,official,homepage,crawl,https://fondation-bertarelli.org/,,https://fondation-bertarelli.org/,fondation-bertarelli.org,v1_url
+Geo-Ocean (partner),5,v1,ok,official,homepage,crawl,https://geo-ocean.fr/,,https://geo-ocean.fr/,,v1_url
+Marine Conservation Institute,5,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+National Oceanic and Atmospheric Administration (NOAA),5,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Oceanography Centre,5,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Oak Foundation,5,v1,ok,official,homepage,crawl,https://oakfnd.org/,,https://oakfnd.org/,,v1_url
+Plastic Soup Foundation,5,v1,ok,official,homepage,crawl,https://plasticsoupfoundation.org/,,https://plasticsoupfoundation.org/,,v1_url
+The MedFund,5,v1,ok,official,homepage,crawl,https://themedfund.org/,,https://themedfund.org/,themedfund.org,v1_url
+BCAF,4,v1,ok,borrowed_hub,unknown,resolve,,,,bluenaturalcapital.org,
+Blue Carbon Accelerator Fund (BCAF),4,v1,ok,borrowed_hub,unknown,resolve,,,,bluenaturalcapital.org,
+Disney Conservation Fund,4,v1,ok,official,homepage,crawl,https://impact.disney.com/,,https://impact.disney.com/,,v1_url
+Flanders Marine Institute (VLIZ),4,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Intergovernmental Oceanographic Commission of UNESCO,4,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Living Oceans Foundation,4,v1,ok,official,homepage,crawl,https://livingoceansfoundation.org/,,https://livingoceansfoundation.org/,oceandecade.org,v1_url
+LOPS (partner),4,v1,ok,official,homepage,crawl,https://umr-lops.fr/,,https://umr-lops.fr/,,v1_url
+Manta Trust,4,v1,ok,official,homepage,crawl,https://mantatrust.org/,,https://mantatrust.org/,mantatrust.org,v1_url
+MSC Ocean Stewardship Fund - Transition Assistance Fund,4,v1,ok,official,homepage,crawl,https://msc.org/,,https://msc.org/,msc.org,v1_url
+Mubadala,4,v1,ok,unknown,unknown,resolve,,,,,
+Prince Albert II of Monaco Foundation - Monaco Branch,4,v1,ok,unknown,unknown,resolve,,,,,
+Sea Legacy,4,v1,ok,official,projects_index,crawl,https://sealegacy.org/,https://sealegacy.org/expedition/,https://sealegacy.org/expedition/,sealegacy.org,v1_url
+State of California,4,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Surfrider Foundation San Diego Chapter,4,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+"Swiss Re Foundation, UK Blue Planet Fund",4,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+TotalEnergies Foundation,4,v1,ok,official,homepage,crawl,https://fondation.totalenergies.com/,,https://fondation.totalenergies.com/,,v1_url
+U.S. National Oceanic and Atmospheric Administration (NOAA),4,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+U.S. National Science Foundation,4,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+5 Gyres Institute,3,v1,ok,official,homepage,crawl,https://5gyres.org/,,https://5gyres.org/,,v1_url
+Chilean National Oceanographic Committee (CONA),3,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Disney,3,v1,ok,official,homepage,crawl,https://impact.disney.com/,,https://impact.disney.com/,,v1_url
+FRDC,3,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Fundação Calouste Gulbenkian,3,v1,ok,official,projects_index,crawl,https://gulbenkian.pt/,https://gulbenkian.pt/projects/,https://gulbenkian.pt/projects/,gulbenkian.pt,v1_url
+German Ocean Foundation,3,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+IOC-UNESCO,3,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Korea Institute of Ocean Science and Technology,3,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Mission Blue,3,curated,ok,official,projects_index,crawl,https://missionblue.org/,https://missionblue.org/hope-spots/,https://missionblue.org/hope-spots/,,curated
+OceanX,3,v1,ok,official,projects_index,crawl,https://oceanx.org/,https://oceanx.org/missions/,https://oceanx.org/missions/,oceanx.org,v1_url
+Surfrider Foundation Connecticut Chapter,3,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+U.S. Federal Government,3,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+UK Blue Planet Fund,3,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Waitt Institute,3,v1,ok,official,homepage,crawl,https://waittinstitute.org/,,https://waittinstitute.org/,,v1_url
+Walton Family Foundation,3,v1,ok,official,homepage,crawl,https://waltonfamilyfoundation.org/,,https://waltonfamilyfoundation.org/,,v1_url
+Washington State Legislature,3,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"Aqua-Firma, Shark Foundation, Waterlust",2,v1,compound,borrowed_hub,unknown,resolve,,,,marinemegafauna.org,
+Arctic and Antarctic Research Institute (AARI),2,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+BNP Paribas Foundation Climate Initiative,2,v1,ok,publisher,unknown,resolve,,,,,
+California Coastal Conservancy,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Dana Point,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Manhattan Beach,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Coastal Quest,2,v1,ok,official,homepage,crawl,https://coastal-quest.org/,,https://coastal-quest.org/,coastal-quest.org,v1_url
+Common Seas,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Conservation International,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CSIRO,2,v1,ok,official,homepage,crawl,https://csiro.au/,,https://csiro.au/,oceandecade.org,v1_url
+EPA,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+European Commission - H2020,2,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Commission - Horizon Europe ERC,2,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Commission Horizon 2020,2,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Research Council (ERC) - Horizon Europe,2,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Fisheries and Oceans Canada (DFO),2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Florida Legislature,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Global Environment Facility,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Government of Canada and UK Blue Planet Fund,2,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Griffith University,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+In-kind,2,v1,exclude,borrowed_hub,unknown,skip,,,,oceanriskalliance.org,
+Institute of Marine Research – Norway,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Association of Oil and Gas Producers (IOGP),2,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO & UNESCO Bangkok",2,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+IOC/UNESCO,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+JPI Oceans and JPI Climate,2,v1,compound,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+Kelp Forest Foundation,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+LEMAR (partner),2,v1,ok,unknown,unknown,resolve,,,,,
+Nekton and Schmidt Ocean Institute,2,v1,compound,official,projects_index,resolve,https://nektonmission.org/,https://nektonmission.org/programmes/,https://nektonmission.org/programmes/,nektonmission.org,v1_url
+NOAA Sea Grant,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Nord University,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Stewardship Fund,2,v1,ok,borrowed_hub,unknown,resolve,,,,msc.org,
+Oceans5,2,v1,ok,official,projects_index,crawl,https://oceans5.org/,https://oceans5.org/project/,https://oceans5.org/project/,oceans5.org,v1_url
+ORRAA,2,v1,ok,official,projects_index,crawl,https://oceanriskalliance.org/,https://oceanriskalliance.org/project/,https://oceanriskalliance.org/project/,oceanriskalliance.org,v1_url
+Pew Bertarelli Ocean Legacy Project,2,v1,ok,official,homepage,crawl,https://pew.org/,,https://pew.org/,pew.org,v1_url
+Province of British Columbia,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Save The Waves Coalition,2,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Sea Shepherd,2,v1,ok,official,homepage,crawl,https://seashepherd.org/,,https://seashepherd.org/,,v1_url
+"Second Institute of Oceanography, Ministry of Natural Resources – China",2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+SOI Foundation,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+SOS Oceano (partner),2,v1,ok,official,homepage,crawl,https://sos-oceanos.org/,,https://sos-oceanos.org/,,v1_url
+Sulubaai Environmental Foundation,2,v1,ok,official,homepage,crawl,https://sulubaai-foundation.com/,,https://sulubaai-foundation.com/,oceandecade.org,v1_url
+Surfrider Foundation Broward Chapter,2,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+Surfrider Foundation Charleston Chapter,2,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+Surfrider Foundation First Coast Chapter,2,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+Surfrider Foundation San Mateo County Chapter,2,v1,ok,official,projects_index,crawl,https://surfrider.org/,https://surfrider.org/campaigns/,https://surfrider.org/campaigns/,surfrider.org,v1_url
+Sustainable Blue Economy Partnership,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Tara Ocean Foundation,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The German Marine Research Alliance (DAM),2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Minderoo Foundation,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Tiffany & Co. Foundation,2,v1,ok,official,homepage,crawl,https://tiffanyandcofoundation.org/,,https://tiffanyandcofoundation.org/,,v1_url
+UK's Blue Planet Fund,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+UNESCO Intergovernmental Oceanographic Commission,2,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+UNESCO-IOC,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Victoria,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Veolia Foundation and Prince Albert II of Monaco Foundation,2,v1,compound,official,homepage,resolve,https://fondation.veolia.com/,,https://fondation.veolia.com/,fondation.veolia.com,v1_url
+Xiamen University,2,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+日本財団,2,v1,ok,unknown,unknown,resolve,,,,,
+1000 Ocean Startups,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+5 Gyres,1,v1,ok,official,homepage,crawl,https://5gyres.org/,,https://5gyres.org/,,v1_url
+A Liquid Future,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"ACTAI Global Foundation, Baum Foundation, Martha Shaw's Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+Advanced Institute of Convergence Technology,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+African Marine Environment Sustainability Initiative (AFMESI),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+AG2R LA MONDIALE,1,v1,ok,unknown,unknown,resolve,,,,,
+Agency for Meteorology Climatology and Geophysics (BMKG) – Indonesia,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Agency of Meteorology, Climatology, and Geophysics – Indonesia",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Aker Biomarine,1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+Aker BP,1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+"Alfred Wegener Institute, Helmholtz Centre for Polar and Marine Research",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Alfred-Wegener-Institut, Helmholtz-Zentrum für Polar- und Meeresforschung (AWI)",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+American Geophysical Union (AGU),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Amplify Energy,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Aqua Farms Organization,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+AQUAEXCEL2020,1,v1,ok,borrowed_hub,unknown,resolve,,,,blueinvest-community.converve.io,
+"AquaSpark, Chroma Ventures",1,v1,ok,borrowed_hub,unknown,resolve,,,,blueinvest-community.converve.io,
+ARC Marine,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+Arcadia Fund,1,v1,ok,official,homepage,crawl,https://arcadiafund.org.uk/,,https://arcadiafund.org.uk/,,v1_url
+Arcadia Fund (Oceans 5),1,v1,ok,official,homepage,crawl,https://arcadiafund.org.uk/,,https://arcadiafund.org.uk/,,v1_url
+Arctic Reflections,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+ArcticNet,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ashlan and Philippe Cousteau,1,v1,compound,unknown,unknown,resolve,,,,,
+Asian Development Bank,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Asociación Centro para la Autonomía y Desarrollo de los Pueblos Indígenas (CADPI),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Association Esprit de Velox,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Atmosphere and Ocean Research Institute, The University of Tokyo",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Australian Government,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Australian National University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Autonomous University of Barcelona,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+AWS,1,v1,ok,borrowed_hub,unknown,resolve,,,,skytruth.org,
+AXA Atout Coeur,1,v1,ok,unknown,unknown,resolve,,,,,
+AXA Research Fund – University of Leeds,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+AXA XL,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"AXA XL, Government of Canada, UK Blue Planet Fund",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Becht Family Charitable Trust,1,v1,ok,unknown,unknown,resolve,,,,,
+Belize Tourism Board,1,v1,ok,unknown,unknown,resolve,,,,,
+"Bently Foundation, Hawaiʻi Community Foundation, Hawaiʻi Tourism Authority, The Keith Campbell Foundation, NOAA",1,v1,compound,unknown,unknown,resolve,,,,,
+"Bertarelli Foundation, Pew Charitable Trusts",1,v1,compound,official,homepage,resolve,https://fondation-bertarelli.org/,,https://fondation-bertarelli.org/,fondation-bertarelli.org,v1_url
+BioConsult SH GmbH & Co. KG,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Biotherm WaterLovers,1,v1,ok,unknown,unknown,resolve,,,,,
+"Biotherm, Polar Bears International, IUCN, ScubaPro, Gates Products",1,v1,compound,unknown,unknown,resolve,,,,,
+Bloomberg Philanthropies,1,v1,ok,borrowed_hub,unknown,resolve,,,,archive.oceanx.org,
+"Bloomberg Philanthropies Bloomberg Ocean Initiative, Swedish Postcode Lottery Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+"Bloomberg Philanthropies' Vibrant Oceans Initiative, Prince Albert II of Monaco Foundation",1,v1,compound,borrowed_hub,unknown,resolve,,,,archive.oceanx.org,
+"Blue Action Fund, UK Blue Planet Fund",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Blue Carbon Accelerator Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,bluenaturalcapital.org,
+Blue Climate Initiative (Tetiaroa Society),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Blue Economy Enterprise Incubation Facility (BE-EIF),1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+"Blue Marine Foundation, Blue Nature Alliance, Mission Blue, Ocean Born Foundation, Yachts for Science",1,v1,compound,borrowed_hub,unknown,resolve,,,,sealegacy.org,
+"Blue Marine Foundation, BOAT International, Nekton",1,v1,compound,unknown,unknown,resolve,,,,,
+"Blue Marine Foundation, Menorca Preservation Fund",1,v1,compound,unknown,unknown,resolve,,,,,
+Blue Park Award,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Blue Prosperity,1,v1,ok,official,homepage,crawl,https://blueprosperity.org/,,https://blueprosperity.org/,,v1_url
+"BlueInvest, Bpifrance",1,v1,ok,official,homepage,crawl,https://blueinvest-community.converve.io/,,https://blueinvest-community.converve.io/,blueinvest-community.converve.io,v1_url
+BNP Paribas Foundation under the aegis of Fondation de France,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Bow Seat,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Brevard County sales tax,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"Bundesministerium für Forschung, Technologie und Raumfahrt – BMFTR (Federal Ministry of Research, Technology and Space) – Germany",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+California Academy of Sciences,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+California Climate Bond (Proposition 4),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California Coastal Commission,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California Department of Parks and Recreation,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California Governor,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California Marine Sanctuary Foundation,1,v1,ok,unknown,unknown,resolve,,,,,
+California Ocean Protection Council,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"California Ocean Protection Council, California State Coastal Conservancy, philanthropic donors",1,v1,compound,borrowed_hub,unknown,resolve,,,,coastal-quest.org,
+California Proposition 4,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California State Budget,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California State Budget (Waste Discharge Permit Fund),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California State Government,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+California State Water Resources Control Board,1,v1,ok,borrowed_hub,unknown,resolve,,,,coastal-quest.org,
+"Campinas municipality, SOA Hub, Roots & Shoots, partners",1,v1,compound,unknown,unknown,resolve,,,,,
+Canada Foundation for Innovation Major Science Initiatives Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Canada's International Fisheries Enforcement Program,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine.wildaid.org,
+Canadian Commission for UNESCO,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Capacity building Working Group for the UN Ocean Decade, National Oceanographic Commission of Russian Federation",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CarbonEthics,1,v1,ok,official,homepage,crawl,https://carbonethics.co/,,https://carbonethics.co/,,v1_url
+Caribbean Cetacean Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Carl F. Bucherer,1,v1,ok,unknown,unknown,resolve,,,,,
+Caspian Environmental Consortium Ltd.,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CEA and CNRS,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CEAZA (Center for Advanced Studies in Arid Zones),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Center for Human-Environmental Research,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Centers for Disease Control and Prevention (CDC),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"Channel Islands National Park, Channel Islands National Marine Sanctuary, California Department of Fish and Wildlife",1,v1,compound,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+"Chilean Ministry of Economy, Development, and Tourism",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+China Deep Ocean Affairs Administration,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+China Ocean Mineral Resources R&D Association (COMRA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+China Oceanic Development Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+China University of Petroleum,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"CIIMAR, University of Porto",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+City and County of Honolulu,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Fort Lauderdale,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Miami Beach,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Oceanside,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of San Diego (mitigation funding),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+City of Ventura,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Clean Galveston,1,v1,ok,borrowed_hub,unknown,resolve,,,,seaturtles.org,
+Clean Water Act fines from Deepwater Horizon oil spill,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Clermont-Auvergne INP,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+ClimateWorks Foundation and Jeremy and Hannelore Grantham Environmental Trust,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+CMCC,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"CMCC Foundation – Euro-Mediterranean Center on Climate Change, Italy",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"CNR, EMODnet, Parc naturel marin du Cap Corse, Carloforte Municipality, SMEs",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Coalition française des fondations pour le climat,1,v1,ok,official,homepage,crawl,https://fondationdefrance.org/,,https://fondationdefrance.org/,fondationdefrance.org,v1_url
+Colectivo Internacional Pelagos Okeanos,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Commonwealth Scientific and Industrial Research Organisation (CSIRO),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Commonwealth Scientific and Industrial Research Organization,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Commonwealth Secretariat, Fisheries and Oceans Canada",1,v1,ok,official,homepage,crawl,https://thecommonwealth.org/,,https://thecommonwealth.org/,,v1_url
+Community Report,1,v1,ok,unknown,unknown,resolve,,,,,
+"Conservation Law Foundation, National Geographic, Google, National Resources Defense Council",1,v1,compound,unknown,unknown,resolve,,,,,
+Consorcio de Investigación del Golfo de México (CIGOM),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Convex Group Limited,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CoopeSoliDar R.L,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CORAL and MAR Fund,1,v1,compound,official,homepage,resolve,https://coral.org/,,https://coral.org/,,v1_url
+Coral Reef Alliance (CORAL) and partners,1,v1,compound,official,homepage,resolve,https://coral.org/,,https://coral.org/,,v1_url
+"CORAL, PROLANSATE Foundation, DIGEPESCA",1,v1,compound,official,homepage,resolve,https://coral.org/,,https://coral.org/,,v1_url
+"CORDAP, Zoo & Aquarium Partnership Program",1,v1,ok,unknown,unknown,resolve,,,,,
+Corporación Endeavor – Chile,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CSIRO Environment,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CSIRO Environment – Australia,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"CT Department of Energy and Environmental Protection, The Nature Conservancy",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Dalhousie University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+DAM,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+DAN EUROPE FOUNDATION,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Deep Ocean Observing Strategy,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Deep Ocean Stewardship Initiative (DOSI),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Department for Environment, Food, and Rural Affairs – United Kingdom",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Department of Blue Economy, Ministry of Fisheries and Blue Economy, Seychelles",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"DG Research and Innovation, European Commission",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+DNB,1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+Dollar Donation Club,1,v1,ok,unknown,unknown,resolve,,,,,
+Dona Bertarelli Philanthropy,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Donor funded, Manta Trust affiliate, Barefoot Manta Resort, Conservation International",1,v1,compound,official,homepage,resolve,https://mantaprojectfiji.com/,,https://mantaprojectfiji.com/,,v1_url
+Doors of Hope Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+DOTCAN Institute,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Drake Enterprise Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Duke University Nicholas Institute,1,v1,ok,unknown,unknown,resolve,,,,,
+"Early Career Scientists' Network at IIOE-2 JPO, INCOIS",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ecovybz Environmental Creatives,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+EIT Food,1,v1,ok,unknown,unknown,resolve,,,,,
+Electricity Supply Board (ESB),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Elevation Capital, Techstars",1,v1,ok,unknown,unknown,resolve,,,,,
+EMBRC-ERIC,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+ENGIE,1,v1,ok,unknown,unknown,resolve,,,,,
+ENGIE Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Enviheals Foundations,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Environmental Protection Agency (EPA), United States Mexico Canada Agreement (USMCA)",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Environmental Protection Agency – United States of America (USA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+EPA BEACH Grant Program,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+EPA Clean Water State Revolving Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+EPOS-ERIC,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+EU,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+EU BlueInvest,1,v1,ok,official,homepage,crawl,https://blueinvest-community.converve.io/,,https://blueinvest-community.converve.io/,blueinvest-community.converve.io,v1_url
+EU Green Deal,1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+EU Mission Ocean and Waters,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"EU programmes, Nouvelle-Aquitaine region, Impact Ocean Capital",1,v1,compound,unknown,unknown,resolve,,,,,
+EU-Funded Project AANChOR,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Euro-Mediterranean Centre on Climate Change Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Euro-Mediterranean University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"EuroMarine, European Marine Research Network",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Commission DG Research and Innovation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Commission H2020 MSCA-IF,1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+"European Commission, JPI Oceans, 17 European countries",1,v1,compound,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+European Global Ocean Observing System (EuroGOOS),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Marine Board,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Open Science Cloud (EOSC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Space Agency (ESA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Union (CREA-CULT-2021-COOP),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+European Union - H2020,1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+European Union Horizon 2020 Research and Innovation Programme,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+"European Union Horizon 2020, JPI Oceans",1,v1,ok,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+European Way,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Expédition 7e Continent,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+F3 Team,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+FAPESP,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Federal University of Santa Catarina,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Federal University of São Paulo,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Federal University of Technology – Paraná,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"First Institute of Oceanography (FIO), Ministry of Natural Resources – China",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Fisheries and Oceans Canada (DFO), Atlantic Ocean Marine Microbiome Working Group",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Fisheries Research Institute Malaysia,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Flexens Oy Ab,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Florida State Government and Miami-Dade County,1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Flotilla Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,nektonmission.org,
+Fondation CMA CGM,1,curated,ok,official,home_only,crawl,https://cmacgm-group.com/,,https://www.cmacgm-group.com/fr/fondation,,curated
+Fondation de la Mer / Pôle-Relais Zones Humides Tropicales,1,v1,ok,official,homepage,crawl,https://fondationdelamer.org/,,https://fondationdelamer.org/,,v1_url
+Fondation Léa Nature / Jardin BiO',1,v1,ok,borrowed_hub,unknown,resolve,,,,fondationdefrance.org,
+Fondation Nos étoiles pour l'avenir,1,v1,ok,borrowed_hub,unknown,resolve,,,,fondationdefrance.org,
+Fondation Veolia,1,v1,ok,official,homepage,crawl,https://fondation.veolia.com/,,https://fondation.veolia.com/,fondation.veolia.com,v1_url
+Fondo Acción,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+Food and Agriculture Organization (FAO) of the United Nations,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"FORMAS, NSF, SIDA",1,v1,compound,borrowed_hub,unknown,resolve,,,,belmontforum.org,
+"Foundation FortUna, Mantahari Oceancare",1,v1,compound,borrowed_hub,unknown,resolve,,,,marinemegafauna.org,
+French Facility for Global Environment (FFEM),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"French Foundation for Biodiversity Research (FRB-CESAB), Canadian Institute for Ecology & Evolution (CIEE), French Embassy in Canada",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"French Government (IFREMER, CNRS)",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Fundación Amiguitos del Océano,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Fundação Calouste Gulbenkian e Fundação Oceano Azul,1,v1,ok,official,homepage,crawl,https://gulbenkian.pt/,,https://gulbenkian.pt/,gulbenkian.pt,v1_url
+Fusion and Univision Media,1,v1,compound,unknown,unknown,resolve,,,,,
+GEF-UNDP-UNESCO-IOC,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+GEF/World Bank,1,v1,ok,borrowed_hub,unknown,resolve,,,,iwlearn.net,
+"GEOMAR Helmholtz Centre for Ocean Research Kiel, co-lead IOCAFRICA",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+German Federal Ministry for Economic Cooperation and Development (BMZ),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"German Ocean Foundation, Springer Nature, German Society for Marine Research",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+GFCR Equity Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+GIZ,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Global Affairs Canada,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine.wildaid.org,
+Global Environment Facility (GEF),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Global Fund for Coral Reefs (GFCR) and Joint SDG Fund (JSDG),1,v1,compound,official,homepage,resolve,https://globalfundcoralreefs.org/,,https://globalfundcoralreefs.org/,globalfundcoralreefs.org,v1_url
+"Global Fund for Coral Reefs, UN Joint SDG Fund",1,v1,compound,official,homepage,resolve,https://globalfundcoralreefs.org/,,https://globalfundcoralreefs.org/,globalfundcoralreefs.org,v1_url
+"Global Fund for Coral Reefs, UNDP, Blue Natural Capital Finance Facility (IUCN), UBS optimus, AXA Climate, Milkywire, Convergence, Genesis Charitable Trust",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Global Ghost Gear Initiative,1,v1,ok,unknown,unknown,resolve,,,,,
+Global Ocean Oxygen Decade (GOOD),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Global Partnership for Sharks and Rays,1,v1,compound,unknown,unknown,resolve,,,,,
+GO-SHIP Programme Office,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"Government of Canada, UK Blue Planet Fund",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"Government of Canada, UK Blue Planet Fund, US Department of State",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Government of Haiti,1,v1,ok,borrowed_hub,unknown,resolve,,,,icriforum.org,
+"Government Secretariat of Science, Technology and Productive Innovation - Argentina",1,v1,compound,unknown,unknown,resolve,,,,,
+Great Barrier Reef Foundation,1,v1,ok,official,homepage,crawl,https://barrierreef.org/,,https://barrierreef.org/,,v1_url
+"Groupe KRESK (SVR, Lazartigue, Fillmed)",1,v1,compound,unknown,unknown,resolve,,,,,
+Gulbenkian Foundation,1,v1,ok,official,homepage,crawl,https://gulbenkian.pt/,,https://gulbenkian.pt/,gulbenkian.pt,v1_url
+"Gulf Star Program (public-private partnership), NOAA, EPA",1,v1,compound,unknown,unknown,resolve,,,,,
+Hans Wilsdorf Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Harbin Engineering University (HEU),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Hawai'i Department of Health, Hawai'i County Council",1,v1,compound,unknown,unknown,resolve,,,,,
+Hawai'i Tourism Authority and National Oceanic Atmospheric Administration,1,v1,compound,unknown,unknown,resolve,,,,,
+Hawaii Department of Land and Natural Resources,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Hawaii State Legislature,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"Hawaii State Legislature, Surfrider Foundation",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+HC Oceanography Services LTDA,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Helmholtz Institute for Functional Marine Biodiversity at the University of Oldenburg (HIFMB),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Helmholtz International Lab,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Helmholtz-Zentrum Hereon,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+HELMHOLTZ-ZENTRUM HEREON GMBH (HEREON),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Help Images – Associação de Promoção e Apoio à Solidariedade Social,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+High Seas Alliance (70+ NGO members and IUCN),1,v1,compound,official,homepage,resolve,https://highseasalliance.org/,,https://highseasalliance.org/,,v1_url
+Hope Zones Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Horizon 2020,1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Horizon Educatief vzw,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Horizon Europe (MSCA),1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+"Horizon Europe, European Union - Horizon Europe",1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+"HUB Ocean, Microsoft, Accenture",1,v1,compound,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+"HUB Ocean, OceanPact",1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+"Hummingbirds, Climate-KIC, Julius Bär, Sustainable Ocean Alliance",1,v1,compound,unknown,unknown,resolve,,,,,
+Hydrographic and Oceanographic Service of the Chilean Navy (SHOA),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+IMarEST,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+In-Kind,1,v1,exclude,borrowed_hub,unknown,skip,,,,oceanriskalliance.org,
+In-Kind and the Government of Canada,1,v1,exclude,borrowed_hub,unknown,skip,,,,oceanriskalliance.org,
+Indian River Lagoon National Estuary Program,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Individual supporters and business partners,1,v1,exclude,unknown,unknown,skip,,,,,
+Indo-Norwegian collaboration,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Innovation Norway, European Commission, Verizon, SailGP",1,v1,compound,unknown,unknown,resolve,,,,,
+"Institut de Ciències del Mar, CSIC",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institut de Recherche pour le Développement (IRD),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institut de Recherches Halieutiques et Océanologiques du Bénin (IRHOB),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institut National des Sciences et Technologies de la Mer – Tunisia,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institut polaire,1,v1,ok,publisher,unknown,resolve,,,,,
+"Institute of Deep-Sea Science and Engineering, Chinese Academy of Sciences",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institute of Heritage Science (ISPC) CNR,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Institute of Marine Research, Norway",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Institute of Marine Sciences (LABOMAR)/Federal University of Ceará (UFC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Instituto de Ciencias del Mar y Limnología – UNAM,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Instituto de Ciencias del Mar y Limnología, Universidad Nacional Autónoma de México",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+IntelliReefs,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Interagency Working Group for Ocean Sound and Marine Life,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Interdisciplinary Centre for the Development of Ocean Mapping (CIDCO),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Intergovernmental Oceanographic Commission (IOC) of UNESCO,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Intergovernmental Oceanographic Commission of UNESCO (IOC-UNESCO),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Intergovernmental Oceanographic Commission of UNESCO (UNESCO-IOC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Alliance to Combat Ocean Acidification,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Atomic Energy Agency,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Bio-Logging Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Center for Living Aquatic Resources Management,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Council for the Exploration of the Sea (ICES) & The North Pacific Marine Science Organization (PICES),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Hydrographic Organization,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Ocean Institute – Malta,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Oceanographic Data and Information Exchange (IODE) and Global Ocean Observing System (GOOS) of IOC-UNESCO,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+International Oceanographic Data and Information Exchange (IODE) of IOC-UNESCO,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"IOC Sub-Commission for the Western Pacific, IOC/UNESCO",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"IOC-WESTPAC, Thailand",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+IOCAFRICA,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Irish Aid,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Italian Ministry of Environment,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Italian Navy Hydrographic Institute,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Joint SDG Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Jordan (Royal directives),1,v1,ok,borrowed_hub,unknown,resolve,,,,icriforum.org,
+JPI Climate and JPI Oceans,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"JPI Oceans (Belgium, Ireland, Netherlands, Norway, Sweden, France, Germany, Denmark, UK)",1,v1,compound,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+"JPI Oceans (Belgium, Italy, Malta lead + 8 countries)",1,v1,compound,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+"JPI Oceans, Belmont Forum, Future Earth",1,v1,compound,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+"JPI Oceans, JPI Climate",1,v1,ok,borrowed_hub,unknown,resolve,,,,jpi-oceans.eu,
+Kaho'olawe Island Reserve Commission,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Keep Galveston Beautiful,1,v1,ok,borrowed_hub,unknown,resolve,,,,seaturtles.org,
+Kelp Blue,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Kelp Forest Alliance,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Kenya Wildlife Service,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Kinjani,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Kitasoo Xai'xais First Nation,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Korea-Indonesia Marine Technology Cooperation Research Center (MTCRC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Laboratorio De Biologia Molecular Marina Biommar,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Leibniz Centre for Tropical Marine Research (ZMT),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Luxury resorts partnerships,1,v1,ok,unknown,unknown,resolve,,,,,
+MAC3 Impact Philanthropies,1,v1,ok,borrowed_hub,unknown,resolve,,,,sealegacy.org,
+"MaiTai Global, Paul M. Angell Family Foundation, Marisla Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+Malahat Nation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Manta Trust, Ocean First Institute",1,v1,compound,official,homepage,resolve,https://mantatrust.org/,,https://mantatrust.org/,mantatrust.org,v1_url
+MAR Fund,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+"MAR Fund, WTW, Fondo Acción",1,v1,compound,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+MAR+Invest,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+MARE (Marine and Environmental Sciences Centre),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Marine Biodiversity Observation Network (MBON) and National Oceanographic and Atmospheric Administration (NOAA),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Marine Biological Association,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Marine Conservation Institute, Save the Waves Coalition, Patagonia",1,v1,compound,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Marine Life 2030,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Marine Science Institute, University of the Philippines Diliman",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MARUM – Center for Marine Environmental Sciences,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MarViva,1,v1,ok,unknown,unknown,resolve,,,,,
+Maurice Lamontagne Institute,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Mauritius Meteorological Services,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MedFund,1,v1,ok,official,homepage,crawl,https://themedfund.org/,,https://themedfund.org/,themedfund.org,v1_url
+Mediterranean Center for Marine and Environmental Research (CMIMA-CSIC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MeerWissen – Helmholtz Institute for Functional Marine Biodiversity,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Mercuria, Minerva Bunkering, HUB Ocean",1,v1,compound,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+"Miami Super Bowl Host Committee, Pepsi, NFL Green",1,v1,compound,unknown,unknown,resolve,,,,,
+MigraMar,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"MigraMar, Only.One, Mission Blue, Marine Conservation Institute",1,v1,compound,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+"Minderoo Foundation, Seaready Maritime Maintenance Solutions",1,v1,compound,official,homepage,resolve,https://minderoo.org/,,https://minderoo.org/,minderoo.org,v1_url
+Minderoo Pictures,1,v1,ok,official,homepage,crawl,https://minderoo.org/,,https://minderoo.org/,minderoo.org,v1_url
+"Ministry of Education, Culture, Sports, Science and Technology (MEXT) – Japan",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ministry of Environment and Urbanization of Turkey,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ministry of Maritime Economy – Cabo Verde,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ministry of Natural Resources of People's Republic of China,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ministry of Science and Technology – China,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Ministry of the Environment, Japan (MOEJ)",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Mission Blue, Asociación Ondine, Stefan Hearst",1,v1,compound,official,homepage,resolve,https://missionblue.org/,,https://missionblue.org/,,v1_url
+"Mission Blue, Malpelo Foundation, Conservation International Colombia, Migramar",1,v1,compound,official,homepage,resolve,https://missionblue.org/,,https://missionblue.org/,,v1_url
+"MMersive Technology, Inc.",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Monaco Explorations,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+MSC Ocean Stewardship Fund - Science & Research Fund,1,v1,ok,official,homepage,crawl,https://msc.org/,,https://msc.org/,msc.org,v1_url
+"MSC Ocean Stewardship Fund, Carrefour Italy, Delicius",1,v1,compound,official,homepage,resolve,https://msc.org/,,https://msc.org/,msc.org,v1_url
+"Multiple (bp, RWE, BCP Council, UK Seafood Innovation Fund)",1,v1,exclude,official,homepage,skip,https://arcmarine.co.uk/,,https://arcmarine.co.uk/,,v1_url
+Multiple funders listed on page,1,v1,ok,borrowed_hub,unknown,resolve,,,,marinemegafauna.org,
+Museum of the World Ocean,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NASA,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"National Academies of Sciences, Engineering, and Medicine/Ocean Studies Board",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Aeronautics and Space Administration (NASA),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"National Commission for Education, Sciences and Culture, Kingdom of Morocco",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Deep Sea Center – China,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Geographic Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Institute of Oceanography and Fisheries (NIOF) - Egypt,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Institute of Water and Atmospheric Research,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Marine Educators Association,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Oceanic and Atmospheric Administration,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+National Oceanic and Atmospheric Administration Southwest Fisheries Science Center,1,v1,ok,unknown,unknown,resolve,,,,,
+National Oceanographic and Atmospheric Administration (NOAA),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"National Oceanographic and Atmospheric Administration, Southeast Fisheries Science Center",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Oceanographic and Maritime Institute – Bangladesh,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Research Institute for Sustainable Development (IRD),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+National Science and Technology Institute on Biodiversity of the Blue Amazon – Brazil,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Native Conservancy,1,v1,ok,official,homepage,crawl,https://nativeconservancy.org/,,https://nativeconservancy.org/,,v1_url
+Nekton Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NERC British Antarctic Survey,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NESP Marine and Coastal Hub,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"New Carissa salvage funds, grants, private donations",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+New England Aquarium (Marine Conservation Action Fund),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Next Generation EU and Italian National Recovery and Resilience Plan,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NGO Tama nō te tairoto,1,v1,ok,borrowed_hub,unknown,resolve,,,,icriforum.org,
+"Nippon Foundation Ocean Nexus Center, EarthLab, University of Washington",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Nippon Foundation Ocean Voices Programme,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NOAA Marine Debris Program,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+NOAA National Centers for Coastal Ocean Science,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NOAA Office of Education and National Marine Educators Association,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NOAA Pacific Marine Environment Lab,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NOAA Pacific Marine Environmental Lab,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NOAA U.S. Integrated Ocean Observing System (IOOS),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"NOAA-NMFS, US Fish and Wildlife Service, National Fish and Wildlife Foundation, National Save the Sea Turtle Foundation, Lenfest Ocean Program",1,v1,compound,unknown,unknown,resolve,,,,,
+"NordForsk, NSF, RCN",1,v1,compound,borrowed_hub,unknown,resolve,,,,belmontforum.org,
+"North Shore Community Land Trust, Trust for Public Land, State, City, Military and Federal Agencies",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+North-eastern Regional Association of Coastal Ocean Observing Systems (NERACOOS),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Northeast Regional Planning Body,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Northern Institute for Research in Environment and Occupational Health and Safety (INREST),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Norway and Food and Agriculture Organization of the United Nations (FAO),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Norwegian Agency for Development Cooperation (Norad),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Norwegian Institute for Nature Research (NINA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Norwegian Institute of Marine Research,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Norwegian Ministry of Climate and Environment,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Norwegian Seafood Federation, Norwegian Seafood Association",1,v1,compound,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+Norwegian University of Science and Technology,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+NSF,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Núcleo de Educação e Monitoramento Ambiental (NEMA) (partner),1,v1,ok,official,homepage,crawl,https://nema-rs.org.br/,,https://nema-rs.org.br/,,v1_url
+"Oak Foundation, Hawai'i Community Foundation Marine 30×30 Pooled Fund",1,v1,compound,official,homepage,resolve,https://oakfnd.org/,,https://oakfnd.org/,,v1_url
+Obama Administration,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Observatoire des Requins de Polynésie,1,v1,ok,borrowed_hub,unknown,resolve,,,,mantatrust.org,
+Ocean & Climate Platform,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean 14 Capital,1,v1,ok,official,homepage,crawl,https://ocean14capital.com/,,https://ocean14capital.com/,,v1_url
+Ocean Community Challenge Associação,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Ocean Conservancy, Bank of the West",1,v1,compound,official,homepage,resolve,https://oceanconservancy.org/,,https://oceanconservancy.org/,,v1_url
+"Ocean Conservancy, Pacific Environment",1,v1,compound,official,homepage,resolve,https://oceanconservancy.org/,,https://oceanconservancy.org/,,v1_url
+"Ocean Conservancy, The 5 Gyres Institute, The Nature Conservancy",1,v1,compound,official,homepage,resolve,https://oceanconservancy.org/,,https://oceanconservancy.org/,,v1_url
+"Ocean Conservancy, UN Foundation",1,v1,compound,official,homepage,resolve,https://oceanconservancy.org/,,https://oceanconservancy.org/,,v1_url
+"Ocean Conservancy, UN Foundation, Friends of Ocean and Climate",1,v1,compound,official,homepage,resolve,https://oceanconservancy.org/,,https://oceanconservancy.org/,,v1_url
+Ocean Conservation Trust,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Decade Heritage Network (ODHN),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Decade Programme Mega-Delta,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Decade Programme SMARTNET,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Decade Team,1,v1,ok,official,homepage,crawl,https://oceandecade.org/,,https://oceandecade.org/,oceandecade.org,v1_url
+"Ocean Exchange (501(c)(3)), NOAA, Guy Harvey Foundation",1,v1,compound,official,homepage,resolve,https://oceanexchange.org/,,https://oceanexchange.org/,,v1_url
+Ocean Family Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,nektonmission.org,
+Ocean Frontier Institute,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Legacy Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Networks Canada Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Observatories Initiative,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Polaire,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Ocean Protection Council, The Marisla Foundation, Maxwell/Hanrahan Foundation",1,v1,compound,borrowed_hub,unknown,resolve,,,,coastal-quest.org,
+Ocean Rock Base,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Ocean Stewardship Fund (Carrefour Italy, Delicius)",1,v1,compound,borrowed_hub,unknown,resolve,,,,msc.org,
+Ocean Sustainability Foundation (OSF),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Visions,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean Wise,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Ocean5,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceans5.org,
+"Oceana, Google",1,v1,ok,borrowed_hub,unknown,resolve,,,,skytruth.org,
+OCEANO VOX,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+OceanOPS,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+OceanPredict,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+OceanRock Base,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+OceanX and OceanQuest,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Office de l'Environnement Corse,1,v1,ok,unknown,unknown,resolve,,,,,
+Okeanos Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Oregon Department of State Lands,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Oregon Department of Transportation,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Oregon Parks and Recreation Department,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Oregon State Legislature,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+ORRAA and UK's Blue Planet Fund,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"ORRAA, Government of Canada",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+OSDMA with INCOIS support,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+OSPAR,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Pacific Community (SPC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Palm Beach County,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Pampa Azul Initiative (Government of Argentina),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Parks Victoria,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Paul G. Allen Family Foundation,1,v1,ok,unknown,unknown,resolve,,,,,
+Paul M. Angell Family Foundation,1,v1,ok,unknown,unknown,resolve,,,,,
+Peace Boat US,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Peking University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+People's Postcode Lottery Dream Fund,1,v1,ok,unknown,unknown,resolve,,,,,
+"Pew Bertarelli Ocean Legacy, Great Blue Ocean coalition, Blue Nature Alliance",1,v1,compound,official,homepage,resolve,https://sealegacy.org/,,https://sealegacy.org/,sealegacy.org,v1_url
+PlanetCare,1,v1,ok,official,homepage,crawl,https://planetcare.org/,,https://planetcare.org/,,v1_url
+"Plantation Island Resort, Corals for Conservation (C4C)",1,v1,ok,borrowed_hub,unknown,resolve,,,,icriforum.org,
+Plastic Fischer,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Plastic Soup Foundation (people-funded),1,v1,ok,unknown,unknown,resolve,,,,,
+"Pomellato, Henner insurance group",1,v1,ok,unknown,unknown,resolve,,,,,
+PONANT,1,v1,ok,unknown,unknown,resolve,,,,,
+Portuguese Committee for the Intergovernmental Oceanographic Commission of UNESCO,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Posidonia Green Project,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Presidential Agency for International cooperation of Colombia,1,v1,ok,unknown,unknown,resolve,,,,,
+"Prince Albert II Foundation, Monaco National Youth Education and Sports",1,v1,compound,unknown,unknown,resolve,,,,,
+ProtectedSeas,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+PROTEUS OCEAN GROUP Ltd,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Provincial Government of Buenos Aires,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Publix, NFL, NHL, Fortress Investment Group, UBS, Boeing, Newmark, National Marine Sanctuary Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+Pyrénées-Orientales General Council,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Qingdao Institute of Marine Geology,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Region of Eastern Macedonia and Thrace,1,v1,compound,unknown,unknown,resolve,,,,,
+"Research and Production Association ""Typhoon"" (RPA ""Typhoon"") – Russian Federation",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Research Foundation-Flanders (FWO),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Rethink Events Ltd,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Rolex, Tanoto, Tsao Pao Chee",1,v1,compound,borrowed_hub,unknown,resolve,,,,archive.oceanx.org,
+Royal Zoological Society of Scotland,1,v1,ok,borrowed_hub,unknown,resolve,,,,mantatrust.org,
+San Elijo Lagoon Conservancy,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+SANDAG,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Sandia National Laboratories,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Sasakawa Global Ocean Institute, World Maritime University",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Save San Onofre Coalition,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"School of Aquatic Sciences and Fisheries Technology, University of Dar es Salaam",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Scripps Institution of Oceanography,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Scripps Institution of Oceanography, University of California San Diego",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Sea Turtle Conservancy,1,v1,ok,official,homepage,crawl,https://seaturtles.org/,,https://seaturtles.org/,seaturtles.org,v1_url
+Seabird Ventures,1,v1,ok,official,homepage,crawl,https://seabirdventures.fund/,,https://seabirdventures.fund/,,v1_url
+"Second Institute of Oceanography (SIO), Ministry of Natural Resources (MNR) – China",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Second Institute of Oceanography, MNR – China",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Second Institute Of Oceanography, MNR – China",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Secretariat for the Pacific Environment Programme,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Secretariat of the Pacific Regional Environmental Programme,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Secrétariat Permanent de l'ACCOBAMS,1,v1,ok,unknown,unknown,resolve,,,,,
+Senckenberg – Germany,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Seth Casden, Carol Hempf, Dr. Fisk Johnson",1,v1,compound,unknown,unknown,resolve,,,,,
+Seychelles Conservation and Climate Adaptation Trust (SeyCCAT),1,v1,compound,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+"Shell, Eneco, Chubu",1,v1,compound,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+"Shippers, tankers and large vessels",1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"Shirshov Institute of Oceanology, Russian Academy of Sciences",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+SHOM,1,curated,ok,official,home_only,crawl,https://shom.fr/,,https://www.shom.fr/fr,,curated
+"SINAMOT Program, National University Costa Rica",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Sistema Nacional de Areas de Conservacion (SINAC),1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Soneva Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Sony Alpha Universe,1,v1,ok,borrowed_hub,unknown,resolve,,,,sealegacy.org,
+Sorbonne University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Sorbonne Université, LOCEAN-IPSL",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+South Bay Coalition for Smoke-Free Beaches,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Southern Marine Science and Engineering Guangdong Laboratory (Guangzhou),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+St. Francis Xavier University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+State Government,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"State Key Laboratory of Marine Pollution, City University of Hong Kong",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+State of Florida,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+State of Florida and Federal Beach Act,1,v1,compound,borrowed_hub,unknown,resolve,,,,surfrider.org,
+State of Hawaii,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+State of Hawaiʻi (HB2248),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+State Water Resources Control Board,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Stichting The Ocean Cleanup,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Stream Foundation, Digital Switzerland, EPFL, Google for Startups",1,v1,compound,official,homepage,resolve,https://streamocean.io/,,https://streamocean.io/,,v1_url
+Suffolk County sales tax increase (0.125%),1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Sulubaaï Environmental Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+Surfrider Foundation Bogue Banks Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Coos Bay Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Eastern Long Island,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Jersey Shore Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Long Beach Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Los Angeles Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Oʻahu Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Palm Beach County Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation San Francisco Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Santa Barbara Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Santa Barbara County Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Santa Cruz Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation South Orange County Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation South Texas Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Texas Coastal Bend Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider Foundation Ventura County Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+"Surfrider Foundation, Ocean Conservancy",1,v1,compound,borrowed_hub,unknown,resolve,,,,skytruth.org,
+"Surfrider Foundation, Port Orford Ocean Resource Team, New Wave Planning, City of Port Orford, Oregon Department of Land Conservation and Development",1,v1,compound,official,homepage,resolve,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+"Surfrider Foundation, Unknown",1,v1,compound,official,homepage,resolve,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+"Surfrider Foundation, Unknown, California State Water Board, Orange County Health Care Agency, Orange County Public Works, South Orange County Wastewater Authority",1,v1,compound,official,homepage,resolve,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+"Surfrider Foundation, Unknown, NRDC, Maui County Open Space Fund, County of Hawaii, Washington State",1,v1,compound,official,homepage,resolve,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+Surfrider O'ahu Chapter,1,v1,ok,official,homepage,crawl,https://surfrider.org/,,https://surfrider.org/,surfrider.org,v1_url
+"Sussex Kelp Recovery Project (partner), Blue Marine Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+Sustainable Ocean Alliance,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Sustainable Ocean Alliance Tanzania,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Sustainable Seas Trust,1,v1,ok,unknown,unknown,resolve,,,,,
+Swedish Meteorological and Hydrological Institute (SMHI),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Swiss Polar Institute,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Swiss Re Foundation and UK Blue Planet Fund,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"Swiss Re Foundation, UK Blue Planet Fund, Government of Canada",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"Swiss Re Foundation, UK Government Blue Planet Fund, Government of Canada",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Sydney Institute of Marine Science,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Synchronicity Earth, Aurum Fund Management Ltd.",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+Tatauga Dive Association,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+TBA21,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+TBA21-Academy,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Team Malizia,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Teaming for Excellence 2023,1,v1,ok,borrowed_hub,unknown,resolve,,,,cordis.europa.eu,
+Technical University of Mombasa,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+TGS,1,v1,ok,borrowed_hub,unknown,resolve,,,,hubocean.earth,
+The Argo Steering Team,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Atlantic Maritime Academy Nigeria (Institute of Nautical Studies and Ocean Research),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"The Baum Foundation, The Leatherback Trust, LightHawk, Bula Bula Hotel, National Geographic",1,v1,compound,unknown,unknown,resolve,,,,,
+The Crown Estate,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Directorate of Management and Exploitation of the Seabed – Senegal,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"The Federal University of Technology, Akure – Nigeria",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Floating Stories Lab,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The German Federal Foreign Office,1,v1,ok,borrowed_hub,unknown,resolve,,,,icriforum.org,
+The Hydrous,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"The Manta Trust, Conservation International, Aquarium des Lagons",1,v1,compound,official,homepage,resolve,https://mantatrust.org/,,https://mantatrust.org/,mantatrust.org,v1_url
+The Medfund,1,v1,ok,official,homepage,crawl,https://themedfund.org/,,https://themedfund.org/,themedfund.org,v1_url
+"The MedFund, Global Environment Facility",1,v1,ok,official,homepage,crawl,https://themedfund.org/,,https://themedfund.org/,themedfund.org,v1_url
+"The MedFund, MAVA Foundation, PBOL Initiative",1,v1,compound,official,homepage,resolve,https://themedfund.org/,,https://themedfund.org/,themedfund.org,v1_url
+The Mesoamerican Cruise Destination Network (MAR Network),1,v1,ok,unknown,unknown,resolve,,,,,
+The Nature Conservancy,1,v1,ok,unknown,unknown,resolve,,,,,
+"The Nature Conservancy, USAID, CREP, Sustainable Grenadines Project",1,v1,compound,borrowed_hub,unknown,resolve,,,,icriforum.org,
+The Nippon Foundation & Nekton Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Nippon Foundation and Nekton,1,v1,compound,official,homepage,resolve,https://nektonmission.org/,,https://nektonmission.org/,nektonmission.org,v1_url
+The North Pacific Marine Science Organization (PICES),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Ocean Agency,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Ocean Cleanup,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Pacific Community (SPC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Partnership for Observation of the Global Ocean (POGO),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Pew Charitable Trusts and Bertarelli Foundation,1,v1,compound,official,homepage,resolve,https://pew.org/,,https://pew.org/,pew.org,v1_url
+The Research Council of Norway's Ocean Secretariat,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The Royal Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"The State Key Laboratory of Estuarine and Coastal Research (SKLEC), East China Normal University",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+The University of St Andrews,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Third Institute of Oceanography, Ministry of Natural Resources – China",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Tiffany & Co. Foundation,1,v1,ok,official,homepage,crawl,https://tiffanyandcofoundation.org/,,https://tiffanyandcofoundation.org/,,v1_url
+Tokyo University of Marine Science and Technology [UNESCO UNITWIN Network for Underwater Archaeology],1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Town of East Hampton,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Transport & Environment,1,v1,ok,official,homepage,crawl,https://transportenvironment.org/,,https://transportenvironment.org/,,v1_url
+"Transport Canada, NRC Canada",1,v1,ok,unknown,unknown,resolve,,,,,
+Tula Foundation,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Turtle Island Restoration Network,1,v1,ok,official,homepage,crawl,https://seaturtles.org/,,https://seaturtles.org/,seaturtles.org,v1_url
+Tēnaka,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+U.S. Army Corps of Engineers,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+U.S. Department of State,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"U.S. Environmental Protection Agency, NOAA, University of Washington",1,v1,compound,unknown,unknown,resolve,,,,,
+U.S. EPA,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+"U.S. National Science Foundation, National Institutes of Health",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"U.S. National Science Foundation, Paul G. Allen Family Foundation",1,v1,compound,unknown,unknown,resolve,,,,,
+"UK Blue Belt Programme, UK Government, Royal Society for the Protection of Birds",1,v1,compound,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+"UK Blue Planet Fund, Government of Canada, ORRAA",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"UK Blue Planet Fund, ORRAA, Government of Canada",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"UK Blue Planet Fund, Swiss Re Foundation, Government of Canada",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceanriskalliance.org,
+"UK Foreign Commonwealth and Development Office, International Development Research Centre Canada, UK Blue Planet Fund",1,v1,compound,unknown,unknown,resolve,,,,,
+UK Government Blue Belt Programme,1,v1,ok,unknown,unknown,resolve,,,,,
+"UK Government ISPF, Society for Conservation Biology, Government of India",1,v1,compound,borrowed_hub,unknown,resolve,,,,mantatrust.org,
+UK Natural Environment Research Council,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UMR DECOD (partner),1,v1,ok,official,homepage,crawl,https://umr-decod.fr/,,https://umr-decod.fr/,,v1_url
+UN Committee of Experts on Global Geospatial Information Management (UN-GGIM),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UN Ocean Decade,1,v1,ok,official,homepage,crawl,https://oceandecade.org/,,https://oceandecade.org/,oceandecade.org,v1_url
+UNAM – Mexico,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNCDF,1,v1,ok,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+Under the Pole (UTP),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNDP,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"UNDP, UNCDF, UNEP, Fiji Development Bank, JSDG Fund",1,v1,compound,borrowed_hub,unknown,resolve,,,,globalfundcoralreefs.org,
+UNEP,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNESCO Category II Regional Education and Research Centre on Oceanography for West Asia (RCOWA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNESCO-IOC IOCARIBE,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNESCO/IOC,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+UNISC International – Japan,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+United Nations Development Programme,1,v1,ok,borrowed_hub,unknown,resolve,,,,marine-conservation.org,
+United Nations Economic and Social Commission for Asia and the Pacific (UNESCAP),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+United States Agency for International Development (USAID),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"United States Department of Energy, Water Power Technologies Office",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+United States Interagency Working Group on Ocean and Coastal Mapping (IWG-OCM),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"Universeum, the National Science Centre of Sweden",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Universidade Federal Fluminense,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Universitas Padjadjaran,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Universitat Pompeu Fabra,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University Centre Cesmac,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Aveiro,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"University of Bergen, Department of Biological Sciences",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Calgary,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"University of California, Santa Cruz",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Connecticut,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"University of Leeds, Coral Reef Alliance, Rare, Pattimura University",1,v1,compound,official,homepage,resolve,https://coral.org/,,https://coral.org/,,v1_url
+University of Liège,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Maryland Center for Environmental Science and Chesapeake Biological Laboratory,1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Michigan,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Otago,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+University of Plymouth,1,v1,ok,unknown,unknown,resolve,,,,,
+University of the Arts London,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Università IUAV di Venezia,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Université de Bretagne Occidentale,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Urchinomics,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+US Congress,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+US National Oceanic and Atmospheric Administration (NOAA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+USAID,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"V. I. Il'ichev Pacific Oceanological Institute, Far Eastern Branch of Russian Academy of Sciences",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+"V.I. Il'ichev Pacific Oceanological Institute, Far Eastern Branch of the Russian Academy of Sciences",1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Veolia Environment Foundation,1,v1,ok,official,homepage,crawl,https://fondation.veolia.com/,,https://fondation.veolia.com/,fondation.veolia.com,v1_url
+"Veolia Foundation, Albert II of Monaco Foundation",1,v1,compound,official,homepage,resolve,https://fondation.veolia.com/,,https://fondation.veolia.com/,fondation.veolia.com,v1_url
+Vita Loom Labs,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Washington Department of Ecology,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Washington State,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+Wavemakers membership community,1,v1,ok,unknown,unknown,resolve,,,,,
+"WCS, WWF, Sparkgeo",1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+West African Science Service Centre on Climate Change and Adapted Land Use (WASCAL),1,v1,compound,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Western Australian Marine Science Institution (WAMSI),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Western Indian Ocean Early Career Scientists Network,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Western Indian Ocean Marine Science Association (WIOMSA),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Wild Trust,1,v1,ok,borrowed_hub,unknown,resolve,,,,nektonmission.org,
+WildAid,1,v1,ok,official,homepage,crawl,https://marine.wildaid.org/,,https://marine.wildaid.org/,marine.wildaid.org,v1_url
+"WildAid Marine, USAID",1,v1,ok,official,homepage,crawl,https://marine.wildaid.org/,,https://marine.wildaid.org/,marine.wildaid.org,v1_url
+WILDCOAST and Coastal Quest,1,v1,compound,unknown,unknown,resolve,,,,,
+Wildlife Conservation Society,1,v1,ok,borrowed_hub,unknown,resolve,,,,surfrider.org,
+WILDTRUST,1,v1,ok,borrowed_hub,unknown,resolve,,,,nektonmission.org,
+WIOMSA-SCALABLE,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Women in Ocean Science,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+Woods Hole Oceanographic Institution,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+World Ocean Council,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+World Ocean Council (WOC),1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+XL Catlin,1,v1,ok,borrowed_hub,unknown,resolve,,,,nektonmission.org,
+Åbo Akademi University,1,v1,ok,borrowed_hub,unknown,resolve,,,,oceandecade.org,
+CORDIS Europe,0,curated,ok,official,projects_index,crawl,https://cordis.europa.eu/,https://cordis.europa.eu/projects/en,https://cordis.europa.eu/projects/en,,curated
+Fauna & Flora Oceans,0,curated,ok,official,projects_index,crawl,https://fauna-flora.org/,https://www.fauna-flora.org/environments/oceans/,https://www.fauna-flora.org/environments/oceans/,,curated
+Institut Océanographique Paul Ricard,0,curated,ok,official,home_only,crawl,https://institut-paul-ricard.org/,,https://www.institut-paul-ricard.org/,,curated
+Seacology,0,curated,ok,official,projects_index,crawl,https://seacology.org/,https://www.seacology.org/projects/,https://www.seacology.org/projects/,,curated
+WWF Oceans,0,curated,ok,official,projects_index,crawl,https://worldwildlife.org/,https://www.worldwildlife.org/initiatives/oceans,https://www.worldwildlife.org/initiatives/oceans,,curated

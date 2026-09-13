@@ -63,7 +63,7 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_shared_hub_home(decade) is False
     assert ms.is_shared_hub_home(team) is False
     assert ms.is_shared_hub_home(aker) is True
-    assert ms.is_shared_hub_home(hub) is False
+    assert ms.is_shared_hub_home(hub) is True
     assert ms.is_shared_hub_home(own) is False
     ccc = {
         "name": "California Coastal Commission",
@@ -98,6 +98,10 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_publisher_host("https://www.bmkg.go.id/") is False
     assert "bmkg" in ms.official_name_tokens(bmkg["name"])
     assert ms.domain_matches_org("https://www.bmkg.go.id/", bmkg["name"]) is True
+    assert ms.domain_matches_org("bmkg.go.id", bmkg["name"]) is True
+    assert ms.domain_matches_org("saveourseas.com", "Save Our Seas Foundation") is True
+    assert ms.domain_matches_org("oceans5.org", "Oceans 5") is True
+    assert ms.domain_matches_org("oceandecade.org", "Ocean Decade Programme SMARTNET") is False
     assert ms.domain_matches_org("https://www.nature.com/", bmkg["name"]) is False
     assert "awi" in ms.official_name_tokens("Alfred Wegener Institute (AWI)")
     assert "awi" in ms.official_name_tokens("Alfred Wegener Institute")
@@ -135,16 +139,39 @@ def test_merge_curated_alias_no_priority():
     assert "priority" not in by["Blue Marine Foundation"]
 
 
-def test_seeds_for_run_keeps_name_only_skips_blank():
+def test_seeds_for_run_only_crawl_ready():
     seeds = [
-        {"name": "P2-big", "url": "https://b.org/", "priority": 2, "project_count": 99},
-        {"name": "P1", "url": "https://a.org/", "priority": 1, "project_count": 1},
-        {"name": "NoURL", "url": None, "priority": 2, "project_count": 50},
+        {"name": "P2-big", "url": "https://b.org/", "home_status": "official",
+         "queue": "crawl", "project_count": 99},
+        {"name": "P1", "url": "https://a.org/", "home_status": "official",
+         "queue": "crawl", "project_count": 1},
+        {"name": "NoURL", "url": None, "home_status": "unknown", "queue": "resolve"},
         {"name": "", "url": None, "project_count": 1},
-        {"name": "Alpha", "url": "https://z.org/", "project_count": 0},
+        {"name": "Alpha", "url": "https://z.org/", "home_status": "official",
+         "queue": "crawl"},
+        {"name": "BMKG", "url": "https://oceandecade.org/",
+         "home_status": "borrowed_hub", "queue": "resolve"},
     ]
     queued = ms.seeds_for_run(seeds)
-    assert [s["name"] for s in queued] == ["Alpha", "NoURL", "P1", "P2-big"]
+    assert [s["name"] for s in queued] == ["Alpha", "P1", "P2-big"]
+
+
+def test_merge_curated_keeps_hosted_on_cordis():
+    v1 = [
+        {"name": "Horizon Europe", "url": None, "project_count": 24,
+         "listing_kind": "unknown", "home_status": "borrowed_hub", "queue": "resolve"},
+        {"name": "CORDIS Europe", "url": "https://cordis.europa.eu/", "project_count": 1},
+    ]
+    curated = [{
+        "name": "CORDIS Europe", "url": "https://cordis.europa.eu/projects/en",
+        "listing_kind": "projects_index", "aliases": [],
+    }]
+    merged = ms.merge_curated(v1, curated)
+    names = {s["name"] for s in merged}
+    assert "CORDIS Europe" in names
+    assert "Horizon Europe" in names
+    hor = next(s for s in merged if s["name"] == "Horizon Europe")
+    assert hor.get("queue") == "resolve"
 
 
 def test_dump_and_load_strip_legacy_priority(tmp_path):
@@ -176,9 +203,12 @@ def test_loaded_catalog_has_v1_scale():
     assert len(CURATED_SEEDS) == 21
     assert CURATED_SEEDS[0]["name"] == "The Ocean Foundation"
     # Sans JSON : repli 21. Avec JSON généré : ~861.
-    assert len(MASTER_SEEDS) >= 700
+    assert len(MASTER_SEEDS) >= 800
     assert all("priority" not in s for s in MASTER_SEEDS)
     assert all("priority" not in s for s in CURATED_SEEDS)
+    queues = {s.get("queue") for s in MASTER_SEEDS}
+    assert "crawl" in queues and "resolve" in queues
+    assert sum(1 for s in MASTER_SEEDS if s.get("queue") == "crawl") < 400
 
 
 def test_follow_the_money_caps_only_new_orgs():

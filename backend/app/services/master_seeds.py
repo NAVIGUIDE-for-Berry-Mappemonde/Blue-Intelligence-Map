@@ -73,6 +73,12 @@ _FREQUENT_HUBS: frozenset[str] | None = None
 SHARED_HUB_NETLOCS = {
     "oceandecade.org",
     "hubocean.earth",
+    "surfrider.org",
+    "archive.oceanx.org",
+    "oceanx.org",
+    "oceanriskalliance.org",
+    "cordis.europa.eu",
+    "iwlearn.net",
 }
 
 # Le hub EST la home de ces noms (le secrétariat, pas un organisme hébergé).
@@ -85,6 +91,27 @@ HUB_OWNER_TOKENS = {
     "hubocean.earth": (
         "hub ocean",
         "hubocean",
+    ),
+    "surfrider.org": (
+        "surfrider",
+        "surfrider foundation",
+    ),
+    "archive.oceanx.org": (
+        "oceanx",
+    ),
+    "oceanx.org": (
+        "oceanx",
+    ),
+    "oceanriskalliance.org": (
+        "ocean risk alliance",
+        "orraa",
+    ),
+    "cordis.europa.eu": (
+        "cordis",
+        "cordis europe",
+    ),
+    "iwlearn.net": (
+        "iwlearn",
     ),
 }
 
@@ -142,15 +169,38 @@ def frequent_hub_netlocs() -> frozenset[str]:
         n = (item.get("name") or "").strip()
         if d and n:
             by[d].add(norm_name(n))
+    curated_doms = {domain_of(c.get("url")) for c in _curated_seeds()}
     _FREQUENT_HUBS = frozenset(
-        d for d, names in by.items() if len(names) >= _FREQUENT_HUB_MIN)
+        d for d, names in by.items()
+        if len(names) >= _FREQUENT_HUB_MIN and d not in curated_doms
+    )
     return _FREQUENT_HUBS
 
 
 def reset_frequent_hubs() -> None:
-    """Tests."""
+    """Tests / rebuild catalogue."""
     global _FREQUENT_HUBS
     _FREQUENT_HUBS = None
+
+
+def set_frequent_hubs_from_projects(projects: list[dict]) -> frozenset[str]:
+    """Domaines partagés par ≥ N financeurs distincts dans le GeoJSON v1."""
+    global _FREQUENT_HUBS
+    by: dict[str, set[str]] = defaultdict(set)
+    for doc in projects or []:
+        d = domain_of(doc.get("url"))
+        if not d:
+            continue
+        for name in funder_names_from_project(doc):
+            if is_noise_name(name):
+                continue
+            by[d].add(norm_name(name))
+    curated_doms = {domain_of(c.get("url")) for c in _curated_seeds()}
+    _FREQUENT_HUBS = frozenset(
+        d for d, names in by.items()
+        if len(names) >= _FREQUENT_HUB_MIN and d not in curated_doms
+    )
+    return _FREQUENT_HUBS
 
 
 def is_shared_hub(url_or_domain: str | None) -> bool:
@@ -179,7 +229,10 @@ def name_owns_hub(name: str, url_or_domain: str | None) -> bool:
         on = norm_name(owner)
         if not on:
             continue
-        if n == on or n.startswith(on + " ") or n.endswith(" " + on):
+        if n == on:
+            return True
+        # Chapters Surfrider ; pas les programmes « Ocean Decade Programme … ».
+        if d == "surfrider.org" and n.startswith(on + " "):
             return True
     return False
 
@@ -258,7 +311,12 @@ def official_name_tokens(name: str) -> list[str]:
     ]
     while words and words[-1].lower() in {"inc", "ltd", "llc", "gmbh"}:
         words.pop()
-    if 2 <= len(words) <= 5:
+    if len(words) >= 3:
+        for k in (3, 4, min(5, len(words))):
+            initials = "".join(w[0] for w in words[:k]).lower()
+            if 3 <= len(initials) <= 6 and initials not in tokens:
+                tokens.append(initials)
+    elif 2 <= len(words) <= 5:
         initials = "".join(w[0] for w in words).lower()
         if 3 <= len(initials) <= 6 and initials not in tokens:
             tokens.append(initials)
@@ -269,11 +327,29 @@ def domain_matches_org(url_or_domain: str | None, name: str) -> bool:
     """Le domaine porte un jeton distinctif du nom (pas juste « blue »)."""
     d = domain_of(url_or_domain)
     if not d:
+        raw = (url_or_domain or "").strip().lower().replace("www.", "")
+        d = raw.split("/")[0]
+    if not d:
         return False
     compact = d.replace(".", "").replace("-", "")
     tokens = official_name_tokens(name)
+    if d in SHARED_HUB_NETLOCS:
+        return name_owns_hub(name, d)
+    compact_name = norm_name(name).replace(" ", "")
+    if compact_name and len(compact_name) >= 5 and compact_name in compact:
+        return True
     distinctive = [t for t in tokens if t not in _GENERIC_ORG_TOKENS]
-    use = distinctive or tokens
+    first_label = d.split(".")[0].replace("-", "")
+    if is_shared_hub(d):
+        distinctive = [
+            t for t in distinctive
+            if len(t) >= 4 or t == first_label
+        ]
+        if not distinctive:
+            return False
+        use = distinctive
+    else:
+        use = distinctive or tokens
     return bool(use) and any(t in compact for t in use)
 
 
@@ -290,21 +366,60 @@ def names_match(a: str, b: str, aliases: list | None = None) -> bool:
     return False
 
 
+_NAME_ARTICLES = ("the ", "la ", "le ", "les ", "el ", "l ", "los ", "las ")
+_NAME_SUFFIXES = (
+    " foundation", " fondation", " fund", " trust",
+    " institute", " institut",
+)
+
+
+def _strip_name_articles(n: str) -> str:
+    s = n
+    changed = True
+    while changed:
+        changed = False
+        for art in _NAME_ARTICLES:
+            if s.startswith(art):
+                s = s[len(art):]
+                changed = True
+    return s
+
+
+def names_soft_match(a: str, b: str, aliases: list | None = None) -> bool:
+    """Même organisme : articles / suffixe Foundation, pas un domaine partagé."""
+    if names_match(a, b, aliases):
+        return True
+    na = _strip_name_articles(norm_name(a))
+    nb = _strip_name_articles(norm_name(b))
+    if na and na == nb:
+        return True
+    for x, y in ((na, nb), (nb, na)):
+        if len(x.split()) < 2:
+            continue
+        if y.startswith(x + " ") and y[len(x):] in _NAME_SUFFIXES:
+            return True
+    return False
+
+
 def listing_url_from_project_urls(urls: list[str], funder_name: str = "") -> str | None:
+    """Racine du domaine *propriétaire* — jamais un hub emprunté."""
     counts: Counter[str] = Counter()
     for u in urls:
         d = domain_of(u)
-        if d and d not in SKIP_LISTING_NETLOCS and d not in SHARED_HUB_NETLOCS:
-            counts[d] += 1
+        if not d or d in SKIP_LISTING_NETLOCS or is_publisher_host(d):
+            continue
+        if is_shared_hub(d) and not domain_matches_org(d, funder_name) and not name_owns_hub(funder_name, d):
+            continue
+        counts[d] += 1
     if not counts:
         return None
-    tokens = [t for t in norm_name(funder_name).split() if len(t) >= 4]
     scored = []
     for d, n in counts.items():
-        compact = d.replace(".", "")
-        bonus = 2 if any(t in compact for t in tokens) else 0
-        scored.append((bonus, n, -len(d), d))
+        own = domain_matches_org(d, funder_name) or name_owns_hub(funder_name, d)
+        scored.append((2 if own else 0, n, -len(d), d))
     scored.sort(reverse=True)
+    if scored[0][0] < 2:
+        return None
     return f"https://{scored[0][-1]}/"
 
 
@@ -341,55 +456,48 @@ def build_v1_seeds(projects: list[dict]) -> list[dict]:
 
 
 def merge_curated(v1_seeds: list[dict], curated: list[dict] | None = None) -> list[dict]:
+    """Union par nom/alias. Un financeur hébergé sur CORDIS / FPA2 n'est pas jeté."""
     curated = curated if curated is not None else _curated_seeds()
     out: list[dict] = []
     used = set()
 
     def _matches_curated(v: dict, c: dict) -> bool:
-        aliases = c.get("aliases") or []
-        if names_match(c["name"], v.get("name") or "", aliases):
-            return True
-        cdom = domain_of(c.get("url"))
-        return bool(cdom) and cdom == domain_of(v.get("url"))
+        return names_soft_match(c["name"], v.get("name") or "", c.get("aliases") or [])
 
     for c in curated:
-        match = next((v for v in v1_seeds if _matches_curated(v, c)), None)
+        matches = [v for v in v1_seeds if _matches_curated(v, c)]
+        match = matches[0] if matches else None
+        kind = (c.get("listing_kind") or "").strip() or "projects_index"
         item = {
             "name": c["name"],
             "url": c["url"],
             "country": c.get("country"),
             "category": c.get("category"),
-            "listing_kind": "projects_index",
+            "listing_kind": kind,
             "source": "curated",
-            "project_count": int((match or {}).get("project_count") or 0),
+            "project_count": sum(int(m.get("project_count") or 0) for m in matches) or int((match or {}).get("project_count") or 0),
             "aliases": list(c.get("aliases") or []),
         }
         out.append(item)
-        if match:
-            used.add(norm_name(match["name"]))
-            cdom = domain_of(c.get("url"))
-            if cdom:
-                used.add(cdom)
+        for m in matches:
+            used.add(norm_name(m.get("name") or ""))
 
     for v in v1_seeds:
         if norm_name(v.get("name") or "") in used:
             continue
-        if domain_of(v.get("url")) and domain_of(v.get("url")) in used:
-            continue
         if any(_matches_curated(v, c) for c in curated):
             continue
-        out.append({
-            "name": v["name"],
-            "url": v.get("url"),
-            "listing_kind": v.get("listing_kind") or ("homepage" if v.get("url") else "unknown"),
-            "source": v.get("source") or "v1",
-            "project_count": int(v.get("project_count") or 0),
-        })
+        item = {k: val for k, val in v.items() if k != "priority"}
+        item.setdefault("listing_kind", "homepage" if v.get("url") else "unknown")
+        item.setdefault("source", "v1")
+        item["project_count"] = int(v.get("project_count") or 0)
+        out.append(item)
     return out
 
 
 def build_master_seeds(projects: list[dict], curated: list[dict] | None = None) -> list[dict]:
-    return merge_curated(build_v1_seeds(projects), curated)
+    from app.services.seed_catalog import build_enriched_master_seeds
+    return build_enriched_master_seeds(projects, curated)
 
 
 def _without_priority(seed: dict) -> dict:
@@ -397,11 +505,9 @@ def _without_priority(seed: dict) -> dict:
 
 
 def seeds_for_run(seeds: list[dict]) -> list[dict]:
-    """Portails à visiter : URL, ou nom seul (home hub à résoudre)."""
-    ready = [
-        s for s in seeds
-        if (s.get("url") or "").strip() or (s.get("name") or "").strip()
-    ]
+    """File Complet : home officielle ou page-liste déjà classée. Pas les hubs."""
+    from app.services.seed_catalog import is_crawl_ready
+    ready = [s for s in seeds if is_crawl_ready(s)]
     return sorted(ready, key=lambda s: (s.get("name") or "").lower())
 
 
@@ -441,11 +547,15 @@ def load_master_seeds(path: Path | None = None) -> list[dict]:
 
 def dump_master_seeds(seeds: list[dict], path: Path | None = None, source: str = "") -> Path:
     path = path or MASTER_SEEDS_PATH
+    from app.services.seed_catalog import catalog_summary, dump_catalog
+    if any(isinstance(s, dict) and s.get("queue") for s in seeds):
+        return dump_catalog(seeds, path, source=source)
     payload = {
         "generated_at": now_iso(),
         "source": source,
         "n": len(seeds),
         "n_with_url": sum(1 for s in seeds if s.get("url")),
+        **{k: v for k, v in catalog_summary(seeds).items() if k not in {"n", "n_with_url"}},
         "seeds": [_without_priority(s) if isinstance(s, dict) else s for s in seeds],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -10,10 +10,12 @@ Agent listing. Le filtre feuille n'est plus un veto sur la SERP.
 """
 from __future__ import annotations
 
+from collections import Counter
 from urllib.parse import urlparse
 
 from app.services.master_seeds import (
-    SKIP_LISTING_NETLOCS, domain_of, is_shared_hub, name_owns_hub,
+    SKIP_LISTING_NETLOCS, domain_matches_org, domain_of, is_shared_hub,
+    name_owns_hub,
 )
 from app.static_data.seeds import CRAWL_BLACKLIST, CURATED_SEEDS, URL_PATTERNS
 
@@ -71,9 +73,18 @@ def listing_leaves() -> frozenset[str]:
         "grants", "grant", "actions", "missions", "expeditions",
         "hope-spots", "hope-spot", "our-work", "our-work",
         "where-we-work", "nos-actions", "fondation",
+        "nos-programmes", "nos-programme", "nos-projets", "nos-projet",
+        "iw-projects", "iw-project", "reef-plus", "our-campaigns",
+        "decade-actions",
     })
     _LISTING_LEAVES = frozenset(leaves)
     return _LISTING_LEAVES
+
+
+def reset_listing_leaves() -> None:
+    """Tests."""
+    global _LISTING_LEAVES
+    _LISTING_LEAVES = None
 
 
 def path_parts(path: str) -> list[str]:
@@ -141,9 +152,13 @@ def needs_listing_hop(seed: dict | None) -> bool:
     """True si on n'a pas encore une URL catalogue qualifiée."""
     seed = seed or {}
     kind = (seed.get("listing_kind") or "").strip().lower()
-    if kind == "projects_index":
+    url = (seed.get("listing_url") or seed.get("url") or "").strip()
+    if kind == "home_only":
         return False
-    url = (seed.get("url") or "").strip()
+    if kind == "projects_index":
+        if url and is_homepage_url(url):
+            return True
+        return False
     if not url:
         return True
     if is_listing_url(url) or is_curated_listing_url(url):
@@ -196,7 +211,10 @@ def apply_learned_listings(seeds: list[dict], extras: list[dict] | None) -> list
                 learned = by_domain.get(d)
         if learned:
             item["url"] = learned
+            item["listing_url"] = learned
             item["listing_kind"] = "projects_index"
+            if item.get("home_status") == "official" or item.get("queue") == "crawl":
+                item["queue"] = "crawl"
         out.append(item)
     return out
 
@@ -243,7 +261,9 @@ def fiche_search_retry_query(seed: dict) -> str:
     return "marine conservation project page -news"
 
 
-def infer_listing_from_project_urls(urls: list[str], funder_name: str = "") -> str | None:
+def infer_listing_from_project_urls(
+    urls: list[str], funder_name: str = "", *, allow_shared_hub: bool = False,
+) -> str | None:
     """Indice : préfixe commun des fiches v1 s'il ressemble à un catalogue.
 
     Save Our Seas `/project/…` → `https://saveourseas.com/project/`.
@@ -257,6 +277,13 @@ def infer_listing_from_project_urls(urls: list[str], funder_name: str = "") -> s
         host = domain_of(u)
         if not host or host in SKIP_LISTING_NETLOCS:
             continue
+        if (
+            not allow_shared_hub
+            and is_shared_hub(host)
+            and not name_owns_hub(funder_name, host)
+            and not domain_matches_org(host, funder_name)
+        ):
+            continue
         by_host.setdefault(host, []).append(path_parts(pr.path))
     if not by_host:
         return None
@@ -267,6 +294,12 @@ def infer_listing_from_project_urls(urls: list[str], funder_name: str = "") -> s
         if len(groups) < 2 and not name_hit:
             continue
         prefix = _common_prefix(groups)
+        if not prefix:
+            first = Counter(g[0] for g in groups if g)
+            if first:
+                seg, n = first.most_common(1)[0]
+                if n / len(groups) >= 0.6:
+                    prefix = [seg]
         if not prefix:
             continue
         path = "/" + "/".join(prefix) + "/"
