@@ -136,13 +136,19 @@ async def write_run_project(db, run_id: str, doc: dict) -> str:
     return rid
 
 
+class RunNotRunning(Exception):
+    """Cancel demandé alors que le run n'est plus running (mémoire et Mongo)."""
+
+
 async def finalize_run(db, run_id: str, *, cancelled: bool = False, error: str | None = None,
                        extra: dict | None = None):
     if not run_id:
         return
+    doc = await db.project_runs.find_one({"_id": run_id}) or {}
+    if doc.get("state") in ("cancelled", "done", "failed") and doc.get("finished_at"):
+        return
     rec = RunRecorder(run_id, db=db, events_coll="project_run_events")
     await rec.resume_seq()
-    doc = await db.project_runs.find_one({"_id": run_id}) or {}
     counters = doc.get("counters") or empty_counters()
     n_sites = await db.project_run_projects.count_documents({"run_id": run_id, "verdict": "site"})
     from app.services.run_journal import count_journal_file, load_journal
@@ -172,6 +178,29 @@ async def finalize_run(db, run_id: str, *, cancelled: bool = False, error: str |
         "wrote_projects": False,
     }})
     await rec.event("run_done", **summary)
+
+
+async def request_cancel(db, run_id: str, swarm) -> dict:
+    """Stop mémoire + finalize Mongo. 2e appel OK si le run est encore running en base.
+
+    N'écrit jamais dans ``projects``.
+    """
+    doc = await db.project_runs.find_one({"_id": run_id})
+    if not doc:
+        raise KeyError(run_id)
+    same = getattr(swarm, "run_id", None) == run_id
+    live = same and (
+        bool(getattr(swarm, "running", False))
+        or bool(getattr(swarm, "stopping", False))
+    )
+    mongo_running = doc.get("state") == "running"
+    if not live and not mongo_running and not same:
+        raise RunNotRunning(run_id)
+    if same:
+        await swarm.stop()
+    elif mongo_running:
+        await finalize_run(db, run_id, cancelled=True)
+    return {"cancelling": True, "run_id": run_id, "wrote_projects": False}
 
 
 async def diff_run_vs_v1(db, run_id: str) -> dict:

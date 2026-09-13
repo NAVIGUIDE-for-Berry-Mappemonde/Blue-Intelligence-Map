@@ -383,6 +383,8 @@ async def mongo_insert_journal(db, rec: dict) -> None:
     try:
         await db.project_run_journal.insert_one(doc)
     except Exception as exc:
+        if type(exc).__name__ == "DuplicateKeyError":
+            return
         logger.warning(
             "journal Mongo insert failed run_id=%s seq=%s: %s",
             rec.get("run_id"), rec.get("seq"), exc,
