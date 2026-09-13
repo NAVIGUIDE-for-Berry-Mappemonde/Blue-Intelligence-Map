@@ -1,0 +1,854 @@
+{
+  "generated_at": "2026-09-13T05:58:23.092391+00:00",
+  "before": {
+    "n": 850,
+    "n_with_url": 567,
+    "n_crawl": 530,
+    "n_resolve": 315,
+    "n_skip": 5,
+    "n_official": 567,
+    "n_borrowed": 125,
+    "n_unknown_home": 158,
+    "n_compound": 190,
+    "n_projects_index": 145,
+    "n_home_only": 4,
+    "n_homepage": 418,
+    "n_listing_search": 103,
+    "n_split": 0
+  },
+  "after": {
+    "n": 904,
+    "n_with_url": 567,
+    "n_crawl": 530,
+    "n_resolve": 313,
+    "n_skip": 61,
+    "n_official": 567,
+    "n_borrowed": 125,
+    "n_unknown_home": 158,
+    "n_compound": 187,
+    "n_projects_index": 145,
+    "n_home_only": 4,
+    "n_homepage": 418,
+    "n_listing_search": 103,
+    "n_split": 54
+  },
+  "counts": {
+    "reclassified_ok": 3,
+    "merged": 79,
+    "created": 54,
+    "split_sources": 56,
+    "unsplittable": 131,
+    "n": 904
+  },
+  "reclassified_ok": [
+    "Seychelles Conservation and Climate Adaptation Trust (SeyCCAT)",
+    "International Association of Oil and Gas Producers (IOGP)",
+    "Arctic and Antarctic Research Institute (AARI)"
+  ],
+  "merged": [
+    {
+      "from": "Blue Marine Foundation, Menorca Preservation Fund",
+      "into": "Blue Marine Foundation",
+      "part": "Blue Marine Foundation"
+    },
+    {
+      "from": "The Pew Charitable Trusts and Bertarelli Foundation",
+      "into": "Pew Charitable Trusts",
+      "part": "The Pew Charitable Trusts"
+    },
+    {
+      "from": "The Pew Charitable Trusts and Bertarelli Foundation",
+      "into": "Bertarelli Foundation",
+      "part": "Bertarelli Foundation"
+    },
+    {
+      "from": "Fondation de la Mer, Fondation Ecoalf",
+      "into": "Fondation de la Mer",
+      "part": "Fondation de la Mer"
+    },
+    {
+      "from": "Global Fund for Coral Reefs, UN Joint SDG Fund",
+      "into": "Global Fund for Coral Reefs",
+      "part": "Global Fund for Coral Reefs"
+    },
+    {
+      "from": "MAR Fund, WTW, Fondo Acción",
+      "into": "MAR Fund",
+      "part": "MAR Fund"
+    },
+    {
+      "from": "MAR Fund, WTW, Fondo Acción",
+      "into": "Fondo Acción",
+      "part": "Fondo Acción"
+    },
+    {
+      "from": "Bertarelli Foundation, Pew Charitable Trusts",
+      "into": "Bertarelli Foundation",
+      "part": "Bertarelli Foundation"
+    },
+    {
+      "from": "Bertarelli Foundation, Pew Charitable Trusts",
+      "into": "Pew Charitable Trusts",
+      "part": "Pew Charitable Trusts"
+    },
+    {
+      "from": "Oak Foundation, Hawai'i Community Foundation Marine 30×30 Pooled Fund",
+      "into": "Oak Foundation",
+      "part": "Oak Foundation"
+    },
+    {
+      "from": "The MedFund, MAVA Foundation, PBOL Initiative",
+      "into": "The MedFund",
+      "part": "The MedFund"
+    },
+    {
+      "from": "U.S. National Science Foundation, Paul G. Allen Family Foundation",
+      "into": "U.S. National Science Foundation",
+      "part": "U.S. National Science Foundation"
+    },
+    {
+      "from": "U.S. National Science Foundation, Paul G. Allen Family Foundation",
+      "into": "Paul G. Allen Family Foundation",
+      "part": "Paul G. Allen Family Foundation"
+    },
+    {
+      "from": "U.S. Environmental Protection Agency, NOAA, University of Washington",
+      "into": "NOAA",
+      "part": "NOAA"
+    },
+    {
+      "from": "Veolia Foundation, Albert II of Monaco Foundation",
+      "into": "Veolia Foundation",
+      "part": "Veolia Foundation"
+    },
+    {
+      "from": "Veolia Foundation and Prince Albert II of Monaco Foundation",
+      "into": "Veolia Foundation",
+      "part": "Veolia Foundation"
+    },
+    {
+      "from": "Veolia Foundation and Prince Albert II of Monaco Foundation",
+      "into": "Prince Albert II Foundation",
+      "part": "Prince Albert II of Monaco Foundation"
+    },
+    {
+      "from": "Manta Trust, Ocean First Institute",
+      "into": "Manta Trust",
+      "part": "Manta Trust"
+    },
+    {
+      "from": "University of Leeds, Coral Reef Alliance, Rare, Pattimura University",
+      "into": "Coral Reef Alliance",
+      "part": "Coral Reef Alliance"
+    },
+    {
+      "from": "University of Leeds, Coral Reef Alliance, Rare, Pattimura University",
+      "into": "Rare Fish Forever",
+      "part": "Rare"
+    },
+    {
+      "from": "CORAL and MAR Fund",
+      "into": "Coral Reef Alliance",
+      "part": "CORAL"
+    },
+    {
+      "from": "CORAL and MAR Fund",
+      "into": "MAR Fund",
+      "part": "MAR Fund"
+    },
+    {
+      "from": "Ocean Conservancy, UN Foundation",
+      "into": "Ocean Conservancy",
+      "part": "Ocean Conservancy"
+    },
+    {
+      "from": "Ocean Conservancy, The 5 Gyres Institute, The Nature Conservancy",
+      "into": "Ocean Conservancy",
+      "part": "Ocean Conservancy"
+    },
+    {
+      "from": "Ocean Conservancy, The 5 Gyres Institute, The Nature Conservancy",
+      "into": "5 Gyres Institute",
+      "part": "The 5 Gyres Institute"
+    },
+    {
+      "from": "Ocean Conservancy, The 5 Gyres Institute, The Nature Conservancy",
+      "into": "The Nature Conservancy",
+      "part": "The Nature Conservancy"
+    },
+    {
+      "from": "JPI Oceans and JPI Climate",
+      "into": "JPI Oceans",
+      "part": "JPI Oceans"
+    },
+    {
+      "from": "Government of Canada, UK Blue Planet Fund",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada, UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "UK Blue Planet Fund, Government of Canada, ORRAA",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "UK Blue Planet Fund, Government of Canada, ORRAA",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "UK Blue Planet Fund, Government of Canada, ORRAA",
+      "into": "ORRAA",
+      "part": "ORRAA"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Government Blue Planet Fund, Government of Canada",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "ORRAA and UK's Blue Planet Fund",
+      "into": "ORRAA",
+      "part": "ORRAA"
+    },
+    {
+      "from": "ORRAA and UK's Blue Planet Fund",
+      "into": "The UK's Blue Planet Fund",
+      "part": "UK's Blue Planet Fund"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Blue Planet Fund",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Synchronicity Earth, Aurum Fund Management Ltd.",
+      "into": "Synchronicity Earth",
+      "part": "Synchronicity Earth"
+    },
+    {
+      "from": "UK Blue Planet Fund, Swiss Re Foundation, Government of Canada",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "UK Blue Planet Fund, Swiss Re Foundation, Government of Canada",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "UK Blue Planet Fund, Swiss Re Foundation, Government of Canada",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Blue Action Fund, UK Blue Planet Fund",
+      "into": "Blue Action Fund",
+      "part": "Blue Action Fund"
+    },
+    {
+      "from": "Blue Action Fund, UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Swiss Re Foundation and UK Blue Planet Fund",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation and UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "AXA XL, Government of Canada, UK Blue Planet Fund",
+      "into": "AXA XL",
+      "part": "AXA XL"
+    },
+    {
+      "from": "AXA XL, Government of Canada, UK Blue Planet Fund",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "AXA XL, Government of Canada, UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "US Department of State",
+      "part": "US Department of State"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Blue Planet Fund, Government of Canada",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Blue Planet Fund, Government of Canada",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Blue Planet Fund, Government of Canada",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada and UK Blue Planet Fund",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Government of Canada and UK Blue Planet Fund",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "Swiss Re Foundation",
+      "part": "Swiss Re Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",
+      "into": "US Department of State",
+      "part": "US Department of State"
+    },
+    {
+      "from": "UK Blue Planet Fund, ORRAA, Government of Canada",
+      "into": "UK Blue Planet Fund",
+      "part": "UK Blue Planet Fund"
+    },
+    {
+      "from": "UK Blue Planet Fund, ORRAA, Government of Canada",
+      "into": "ORRAA",
+      "part": "ORRAA"
+    },
+    {
+      "from": "UK Blue Planet Fund, ORRAA, Government of Canada",
+      "into": "Government of Canada",
+      "part": "Government of Canada"
+    },
+    {
+      "from": "Surfrider Foundation, Ocean Conservancy",
+      "into": "Surfrider Foundation",
+      "part": "Surfrider Foundation"
+    },
+    {
+      "from": "Surfrider Foundation, Ocean Conservancy",
+      "into": "Ocean Conservancy",
+      "part": "Ocean Conservancy"
+    },
+    {
+      "from": "FORMAS, NSF, SIDA",
+      "into": "NSF",
+      "part": "NSF"
+    },
+    {
+      "from": "Hawaii State Legislature, Surfrider Foundation",
+      "into": "Hawaii State Legislature",
+      "part": "Hawaii State Legislature"
+    },
+    {
+      "from": "Hawaii State Legislature, Surfrider Foundation",
+      "into": "Surfrider Foundation",
+      "part": "Surfrider Foundation"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific, IOC/UNESCO",
+      "into": "IOC/UNESCO",
+      "part": "IOC/UNESCO"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO",
+      "into": "IOC Sub-Commission for the Western Pacific (WESTPAC)",
+      "part": "IOC Sub-Commission for the Western Pacific (WESTPAC)"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO",
+      "into": "IOC/UNESCO",
+      "part": "IOC/UNESCO"
+    },
+    {
+      "from": "Scripps Institution of Oceanography, University of California San Diego",
+      "into": "Scripps Institution of Oceanography",
+      "part": "Scripps Institution of Oceanography"
+    },
+    {
+      "from": "JPI Climate and JPI Oceans",
+      "into": "JPI Climate",
+      "part": "JPI Climate"
+    },
+    {
+      "from": "JPI Climate and JPI Oceans",
+      "into": "JPI Oceans",
+      "part": "JPI Oceans"
+    },
+    {
+      "from": "DG Research and Innovation, European Commission",
+      "into": "European Commission",
+      "part": "European Commission"
+    },
+    {
+      "from": "NOAA Office of Education and National Marine Educators Association",
+      "into": "National Marine Educators Association",
+      "part": "National Marine Educators Association"
+    }
+  ],
+  "created": [
+    {
+      "from": "Blue Marine Foundation, Menorca Preservation Fund",
+      "name": "Menorca Preservation Fund"
+    },
+    {
+      "from": "Fondation de la Mer, Fondation Ecoalf",
+      "name": "Fondation Ecoalf"
+    },
+    {
+      "from": "Global Fund for Coral Reefs, UN Joint SDG Fund",
+      "name": "UN Joint SDG Fund"
+    },
+    {
+      "from": "MAR Fund, WTW, Fondo Acción",
+      "name": "WTW"
+    },
+    {
+      "from": "Global Fund for Coral Reefs (GFCR) and Joint SDG Fund (JSDG)",
+      "name": "Global Fund for Coral Reefs (GFCR)"
+    },
+    {
+      "from": "Global Fund for Coral Reefs (GFCR) and Joint SDG Fund (JSDG)",
+      "name": "Joint SDG Fund (JSDG)"
+    },
+    {
+      "from": "Oak Foundation, Hawai'i Community Foundation Marine 30×30 Pooled Fund",
+      "name": "Hawai'i Community Foundation Marine 30×30 Pooled Fund"
+    },
+    {
+      "from": "The MedFund, MAVA Foundation, PBOL Initiative",
+      "name": "MAVA Foundation"
+    },
+    {
+      "from": "The MedFund, MAVA Foundation, PBOL Initiative",
+      "name": "PBOL Initiative"
+    },
+    {
+      "from": "U.S. Environmental Protection Agency, NOAA, University of Washington",
+      "name": "U.S. Environmental Protection Agency"
+    },
+    {
+      "from": "U.S. Environmental Protection Agency, NOAA, University of Washington",
+      "name": "University of Washington"
+    },
+    {
+      "from": "Veolia Foundation, Albert II of Monaco Foundation",
+      "name": "Albert II of Monaco Foundation"
+    },
+    {
+      "from": "Manta Trust, Ocean First Institute",
+      "name": "Ocean First Institute"
+    },
+    {
+      "from": "UK Blue Belt Programme, UK Government, Royal Society for the Protection of Birds",
+      "name": "UK Blue Belt Programme"
+    },
+    {
+      "from": "UK Blue Belt Programme, UK Government, Royal Society for the Protection of Birds",
+      "name": "UK Government"
+    },
+    {
+      "from": "UK Blue Belt Programme, UK Government, Royal Society for the Protection of Birds",
+      "name": "Royal Society for the Protection of Birds"
+    },
+    {
+      "from": "ACTAI Global Foundation, Baum Foundation, Martha Shaw's Foundation",
+      "name": "ACTAI Global Foundation"
+    },
+    {
+      "from": "ACTAI Global Foundation, Baum Foundation, Martha Shaw's Foundation",
+      "name": "Baum Foundation"
+    },
+    {
+      "from": "ACTAI Global Foundation, Baum Foundation, Martha Shaw's Foundation",
+      "name": "Martha Shaw's Foundation"
+    },
+    {
+      "from": "University of Leeds, Coral Reef Alliance, Rare, Pattimura University",
+      "name": "University of Leeds"
+    },
+    {
+      "from": "University of Leeds, Coral Reef Alliance, Rare, Pattimura University",
+      "name": "Pattimura University"
+    },
+    {
+      "from": "Ocean Conservancy, UN Foundation",
+      "name": "UN Foundation"
+    },
+    {
+      "from": "JPI Oceans and JPI Climate",
+      "name": "JPI Climate"
+    },
+    {
+      "from": "Ocean Protection Council, The Marisla Foundation, Maxwell/Hanrahan Foundation",
+      "name": "Ocean Protection Council"
+    },
+    {
+      "from": "Ocean Protection Council, The Marisla Foundation, Maxwell/Hanrahan Foundation",
+      "name": "The Marisla Foundation"
+    },
+    {
+      "from": "Ocean Protection Council, The Marisla Foundation, Maxwell/Hanrahan Foundation",
+      "name": "Maxwell/Hanrahan Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Government Blue Planet Fund, Government of Canada",
+      "name": "Swiss Re Foundation"
+    },
+    {
+      "from": "Swiss Re Foundation, UK Government Blue Planet Fund, Government of Canada",
+      "name": "UK Government Blue Planet Fund"
+    },
+    {
+      "from": "Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",
+      "name": "US Department of State"
+    },
+    {
+      "from": "Synchronicity Earth, Aurum Fund Management Ltd.",
+      "name": "Aurum Fund Management Ltd"
+    },
+    {
+      "from": "FORMAS, NSF, SIDA",
+      "name": "FORMAS"
+    },
+    {
+      "from": "FORMAS, NSF, SIDA",
+      "name": "SIDA"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO & UNESCO Bangkok",
+      "name": "IOC Sub-Commission for the Western Pacific (WESTPAC)"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO & UNESCO Bangkok",
+      "name": "IOC/UNESCO & UNESCO Bangkok"
+    },
+    {
+      "from": "IOC Sub-Commission for the Western Pacific, IOC/UNESCO",
+      "name": "IOC Sub-Commission for the Western Pacific"
+    },
+    {
+      "from": "Scripps Institution of Oceanography, University of California San Diego",
+      "name": "University of California San Diego"
+    },
+    {
+      "from": "SINAMOT Program, National University Costa Rica",
+      "name": "SINAMOT Program"
+    },
+    {
+      "from": "SINAMOT Program, National University Costa Rica",
+      "name": "National University Costa Rica"
+    },
+    {
+      "from": "Marine Science Institute, University of the Philippines Diliman",
+      "name": "Marine Science Institute"
+    },
+    {
+      "from": "Marine Science Institute, University of the Philippines Diliman",
+      "name": "University of the Philippines Diliman"
+    },
+    {
+      "from": "University of Maryland Center for Environmental Science and Chesapeake Biological Laboratory",
+      "name": "University of Maryland Center for Environmental Science"
+    },
+    {
+      "from": "University of Maryland Center for Environmental Science and Chesapeake Biological Laboratory",
+      "name": "Chesapeake Biological Laboratory"
+    },
+    {
+      "from": "CIIMAR, University of Porto",
+      "name": "CIIMAR"
+    },
+    {
+      "from": "CIIMAR, University of Porto",
+      "name": "University of Porto"
+    },
+    {
+      "from": "State Key Laboratory of Marine Pollution, City University of Hong Kong",
+      "name": "State Key Laboratory of Marine Pollution"
+    },
+    {
+      "from": "State Key Laboratory of Marine Pollution, City University of Hong Kong",
+      "name": "City University of Hong Kong"
+    },
+    {
+      "from": "Institut de Ciències del Mar, CSIC",
+      "name": "Institut de Ciències del Mar"
+    },
+    {
+      "from": "Institut de Ciències del Mar, CSIC",
+      "name": "CSIC"
+    },
+    {
+      "from": "CEA and CNRS",
+      "name": "CEA"
+    },
+    {
+      "from": "CEA and CNRS",
+      "name": "CNRS"
+    },
+    {
+      "from": "DG Research and Innovation, European Commission",
+      "name": "DG Research and Innovation"
+    },
+    {
+      "from": "NOAA Office of Education and National Marine Educators Association",
+      "name": "NOAA Office of Education"
+    },
+    {
+      "from": "Sasakawa Global Ocean Institute, World Maritime University",
+      "name": "Sasakawa Global Ocean Institute"
+    },
+    {
+      "from": "Sasakawa Global Ocean Institute, World Maritime University",
+      "name": "World Maritime University"
+    }
+  ],
+  "split_sources": [
+    "Blue Marine Foundation, Menorca Preservation Fund",
+    "The Pew Charitable Trusts and Bertarelli Foundation",
+    "Fondation de la Mer, Fondation Ecoalf",
+    "Global Fund for Coral Reefs, UN Joint SDG Fund",
+    "MAR Fund, WTW, Fondo Acción",
+    "Global Fund for Coral Reefs (GFCR) and Joint SDG Fund (JSDG)",
+    "Bertarelli Foundation, Pew Charitable Trusts",
+    "Oak Foundation, Hawai'i Community Foundation Marine 30×30 Pooled Fund",
+    "The MedFund, MAVA Foundation, PBOL Initiative",
+    "U.S. National Science Foundation, Paul G. Allen Family Foundation",
+    "U.S. Environmental Protection Agency, NOAA, University of Washington",
+    "Veolia Foundation, Albert II of Monaco Foundation",
+    "Veolia Foundation and Prince Albert II of Monaco Foundation",
+    "Manta Trust, Ocean First Institute",
+    "UK Blue Belt Programme, UK Government, Royal Society for the Protection of Birds",
+    "ACTAI Global Foundation, Baum Foundation, Martha Shaw's Foundation",
+    "University of Leeds, Coral Reef Alliance, Rare, Pattimura University",
+    "CORAL and MAR Fund",
+    "Ocean Conservancy, UN Foundation",
+    "Ocean Conservancy, The 5 Gyres Institute, The Nature Conservancy",
+    "JPI Oceans and JPI Climate",
+    "Ocean Protection Council, The Marisla Foundation, Maxwell/Hanrahan Foundation",
+    "Government of Canada, UK Blue Planet Fund",
+    "UK Blue Planet Fund, Government of Canada, ORRAA",
+    "Swiss Re Foundation, UK Government Blue Planet Fund, Government of Canada",
+    "Government of Canada, Swiss Re Foundation, UK Blue Planet Fund, US Department of State",
+    "ORRAA and UK's Blue Planet Fund",
+    "Swiss Re Foundation, UK Blue Planet Fund",
+    "Synchronicity Earth, Aurum Fund Management Ltd.",
+    "UK Blue Planet Fund, Swiss Re Foundation, Government of Canada",
+    "Blue Action Fund, UK Blue Planet Fund",
+    "Swiss Re Foundation and UK Blue Planet Fund",
+    "AXA XL, Government of Canada, UK Blue Planet Fund",
+    "Government of Canada, UK Blue Planet Fund, US Department of State",
+    "Swiss Re Foundation, UK Blue Planet Fund, Government of Canada",
+    "Government of Canada and UK Blue Planet Fund",
+    "Swiss Re Foundation, Government of Canada, UK Blue Planet Fund, US Department of State",
+    "UK Blue Planet Fund, ORRAA, Government of Canada",
+    "Surfrider Foundation, Ocean Conservancy",
+    "FORMAS, NSF, SIDA",
+    "Hawaii State Legislature, Surfrider Foundation",
+    "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO & UNESCO Bangkok",
+    "IOC Sub-Commission for the Western Pacific, IOC/UNESCO",
+    "IOC Sub-Commission for the Western Pacific (WESTPAC), IOC/UNESCO",
+    "Scripps Institution of Oceanography, University of California San Diego",
+    "SINAMOT Program, National University Costa Rica",
+    "Marine Science Institute, University of the Philippines Diliman",
+    "University of Maryland Center for Environmental Science and Chesapeake Biological Laboratory",
+    "CIIMAR, University of Porto",
+    "State Key Laboratory of Marine Pollution, City University of Hong Kong",
+    "JPI Climate and JPI Oceans",
+    "Institut de Ciències del Mar, CSIC",
+    "CEA and CNRS",
+    "DG Research and Innovation, European Commission",
+    "NOAA Office of Education and National Marine Educators Association",
+    "Sasakawa Global Ocean Institute, World Maritime University"
+  ],
+  "unsplittable": [
+    "Sussex Kelp Recovery Project (partner), Blue Marine Foundation",
+    "Blue Marine Foundation, BOAT International, Nekton",
+    "Government Secretariat of Science, Technology and Productive Innovation - Argentina",
+    "Prince Albert II Foundation, Monaco National Youth Education and Sports",
+    "The Pew Charitable Trusts and Dona Bertarelli",
+    "Bloomberg Philanthropies' Vibrant Oceans Initiative, Prince Albert II of Monaco Foundation",
+    "Rolex, Tanoto, Tsao Pao Chee",
+    "Groupe KRESK (SVR, Lazartigue, Fillmed)",
+    "UNDP, UNCDF, UNEP, Fiji Development Bank, JSDG Fund",
+    "NOAA-NMFS, US Fish and Wildlife Service, National Fish and Wildlife Foundation, National Save the Sea Turtle Foundation, Lenfest Ocean Program",
+    "The Nature Conservancy, USAID, CREP, Sustainable Grenadines Project",
+    "Minderoo Foundation, Seaready Maritime Maintenance Solutions",
+    "Ocean Exchange (501(c)(3)), NOAA, Guy Harvey Foundation",
+    "High Seas Alliance (70+ NGO members and IUCN)",
+    "Nekton and Schmidt Ocean Institute",
+    "The Nippon Foundation and Nekton",
+    "UK Government ISPF, Society for Conservation Biology, Government of India",
+    "Donor funded, Manta Trust affiliate, Barefoot Manta Resort, Conservation International",
+    "The Manta Trust, Conservation International, Aquarium des Lagons",
+    "Channel Islands National Park, Channel Islands National Marine Sanctuary, California Department of Fish and Wildlife",
+    "MigraMar, Only.One, Mission Blue, Marine Conservation Institute",
+    "Marine Conservation Institute, Save the Waves Coalition, Patagonia",
+    "Aqua-Firma, Shark Foundation, Waterlust",
+    "Seth Casden, Carol Hempf, Dr. Fisk Johnson",
+    "Mission Blue, Malpelo Foundation, Conservation International Colombia, Migramar",
+    "Biotherm, Polar Bears International, IUCN, ScubaPro, Gates Products",
+    "Foundation FortUna, Mantahari Oceancare",
+    "Mission Blue, Asociación Ondine, Stefan Hearst",
+    "Fusion and Univision Media",
+    "Conservation Law Foundation, National Geographic, Google, National Resources Defense Council",
+    "The Baum Foundation, The Leatherback Trust, LightHawk, Bula Bula Hotel, National Geographic",
+    "MaiTai Global, Paul M. Angell Family Foundation, Marisla Foundation",
+    "Region of Eastern Macedonia and Thrace",
+    "UK Foreign Commonwealth and Development Office, International Development Research Centre Canada, UK Blue Planet Fund",
+    "CORAL, PROLANSATE Foundation, DIGEPESCA",
+    "Hawai'i Department of Health, Hawai'i County Council",
+    "Hawai'i Tourism Authority and National Oceanic Atmospheric Administration",
+    "Bently Foundation, Hawaiʻi Community Foundation, Hawaiʻi Tourism Authority, The Keith Campbell Foundation, NOAA",
+    "Coral Reef Alliance (CORAL) and partners",
+    "Pew Bertarelli Ocean Legacy, Great Blue Ocean coalition, Blue Nature Alliance",
+    "Blue Marine Foundation, Blue Nature Alliance, Mission Blue, Ocean Born Foundation, Yachts for Science",
+    "EU programmes, Nouvelle-Aquitaine region, Impact Ocean Capital",
+    "Ashlan and Philippe Cousteau",
+    "Hummingbirds, Climate-KIC, Julius Bär, Sustainable Ocean Alliance",
+    "Stream Foundation, Digital Switzerland, EPFL, Google for Startups",
+    "Innovation Norway, European Commission, Verizon, SailGP",
+    "HUB Ocean, Microsoft, Accenture",
+    "Shell, Eneco, Chubu",
+    "Mercuria, Minerva Bunkering, HUB Ocean",
+    "Norwegian Seafood Federation, Norwegian Seafood Association",
+    "Campinas municipality, SOA Hub, Roots & Shoots, partners",
+    "Global Partnership for Sharks and Rays",
+    "Miami Super Bowl Host Committee, Pepsi, NFL Green",
+    "Ocean Conservancy, Bank of the West",
+    "Ocean Conservancy, Pacific Environment",
+    "Gulf Star Program (public-private partnership), NOAA, EPA",
+    "Ocean Conservancy, UN Foundation, Friends of Ocean and Climate",
+    "MSC Ocean Stewardship Fund, Carrefour Italy, Delicius",
+    "Ocean Stewardship Fund (Carrefour Italy, Delicius)",
+    "European Commission, JPI Oceans, 17 European countries",
+    "JPI Oceans (Belgium, Italy, Malta lead + 8 countries)",
+    "JPI Oceans, Belmont Forum, Future Earth",
+    "JPI Oceans (Belgium, Ireland, Netherlands, Norway, Sweden, France, Germany, Denmark, UK)",
+    "California Ocean Protection Council, California State Coastal Conservancy, philanthropic donors",
+    "WILDCOAST and Coastal Quest",
+    "Bloomberg Philanthropies Bloomberg Ocean Initiative, Swedish Postcode Lottery Foundation",
+    "Publix, NFL, NHL, Fortress Investment Group, UBS, Boeing, Newmark, National Marine Sanctuary Foundation",
+    "Global Fund for Coral Reefs, UNDP, Blue Natural Capital Finance Facility (IUCN), UBS optimus, AXA Climate, Milkywire, Convergence, Genesis Charitable Trust",
+    "NordForsk, NSF, RCN",
+    "Surfrider Foundation, Unknown, NRDC, Maui County Open Space Fund, County of Hawaii, Washington State",
+    "Surfrider Foundation, Unknown",
+    "Surfrider Foundation, Unknown, California State Water Board, Orange County Health Care Agency, Orange County Public Works, South Orange County Wastewater Authority",
+    "Environmental Protection Agency (EPA), United States Mexico Canada Agreement (USMCA)",
+    "Florida State Government and Miami-Dade County",
+    "CT Department of Energy and Environmental Protection, The Nature Conservancy",
+    "North Shore Community Land Trust, Trust for Public Land, State, City, Military and Federal Agencies",
+    "Shippers, tankers and large vessels",
+    "New Carissa salvage funds, grants, private donations",
+    "State of Florida and Federal Beach Act",
+    "Surfrider Foundation, Port Orford Ocean Resource Team, New Wave Planning, City of Port Orford, Oregon Department of Land Conservation and Development",
+    "German Federal Ministry for Economic Cooperation and Development (BMZ)",
+    "Alfred Wegener Institute, Helmholtz Centre for Polar and Marine Research",
+    "National Oceanographic and Atmospheric Administration, Southeast Fisheries Science Center",
+    "National Aeronautics and Space Administration (NASA)",
+    "National Institute of Oceanography and Fisheries (NIOF) - Egypt",
+    "Ministry of the Environment, Japan (MOEJ)",
+    "German Ocean Foundation, Springer Nature, German Society for Marine Research",
+    "Universeum, the National Science Centre of Sweden",
+    "Department of Blue Economy, Ministry of Fisheries and Blue Economy, Seychelles",
+    "WCS, WWF, Sparkgeo",
+    "Capacity building Working Group for the UN Ocean Decade, National Oceanographic Commission of Russian Federation",
+    "Department for Environment, Food, and Rural Affairs – United Kingdom",
+    "National Commission for Education, Sciences and Culture, Kingdom of Morocco",
+    "United Nations Economic and Social Commission for Asia and the Pacific (UNESCAP)",
+    "Ministry of Environment and Urbanization of Turkey",
+    "National Institute of Water and Atmospheric Research",
+    "Commonwealth Scientific and Industrial Research Organization",
+    "Shirshov Institute of Oceanology, Russian Academy of Sciences",
+    "West African Science Service Centre on Climate Change and Adapted Land Use (WASCAL)",
+    "Northern Institute for Research in Environment and Occupational Health and Safety (INREST)",
+    "The Atlantic Maritime Academy Nigeria (Institute of Nautical Studies and Ocean Research)",
+    "Nippon Foundation Ocean Nexus Center, EarthLab, University of Washington",
+    "University of California, Santa Cruz",
+    "United States Interagency Working Group on Ocean and Coastal Mapping (IWG-OCM)",
+    "Chilean Ministry of Economy, Development, and Tourism",
+    "National Oceanographic and Maritime Institute – Bangladesh",
+    "Institute of Marine Research, Norway",
+    "Agency of Meteorology, Climatology, and Geophysics – Indonesia",
+    "School of Aquatic Sciences and Fisheries Technology, University of Dar es Salaam",
+    "Commonwealth Scientific and Industrial Research Organisation (CSIRO)",
+    "Agency for Meteorology Climatology and Geophysics (BMKG) – Indonesia",
+    "Marine Biodiversity Observation Network (MBON) and National Oceanographic and Atmospheric Administration (NOAA)",
+    "National Academies of Sciences, Engineering, and Medicine/Ocean Studies Board",
+    "National Oceanographic and Atmospheric Administration (NOAA)",
+    "CMCC Foundation – Euro-Mediterranean Center on Climate Change, Italy",
+    "The State Key Laboratory of Estuarine and Coastal Research (SKLEC), East China Normal University",
+    "The Federal University of Technology, Akure – Nigeria",
+    "OceanX and OceanQuest",
+    "CNR, EMODnet, Parc naturel marin du Cap Corse, Carloforte Municipality, SMEs",
+    "Institute of Deep-Sea Science and Engineering, Chinese Academy of Sciences",
+    "Atmosphere and Ocean Research Institute, The University of Tokyo",
+    "French Foundation for Biodiversity Research (FRB-CESAB), Canadian Institute for Ecology & Evolution (CIEE), French Embassy in Canada",
+    "Ministry of Education, Culture, Sports, Science and Technology (MEXT) – Japan",
+    "GEOMAR Helmholtz Centre for Ocean Research Kiel, co-lead IOCAFRICA",
+    "EU Mission Ocean and Waters",
+    "U.S. National Science Foundation, National Institutes of Health",
+    "Interagency Working Group for Ocean Sound and Marine Life",
+    "Next Generation EU and Italian National Recovery and Resilience Plan",
+    "Swedish Meteorological and Hydrological Institute (SMHI)",
+    "Hydrographic and Oceanographic Service of the Chilean Navy (SHOA)",
+    "Bundesministerium für Forschung, Technologie und Raumfahrt – BMFTR (Federal Ministry of Research, Technology and Space) – Germany"
+  ]
+}
