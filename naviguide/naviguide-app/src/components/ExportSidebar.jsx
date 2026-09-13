@@ -70,7 +70,7 @@ function downloadFile(content, filename, mimeType) {
 }
 
 /** Build a GeoJSON FeatureCollection from segments + waypoints */
-function buildGeoJSON(segments, points) {
+function buildGeoJSON(segments, points, name = "NAVIGUIDE - Berry-Mappemonde Expedition") {
   const features = [];
 
   // ── Route segments ────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ function buildGeoJSON(segments, points) {
 
   return {
     type: "FeatureCollection",
-    name: "NAVIGUIDE - Berry-Mappemonde Expedition",
+    name,
     features,
   };
 }
@@ -293,11 +293,11 @@ function ExportButton({ icon, label, onClick, color }) {
 
 export function ExportSidebar({
   segments, points, open, onToggle,
-  // Mode props (state lives in App.jsx)
-  isOffshore, isCockpit, isLightMode,
-  onOffshoreChange, onCockpitChange, onLightModeChange,
-  // Polar props (state lives in App.jsx)
+  isLightMode, onLightModeChange,
   polarData, onPolarDataLoaded,
+  routeDistanceNm, routeSegmentCount,
+  exportName = "naviguide-berry-mappemonde",
+  routeCollectionName,
 }) {
   const { lang, switchLang, t } = useLang();
   const [exportStatus, setExportStatus] = useState(null); // "geojson" | "kml" | null
@@ -392,9 +392,9 @@ export function ExportSidebar({
   const handleExportGeoJSON = () => {
     setExportStatus("geojson");
     try {
-      const geoJSON = buildGeoJSON(segments, points);
+      const geoJSON = buildGeoJSON(segments, points, routeCollectionName);
       const json    = JSON.stringify(geoJSON, null, 2);
-      downloadFile(json, "naviguide-berry-mappemonde.geojson", "application/geo+json");
+      downloadFile(json, `${exportName}.geojson`, "application/geo+json");
     } finally {
       setTimeout(() => setExportStatus(null), 1500);
     }
@@ -404,7 +404,7 @@ export function ExportSidebar({
     setExportStatus("kml");
     try {
       const kml = buildKML(segments, points);
-      downloadFile(kml, "naviguide-berry-mappemonde.kml", "application/vnd.google-earth.kml+xml");
+      downloadFile(kml, `${exportName}.kml`, "application/vnd.google-earth.kml+xml");
     } finally {
       setTimeout(() => setExportStatus(null), 1500);
     }
@@ -480,7 +480,12 @@ export function ExportSidebar({
             {t("routeSummary")}
           </div>
           <div className="bg-slate-800/60 rounded-xl px-3 py-1 border border-slate-700/40">
-            <StatRow icon="🗺️" label={t("totalSegments")}  value={totalSegments} />
+            <StatRow
+              icon="📏"
+              label={t("totalDistanceNm")}
+              value={routeDistanceNm != null ? `${Number(routeDistanceNm).toLocaleString()} nm` : "—"}
+            />
+            <StatRow icon="🗺️" label={t("totalSegments")}  value={routeSegmentCount ?? totalSegments} />
             <StatRow icon="⚓" label={t("maritimeLegs")}   value={maritimeSegs.length} />
             <StatRow icon="🛣️" label={t("overlandLegs")}   value={overlandSegs.length} />
             <StatRow icon="📍" label={t("waypoints")}      value={points.length} />

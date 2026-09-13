@@ -4,12 +4,11 @@
  * The Berry-Mappemonde card is an interactive route switcher with file import.
  */
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, AlertTriangle, Navigation, Shield, Upload, X, Pencil, CheckCircle, Send, Loader2, Compass, Play, Square } from "lucide-react";
-import { riskBadgeClass } from "../utils/riskColors";
+import { ChevronLeft, ChevronRight, Shield, Upload, X, Pencil, CheckCircle, Send, Loader2, Compass, Play, Square, Trash2 } from "lucide-react";
 import { useLang } from "../i18n/LangContext.jsx";
 import { SimulationPanel } from "./SimulationPanel";
 import { AgentPanel } from "./AgentPanel";
-import { BI_LAYER_CONFIG } from "./MaritimeLayers";
+import { ALL_LAYER_CONFIG } from "./MaritimeLayers";
 
 const POLAR_API_URL = import.meta.env.VITE_POLAR_API_URL ?? "http://localhost:8004";
 
@@ -35,11 +34,12 @@ function PolarChatSection({ polarData }) {
   const [messages,    setMessages]    = useState([]);
   const [chatInput,   setChatInput]   = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const chatEndRef  = useRef(null);
+  const chatListRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = chatListRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   // Auto-resize textarea as content grows/shrinks
@@ -91,7 +91,7 @@ function PolarChatSection({ polarData }) {
 
       {/* Messages */}
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
-        <div className="max-h-48 overflow-y-auto sidebar-scroll px-3 py-3 space-y-0.5">
+        <div ref={chatListRef} className="max-h-48 overflow-y-auto sidebar-scroll px-3 py-3 space-y-0.5">
           {messages.length === 0 && !polarData && (
             <p className="text-xs text-slate-500 text-center py-3">
               {t("polarChatLoadPrompt")}
@@ -105,7 +105,6 @@ function PolarChatSection({ polarData }) {
               </div>
             </div>
           )}
-          <div ref={chatEndRef} />
         </div>
 
         {/* Input */}
@@ -229,48 +228,6 @@ function stemName(filename) {
 
 /* ── Sub-components ───────────────────────────────────────────────────────── */
 
-function StatCard({ icon, label, value, sub }) {
-  return (
-    <div className="bg-slate-800/70 rounded-xl p-3 flex items-start gap-3">
-      <div className="mt-0.5 text-slate-400">{icon}</div>
-      <div className="min-w-0">
-        <div className="text-xs text-slate-500 mb-0.5">{label}</div>
-        <div className="text-sm font-semibold text-white truncate">{value}</div>
-        {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-function RiskBadge({ level }) {
-  const cls = riskBadgeClass[level] || riskBadgeClass.UNKNOWN;
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
-      {level || "UNKNOWN"}
-    </span>
-  );
-}
-
-function AlertItem({ alert }) {
-  const { t } = useLang();
-  const colors = {
-    CRITICAL: "border-red-700/60 bg-red-950/40",
-    HIGH:     "border-orange-700/60 bg-orange-950/40",
-  };
-  const cls = colors[alert.risk_level] || "border-slate-700 bg-slate-800/40";
-  return (
-    <div className={`border rounded-lg p-2.5 ${cls}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-white truncate">{alert.waypoint}</span>
-        <RiskBadge level={alert.risk_level} />
-      </div>
-      <div className="text-xs text-slate-400 mt-1 capitalize">
-        {t("dominantRisk")}: {alert.dominant_risk?.replace("_score", "") || "—"}
-      </div>
-    </div>
-  );
-}
-
 /* ── BerryCard ────────────────────────────────────────────────────────────── */
 /**
  * States:
@@ -279,17 +236,21 @@ function AlertItem({ alert }) {
  *  "file-active"             – Imported file is the active route. Shows Berry mini-btn + filename (highlighted).
  *  "berry-active-file-loaded"– Berry is active route, file is in memory. Shows Berry (highlighted) + filename.
  */
-function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish }) {
+function BerryCard({
+  onRouteImport, onRouteSwitchToBerry, isDrawing,
+  onDrawStart, onDrawContinue, onDrawFinish, onCustomDelete, canContinueDraw,
+}) {
   const { t } = useLang();
   const [cardMode, setCardMode]         = useState("berry-active");
-  const [importedGeoJSON, setImportedGeoJSON] = useState(null); // FeatureCollection
+  const [importedGeoJSON, setImportedGeoJSON] = useState(null);
   const [importedName, setImportedName]       = useState(null);
   const [importError, setImportError]         = useState(null);
 
   const geoJsonRef = useRef(null);
   const kmlRef     = useRef(null);
+  const hasCustom  = Boolean(importedGeoJSON);
+  const customOn   = cardMode === "file-active";
 
-  /* ── File processing ──────────────────────────────────────────────────── */
   const processFile = (file) => {
     setImportError(null);
     const name = stemName(file.name);
@@ -299,9 +260,7 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
         const text    = e.target.result;
         const isKml   = file.name.toLowerCase().endsWith(".kml");
         const geojson = isKml ? parseKML(text) : parseGeoJSON(text);
-
         if (geojson.features.length === 0) throw new Error(t("noCoordsFound"));
-
         setImportedGeoJSON(geojson);
         setImportedName(name);
         setCardMode("file-active");
@@ -313,218 +272,180 @@ function BerryCard({ onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart
     reader.readAsText(file);
   };
 
-  /* ── Handlers ────────────────────────────────────────────────────────── */
-  const handleCardClick = () => {
-    if (cardMode === "berry-active" || cardMode === "berry-active-file-loaded") {
-      setCardMode("import-mode");
-    }
-  };
-
-  const handleImportFile = (ref) => ref.current?.click();
-
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) processFile(file);
-    e.target.value = ""; // allow re-import of same file
+    e.target.value = "";
   };
 
-  const handleBerryMiniClick = (e) => {
-    e.stopPropagation();
-    setCardMode("berry-active-file-loaded");
+  const activateBerry = () => {
+    setCardMode(hasCustom ? "berry-active-file-loaded" : "berry-active");
     onRouteSwitchToBerry();
   };
 
-  const handleFileNameClick = (e) => {
-    e.stopPropagation();
-    if (importedGeoJSON) {
-      setCardMode("file-active");
-      onRouteImport(importedGeoJSON);
-    }
+  const activateCustom = () => {
+    if (!importedGeoJSON) return;
+    setCardMode("file-active");
+    onRouteImport(importedGeoJSON);
   };
 
   const handleCancelImport = (e) => {
     e.stopPropagation();
-    // Return to appropriate mode without importing
-    setCardMode(importedGeoJSON ? "berry-active-file-loaded" : "berry-active");
+    setCardMode(hasCustom ? "berry-active-file-loaded" : "berry-active");
   };
 
   const handleFinishDrawing = () => {
-    const geojson = onDrawFinish(); // App stops drawing and returns built FeatureCollection
+    const geojson = onDrawFinish();
     if (geojson?.features?.length > 0) {
       setImportedGeoJSON(geojson);
       setImportedName(t("customRoute"));
       setCardMode("file-active");
       onRouteImport(geojson);
     } else {
-      // Nothing drawn yet — just exit drawing mode
-      setCardMode(importedGeoJSON ? "berry-active-file-loaded" : "berry-active");
+      setCardMode(hasCustom ? "berry-active-file-loaded" : "berry-active");
     }
   };
 
-  /* ── Render helpers ──────────────────────────────────────────────────── */
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    setImportedGeoJSON(null);
+    setImportedName(null);
+    setCardMode("berry-active");
+    onCustomDelete?.();
+    onRouteSwitchToBerry();
+  };
 
-  // Glow ring for active state
-  const glowCls   = "border-blue-500/70 bg-blue-950/30 shadow-[0_0_12px_2px_rgba(59,130,246,0.25)]";
-  const normalCls = "border-slate-700/50 bg-slate-800/60";
+  const pillOn  = "flex-1 min-w-0 px-2 py-1.5 rounded-lg text-[10px] font-semibold leading-tight border border-blue-400/60 bg-blue-600/30 text-blue-100";
+  const pillOff = "flex-1 min-w-0 px-2 py-1.5 rounded-lg text-[10px] font-semibold leading-tight border border-slate-600/50 bg-slate-800/50 text-slate-400 hover:text-white hover:border-slate-500";
 
-  /* State: berry-active */
-  if (cardMode === "berry-active") {
-    return (
-      <button
-        onClick={handleCardClick}
-        title={t("clickToImport")}
-        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 border
-          transition-all duration-200 hover:border-blue-400/50 cursor-pointer ${glowCls}`}
-      >
-        <img src={BERRY_LOGO} alt="Berry-Mappemonde"
-          className="h-12 w-auto object-contain rounded-lg flex-shrink-0" style={{ maxWidth: 90 }} />
-        <div className="text-white font-bold text-sm leading-tight tracking-wide">BERRY-MAPPEMONDE</div>
+  const switcher = hasCustom ? (
+    <div className="flex gap-1 mb-1.5">
+      <button type="button" onClick={activateBerry} className={customOn ? pillOff : pillOn} title={t("backToBerry")}>
+        {t("berryMappemonde") // pragma: allowlist secret
+        }
       </button>
-    );
-  }
+      <button type="button" onClick={activateCustom} className={customOn ? pillOn : pillOff} title={t("showRoute", { name: importedName })}>
+        {importedName || t("customRoute")}
+      </button>
+    </div>
+  ) : null;
 
-  /* State: import-mode */
-  if (cardMode === "import-mode") {
+  if (cardMode === "import-mode" || isDrawing) {
     return (
-      <div className={`rounded-xl px-3 py-2 border ${normalCls}`}>
-        {/* Header row */}
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-slate-400 font-medium">{t("importOrDraw")}</span>
-          <button onClick={handleCancelImport}
-            className="text-slate-500 hover:text-slate-300 transition-colors" title={t("cancel")}>
-            <X size={13} />
-          </button>
+      <div className="rounded-lg px-2 py-1.5 border border-slate-700/50 bg-slate-800/60">
+        {switcher}
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] text-slate-400 font-medium">{t("importOrDraw")}</span>
+          {!isDrawing && (
+            <button onClick={handleCancelImport} className="text-slate-500 hover:text-slate-300" title={t("cancel")}>
+              <X size={12} />
+            </button>
+          )}
         </div>
-
-        {/* Import buttons */}
-        <div className="flex gap-2 mb-2">
+        <div className="flex gap-1.5 mb-1.5">
           <button
-            onClick={() => handleImportFile(geoJsonRef)}
-            className="flex-1 flex items-center justify-center gap-1.5 bg-blue-600/20 hover:bg-blue-600/40
-              border border-blue-500/40 rounded-lg px-2 py-2 text-xs text-blue-300 font-medium
-              transition-all duration-150"
+            onClick={() => geoJsonRef.current?.click()}
+            className="flex-1 flex items-center justify-center gap-1 bg-blue-600/20 hover:bg-blue-600/40
+              border border-blue-500/40 rounded-lg px-1.5 py-1.5 text-[10px] text-blue-300 font-medium"
           >
-            <Upload size={12} /> GeoJSON
+            <Upload size={11} /> GeoJSON
           </button>
           <button
-            onClick={() => handleImportFile(kmlRef)}
-            className="flex-1 flex items-center justify-center gap-1.5 bg-teal-600/20 hover:bg-teal-600/40
-              border border-teal-500/40 rounded-lg px-2 py-2 text-xs text-teal-300 font-medium
-              transition-all duration-150"
+            onClick={() => kmlRef.current?.click()}
+            className="flex-1 flex items-center justify-center gap-1 bg-teal-600/20 hover:bg-teal-600/40
+              border border-teal-500/40 rounded-lg px-1.5 py-1.5 text-[10px] text-teal-300 font-medium"
           >
-            <Upload size={12} /> KML
+            <Upload size={11} /> KML
           </button>
         </div>
-
-        {/* Draw / Finish button */}
         {isDrawing ? (
           <button
             onClick={handleFinishDrawing}
-            className="w-full flex items-center justify-center gap-2 bg-green-600/30 hover:bg-green-600/50
-              border border-green-500/50 rounded-lg px-2 py-2 text-xs text-green-300 font-semibold
-              transition-all duration-150"
+            className="w-full flex items-center justify-center gap-1.5 bg-green-600/30 hover:bg-green-600/50
+              border border-green-500/50 rounded-lg px-2 py-1.5 text-[10px] text-green-300 font-semibold"
           >
-            <CheckCircle size={12} /> {t("finish")}
+            <CheckCircle size={11} /> {t("finish")}
           </button>
         ) : (
           <button
             onClick={() => onDrawStart()}
-            className="w-full flex items-center justify-center gap-2 bg-violet-600/20 hover:bg-violet-600/40
-              border border-violet-500/40 rounded-lg px-2 py-2 text-xs text-violet-300 font-medium
-              transition-all duration-150"
+            className="w-full flex items-center justify-center gap-1.5 bg-violet-600/20 hover:bg-violet-600/40
+              border border-violet-500/40 rounded-lg px-2 py-1.5 text-[10px] text-violet-300 font-medium"
           >
-            <Pencil size={12} /> {t("drawOwnRoute")}
+            <Pencil size={11} /> {t("drawOwnRoute")}
           </button>
         )}
-
-        {importError && (
-          <p className="text-xs text-red-400 mt-1.5">{importError}</p>
-        )}
-
-        {/* Hidden file inputs */}
-        <input ref={geoJsonRef} type="file" accept=".geojson,.json" className="hidden"
-          onChange={handleFileChange} />
-        <input ref={kmlRef}     type="file" accept=".kml"           className="hidden"
-          onChange={handleFileChange} />
+        {importError && <p className="text-[10px] text-red-400 mt-1">{importError}</p>}
+        <input ref={geoJsonRef} type="file" accept=".geojson,.json" className="hidden" onChange={handleFileChange} />
+        <input ref={kmlRef} type="file" accept=".kml" className="hidden" onChange={handleFileChange} />
       </div>
     );
   }
 
-  /* State: file-active */
   if (cardMode === "file-active") {
     return (
-      <div className={`rounded-xl px-3 py-2 border ${glowCls}`}>
-        <div className="flex items-center gap-2">
-          {/* Berry mini-button */}
+      <div className="rounded-lg px-2 py-1.5 border border-blue-500/70 bg-blue-950/30">
+        {switcher}
+        <div className="flex gap-1">
           <button
-            onClick={handleBerryMiniClick}
-            title={t("backToBerry")}
-            className="flex items-center gap-1.5 bg-slate-700/60 hover:bg-slate-600/60
-              border border-slate-600/50 rounded-lg px-2 py-1 transition-all duration-150
-              text-slate-400 hover:text-white flex-shrink-0"
+            type="button"
+            onClick={() => { setCardMode("import-mode"); (canContinueDraw ? onDrawContinue : onDrawStart)?.(); }}
+            className="flex-1 flex items-center justify-center gap-1 px-1.5 py-1 rounded-lg text-[10px]
+              font-medium border border-violet-500/40 text-violet-300 hover:bg-violet-600/20"
           >
-            <img src={BERRY_LOGO} alt="Berry" className="h-5 w-auto object-contain rounded" style={{ maxWidth: 28 }} />
-            <span className="text-xs font-medium whitespace-nowrap">{t("berry")}</span>
+            <Pencil size={10} /> {canContinueDraw ? t("continueDrawing") : t("drawOwnRoute")}
           </button>
-
-          {/* Active filename — highlighted */}
-          <div className="flex-1 min-w-0 flex items-center gap-1.5">
-            <span className="text-xs font-semibold text-blue-300 truncate" title={importedName}>
-              {importedName}
-            </span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* State: berry-active-file-loaded */
-  if (cardMode === "berry-active-file-loaded") {
-    return (
-      <div className={`rounded-xl px-3 py-2 border ${glowCls}`}>
-        <div className="flex items-center gap-2">
-          {/* Berry active section — click to enter import-mode */}
           <button
-            onClick={(e) => { e.stopPropagation(); setCardMode("import-mode"); }}
-            title={t("clickNewImport")}
-            className="flex items-center gap-2 flex-shrink-0 hover:opacity-80 transition-opacity"
+            type="button"
+            onClick={handleDelete}
+            title={t("deleteCustomRoute")}
+            className="flex items-center justify-center px-2 py-1 rounded-lg text-[10px]
+              border border-red-500/40 text-red-300 hover:bg-red-600/20"
           >
-            <img src={BERRY_LOGO} alt="Berry-Mappemonde"
-              className="h-10 w-auto object-contain rounded-lg" style={{ maxWidth: 60 }} />
-            <span className="text-white font-bold text-xs leading-tight tracking-wide whitespace-nowrap">
-              BERRY-MAPPEMONDE
-            </span>
-          </button>
-
-          {/* Divider */}
-          <div className="w-px h-8 bg-slate-600/60 flex-shrink-0" />
-
-          {/* Imported filename — clickable to re-activate */}
-          <button
-            onClick={handleFileNameClick}
-            title={t("showRoute", { name: importedName })}
-            className="flex-1 min-w-0 text-left px-2 py-1 rounded-lg bg-slate-700/40
-              hover:bg-blue-700/30 border border-slate-600/30 hover:border-blue-500/40
-              transition-all duration-150"
-          >
-            <span className="text-xs text-slate-400 hover:text-blue-300 truncate block" title={importedName}>
-              {importedName}
-            </span>
+            <Trash2 size={10} />
           </button>
         </div>
       </div>
     );
   }
 
-  return null;
+  // berry-active ou berry-active-file-loaded
+  return (
+    <div className="rounded-lg px-2 py-1.5 border border-blue-500/70 bg-blue-950/30">
+      {switcher}
+      {!hasCustom && (
+        <button
+          onClick={() => setCardMode("import-mode")}
+          title={t("clickToImport")}
+          className="w-full flex items-center gap-2 rounded-lg px-1.5 py-1
+            hover:bg-blue-900/30 cursor-pointer"
+        >
+          <img src={BERRY_LOGO} alt="Berry-Mappemonde"
+            className="h-7 w-auto object-contain rounded flex-shrink-0" style={{ maxWidth: 48 }} />
+          <div className="text-white font-bold text-[11px] leading-tight tracking-wide">{t("berryMappemonde") /* pragma: allowlist secret */}</div>
+        </button>
+      )}
+      {hasCustom && (
+        <button
+          onClick={() => setCardMode("import-mode")}
+          className="w-full text-[10px] text-slate-400 hover:text-white py-0.5"
+        >
+          {t("clickNewImport")}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /* ── Main component ───────────────────────────────────────────────────────── */
 
-export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing, onDrawStart, onDrawFinish, isCockpit, isOffshore, polarData, maritimeLayers, simulationMode, onSimulationToggle, legContext, onNext, canNext, onPrev, canPrev }) {
+export function Sidebar({
+  plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing,
+  onDrawStart, onDrawContinue, onDrawFinish, onCustomDelete, canContinueDraw,
+  isCockpit, polarData, maritimeLayers, simulationMode, onSimulationToggle,
+  legContext, onNext, canNext, onPrev, canPrev, briefingLoading,
+}) {
   const { t } = useLang();
-  const stats    = plan?.voyage_statistics || {};
-  const alerts   = plan?.critical_alerts   || [];
   const briefing = plan?.executive_briefing || "";
 
   return (
@@ -539,105 +460,43 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
         className={`naviguide-sidebar-toggle absolute top-4 z-30 bg-slate-900/95 text-white
           rounded-full flex items-center justify-center shadow-lg
           hover:bg-slate-800 transition-all duration-300
-          ${isOffshore
-            ? "w-12 h-12 border-2 border-sky-400/70 shadow-sky-900/40"
-            : "w-9 h-9 border border-slate-700"}
+          w-9 h-9 border border-slate-700
           ${open ? "left-[322px]" : "left-4"}`}
         title={open ? t("hideSidebar") : t("showExpeditionPanel")}
       >
-        {open
-          ? <ChevronLeft  size={isOffshore ? 22 : 16} />
-          : <ChevronRight size={isOffshore ? 22 : 16} />}
+        {open ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
       </button>
 
       {/* Sidebar panel */}
       <div
         className={`naviguide-sidebar-panel absolute top-0 left-0 h-full z-20 flex flex-col bg-slate-900/97
-          shadow-2xl transition-transform duration-300
-          ${isOffshore
-            ? "border-r-2 border-sky-400/40"
-            : "border-r border-slate-700/60"}
+          shadow-2xl transition-transform duration-300 border-r border-slate-700/60
           ${open ? "translate-x-0" : "-translate-x-full"}`}
         style={{ width: 320 }}
       >
 
         {/* ── Brand header ─────────────────────────────────────────────── */}
-        <div className={`px-4 ${isCockpit ? "pt-3 pb-2" : "pt-4 pb-3"} border-b border-slate-700/60 flex-shrink-0`}>
+        <div className="px-3 pt-2 pb-2 border-b border-slate-700/60 flex-shrink-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE"
+              className="h-10 w-10 object-contain rounded-full drop-shadow" />
+            <span className="text-white font-bold text-xs tracking-widest">NAVIGUIDE</span>
+          </div>
 
-          {/*
-            COCKPIT: compact horizontal header — saves vertical space so all
-            data panels can be visible simultaneously without scrolling.
-            ONBOARDING: centred large logo with progressive guidance feel.
-          */}
-          {isCockpit ? (
-            <div className="flex items-center gap-2 mb-2">
-              <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE"
-                className="h-9 w-9 object-contain rounded-full" />
-              <span className="text-white font-bold text-sm tracking-widest flex-1">NAVIGUIDE</span>
-            </div>
-          ) : (
-            <div className="flex justify-center mb-3">
-              <img
-                src={NAVIGUIDE_LOGO}
-                alt="NAVIGUIDE for Berry-Mappemonde"
-                className="h-32 w-32 object-contain rounded-full drop-shadow-lg"
-              />
-            </div>
-          )}
-
-          {/* Berry-Mappemonde interactive route card */}
           <BerryCard
             onRouteImport={onRouteImport}
             onRouteSwitchToBerry={onRouteSwitchToBerry}
             isDrawing={isDrawing}
             onDrawStart={onDrawStart}
+            onDrawContinue={onDrawContinue}
             onDrawFinish={onDrawFinish}
+            onCustomDelete={onCustomDelete}
+            canContinueDraw={canContinueDraw}
           />
 
-          {/* ── Maritime layer toggles — ligne horizontale sous Berry-Mappemonde ── */}
           {maritimeLayers && (
-            <div className="flex flex-col gap-1 mt-2.5">
-              <div className="flex items-center gap-1">
-              {[
-                { key: "zee",      labelKey: "layerZee",      color: "#0e7490", showKey: "showZee",      toggleKey: "setShowZee",      loadingKey: "loadingZee",      errorKey: "errorZee" },
-                { key: "ports",    labelKey: "layerPorts",    color: "#f59e0b", showKey: "showPorts",    toggleKey: "setShowPorts",    loadingKey: "loadingPorts",    errorKey: "errorPorts" },
-                { key: "balisage", labelKey: "layerBalisage", color: "#10b981", showKey: "showBalisage", toggleKey: "setShowBalisage", loadingKey: "loadingBalisage", errorKey: "errorBalisage" },
-              ].map(({ key, labelKey, color, showKey, toggleKey, loadingKey, errorKey }) => {
-                const active  = maritimeLayers[showKey];
-                const loading = maritimeLayers[loadingKey];
-                const error   = maritimeLayers[errorKey];
-                const label   = t(labelKey);
-                const title   = error ? `${label}: ${error} — ${t("layersStartHint")}` : label;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => maritimeLayers[toggleKey]((v) => !v)}
-                    title={title}
-                    className={[
-                      "flex items-center justify-center gap-1 flex-1 px-1.5 py-1 rounded-full",
-                      "text-[10px] font-semibold transition-all duration-150 select-none",
-                      active
-                        ? "bg-slate-700/80 text-white border border-white/10"
-                        : "bg-slate-800/30 text-white/35 border border-white/5 hover:text-white/60",
-                    ].join(" ")}
-                  >
-                    {loading
-                      ? <div className="w-1.5 h-1.5 rounded-full border border-white/30 border-t-white animate-spin flex-shrink-0" />
-                      : <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: active ? color : "transparent", border: `1.5px solid ${error ? "#ef4444" : color}` }} />
-                    }
-                    {label}
-                    {error && !loading && <span className="text-red-400 text-[9px]">⚠</span>}
-                  </button>
-                );
-              })}
-              </div>
-
-              {/* ── Couches Blue Intelligence — blueintelligence.online ────── */}
-              <div className="text-[8px] uppercase tracking-widest text-white/25 px-1 mt-1 select-none">
-                {t("biLayersLabel")}
-              </div>
-              <div className="flex items-center gap-1">
-              {BI_LAYER_CONFIG.map(({ key, labelKey, titleKey, color, showKey, toggleKey, loadingKey, errorKey }) => {
+            <div className="flex flex-wrap gap-1 mt-2">
+              {ALL_LAYER_CONFIG.map(({ key, labelKey, titleKey, color, showKey, toggleKey, loadingKey, errorKey }) => {
                 const active  = maritimeLayers[showKey];
                 const loading = maritimeLayers[loadingKey];
                 const error   = maritimeLayers[errorKey];
@@ -649,11 +508,11 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
                     onClick={() => maritimeLayers[toggleKey]((v) => !v)}
                     title={title}
                     className={[
-                      "flex items-center justify-center gap-1 flex-1 px-1.5 py-1 rounded-full",
-                      "text-[10px] font-semibold transition-all duration-150 select-none",
+                      "flex items-center justify-center gap-1 px-1.5 py-0.5 rounded-full",
+                      "text-[9px] font-semibold transition-all duration-150 select-none",
                       active
                         ? "bg-slate-700/80 text-white border border-white/10"
-                        : "bg-slate-800/30 text-white/35 border border-white/5 hover:text-white/60",
+                        : "bg-slate-800/30 text-white/40 border border-white/5 hover:text-white/70",
                     ].join(" ")}
                   >
                     {loading
@@ -661,30 +520,21 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
                       : <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: active ? color : "transparent", border: `1.5px solid ${error ? "#ef4444" : color}` }} />
                     }
                     {label}
-                    {error && !loading && <span className="text-red-400 text-[9px]">⚠</span>}
                   </button>
                 );
               })}
-              </div>
-
-              {(maritimeLayers.errorZee || maritimeLayers.errorPorts) && (
-                <div className="text-[9px] text-amber-400/90 px-2" title={t("layersApiHint")}>
-                  {t("layersStartHint")}
-                </div>
-              )}
             </div>
           )}
 
-          {/* ── Bouton Mode Simulation ─────────────────────────────────────── */}
           {onSimulationToggle && (
             <button
               onClick={onSimulationToggle}
               title={simulationMode ? t("exitSimulation") : t("simulationModeTooltip")}
               className={[
-                "flex items-center justify-center gap-1.5 w-full mt-2 px-2 py-1.5 rounded-lg",
+                "flex items-center justify-center gap-1.5 w-full mt-1.5 px-2 py-1 rounded-lg",
                 "text-[10px] font-semibold transition-all duration-150 select-none border",
                 simulationMode
-                  ? "bg-blue-600/80 text-white border-blue-500/60 shadow-lg shadow-blue-900/30"
+                  ? "bg-blue-600/80 text-white border-blue-500/60"
                   : "bg-slate-800/40 text-white/50 border-white/8 hover:text-white/80 hover:bg-slate-700/50",
               ].join(" ")}
             >
@@ -722,31 +572,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
             </>
           )}
 
-        {(isCockpit || plan) && (
-          <div className="pb-3 border-b border-slate-700/60">
-            <div className="grid grid-cols-2 gap-2">
-              <StatCard
-                icon={<Navigation size={14} />}
-                label={t("totalDistance")}
-                value={stats.total_distance_nm ? `${stats.total_distance_nm.toLocaleString()} nm` : "—"}
-                sub={`${stats.total_segments || "—"} ${t("segments")}`}
-              />
-              <div className="bg-slate-800/70 rounded-xl p-3 flex flex-col gap-1">
-                <div className="text-xs text-slate-500">{t("expeditionRisk")}</div>
-                <RiskBadge level={stats.expedition_risk_level} />
-                <div className="text-xs text-slate-500 mt-0.5">
-                  Score: {stats.overall_expedition_risk?.toFixed(2) ?? "—"}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-          {/*
-            ONBOARDING only: progressive "Getting Started" guide.
-            Hidden in Cockpit — the user already knows the app.
-          */}
-          {!isCockpit && !plan && (
+          {!isCockpit && !plan && !briefingLoading && (
             <div className="rounded-xl border border-blue-700/30 bg-blue-950/20 p-3">
               <div className="text-xs font-semibold text-blue-300 mb-1.5 flex items-center gap-1.5">
                 {t("gettingStarted")}
@@ -765,7 +591,7 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
             COCKPIT: always visible — shows placeholder when not yet loaded.
             ONBOARDING: shown only when plan data is available.
           */}
-          {(isCockpit || briefing) && (
+          {(isCockpit || briefing || briefingLoading) && (
             <div>
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Shield size={12} className="text-blue-400" />
@@ -773,32 +599,9 @@ export function Sidebar({ plan, open, onToggle, onRouteImport, onRouteSwitchToBe
               </div>
               <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
                 <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
-                  {briefing || t("briefingPlaceholder")}
+                  {briefingLoading ? t("briefingLoading") : (briefing || t("briefingPlaceholder"))}
                 </p>
               </div>
-            </div>
-          )}
-
-          {/*
-            Critical Alerts.
-            COCKPIT: always shown (with "no alerts" state for peace of mind).
-            ONBOARDING: shown only when alerts exist.
-          */}
-          {(isCockpit || alerts.length > 0) && (
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <AlertTriangle size={12} className="text-orange-400" />
-                {t("criticalAlerts")}
-              </div>
-              {alerts.length > 0 ? (
-                <div className="space-y-2">
-                  {alerts.map((alert, i) => <AlertItem key={i} alert={alert} />)}
-                </div>
-              ) : (
-                <div className="text-xs text-slate-500 py-2 px-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
-                  {t("noAlerts")}
-                </div>
-              )}
             </div>
           )}
 

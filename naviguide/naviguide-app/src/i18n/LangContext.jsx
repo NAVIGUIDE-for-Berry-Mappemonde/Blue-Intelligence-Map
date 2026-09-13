@@ -1,24 +1,19 @@
 /**
  * NAVIGUIDE — Lightweight i18n context
  * Provides useLang() hook with t(key, vars) translation function.
- * Language is persisted in localStorage. Default: "en".
+ * Language is persisted in localStorage. Default: "fr".
  */
 import { createContext, useCallback, useContext, useState } from "react";
 import en from "./en";
 import fr from "./fr";
+import { STORAGE_KEY, VALID_LANGS, readStoredLang } from "./langStorage";
 
-// v2: bumped to invalidate any legacy "fr" stored under the old key
-const STORAGE_KEY = "naviguide_lang_v2";
-const VALID_LANGS  = new Set(["en", "fr"]);
 const translations = { en, fr };
 
 const LangContext = createContext(null);
 
 export function LangProvider({ children }) {
-  const [lang, setLang] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return VALID_LANGS.has(stored) ? stored : "en";
-  });
+  const [lang, setLang] = useState(() => readStoredLang());
 
   const switchLang = useCallback((l) => {
     if (!VALID_LANGS.has(l)) return;
