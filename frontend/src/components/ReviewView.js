@@ -45,6 +45,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   const [saving, setSaving] = useState(false);
   const [goldOn, setGoldOn] = useState(false);
   const [goldBusy, setGoldBusy] = useState(false);
+  const [suggestBusy, setSuggestBusy] = useState(false);
   const [goldReady, setGoldReady] = useState(false);
   const [choices, setChoices] = useState({ td: {}, ports: {}, bu: {} });
   const dirtyRef = useRef(false);
@@ -255,6 +256,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
       });
       dirtyRef.current = false;
       setSavedAt(data.updated_at || new Date().toISOString());
+      if (data.gold_ready != null) setGoldReady(Boolean(data.gold_ready));
       setQueue((items) => items.map((it) => (
         it.id === current.id ? { ...it, has_comment: Boolean((comment || "").trim()) } : it
       )));
@@ -294,10 +296,38 @@ export default function ReviewView({ t, mode, onMapDirty }) {
         it.id === current.id ? { ...it, gold_on: pressed } : it
       )));
       if (onMapDirty) onMapDirty();
+      if (pressed && kind === "eez") {
+        api.post("/review/extract", { kind, id: current.id }).catch(() => {});
+      }
     } catch (e) {
       /* transient */
     } finally {
       setGoldBusy(false);
+    }
+  };
+
+  const suggestDocs = async () => {
+    if (!current || suggestBusy || kind !== "eez") return;
+    try {
+      setSuggestBusy(true);
+      const { data } = await api.post("/review/suggest", { kind, id: current.id });
+      setChoices(data.choices || { td: {}, ports: {}, bu: {} });
+      if (data.comment != null) {
+        setComment(data.comment);
+        commentRef.current = data.comment;
+        dirtyRef.current = false;
+      }
+      if (data.comment_updated_at) setSavedAt(data.comment_updated_at);
+      setGoldReady(Boolean(data.gold_ready));
+      setQueue((items) => items.map((it) => (
+        it.id === current.id
+          ? { ...it, has_comment: Boolean((data.comment || "").trim()) }
+          : it
+      )));
+    } catch (e) {
+      /* transient */
+    } finally {
+      setSuggestBusy(false);
     }
   };
 
@@ -454,7 +484,7 @@ export default function ReviewView({ t, mode, onMapDirty }) {
           </a>
         </div>
         <p className="px-5 py-2 font-mono text-[10px] text-slate-500 border-b border-line" data-testid="review-hint">
-          {t("reviewHint")}
+          {kind === "eez" ? t("reviewHintFormalities") : t("reviewHint")}
         </p>
         <div className="flex-1 overflow-y-auto" data-testid="review-fiche-pane">
           {queue.length === 0 && !loading ? (
@@ -494,6 +524,17 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {saving ? t("reviewSaving") : t("reviewSave")}
             </button>
+            {kind === "eez" ? (
+              <button
+                type="button"
+                data-testid="review-suggest"
+                onClick={suggestDocs}
+                disabled={!current || suggestBusy}
+                className="px-3 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
+              >
+                {suggestBusy ? t("reviewSuggesting") : t("reviewSuggest")}
+              </button>
+            ) : null}
             <button
               type="button"
               data-testid="review-gold"

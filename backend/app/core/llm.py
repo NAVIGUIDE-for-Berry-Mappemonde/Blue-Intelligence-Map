@@ -90,10 +90,16 @@ def parse_json_flexible(txt: str):
 # ---------------------------------------------------------------------------
 async def _call_openrouter(prompt: str, system: str, key: str, model: str | None = None,
                            json_mode: bool = True, max_tokens: int = 2000,
-                           retries: int = 2) -> str:
+                           retries: int = 2,
+                           images: list[bytes] | None = None) -> str:
+    from app.core.vision_msg import openai_user_content
+
     payload = {
         "model": model or openrouter_model(),
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": openai_user_content(prompt, images)},
+        ],
         "temperature": 0,
         "max_tokens": max_tokens,
     }
@@ -405,12 +411,14 @@ def coerce_ports(data, context: str | None = None) -> list[dict]:
 
 
 async def _json_openrouter(prompt: str, system: str, settings: dict | None,
-                           max_tokens: int) -> dict:
+                           max_tokens: int,
+                           images: list[bytes] | None = None) -> dict:
     key = get_llm_key(settings)
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY missing")
     raw = await _call_openrouter(
-        prompt, system, key, json_mode=True, max_tokens=max_tokens)
+        prompt, system, key, json_mode=True, max_tokens=max_tokens,
+        images=images)
     data = parse_json_flexible(raw)
     if isinstance(data, dict):
         return data

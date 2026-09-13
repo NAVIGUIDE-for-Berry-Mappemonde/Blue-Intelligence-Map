@@ -195,6 +195,7 @@ async def complete_json_cascade(
     claude_model: str | None = None,
     claude_max_tokens: int | None = None,
     openrouter_max_tokens: int | None = None,
+    images: list[bytes] | None = None,
 ) -> tuple[dict, str]:
     """NVIDIA → OpenRouter → Claude. Un branchement pour JSON strict."""
     from app.core import claude, llm, nvidia
@@ -209,15 +210,28 @@ async def complete_json_cascade(
         try:
             data, used = await nvidia.complete_json_nvidia_tracked(
                 system, prompt, settings, max_tokens=nv_tokens, log=log,
-                role=role, model=nvidia_model, fallback=nvidia_fallback)
+                role=role, model=nvidia_model, fallback=nvidia_fallback,
+                images=images)
             return data, nvidia.engine_label(used)
         except Exception as e:
             last = e
             if log:
                 log(f"nvidia JSON épuisé: {str(e)[:120]}")
+        if images:
+            try:
+                data, used = await nvidia.complete_json_nvidia_tracked(
+                    system, prompt, settings, max_tokens=nv_tokens, log=log,
+                    role=role, model=nvidia_model, fallback=nvidia_fallback,
+                    images=None)
+                return data, nvidia.engine_label(used)
+            except Exception as e:
+                last = e
+                if log:
+                    log(f"nvidia JSON texte: {str(e)[:120]}")
     if llm.get_llm_key(settings):
         try:
-            data = await llm._json_openrouter(prompt, system, settings, or_tokens)
+            data = await llm._json_openrouter(
+                prompt, system, settings, or_tokens, images=images)
             return data, "openrouter"
         except Exception as e:
             last = e
@@ -228,7 +242,7 @@ async def complete_json_cascade(
             data = await claude.complete_json_claude(
                 system, prompt, settings,
                 model=claude_model,
-                max_tokens=cl_tokens, log=log)
+                max_tokens=cl_tokens, log=log, images=images)
             return data, claude_engine_label(claude_model or claude.CLAUDE_HAIKU_MODEL)
         except Exception as e:
             last = e

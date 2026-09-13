@@ -132,6 +132,7 @@ async def build_report(db, kind: str | None = None) -> dict:
 
     actions = {
         "suggested_urls": [],
+        "td_kept": [],
         "td_dropped": [],
         "urls_dropped": [],
         "ports_dropped": [],
@@ -148,9 +149,14 @@ async def build_report(db, kind: str | None = None) -> dict:
             actions["suggested_urls"].append({**base, "url": url})
         ch = row["choices"] or {}
         for url, act in (ch.get("td") or {}).items():
-            if act == "drop":
+            if act == "keep":
+                actions["td_kept"].append({**base, "url": url})
+            elif act == "drop":
                 actions["td_dropped"].append({**base, "url": url})
                 domains.add(_domain(url))
+        for url in row["suggested_urls"]:
+            if not any(a.get("url") == url for a in actions["td_kept"]):
+                actions["td_kept"].append({**base, "url": url})
         for url, act in (ch.get("urls") or {}).items():
             if act == "drop":
                 actions["urls_dropped"].append({**base, "url": url})
@@ -240,6 +246,9 @@ def report_markdown(report: dict) -> str:
             lines.append(fmt(r))
         lines.append("")
 
+    _section("TD gardées (listes officielles validées)",
+             actions.get("td_kept") or [],
+             lambda r: f"- [{_label(r['kind'])}] {r['title']} — <{r['url']}>")
     _section("TD écartées (candidates blacklist)",
              actions.get("td_dropped") or [],
              lambda r: f"- [{_label(r['kind'])}] {r['title']} — <{r['url']}>")

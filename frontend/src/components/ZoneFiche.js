@@ -128,8 +128,6 @@ export default function ZoneFiche({
   if (!fiche) return null;
   const selectable = variant === "page" && typeof onChoice === "function";
   const tdMap = choices?.td || {};
-  const portMap = choices?.ports || {};
-  const buMap = choices?.bu || {};
   const ports = fiche.ports || [];
   const tdSources = tdListOf(fiche);
   const td = tdUrlOf(fiche);
@@ -231,6 +229,11 @@ export default function ZoneFiche({
       <div data-testid="poe-fiche-ports">
         <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500 mb-1.5">
           {t("poeFichePorts")} <span className="text-accent">({ports.length})</span>
+          {variant === "page" ? (
+            <span className="ml-1 normal-case tracking-normal text-slate-500">
+              — {t("reviewPortsPreview")}
+            </span>
+          ) : null}
         </p>
         {ports.length === 0 ? (
           <p className="text-[11px] text-slate-500">{t("poeFicheNoPorts")}</p>
@@ -241,7 +244,6 @@ export default function ZoneFiche({
               const bus = showAllTd ? buListOf(p) : (href ? [{ url: href }] : []);
               const canFly = p.lat != null && p.lon != null && onFlyToPort;
               const pid = p.port_id || p.id || p.name;
-              const verdict = portMap[pid];
               return (
                 <div
                   key={pid || p.name}
@@ -259,44 +261,6 @@ export default function ZoneFiche({
                     >
                       <p className="text-xs font-semibold text-slate-200 leading-snug">{p.name}</p>
                     </button>
-                    {selectable ? (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          data-testid={`poe-fiche-port-keep-${pid}`}
-                          aria-pressed={verdict === "keep"}
-                          onClick={() => onChoice({
-                            target: "port",
-                            port_id: pid,
-                            action: verdict === "keep" ? "clear" : "keep",
-                          })}
-                          className={`px-1.5 py-0.5 font-mono text-[9px] border rounded-sm ${
-                            verdict === "keep"
-                              ? "border-bio/50 bg-bio/15 text-bio"
-                              : "border-line text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          {t("reviewKeep")}
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`poe-fiche-port-drop-${pid}`}
-                          aria-pressed={verdict === "drop"}
-                          onClick={() => onChoice({
-                            target: "port",
-                            port_id: pid,
-                            action: verdict === "drop" ? "clear" : "drop",
-                          })}
-                          className={`px-1.5 py-0.5 font-mono text-[9px] border rounded-sm ${
-                            verdict === "drop"
-                              ? "border-alert/50 bg-alert/10 text-alert"
-                              : "border-line text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          {t("reviewDrop")}
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                   <div className="flex items-center justify-between mt-1 gap-2">
                     <span className="font-mono text-[10px] text-slate-500 truncate">
@@ -309,20 +273,6 @@ export default function ZoneFiche({
                       >
                         {bus.map((rec, i) => (
                           <span key={rec.url} className="inline-flex items-center gap-1 shrink-0">
-                            {selectable ? (
-                              <input
-                                type="checkbox"
-                                data-testid={i === 0 ? `poe-fiche-bu-keep-${pid}` : `poe-fiche-bu-keep-${pid}-${i}`}
-                                checked={(buMap[pid] || {})[rec.url] === "keep"}
-                                onChange={() => onChoice({
-                                  target: "bu",
-                                  port_id: pid,
-                                  url: rec.url,
-                                  action: (buMap[pid] || {})[rec.url] === "keep" ? "clear" : "keep",
-                                })}
-                                className="accent-accent"
-                              />
-                            ) : null}
                             <a
                               href={rec.url}
                               target="_blank"

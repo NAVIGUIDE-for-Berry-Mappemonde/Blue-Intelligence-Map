@@ -37,7 +37,7 @@ Cinq modes produit, **cinq files**. Pas de file `poe` séparée (accident d’im
 
 | Mode | Une fiche = | Identifiant | Preuve que le réviseur juge | Gold quand |
 |------|-------------|-------------|-----------------------------|------------|
-| **Formalités** | un polygone VLIZ + ses ports | `mrgid` | URLs d’**État** (TD toutes runs, BU par port). WPI = contre-preuve. Noonsite hors fiche. | ≥ 1 TD gardée (ou UNCLOS `none`) **et** chaque port tranché |
+| **Formalités** | un polygone VLIZ + ses ports | `mrgid` | URLs d’**État** (TD toutes runs). WPI = contre-preuve. Noonsite hors fiche. | ≥ 1 TD gardée (ou UNCLOS `none`) ; ports extraits ensuite des docs |
 | **Projets** | un projet (n sites) | `_id` ou `url` | URL de **page projet** + GPS du **lieu d’action** visitable en bateau | URL projet + ≥ 1 site accepté (pas snapped / fallback / HQ) |
 | **Marinas** | une marina | `osm_id` | Identité OSM + GPS du bassin. Enrichissement (VHF, places, tirant) **sans inventer**. `/maps/place/` = signal. | Identité + GPS acceptés. Champs enrichis : garder seulement s’ils sont sourcés |
 | **Capitaineries** | un **bureau** | `osm_id` et/ou `shom_id` / `noaa_id` | Bâtiment (pas le plan d’eau). Tél + VHF sourcés (tags ou page officielle). Calque 250 m ≠ fusion 500 m. | Bureau + GPS acceptés. Contact : garder seulement s’il n’est pas inventé |
@@ -49,7 +49,7 @@ Cinq modes produit, **cinq files**. Pas de file `poe` séparée (accident d’im
 
 C’est `docs/CAHIER_DES_CHARGES_REVIEW.md` §3.4 / §7.2 / §11. On ne le réécrit pas. On le **nomme** pour que les autres files calquent le geste, pas l’objet.
 
-**Question.** Parmi toutes les TD déjà trouvées pour **ce** `mrgid`, laquelle (ou lesquelles) est *la* liste d’État de **ce** polygone ? Les ports D∩P restent ; les WPI commerce-only sortent ; chaque port accepté a au moins une BU d’État, ou on le note. Sinon UNCLOS.
+**Question.** Parmi toutes les TD déjà trouvées pour **ce** `mrgid`, laquelle (ou lesquelles) est *la* liste d’État de **ce** polygone ? Gold fige ces documents. Les ports sont extraits ensuite depuis ces URLs (pas un clic par nom). Sinon UNCLOS.
 
 **Interdit.** Pays à la place du polygone. File ports séparée. Cacher des TD « pour n’en garder qu’une ». Noonsite / wiki / forum comme preuve. WPI comme preuve **positive** de plaisance (sauf mixte explicite). Goldiser un canari.
 
@@ -256,7 +256,7 @@ Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline pro
 |---|------------|---------|---------|---------------|-----|
 | Commenter | oui | oui | oui | oui | oui |
 | Choisir des URLs | TD + BU | pages projet | website / Maps | page contact | candidats visite |
-| Tranche l’objet | ports keep/drop | sites keep/drop/édit GPS→Gold | marina vs non | bureau vs plan d’eau | visite vs manager |
+| Tranche l’objet | pages / PDF d’État (pas chaque port) | sites keep/drop/édit GPS→Gold | marina vs non | bureau vs plan d’eau | visite vs manager |
 | Blacklist → règles | polygone / souverain | chemins listing | OTA | OTA / réseaux | homepages visite |
 | Relancer un crawl | non | non | non | non | non |
 | Inventer un GPS / une URL | non | non | non | non | non |

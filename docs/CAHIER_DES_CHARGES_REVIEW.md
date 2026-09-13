@@ -145,7 +145,7 @@ Un sélecteur « un run isolé » peut rester pour **déboguer un pipeline**. Il
 |-----------------|------------------------|
 | Commenter | Relancer un crawl |
 | Choisir / blacklister des URLs | Prendre Noonsite pour preuve |
-| Accepter / écarter des ports sur **cette** fiche | Écraser la v1 par un batch SERP |
+| Choisir les pages / PDF d’État (pas chaque port) | Écraser la v1 par un batch SERP |
 | **Gold** : fiche acceptée → Gold + carte | Goldiser en silence via « Enregistrer » |
 | Nourrir les **règles** (blacklist, domaines) | Inventer un GPS |
 
@@ -216,7 +216,7 @@ File : libellé désambiguïsé (`zoneDisplayName`). Sous-titre = souverain. Ext
 
 Fiche : contrat §3.4. **Pas** de second onglet « Ports d’Entrée ».
 
-Job : parmi les TD cliquables, laquelle (ou lesquelles) est *la* liste d’État de **ce** polygone ? Les ports D∩P restent ; les WPI commerce-only sortent ; chaque port accepté a au moins une URL BU d’État, ou on le note. Sinon UNCLOS.
+Job : parmi les TD cliquables, laquelle (ou lesquelles) est *la* liste d’État de **ce** polygone ? Gold sur ces documents. Les ports listés par les runs sont un aperçu. L’extraction Gold relit seulement les URLs gardées. Sinon UNCLOS.
 
 ### 7.3 Marinas
 
@@ -298,7 +298,7 @@ On en a parlé : il est **dans le contrat**, pas hors périmètre.
 
 Sur la fiche courante, si le réviseur a de quoi accepter :
 
-- Formalités : au moins une URL TD **gardée** (ou UNCLOS `kind = none` justifié) **et** la liste des ports **tranchée** (acceptés / écartés, y compris « zéro port » assumé) ;
+- Formalités : au moins une URL TD **gardée** (ou URL collée dans le commentaire, ou UNCLOS `kind = none` justifié). Les ports des runs sont un aperçu, **pas** un verdict Gold ;
 - Projets : URL de projet + site visitable accepté (pas un `snapped` laissé tel quel) ;
 - Marinas : identité + GPS acceptés.
 

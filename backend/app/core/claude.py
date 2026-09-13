@@ -546,8 +546,11 @@ async def extract_ports_claude(context: str, zone: dict,
 async def complete_json_claude(system: str, user: str,
                                settings: dict | None = None, *,
                                model: str | None = None,
-                               max_tokens: int = 250, log=None) -> dict:
+                               max_tokens: int = 250, log=None,
+                               images: list[bytes] | None = None) -> dict:
     """Appel Messages JSON (juge). Haiku ou Sonnet. Lève si budget / HTTP."""
+    from app.core.vision_msg import claude_user_content
+
     if not claude_enabled(settings):
         raise RuntimeError("Claude disabled (missing key or budget is 0)")
     if not budget_allows_call(settings):
@@ -559,7 +562,7 @@ async def complete_json_claude(system: str, user: str,
         "max_tokens": int(max_tokens),
         "temperature": 0,
         "system": system,
-        "messages": [{"role": "user", "content": user}],
+        "messages": [{"role": "user", "content": claude_user_content(user, images)}],
     }
     headers = {
         "x-api-key": key,

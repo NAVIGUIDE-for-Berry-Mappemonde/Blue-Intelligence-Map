@@ -4,12 +4,15 @@ Lecture des runs / v1. Écrit `review_comments`, `review_gold`, `review_choices`
 N'écrit jamais `projects` / `poe_ports` / `eez_zones` / `marinas` /
 `capitaineries` / `amp_sites`.
 """
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.db import db
 from app.services import review_gold, review_queue
+
 from app.services.review_choices import gold_ready, save_choice
 from app.services.review_gold import GoldNotReady
 from app.services.review_report import REPORT_KINDS, build_report, report_markdown
@@ -101,7 +104,30 @@ async def review_comment_put(body: CommentBody):
     kind = _kind_or_400(body.kind)
     if not body.id:
         raise HTTPException(400, "id required")
-    return await review_queue.save_comment(db, kind, body.run_id, body.id, body.comment)
+    out = await review_queue.save_comment(db, kind, body.run_id, body.id, body.comment)
+    payload = await review_queue.get_fiche(db, kind, body.run_id, body.id)
+    if payload:
+        out["gold_ready"] = bool(payload.get("gold_ready"))
+        out["choices"] = payload.get("choices")
+    return out
+
+
+class ExtractBody(BaseModel):
+    kind: str
+    id: str
+
+
+class SuggestBody(BaseModel):
+    kind: str
+    id: str
+
+
+async def _extract_gold_safe(entity_id: str) -> None:
+    try:
+        from app.services.review_extract import extract_gold_ports
+        await extract_gold_ports(db, entity_id)
+    except Exception:
+        pass
 
 
 @router.put("/review/choice")
@@ -120,7 +146,9 @@ async def review_choice_put(body: ChoiceBody):
         raise HTTPException(400, str(e)) from e
     payload = await review_queue.get_fiche(db, kind, PUBLISHED_RUN, body.id)
     fiche = (payload or {}).get("fiche") if payload else None
-    out["gold_ready"] = gold_ready(fiche, out.get("choices"), kind=kind)
+    out["gold_ready"] = gold_ready(
+        fiche, out.get("choices"), kind=kind,
+        comment=(payload or {}).get("comment") or "")
     out["gold_on"] = bool(payload and payload.get("gold_on")) if payload else False
     return out
 
@@ -138,10 +166,39 @@ async def review_gold_put(body: GoldBody):
     comment = payload.get("comment") or ""
     choices = payload.get("choices")
     try:
-        return await review_gold.toggle_gold(
+        out = await review_gold.toggle_gold(
             db, body.kind, body.id, run_id=body.run_id,
             fiche=fiche, comment=comment, choices=choices)
     except GoldNotReady as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    if body.kind == "eez" and out.get("gold_on"):
+        asyncio.create_task(_extract_gold_safe(body.id))
+    return out
+
+
+@router.post("/review/extract")
+async def review_extract_post(body: ExtractBody):
+    if body.kind != "eez":
+        raise HTTPException(400, "extract is only for eez")
+    if not body.id:
+        raise HTTPException(400, "id required")
+    from app.services.review_extract import extract_gold_ports
+    try:
+        return await extract_gold_ports(db, body.id)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@router.post("/review/suggest")
+async def review_suggest_post(body: SuggestBody):
+    if body.kind != "eez":
+        raise HTTPException(400, "suggest is only for eez")
+    if not body.id:
+        raise HTTPException(400, "id required")
+    from app.services.review_doc_picker import suggest_eez_documents
+    try:
+        return await suggest_eez_documents(db, body.id)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e

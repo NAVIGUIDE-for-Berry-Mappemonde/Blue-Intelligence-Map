@@ -21,6 +21,7 @@ Source unique : `CHAINS`. Hors NIM : OpenRouter, puis Claude (prix). Pas de web 
   json    Pro → gpt-oss → Muse             # ask_yes_no (gatekeeper, AMP), projet, géocode
   page    Pro → gpt-oss → Muse             # marina + capitainerie (même chaîne)
   text    Pro → gpt-oss → Muse             # ask_text, json_object=false
+  review  Pro → gpt-oss → Muse             # juge de documents Review (vision si le modèle suit)
 
 Paramètres JSON — contrat hosted = fiche infer (docs.api.nvidia.com/nim/…-infer),
 pas le playground ni la carte locale (temp/top_k hors schéma hosted) :
@@ -101,6 +102,7 @@ CHAINS = {
     "json": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
     "page": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
     "text": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
+    "review": (PRO_MODEL, GPT_OSS_MODEL, SECONDARY_MODEL),
 }
 
 _THINKING_RE = re.compile(r"^\s*here's a thinking process", re.I)
@@ -403,15 +405,18 @@ def _retry_wait(response: httpx.Response, fallback: float) -> float:
 
 
 def chat_payload(model: str, system: str, user: str, max_tokens: int,
-                 *, json_object: bool | None = None, role: str = "json") -> dict:
+                 *, json_object: bool | None = None, role: str = "json",
+                 images: list[bytes] | None = None) -> dict:
     """Corps chat/completions. json_object=None → selon la fiche Build."""
+    from app.core.vision_msg import openai_user_content
+
     used = _usable_nim(model)
     use_json = supports_json_object(used) if json_object is None else json_object
     body = {
         "model": used,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": openai_user_content(user, images)},
         ],
         "max_tokens": max_tokens,
         "stream": False,
@@ -487,7 +492,8 @@ async def complete_json_nvidia_tracked(
         role: str = "json",
         fallback: bool = True,
         max_tokens: int = 800,
-        log=None) -> tuple[dict, str]:
+        log=None,
+        images: list[bytes] | None = None) -> tuple[dict, str]:
     """Comme complete_json_nvidia, plus l'id réellement servi."""
     key = get_nvidia_key(settings)
     if not key:
@@ -498,7 +504,8 @@ async def complete_json_nvidia_tracked(
     last_err = "nvidia exhausted chain"
     async with _nvidia_sem():
         for used in chain:
-            payload = chat_payload(used, system, prompt, max_tokens, role=role)
+            payload = chat_payload(
+                used, system, prompt, max_tokens, role=role, images=images)
             try:
                 data = await _complete_one(key, payload, max_tokens=max_tokens, log=log)
                 return data, used
@@ -520,11 +527,12 @@ async def complete_json_nvidia(system: str, prompt: str,
                                role: str = "json",
                                fallback: bool = True,
                                max_tokens: int = 800,
-                               log=None) -> dict:
+                               log=None,
+                               images: list[bytes] | None = None) -> dict:
     """Complétion JSON. fallback=True : chaîne du rôle si le modèle échoue."""
     data, _used = await complete_json_nvidia_tracked(
         system, prompt, settings, model=model, role=role,
-        fallback=fallback, max_tokens=max_tokens, log=log)
+        fallback=fallback, max_tokens=max_tokens, log=log, images=images)
     return data
 
 

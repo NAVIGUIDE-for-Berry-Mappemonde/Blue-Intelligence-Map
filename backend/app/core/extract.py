@@ -30,6 +30,7 @@ import hashlib
 import html
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -240,6 +241,48 @@ def _run_pdf_worker(inp: str, out: str, max_pages: int) -> None:
     if proc.returncode != 0:
         err = (proc.stderr or b"").decode("utf-8", "replace")[:300]
         raise RuntimeError(f"pdf_worker exit {proc.returncode}: {err}")
+
+
+def pdf_page_jpegs(content: bytes, max_pages: int = 2) -> list[bytes]:
+    """Premières pages du PDF en JPEG, hors process (vision Review)."""
+    if not content:
+        return []
+    fd, inp = tempfile.mkstemp(suffix=".pdf")
+    out_dir = tempfile.mkdtemp(prefix="pdf-preview-")
+    try:
+        os.write(fd, content)
+        os.close(fd)
+        fd = -1
+        proc = subprocess.run(
+            [sys.executable, "-m", "app.core.pdf_preview", inp, out_dir,
+             str(max_pages)],
+            timeout=PDF_SUBPROCESS_TIMEOUT_S,
+            capture_output=True,
+            env=_pdf_worker_env(),
+            cwd=str(BACKEND_DIR),
+        )
+        if proc.returncode != 0:
+            return []
+        out: list[bytes] = []
+        for path in sorted(Path(out_dir).glob("*.jpg")):
+            out.append(path.read_bytes())
+        return out
+    except Exception:
+        return []
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(inp)
+        except OSError:
+            pass
+        try:
+            shutil.rmtree(out_dir, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def parse_pdf_text(content: bytes, max_pages: int = 180) -> str:
@@ -531,6 +574,7 @@ def empty_page(url: str, *, level: str = "failed", error: str | None = None) -> 
         "meta_desc": "", "image": None, "ext_links": [], "links": [],
         "is_pdf": False, "html": None, "blocked": False, "render_used": False,
         "parse": None, "fetch_compare": None, "final_url": url, "error": error,
+        "raw": None,
     }
 
 
@@ -1745,7 +1789,8 @@ async def fetch_mirror_text(url: str, log=None, skip_tinyfish: bool = False
 
 
 async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = True,
-                          log=None, skip_fetch_mirror: bool = False) -> dict:
+                          log=None, skip_fetch_mirror: bool = False,
+                          keep_raw: bool = False) -> dict:
     """
     Moteur local de lecture. La porte publique est ``read_url``.
 
@@ -1783,6 +1828,8 @@ async def extract_cascade(url: str, min_chars: int = 200, allow_render: bool = T
         out["md5"] = hashlib.md5(content).hexdigest()
         is_pdf = content_is_pdf(content, ctype, out["final_url"] or url, disposition)
         out["is_pdf"] = is_pdf
+        if keep_raw and content:
+            out["raw"] = content
         if is_pdf:
             try:
                 text = await asyncio.to_thread(parse_pdf_text, content)
