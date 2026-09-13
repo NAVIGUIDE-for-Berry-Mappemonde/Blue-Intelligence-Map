@@ -23,12 +23,15 @@ import { summarizeRoute, featuresToSegments } from "./utils/geo";
 import { SEAMAP_ATTRIBUTION } from "./utils/seamapStyle";
 import { waypointsFromCollection } from "./utils/waypointsFromCollection.js";
 import { buildLocalCustomBriefing } from "./utils/customRouteBriefing.js";
+import {
+  activeSimulationSegments,
+  activeSimulationStops,
+  buildSimTargets,
+  simulationStartPos,
+} from "./utils/simulationRoute.js";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
-
-// La Rochelle — position de départ du catamaran en mode simulation
-const LA_ROCHELLE_POS = { lat: 46.1541, lon: -1.167 };
 
 // ── Orchestrator plan cache (localStorage, 24 h TTL, per language) ───────────
 const PLAN_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -93,56 +96,23 @@ export default function App() {
   const [catamaranPos,   setCatamaranPos]   = useState(null);  // { lat, lon }
   const [simulationStep, setSimulationStep] = useState(0);
 
-  // Position par défaut : La Rochelle (point de départ maritime de l'expédition)
-  const initialCatamaranPos = LA_ROCHELLE_POS;
-  const activeCatamaranPos  = catamaranPos ?? initialCatamaranPos;
+  // Route perso déclarée tôt : la simulation s'aligne sur la route affichée.
+  const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
 
-  // Flat ordered list of simulation targets built from the REAL route polylines:
-  //   [departure(step 0), mid(seg0), end(seg0), mid(seg1), end(seg1), …]
-  // Using segments[] ensures midpoints lie ON the actual maritime route and
-  // handles all detours (Saint-Pierre, Marigot→Cayenne, etc.) automatically.
-  const simTargets = useMemo(() => {
-    const maritimeSegs = segments.filter(s => !s.nonMaritime && s.coords?.length >= 2);
-    if (maritimeSegs.length === 0) {
-      return [{ lat: LA_ROCHELLE_POS.lat, lon: LA_ROCHELLE_POS.lon }];
-    }
-    // Step 0 = first coord of first maritime segment (La Rochelle departure)
-    const firstCoord = maritimeSegs[0].coords[0];
-    const list = [{ lat: firstCoord[1], lon: firstCoord[0] }];
-    for (const seg of maritimeSegs) {
-      const coords = seg.coords; // [[lon, lat], …]
-      // Midpoint at 50% cumulative Euclidean distance along the polyline
-      let totalLen = 0;
-      const lengths = [];
-      for (let i = 0; i < coords.length - 1; i++) {
-        const l = Math.hypot(coords[i + 1][0] - coords[i][0], coords[i + 1][1] - coords[i][1]);
-        lengths.push(l);
-        totalLen += l;
-      }
-      const halfLen = totalLen / 2;
-      let acc = 0;
-      let mid = null;
-      for (let i = 0; i < lengths.length; i++) {
-        if (acc + lengths[i] >= halfLen) {
-          const t = lengths[i] > 0 ? (halfLen - acc) / lengths[i] : 0;
-          mid = {
-            lat: coords[i][1] + t * (coords[i + 1][1] - coords[i][1]),
-            lon: coords[i][0] + t * (coords[i + 1][0] - coords[i][0]),
-          };
-          break;
-        }
-        acc += lengths[i];
-      }
-      if (!mid) {
-        const m = Math.floor(coords.length / 2);
-        mid = { lat: coords[m][1], lon: coords[m][0] };
-      }
-      const last = coords[coords.length - 1];
-      list.push(mid);
-      list.push({ lat: last[1], lon: last[0] });
-    }
-    return list;
-  }, [segments]);
+  const activeStops = useMemo(
+    () => activeSimulationStops(customRoute, ITINERARY_POINTS),
+    [customRoute],
+  );
+  const activeSegments = useMemo(
+    () => activeSimulationSegments(customRoute, segments),
+    [customRoute, segments],
+  );
+  const simTargets = useMemo(
+    () => buildSimTargets(activeSegments, activeStops),
+    [activeSegments, activeStops],
+  );
+  const routeStartPos = useMemo(() => simulationStartPos(simTargets), [simTargets]);
+  const activeCatamaranPos = catamaranPos ?? routeStartPos;
 
   // flyTo helper — recenters map on catamaran with smooth animation
   const flyToPos = useCallback((lat, lon) => {
@@ -193,8 +163,8 @@ export default function App() {
   const legContext = useLegContext(
     simulationMode ? activeCatamaranPos.lat : null,
     simulationMode ? activeCatamaranPos.lon : null,
-    segments,
-    ITINERARY_POINTS,
+    activeSegments,
+    activeStops,
     undefined,                               // speedKnots — valeur par défaut
     simulationMode ? simulationStep : null,  // contrainte chronologique
   );
@@ -207,6 +177,17 @@ export default function App() {
     flyToPos(legContext.snappedPosition[1], legContext.snappedPosition[0]);
   }, [legContext, flyToPos]);
 
+  // Changement de route affichée : le bateau reprend le départ de cette route.
+  useEffect(() => {
+    if (!simulationMode) return;
+    setSimulationStep(0);
+    setCatamaranPos(routeStartPos);
+    pendingFlyTo.current = true;
+    // customRoute identifie la route perso ; on ne dépend pas de simTargets
+    // (les segments Berry se chargent progressivement).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customRoute]);
+
   const routeCoords = useMemo(
     () => segments.filter((s) => !s.nonMaritime).flatMap((s) => s.coords || []),
     [segments],
@@ -214,9 +195,6 @@ export default function App() {
 
   // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
   const markerOffsets = useMarkerOffsets(points, mapRef, routeCoords);
-
-  // Custom imported route (null = show Berry-Mappemonde default route)
-  const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
 
   const [routeKind, setRouteKind] = useState("berry");
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -333,6 +311,9 @@ export default function App() {
   };
 
   const handleDrawStart = () => {
+    setSimulationMode(false);
+    setCatamaranPos(null);
+    setSimulationStep(0);
     setDrawingMode(true);
     _resetDrawState();
     berryFetchIdRef.current += 1;
@@ -361,6 +342,9 @@ export default function App() {
   };
 
   const handleDrawContinue = () => {
+    setSimulationMode(false);
+    setCatamaranPos(null);
+    setSimulationStep(0);
     setDrawingMode(true);
     setExpeditionPlan(null);
     setBriefingLoading(false);
@@ -864,9 +848,9 @@ export default function App() {
           const entering = !simulationMode;
           setSimulationMode(entering);
           if (entering) {
-            // Activation : positionner le catamaran sur La Rochelle
-            setCatamaranPos(LA_ROCHELLE_POS);
+            setCatamaranPos(routeStartPos);
             setSimulationStep(0);
+            flyToPos(routeStartPos.lat, routeStartPos.lon);
           } else {
             setCatamaranPos(null);
           }

@@ -531,7 +531,7 @@ export function Sidebar({
             </div>
           )}
 
-          {onSimulationToggle && (
+          {onSimulationToggle && !isDrawing && (
             <button
               onClick={onSimulationToggle}
               title={simulationMode ? t("exitSimulation") : t("simulationModeTooltip")}
