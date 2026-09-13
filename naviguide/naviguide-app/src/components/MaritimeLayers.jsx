@@ -107,7 +107,79 @@ function useBiLayer(path) {
  * Gère l'état ON/OFF, les données GeoJSON et les états de chargement
  * pour les couches maritimes et les couches Blue Intelligence.
  */
-export function useMaritimeLayers() {
+/**
+ * AMP en polygones via GET /amp?bbox= (pas l'export centroïdes).
+ */
+function useAmpPolygons(mapRef) {
+  const [show, setShow] = useState(false);
+  const [data, setData] = useState(EMPTY_FC);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!show) return undefined;
+    let cancelled = false;
+    let timer = null;
+
+    const load = () => {
+      const map = mapRef?.current?.getMap?.();
+      if (!map) return;
+      const b = map.getBounds();
+      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(",");
+      setLoading(true);
+      setError(null);
+      fetch(`${BI_BASE}/amp?bbox=${encodeURIComponent(bbox)}`)
+        .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+        .then((fc) => {
+          if (!cancelled) setData(fc?.type === "FeatureCollection" ? fc : EMPTY_FC);
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            console.warn("[MaritimeLayers] AMP", e.message || e);
+            setError(e.message || String(e));
+          }
+        })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
+
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(load, 420);
+    };
+
+    const attach = () => {
+      const map = mapRef?.current?.getMap?.();
+      if (!map) return false;
+      map.on("moveend", schedule);
+      map.on("zoomend", schedule);
+      load();
+      return true;
+    };
+
+    if (!attach()) {
+      const poll = setInterval(() => { if (attach()) clearInterval(poll); }, 250);
+      return () => {
+        cancelled = true;
+        clearInterval(poll);
+        clearTimeout(timer);
+      };
+    }
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      const map = mapRef?.current?.getMap?.();
+      if (map) {
+        map.off("moveend", schedule);
+        map.off("zoomend", schedule);
+      }
+    };
+  }, [show, mapRef]);
+
+  return { show, setShow, data, loading, error };
+}
+
+export function useMaritimeLayers(mapRef) {
   // Couches actives par défaut — chargement différé pour ne pas bloquer le rendu initial
   const [showZee,      setShowZee]      = useState(true);
   const [showPorts,    setShowPorts]    = useState(true);
@@ -135,7 +207,7 @@ export function useMaritimeLayers() {
   const biMarinas       = useBiLayer("/export/marinas.geojson");
   const biCapitaineries = useBiLayer("/export/capitaineries.geojson");
   const biPoe           = useBiLayer("/export/poe.geojson");
-  const biAmp           = useBiLayer("/export/amp.geojson");
+  const biAmp           = useAmpPolygons(mapRef);
 
   return {
     // Toggles
@@ -192,7 +264,6 @@ export function useMaritimeLayers() {
 export function MaritimeLayers({
   showZee,
   showPorts, portsData,
-  showBalisage,
   showBiProjects,      biProjectsData,
   showBiMarinas,       biMarinasData,
   showBiCapitaineries, biCapitaineriesData,
@@ -231,7 +302,27 @@ export function MaritimeLayers({
 
       {/* ── Blue Intelligence — 5 modes en points (couleurs du site BI) ──── */}
       <Source id="bi-amp-source" type="geojson" data={biAmpData ?? EMPTY_FC}>
-        <Layer id="bi-amp-circle" type="circle" layout={vis(showBiAmp)} paint={biCirclePaint(BI_COLORS.biAmp)} />
+        <Layer
+          id="bi-amp-fill"
+          type="fill"
+          layout={vis(showBiAmp)}
+          filter={["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false]}
+          paint={{ "fill-color": BI_COLORS.biAmp, "fill-opacity": 0.28 }}
+        />
+        <Layer
+          id="bi-amp-line"
+          type="line"
+          layout={vis(showBiAmp)}
+          filter={["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false]}
+          paint={{ "line-color": "#15803d", "line-width": 1.2 }}
+        />
+        <Layer
+          id="bi-amp-circle"
+          type="circle"
+          layout={vis(showBiAmp)}
+          filter={["==", ["geometry-type"], "Point"]}
+          paint={biCirclePaint(BI_COLORS.biAmp)}
+        />
       </Source>
       <Source id="bi-projects-source" type="geojson" data={biProjectsData ?? EMPTY_FC}>
         <Layer id="bi-projects-circle" type="circle" layout={vis(showBiProjects)} paint={biCirclePaint(BI_COLORS.biProjects)} />
@@ -287,7 +378,17 @@ const LAYER_CONFIG = [
   { key: "balisage", labelKey: "layerBalisage", titleKey: "layerBalisageTitle", color: "#10b981", showKey: "showBalisage", toggleKey: "setShowBalisage", loadingKey: "loadingBalisage", errorKey: "errorBalisage" },
 ];
 
-/** Toggles Blue Intelligence — consommés par la Sidebar (mêmes conventions que LAYER_CONFIG). */
+/** Toutes les couches carte — une seule grille de pastilles dans la Sidebar. */
+export const ALL_LAYER_CONFIG = [
+  ...LAYER_CONFIG,
+  { key: "biProjects",      labelKey: "layerBiProjects",      titleKey: "layerBiProjectsTitle",      color: BI_COLORS.biProjects,      showKey: "showBiProjects",      toggleKey: "setShowBiProjects",      loadingKey: "loadingBiProjects",      errorKey: "errorBiProjects" },
+  { key: "biMarinas",       labelKey: "layerBiMarinas",       titleKey: "layerBiMarinasTitle",       color: BI_COLORS.biMarinas,       showKey: "showBiMarinas",       toggleKey: "setShowBiMarinas",       loadingKey: "loadingBiMarinas",       errorKey: "errorBiMarinas" },
+  { key: "biCapitaineries", labelKey: "layerBiCapitaineries", titleKey: "layerBiCapitaineriesTitle", color: BI_COLORS.biCapitaineries, showKey: "showBiCapitaineries", toggleKey: "setShowBiCapitaineries", loadingKey: "loadingBiCapitaineries", errorKey: "errorBiCapitaineries" },
+  { key: "biPoe",           labelKey: "layerBiPoe",           titleKey: "layerBiPoeTitle",           color: BI_COLORS.biPoe,           showKey: "showBiPoe",           toggleKey: "setShowBiPoe",           loadingKey: "loadingBiPoe",           errorKey: "errorBiPoe" },
+  { key: "biAmp",           labelKey: "layerBiAmp",           titleKey: "layerBiAmpTitle",           color: BI_COLORS.biAmp,           showKey: "showBiAmp",           toggleKey: "setShowBiAmp",           loadingKey: "loadingBiAmp",           errorKey: "errorBiAmp" },
+];
+
+/** @deprecated — utiliser ALL_LAYER_CONFIG */
 export const BI_LAYER_CONFIG = [
   { key: "biProjects",      labelKey: "layerBiProjects",      titleKey: "layerBiProjectsTitle",      color: BI_COLORS.biProjects,      showKey: "showBiProjects",      toggleKey: "setShowBiProjects",      loadingKey: "loadingBiProjects",      errorKey: "errorBiProjects" },
   { key: "biMarinas",       labelKey: "layerBiMarinas",       titleKey: "layerBiMarinasTitle",       color: BI_COLORS.biMarinas,       showKey: "showBiMarinas",       toggleKey: "setShowBiMarinas",       loadingKey: "loadingBiMarinas",       errorKey: "errorBiMarinas" },
