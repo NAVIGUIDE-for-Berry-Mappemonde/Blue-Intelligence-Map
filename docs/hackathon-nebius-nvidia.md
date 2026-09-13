@@ -30,7 +30,7 @@ Le méga-briefing éco-tourisme (toutes les couches) est le **même** produit, s
 | **Technological Implementation** | Token Factory runtime (pas NIM). Nano / Lightning racontent. Ultra juge. Tavily ancré sur une fiche. |
 | **Design** | Un film Leaflet, un briefing, des boutons de couches. Pas 4 chats, pas la Console BI. |
 | **Potential Impact** | Formalités plaisance (ZEE / PoE), expédition Berry-Mappemonde, disclaimer honnête. |
-| **Quality of the Idea** | Sac `ici()`, pas un container. Tavily ne cherche pas « ports of entry ». Ultra n’est pas sur chaque clic. |
+| **Quality of the Idea** | Sac `ici()`, pas un container. Tavily = texte officiel. Stretch : sandbox = preuve géo. Ultra n’est pas sur chaque clic. |
 
 **Prix visés :** Grand Prize (20 000 $) + bonus Tavily (3 000 $). Un seul bonus : on privilégie Tavily plutôt que City (500 $), tout en allant à Toronto.
 
@@ -46,7 +46,8 @@ Le méga-briefing éco-tourisme (toutes les couches) est le **même** produit, s
 4. Tavily ne cherche pas le monde : il **revérifie cette fiche**.  
 5. Ultra barre ce qui n’est plus prouvé.  
 6. Un événement météo / climat : l’agent raconte le bulletin (cyclone nommé, avis) — Copernicus reste les **chiffres au point**.  
-7. Stretch : proximité AMP / projet (« parc, saison, mouillage ») — pas obligatoire pour la première soumission.
+7. Stretch AMP : proximité parc / saison / mouillage.  
+8. Stretch sandbox (si prêt) : « vérifié dans un sandbox Nebius » — le 4ᵉ port est-il dans le polygone ?
 
 Ce n’est plus un chatbot. C’est un **voyage**.
 
@@ -85,6 +86,9 @@ ici(lat, lon)     ← sac (~30 nm), PAS 4500 projets
         │ oui
         ▼
 Tavily (cette fiche) → Nano raconte → Ultra juge
+        │
+        ├─ stretch Data Lab : chaque briefing = un log (après Nano)
+        └─ stretch Sandbox : preuve géo (entrée de ZEE)
         ▼
 Un Briefing + pastilles sur la carte
 ```
@@ -126,7 +130,7 @@ Les boutons allument **toute** la couche sur la carte. Le LLM n’en voit qu’u
 | Console / Review / Swarm / 6 modes | UX opérateur BI |
 | MapLibre / PMTiles « carte marine » | On change de projecteur |
 | Recoller `:8000` / `:8004` | Cassera l’extraction hackathon |
-| ConTree en 2ᵉ soumission | Un seul produit, track Apps |
+| ConTree / Sandboxes en **2ᵉ** soumission (track Coding, SWE-bench) | Un seul produit Apps. Un sandbox **dans** le simulateur = stretch, pas un 2ᵉ repo |
 | NIM comme cerveau de soumission | Hors règlement |
 | Modifier `frontend/`, `backend/`, `naviguide/`, `infra/vps/` | Prod intouchée |
 
@@ -209,7 +213,7 @@ NIM partout, **pas** Token Factory, **pas** Nemotron actif, **pas** Tavily.
 | **3** | Gold route Berry, voire 285 | Carburant de la démo | Humain |
 | **4** | Nano raconte le JSON (adaptateur **dans** le simulateur) | Token Factory apparaît | Agent |
 | **5** | Tavily sentinelle de fiche | Bonus 3 000 $ | Agent |
-| **6** | Ultra + stretch AMP + vidéo + dépôt dédié | Soumission | Les deux |
+| **6** | Ultra + stretch AMP ; Data Lab / sandbox **si** Nano parle déjà ; vidéo + dépôt | Soumission | Les deux |
 | **29 sept.** | Builders & Brews Toronto — film, idéalement sac amorcé | Mentors, pas besoin d’Ultra | Humain |
 | **Fin octobre** | Gel, démo dédiée (pas naviguide.fr), soumission | — | Les deux |
 
@@ -261,7 +265,8 @@ Adaptateur Token Factory **dans le dossier simulateur** (`NEBIUS_API_KEY` en env
 - Lightning / Nano : 1 paragraphe skipper FR/EN depuis le JSON `ici()`.  
 - Thinking OFF pour le JSON / le texte court.  
 - HUD visible : modèle, région, latence, coût.  
-- Ultra **pas encore**.
+- Marqueurs stables dans le prompt (`mrgid`, ids de ports) pour pouvoir filtrer plus tard dans Data Lab (§10).  
+- Ultra **pas encore**. ZDR **off**. Pas de sandbox à cette étape.
 
 Sans clé : le texte local de l’étape 2 reste. La démo ne doit pas être noire.
 
@@ -279,7 +284,8 @@ Sans clé : le texte local de l’étape 2 reste. La démo ne doit pas être noi
 ### Étape 6 — Ultra + soumission
 
 - **Un** Ultra par action visible : cite-or-reject sur les PoE extraits. L’UI **montre** Nano « 12 ports » puis Ultra en barre 2.  
-- Stretch : AMP « parc / saison / mouillage » ; bandeau climatologie.  
+- Stretch AMP : « parc / saison / mouillage » ; bandeau climatologie.  
+- Stretch Data Lab / Sandboxes : voir §10 — **après** les premiers appels Nano, **dans** ce produit.  
 - Extraire `naviguide-simulator/` → dépôt public, README **anglais**, licence MIT, démo URL, YouTube ≤ 3 min.
 
 ---
@@ -304,7 +310,65 @@ SearXNG / TinyFish restent le volume **prod BI**. Le simulateur ne les recopie p
 
 ---
 
-## 10. Vidéo 3 min
+## 10. Stretch Token Factory — Data Lab et Sandboxes (même produit)
+
+Ce n’est **pas** une 2ᵉ soumission. Pas de repo ConTree, pas de track Coding, pas de SWE-bench. Dedicated endpoints restent hors scope (coût). Data Lab et Sandboxes s’accrochent au **même** Briefing, **après** que Nano parle.
+
+| Priorité | Stretch | Entre dans la vidéo 3 min ? | Quand |
+|---|---|---|---|
+| Déjà au §2 | AMP / projet près du trait | Oui si prêt | Étape 6 |
+| **Utile dès Nano** | **Data Lab** — mesurer, pas prompter au feeling | Non (sérieux hors caméra) | Après les **premiers vrais** appels Nano |
+| **Peut entrer dans le film** | **Sandbox** — preuve géo à l’entrée de ZEE | Oui, une phrase + un résultat | Après `ici()` rempli **et** Nano |
+| Plus tard | 2 searoute (`avoid_land` oui/non) ; polar « 12 nd → 7 nd ? » | Non sauf si déjà fluide | Si le cœur est poli |
+| Encore plus tard | Fine-tune Nemotron depuis le jeu d’éval | Non | Seulement si le modèle devient fine-tunable |
+
+Sans inférence, Data Lab est un classeur vide. Sans polygone + PoE dans le sac, le sandbox n’a rien à prouver. **Pas avant l’étape 4.**
+
+### Data Lab — le plus utile des trois, dès que Nano parle
+
+[Data Lab](https://tokenfactory.nebius.com/datalab) est le classeur des logs Token Factory ([doc](https://docs.tokenfactory.nebius.com/data-lab/overview)). Chaque briefing devient un log : prompt, JSON `ici()`, réponse Nano, éventuellement le verdict Ultra.
+
+On peut alors :
+
+- revoir les hallucinations (« Nano a inventé un port ») ;
+- filtrer en SQL : « Ultra a barré au moins un port » ;
+- en faire un **jeu d’éval** (les 11 Gold + la jambe démo) ;
+- plus tard, un jeu de fine-tune — **si** Nemotron devient fine-tunable.
+
+Ça n’apparaît pas dans la vidéo 3 min. Ça rend le produit sérieux : on **mesure**, on ne « prompte pas au feeling ». Une ligne dans le README EN suffit (« we review briefings in Token Factory Data Lab »).
+
+**Condition :** ne **pas** activer **Zero Data Retention** (ZDR). Sinon les logs ne sont pas stockés ; un import sur une période ZDR = dataset vide ([import completions](https://docs.tokenfactory.nebius.com/data-lab/chat-completions)).
+
+Les logs viennent tout seuls des appels API / Playground (champs `prompt`, `completion`, `model_flavor_id`, tokens, erreurs). Pour filtrer « Ultra a barré un port », le prompt ou la réponse doivent porter un marqueur stable (`mrgid`, `ultra_rejected`, ids de ports) — à prévoir dans l’adaptateur de l’étape 4, pas un 2ᵉ produit.
+
+**Quand :** après les premiers vrais appels Nano. Pas avant.
+
+### Sandboxes — une preuve dans le film, pas un 2ᵉ produit
+
+Oublier SWE-bench et le track Coding. On ne fait pas écrire le frontend par Nemotron dans une VM.
+
+[Sandboxes](https://docs.tokenfactory.nebius.com/sandboxes/overview) (beta, `contree@nebius.com`) : l’agent **vérifie**, il ne se contente pas de parler. Tavily vérifie le **texte** officiel. Le sandbox vérifie la **géométrie**. Les deux ne se marchent pas dessus.
+
+À l’entrée d’une ZEE :
+
+1. `ici()` dit : point dans la ZEE France, `mrgid` 5674, 4 PoE Gold.  
+2. Nano (ou Lightning) propose 2 hypothèses : « ces 4 ports sont dans le polygone » / « le 4ᵉ est hors zone ».  
+3. Le sandbox lance un petit script (shapely, extrait de `zee_crossings`) : ce point est-il dans ce polygone ? ces coordonnées PoE sont-elles dedans ?  
+4. Branche A : 4/4 OK. Branche B : 1 port dehors. Rollback, on garde A.  
+5. Le Briefing montre : « vérifié dans un sandbox Nebius » + le résultat.
+
+Ça colle à **Quality of the Idea** : pas un chatbot, un agent qui exécute une preuve géo.
+
+Autres essais **plus tard** (même produit) :
+
+- 2 réglages searoute (`avoid_land` oui / non) en parallèle, on garde le trait qui ne coupe pas la terre ;  
+- polar : « à 12 nœuds de vrai vent, la polaire donne-t-elle vraiment 7 nd ? » — calcul, pas une phrase.
+
+**Limites beta :** 50 opérations en parallèle ; images 180 jours. Ça coûte du temps d’intégration. Si le cœur (film + sac + Tavily + Ultra) n’est pas poli mi-octobre, **on s’en passe**. Un fallback honnête : le même script shapely **sur le serveur 8010**, et on le dit. Mieux un calcul local vrai qu’un sandbox plaqué.
+
+---
+
+## 11. Vidéo 3 min
 
 Anglais, YouTube public, **bateau qui bouge**. Pas de musique copyright.
 
@@ -318,16 +382,18 @@ Anglais, YouTube public, **bateau qui bouge**. Pas de musique copyright.
 | 2:25–2:45 | Token Factory | Split ~90 % Lightning / 10 % Ultra, coût |
 | 2:45–3:00 | Impact | Route Berry, disclaimer, repo |
 
+Si le sandbox géo est **déjà fluide** : 5–8 s dans le plan 1:55–2:25 (« verified in a Nebius sandbox », 4/4 ou 1 dehors). **Ne pas** filmer Data Lab. **Ne pas** reculer Tavily / Ultra pour caser le sandbox.
+
 Audio : nommer **Nebius Token Factory**, **Nemotron 3 Ultra vs Nano**, **Tavily on this EEZ fiche**.
 
 ---
 
-## 11. Soumission Devpost
+## 12. Soumission Devpost
 
 - Track **Best Apps and Agents** uniquement.  
 - Demo URL du simulateur (VPS **séparé** ou preview — **pas** casser naviguide.fr).  
 - Repo **public** + licence MIT visible.  
-- README EN : install, où est Nemotron, où Token Factory accélère, où Tavily, **delta vs NAVIGUIDE/BI**.  
+- README EN : install, où est Nemotron, où Token Factory accélère, où Tavily, **delta vs NAVIGUIDE/BI** ; une ligne Data Lab / sandbox **si** le stretch est réel.  
 - Paragraphe « significantly updated / built during submission period ».  
 - Feedback Nebius / NVIDIA (Most Valuable Feedback).  
 - Matériel en **anglais**.  
@@ -338,7 +404,7 @@ Check-list anti-disqualification : pas de secrets ; pas de Mongo prod ; attribut
 
 ---
 
-## 12. Recette « on peut gagner »
+## 13. Recette « on peut gagner »
 
 Un inconnu (juge) doit pouvoir :
 
@@ -351,9 +417,11 @@ Un inconnu (juge) doit pouvoir :
 
 Si l’un manque, on a un beau simulateur, pas encore une soumission gagnante.
 
+Data Lab et le sandbox **ne sont pas** dans cette liste. Ils renforcent si le cœur est déjà vrai.
+
 ---
 
-## 13. Risques qui font perdre
+## 14. Risques qui font perdre
 
 | Risque | Parade |
 |---|---|
@@ -367,20 +435,25 @@ Si l’un manque, on a un beau simulateur, pas encore une soumission gagnante.
 | Vidéo de slides | Bateau qui bouge, popup sources |
 | Toucher nginx / VPS prod | localhost puis hébergement **dédié** |
 | Commencer l’étape 5 avant l’étape 1 | Critère de sortie étape 1 |
+| Activer ZDR puis « où sont les logs ? » | ZDR **off** tant qu’on veut Data Lab |
+| Sandbox / ConTree en 2ᵉ repo | Un stretch **dans** le Briefing, ou rien |
+| Data Lab / sandbox avant Nano | Classeurs vides ; d’abord l’étape 4 |
+| Filmer Data Lab à la place du bateau | Data Lab = hors caméra |
 
 ---
 
-## 14. Sources
+## 15. Sources
 
 - https://nebiusglobalaihackathon.devpost.com/ · /rules · /resources  
 - https://dev.nebius.com/builders · https://docs.tokenfactory.nebius.com/ · https://docs.tavily.com/  
+- Data Lab : https://docs.tokenfactory.nebius.com/data-lab/overview · Sandboxes : https://docs.tokenfactory.nebius.com/sandboxes/overview  
 - Code prod (lecture) : `nvidia.py`, `zee_crossings.py`, `poe_pipeline.py`, `naviguide-api/main.py`, `polar_engine.py`, `MapView.js`
 
 ---
 
-## 15. Prochaine action
+## 16. Prochaine action
 
 1. **Humain :** Gold (route d’abord) ; `NEBIUS_API_KEY` en env ; Toronto le 29.  
 2. **Agent :** créer `naviguide-simulator/` jalon 1.0 (Vite + FastAPI 8010 / 5174), **sans** Tavily ni Nemotron.
 
-Le code de l’étape 1 commence au premier `package.json` dans `naviguide-simulator/`. Le détail d’exécution est [PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md](./PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md). La recette de victoire est le §12 de **ce** fichier.
+Le code de l’étape 1 commence au premier `package.json` dans `naviguide-simulator/`. Le détail d’exécution est [PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md](./PLAN_IMPLEMENTATION_NAVIGUIDE_SIMULATOR_ETAPE1.md). La recette de victoire est le §13 de **ce** fichier. Data Lab et Sandboxes : §10, **après** Nano.
