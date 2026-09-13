@@ -415,7 +415,10 @@ def is_stale(doc: dict) -> bool:
 # ---------------------------------------------------------------------------
 _exceptions_thread_lock = threading.Lock()
 
-_EXCEPTION_BUCKETS = ("manual", "auto", "seed_urls", "search_hints")
+_EXCEPTION_BUCKETS = (
+    "manual", "auto", "seed_urls", "search_hints",
+    "seed_urls_mrgid", "blacklist_urls_mrgid", "blacklist_domains_mrgid",
+)
 
 
 def _empty_exceptions() -> dict:
@@ -473,13 +476,25 @@ def polygon_iso2(zone: dict) -> str:
 
 
 def seed_url_candidates(zone: dict, exceptions: dict | None = None) -> list[dict]:
-    """URLs officielles épinglées (page ou PDF d'État — jamais une liste de noms)."""
+    """URLs officielles épinglées (page ou PDF d'État — jamais une liste de noms).
+
+    Grain polygone (`seed_urls_mrgid`) d'abord — Mayotte ≠ hexagone — puis ISO2.
+    """
     exc = exceptions or load_exceptions()
+    urls: list[str] = []
+    try:
+        mid = str(int(zone.get("mrgid") or 0))
+    except (TypeError, ValueError):
+        mid = ""
+    if mid and mid != "0":
+        urls.extend((exc.get("seed_urls_mrgid") or {}).get(mid) or [])
     cc = polygon_iso2(zone)
-    urls: list[str] = list((exc.get("seed_urls") or {}).get(cc) or []) if cc else []
+    if cc:
+        urls.extend((exc.get("seed_urls") or {}).get(cc) or [])
+    blocked = set(review_blacklist_urls(zone, exc))
     seen, out = set(), []
     for u in urls:
-        if not u or u in seen:
+        if not u or u in seen or _normalize_url(u) in blocked:
             continue
         seen.add(u)
         out.append({"url": u, "domain": domain_of(u)})
@@ -632,6 +647,50 @@ def remember_seed_urls(zone: dict, urls: list[str], exceptions: dict | None = No
     if added and persist:
         save_exceptions(exc)
     return added
+
+
+def review_blacklist_urls(zone: dict, exceptions: dict | None = None) -> list[str]:
+    """URLs écartées en Review pour ce polygone (normalisées)."""
+    exc = exceptions or load_exceptions()
+    try:
+        mid = str(int(zone.get("mrgid") or 0))
+    except (TypeError, ValueError):
+        mid = ""
+    raw = list((exc.get("blacklist_urls_mrgid") or {}).get(mid) or []) if mid else []
+    return [_normalize_url(u) for u in raw if u]
+
+
+def remember_review_pins(mrgid, kept_urls: list[str] | None,
+                         dropped_urls: list[str] | None = None,
+                         persist: bool = True) -> dict:
+    """Épingle les listes Gold au grain ``mrgid`` (pas le pays)."""
+    try:
+        mid = str(int(mrgid))
+    except (TypeError, ValueError):
+        return {"kept": [], "dropped": []}
+    if mid == "0":
+        return {"kept": [], "dropped": []}
+    exc = load_exceptions()
+    seed = exc.setdefault("seed_urls_mrgid", {}).setdefault(mid, [])
+    kept_added = []
+    for u in kept_urls or []:
+        u = str(u or "").strip()
+        if not u.startswith("http") or u in seed:
+            continue
+        seed.append(u)
+        kept_added.append(u)
+    dropped = exc.setdefault("blacklist_urls_mrgid", {}).setdefault(mid, [])
+    drop_added = []
+    for u in dropped_urls or []:
+        u = str(u or "").strip()
+        if not u.startswith("http"):
+            continue
+        if u not in dropped:
+            dropped.append(u)
+            drop_added.append(u)
+    if persist and (kept_added or drop_added) and not os.environ.get("PYTEST_CURRENT_TEST"):
+        save_exceptions(exc)
+    return {"kept": kept_added, "dropped": drop_added}
 
 
 def urls_with_catalog(texts: list[str]) -> list[str]:
@@ -1857,6 +1916,12 @@ async def _find_sources(zone: dict, whitelist: list[str], exceptions: dict, log,
             continue
         pinned_norm.add(n)
         pinned.append(c)
+    blocked = set(review_blacklist_urls(zone, exceptions))
+    if blocked:
+        official = [c for c in official
+                    if _normalize_url(c.get("url") or "") not in blocked]
+        candidates = [c for c in candidates
+                      if _normalize_url(c.get("url") or "") not in blocked]
     if pinned:
         rest = _best_per_domain([
             c for c in official

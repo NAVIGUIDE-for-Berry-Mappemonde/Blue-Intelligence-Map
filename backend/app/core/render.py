@@ -73,6 +73,42 @@ async def render_html(url: str, timeout_s: int = 45, settle_ms: int = 2500, log=
                     pass
 
 
+async def render_screenshot(url: str, timeout_s: int = 45, settle_ms: int = 2500,
+                            log=None) -> bytes | None:
+    """Capture JPEG pleine page (vision Review), ou None."""
+    log = log or (lambda m: None)
+    browser = await _get_browser(log)
+    if browser is None:
+        return None
+    async with _sem:
+        context = None
+        try:
+            context = await browser.new_context(
+                user_agent=UA_BROWSER, viewport={"width": 1280, "height": 900},
+                locale="en-US")
+            page = await context.new_page()
+            await page.goto(url, wait_until="domcontentloaded",
+                            timeout=timeout_s * 1000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                await page.wait_for_timeout(settle_ms)
+            try:
+                return await page.screenshot(
+                    full_page=True, type="jpeg", quality=65)
+            except Exception:
+                return await page.screenshot(type="jpeg", quality=65)
+        except Exception as e:
+            log(f"screenshot {url[:70]}: échec ({type(e).__name__}: {str(e)[:60]})")
+            return None
+        finally:
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+
 async def shutdown_render():
     """Fermeture propre (appelée au shutdown de l'app)."""
     global _pw, _browser

@@ -144,6 +144,7 @@ class TestProvider:
         assert nvidia.models_for("page") == nvidia.models_for("json") == (
             nvidia.PRIMARY_MODEL, nvidia.GPT_OSS_MODEL, nvidia.SECONDARY_MODEL)
         assert nvidia.models_for("text") == nvidia.models_for("json")
+        assert nvidia.models_for("review") == nvidia.models_for("json")
 
     def test_nvidia_model_prefixes_without_reordering(self, monkeypatch):
         monkeypatch.setenv("NVIDIA_MODEL", "other/reader")

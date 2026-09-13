@@ -31,7 +31,7 @@ from app.services.review_choices import (
 
 
 class GoldNotReady(ValueError):
-    """Gold Formalités cliqué trop tôt — TD / PoE pas encore tranchés."""
+    """Gold Formalités cliqué trop tôt — aucune liste officielle gardée."""
 
 GOLD_KINDS = ("project", "eez", "marina", "capitainerie", "amp")
 FALLBACK_SOURCES = frozenset({
@@ -482,7 +482,7 @@ async def toggle_gold(db, kind: str, entity_id: str, *,
             fiche, comment, ch = await _load_fiche_for_gold(
                 db, kind, eid, run_id, comment, ch)
         pre = await is_pre_gold_entity(db, kind, eid, fiche)
-        if fiche is None or not gold_ready(fiche, ch, kind=kind):
+        if fiche is None or not gold_ready(fiche, ch, kind=kind, comment=comment):
             raise GoldNotReady(gold_incomplete_message(kind))
         snap = snapshot
         if snap is None:
@@ -501,7 +501,7 @@ async def toggle_gold(db, kind: str, entity_id: str, *,
         "gold_on": pressed,
         "pre_gold": pre,
         "choices": ch,
-        "gold_ready": gold_ready(fiche, ch, kind=kind) if fiche is not None else True,
+        "gold_ready": gold_ready(fiche, ch, kind=kind, comment=comment) if fiche is not None else True,
         "snapshot": snap if pressed else None,
         "wrote_projects": False,
         "wrote_poe_ports": False,
@@ -532,7 +532,7 @@ async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
             "gold_on": False,
             "pre_gold": pre,
             "choices": ch,
-            "gold_ready": gold_ready(fiche, ch, kind="eez") if fiche is not None else True,
+            "gold_ready": gold_ready(fiche, ch, kind="eez", comment=comment) if fiche is not None else True,
             "wrote_projects": False,
             "wrote_poe_ports": False,
             "wrote_marinas": False,
@@ -550,11 +550,20 @@ async def _toggle_eez_gold(db, eid: str, *, run_id: str | None,
     if not fiche:
         raise ValueError("fiche not found")
     ch = choices if choices is not None else await get_choices(db, "eez", eid)
-    if not gold_ready(fiche, ch, kind="eez"):
+    if not gold_ready(fiche, ch, kind="eez", comment=comment):
         raise GoldNotReady(gold_incomplete_message("eez"))
     ch = finalize_choices(fiche, ch)
     await save_choices_doc(db, "eez", eid, ch)
     snap = build_gold_snapshot(fiche, ch, comment)
+    try:
+        from app.services.poe_pipeline import remember_review_pins
+        remember_review_pins(
+            snap.get("mrgid") or eid,
+            [rec.get("url") for rec in (snap.get("sources_td") or []) if rec.get("url")],
+            [rec.get("url") for rec in (snap.get("dropped_td") or []) if rec.get("url")],
+        )
+    except Exception:
+        pass
     payload = {
         "_id": cid, "kind": "eez", "entity_id": eid,
         "on": True, "run_id": run_id, "updated_at": now_iso(),

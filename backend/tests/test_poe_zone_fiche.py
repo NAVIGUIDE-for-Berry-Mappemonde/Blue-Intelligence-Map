@@ -389,8 +389,9 @@ def test_frontend_fiche_has_no_generate_button():
     assert "poe-fiche-td-list" in fiche
     assert "poe-fiche-port-bu" in fiche
     assert "poe-fiche-td-keep" in fiche
-    assert "poe-fiche-port-keep" in fiche
-    assert "poe-fiche-bu-keep" in fiche
+    assert "poe-fiche-port-keep" not in fiche
+    assert "poe-fiche-bu-keep" not in fiche
+    assert "reviewPortsPreview" in fiche
     assert "poe-fiche-sources-bu" not in fiche
     assert "poe-zone-fiche" in fiche
     assert "ExternalLink" in fiche

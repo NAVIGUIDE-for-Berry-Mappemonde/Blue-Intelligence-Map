@@ -799,23 +799,12 @@ def test_marina_and_capitainerie_gold_after_identity_gps():
 def _prepare_france_gold(db, *, drop_cambridge=True):
     from app.services.review_choices import save_choice
 
+    del drop_cambridge
     fiche = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     body = fiche["fiche"]
     assert body["sources_td"], "France Review fiche must have TD URLs"
     td0 = body["sources_td"][0]["url"]
     asyncio.run(save_choice(db, "eez", "5677", "td", "keep", url=td0))
-    for p in body["ports"]:
-        name = (p.get("name") or "").lower()
-        action = "drop" if drop_cambridge and "cambridge" in name else "keep"
-        asyncio.run(save_choice(
-            db, "eez", "5677", "port", action, port_id=p["port_id"]))
-        if action != "keep":
-            continue
-        for rec in p.get("urls_bu") or []:
-            if rec.get("url"):
-                asyncio.run(save_choice(
-                    db, "eez", "5677", "bu", "keep",
-                    port_id=p["port_id"], url=rec["url"]))
     return fiche
 
 
@@ -832,7 +821,7 @@ def test_choice_persists_without_writing_v1():
     assert ch["td"]["https://douane.gouv.fr/hexagone.pdf"] == "keep"
     packed = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     assert packed["choices"]["td"]["https://douane.gouv.fr/hexagone.pdf"] == "keep"
-    assert packed["gold_ready"] is False
+    assert packed["gold_ready"] is True
     assert packed["gold_on"] is False
     assert len(db.poe_ports.docs) == n_ports
 
@@ -895,17 +884,16 @@ def test_gold_france_publishes_snapshot_not_v1():
     assert {d["_id"] for d in db.poe_ports.docs} == n_v1_ids
     ov = db.review_gold.docs[0]
     assert ov["on"] is True
-    snap_names = [p["name"] for p in ov["snapshot"]["ports"]]
-    assert snap_names == ["Marseille", "Sète"]
-    assert "Cambridge" not in snap_names
+    assert ov["snapshot"]["ports"] == []
+    assert ov["snapshot"]["ports_status"] == "pending_extract"
     vis = asyncio.run(visible_eez_mrgids(db))
     assert vis == {5677}
     ports = asyncio.run(visible_poe_port_docs(db, mrgid=5677))
-    assert {d["name"] for d in ports} == {"Marseille", "Sète"}
-    assert all(str(d["_id"]).startswith("gold:5677:") for d in ports)
+    assert ports == []
     map_fiche = asyncio.run(build_map_zone_fiche(db, 5677))
     assert map_fiche["fiche_scope"] == "gold"
-    assert [p["name"] for p in map_fiche["ports"]] == ["Marseille", "Sète"]
+    assert map_fiche["ports"] == []
+    assert map_fiche.get("ports_status") == "pending_extract"
     union_after = asyncio.run(review_queue.get_fiche(db, "eez", "published", "5677"))
     assert "Cambridge" in [p["name"] for p in union_after["fiche"]["ports"]]
     assert union_after["fiche"]["fiche_scope"] == "union"
@@ -945,13 +933,17 @@ def test_gold_ready_none_and_zero_ports():
     }
     assert gold_ready(listed, empty_choices()) is False
     half = {"td": {"https://gov.example/list.pdf": "keep"}, "ports": {}, "bu": {}}
-    assert gold_ready(listed, half) is False
+    assert gold_ready(listed, half) is True
     done = {
         "td": {"https://gov.example/list.pdf": "keep"},
         "ports": {"5677:x": "drop"},
         "bu": {},
     }
     assert gold_ready(listed, done) is True
+    pasted = gold_ready(
+        listed, empty_choices(),
+        comment="Liste : https://gov.example/found-by-hand.pdf")
+    assert pasted is True
 
 
 def test_review_report_surfaces_comments_choices_and_manual_urls():
@@ -989,6 +981,8 @@ def test_review_report_surfaces_comments_choices_and_manual_urls():
         "url": "https://douane.gouv.fr/mayotte-liste-poe.pdf"}]
     dropped = rep["pipeline_actions"]["td_dropped"]
     assert dropped[0]["url"] == "https://bad.example/annuaire"
+    kept_td = {a["url"] for a in rep["pipeline_actions"]["td_kept"]}
+    assert "https://douane.gouv.fr/mayotte-liste-poe.pdf" in kept_td
     assert "bad.example" in rep["pipeline_actions"]["domains_dropped"]
     kept = rep["pipeline_actions"]["visit_kept"]
     assert kept[0]["url"] == "https://parc-marin.fr/visite"

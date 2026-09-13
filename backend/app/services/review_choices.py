@@ -26,7 +26,7 @@ FIELD_KEEP = ("canal_vhf", "places_visiteurs", "tirant_eau_max_metres",
 
 GOLD_INCOMPLETE = (
     "gold incomplete: keep at least one official list "
-    "(or UNCLOS none / zero ports) and decide every PoE"
+    "(or UNCLOS none / zero ports)"
 )
 GOLD_INCOMPLETE_BY_KIND = {
     "eez": GOLD_INCOMPLETE,
@@ -303,7 +303,52 @@ def project_urls(fiche: dict | None) -> list[str]:
     return out
 
 
-def gold_ready(fiche: dict | None, choices: dict | None, kind: str | None = None) -> bool:
+def comment_http_urls(comment: str | None) -> list[str]:
+    """URLs collées dans le commentaire reviewer (listes trouvées à la main)."""
+    try:
+        from app.services.amp import extract_urls
+        return [u for u in extract_urls(comment) if str(u).startswith("http")]
+    except Exception:
+        return []
+
+
+def kept_official_urls(fiche: dict | None, choices: dict | None,
+                       comment: str | None = "") -> list[str]:
+    """TD cochées + URLs du commentaire — la vérité documentaire du polygone."""
+    fiche = fiche or {}
+    td_map = (choices or {}).get("td") or {}
+    seen: set[str] = set()
+    out: list[str] = []
+    for rec in fiche.get("sources_td") or []:
+        url = rec.get("url")
+        if url and td_map.get(url) == "keep" and url not in seen:
+            seen.add(url)
+            out.append(url)
+    for url, act in td_map.items():
+        if act == "keep" and url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    for url in comment_http_urls(comment):
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def dropped_official_urls(fiche: dict | None, choices: dict | None) -> list[str]:
+    td_map = (choices or {}).get("td") or {}
+    out: list[str] = []
+    seen: set[str] = set()
+    for rec in (fiche or {}).get("sources_td") or []:
+        url = rec.get("url")
+        if url and td_map.get(url) == "drop" and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def gold_ready(fiche: dict | None, choices: dict | None, kind: str | None = None,
+               comment: str | None = "") -> bool:
     """Gold s'allume seulement si le réviseur a tranché ce que le mode exige."""
     fiche = fiche or {}
     ch = choices or empty_choices()
@@ -319,26 +364,20 @@ def gold_ready(fiche: dict | None, choices: dict | None, kind: str | None = None
         return _gold_ready_capitainerie(fiche, ch)
     if k == "amp":
         return _gold_ready_amp(fiche, ch)
-    return _gold_ready_eez(fiche, ch)
+    return _gold_ready_eez(fiche, ch, comment=comment)
 
 
-def _gold_ready_eez(fiche: dict, ch: dict) -> bool:
-    """Au moins une TD gardée (sauf UNCLOS / zéro port sans liste) et chaque PoE tranché."""
+def _gold_ready_eez(fiche: dict, ch: dict, comment: str | None = "") -> bool:
+    """Au moins une liste officielle gardée (TD ou URL collée), ou UNCLOS / none."""
+    if kept_official_urls(fiche, ch, comment):
+        return True
     td_urls = [r.get("url") for r in (fiche.get("sources_td") or []) if r.get("url")]
-    n_keep = sum(1 for u in td_urls if (ch.get("td") or {}).get(u) == "keep")
     unclos = fiche.get("unclos") if isinstance(fiche.get("unclos"), dict) else {}
     kind = str(fiche.get("kind") or "")
     ports = fiche.get("ports") or []
     if td_urls:
-        td_ok = n_keep >= 1
-    else:
-        td_ok = kind == "none" or bool(unclos.get("code")) or not ports
-    pm = ch.get("ports") or {}
-    ports_ok = all(
-        pm.get(_sid(p.get("port_id") or p.get("id"))) in ("keep", "drop")
-        for p in ports
-    )
-    return bool(td_ok and ports_ok)
+        return False
+    return kind == "none" or bool(unclos.get("code")) or not ports
 
 
 def _gold_ready_project(fiche: dict, ch: dict) -> bool:
@@ -386,7 +425,7 @@ def _gold_ready_amp(fiche: dict, ch: dict) -> bool:
 
 
 def finalize_choices(fiche: dict, choices: dict) -> dict:
-    """Au Gold : TD et BU non cochées → drop. Les PoE doivent déjà être tranchés."""
+    """Au Gold : TD non cochées → drop. Les ports ne sont plus un verdict Review."""
     out = {
         "td": dict((choices or {}).get("td") or {}),
         "ports": dict((choices or {}).get("ports") or {}),
@@ -431,41 +470,41 @@ def build_gold_snapshot(fiche: dict, choices: dict, comment: str = "",
     return _snapshot_eez(fiche, choices, comment)
 
 
+def snapshot_ports_visible(snapshot: dict | None) -> bool:
+    """Points carte seulement après extraction depuis les docs gardés.
+
+    Ancien snapshot sans ``ports_status`` mais avec des ports : on les montre
+    (Gold d'avant le contrat documents).
+    """
+    if not snapshot:
+        return False
+    status = snapshot.get("ports_status")
+    if status in ("pending_extract", "failed"):
+        return False
+    if status in ("extracted", "empty"):
+        return True
+    return bool(snapshot.get("ports"))
+
+
 def _snapshot_eez(fiche: dict, choices: dict, comment: str) -> dict:
-    td_map = (choices or {}).get("td") or {}
-    kept_td = [rec for rec in (fiche.get("sources_td") or [])
-               if rec.get("url") and td_map.get(rec["url"]) == "keep"]
+    kept_urls = kept_official_urls(fiche, choices, comment)
+    by_url = {rec.get("url"): rec for rec in (fiche.get("sources_td") or [])
+              if rec.get("url")}
+    kept_td: list[dict] = []
+    for url in kept_urls:
+        rec = dict(by_url.get(url) or {"url": url, "official": True})
+        if url not in by_url:
+            rec["from_arm"] = "review_comment"
+        kept_td.append(rec)
     url_td = kept_td[0] if kept_td else None
-    port_map = (choices or {}).get("ports") or {}
-    bu_all = (choices or {}).get("bu") or {}
-    kept_ports: list[dict] = []
-    for p in fiche.get("ports") or []:
-        pid = _sid(p.get("port_id") or p.get("id"))
-        if port_map.get(pid) != "keep":
-            continue
-        bmap = bu_all.get(pid) or {}
-        kept_bu = [rec for rec in (p.get("urls_bu") or [])
-                    if rec.get("url") and bmap.get(rec["url"]) == "keep"]
-        best = kept_bu[0] if kept_bu else None
-        kept_ports.append({
-            "id": pid,
-            "port_id": pid,
-            "name": p.get("name"),
-            "city": p.get("city"),
-            "lat": p.get("lat"),
-            "lon": p.get("lon"),
-            "confidence": p.get("confidence"),
-            "spatial_kind": p.get("spatial_kind"),
-            "validated": bool(p.get("validated")),
-            "url_bu": best,
-            "urls_bu": kept_bu,
-            "source_urls": [rec["url"] for rec in kept_bu if rec.get("url")],
-        })
+    dropped = [{"url": u} for u in dropped_official_urls(fiche, choices)]
     return {
         "mrgid": fiche.get("mrgid"),
         "sources_td": kept_td,
         "url_td": url_td,
-        "ports": kept_ports,
+        "dropped_td": dropped,
+        "ports": [],
+        "ports_status": "pending_extract",
         "comment": comment or "",
         "golded_at": now_iso(),
         "kind": fiche.get("kind"),
@@ -613,8 +652,9 @@ def snapshot_to_fiche(zone: dict, snapshot: dict) -> dict:
     ]
     item["kind"] = snapshot.get("kind") or (
         "none" if not sources_td and not ports else "general_list")
-    item["ports"] = ports
-    item["poe_count"] = len(ports)
+    item["ports"] = ports if snapshot_ports_visible(snapshot) else []
+    item["poe_count"] = len(item["ports"])
+    item["ports_status"] = snapshot.get("ports_status")
     item["wrote_poe_ports"] = False
     item["crawled"] = False
     item["fiche_scope"] = "gold"
@@ -628,6 +668,8 @@ def snapshot_port_docs(mrgid: int, snapshot: dict) -> list[dict]:
     docs: list[dict] = []
     iso2 = snapshot.get("iso2")
     zone_name = snapshot.get("zone_name") or snapshot.get("label")
+    if not snapshot_ports_visible(snapshot):
+        return []
     for p in snapshot.get("ports") or []:
         pid = _sid(p.get("port_id") or p.get("id"))
         bu = p.get("url_bu")

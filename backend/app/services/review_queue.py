@@ -964,7 +964,8 @@ async def get_fiche(db, kind: str, run_id: str | None, entity_id: str,
         gold_on = review_gold.eez_is_published(override)
     else:
         gold_on = review_gold.gold_is_on(override)
-    ready = gold_ready(fiche, choices, kind=kind)
+    ready = gold_ready(fiche, choices, kind=kind,
+                       comment=comment.get("comment") or "")
     return {
         "kind": kind,
         "run_id": rid,
