@@ -144,6 +144,19 @@ def test_official_site_skips_facebook():
     assert official_site_from_hits(hits) == "https://wild-oysters.org/"
 
 
+def test_official_site_skips_shared_hub_prefers_name_domain():
+    hits = [
+        {"url": "https://oceandecade.org/decade-actions/"},
+        {"url": "https://www.bmkg.go.id/profil"},
+        {"url": "https://news.example.com/bmkg"},
+    ]
+    assert official_site_from_hits(
+        hits, "Agency for Meteorology (BMKG) – Indonesia"
+    ) == "https://www.bmkg.go.id/"
+    only_hub = [{"url": "https://hubocean.earth/use-cases"}]
+    assert official_site_from_hits(only_hub, "Aker Biomarine") == ""
+
+
 def test_purpose_is_projects_not_poe():
     assert "project" in PROJECTS_DISCOVERY_PURPOSE.lower()
     assert PROJECTS_DISCOVERY_PURPOSE != POE_PURPOSE

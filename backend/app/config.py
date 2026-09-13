@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "follow_the_money": True,
     "max_partner_orgs": 5,
     "discover_concurrency": 8,
+    "listing_judge_concurrency": 2,
     "saturation_limit": 50,
     "rescan_after_days": 7,
     "marina_search_radius_nm": 10.0,

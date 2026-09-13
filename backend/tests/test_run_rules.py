@@ -51,7 +51,8 @@ def test_cdc_numbers_are_catalogued():
         "capitaineries.overpass_throttle_s", "capitaineries.merge_km",
         "amp.visit_url_must_differ", "amp.min_zoom", "amp.bbox_max_deg",
         "shared.dedup_dist_km", "shared.no_snap",
-        "projects.tinyfish_agents", "marinas.place_match_m",
+        "projects.tinyfish_agents", "projects.listing_judge_concurrency",
+        "marinas.place_match_m",
         "formalities.geocode_candidate_limit", "formalities.basin_split_km",
         "formalities.peer_near_km", "formalities.listing_name_sim_mid",
         "shared.extract_agree_sim", "shared.llm_geocode_min_confidence",
@@ -83,6 +84,7 @@ def test_defaults_match_code_constants():
     from app.services.marina_maps_place import MAX_PLACE_DISTANCE_M
     assert catalog_default("marinas.place_match_m") == MAX_PLACE_DISTANCE_M
     assert catalog_default("projects.tinyfish_agents") == 2
+    assert catalog_default("projects.listing_judge_concurrency") == 2
     assert catalog_default("shared.extract_agree_sim") == 0.55
     assert catalog_default("shared.llm_geocode_min_confidence") == 0.4
     assert catalog_default("shared.content_changed_sim") == 0.95

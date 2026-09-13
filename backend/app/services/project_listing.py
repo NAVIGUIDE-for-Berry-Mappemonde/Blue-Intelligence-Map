@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from app.services.master_seeds import SKIP_LISTING_NETLOCS, domain_of
+from app.services.master_seeds import (
+    SKIP_LISTING_NETLOCS, domain_of, is_shared_hub, name_owns_hub,
+)
 from app.static_data.seeds import CRAWL_BLACKLIST, CURATED_SEEDS, URL_PATTERNS
 
 LISTING_JUDGE_CAP = 5
@@ -185,7 +187,13 @@ def apply_learned_listings(seeds: list[dict], extras: list[dict] | None) -> list
         item = dict(seed)
         d = domain_of(item.get("url"))
         n = (item.get("name") or "").strip().lower()
-        learned = by_domain.get(d) or by_name.get(n)
+        learned = by_name.get(n) if n else None
+        if not learned and d:
+            # Un catalogue mémorisé sur oceandecade.org n'est pas celui de BMKG.
+            if is_shared_hub(d) and not name_owns_hub(item.get("name") or "", d):
+                learned = None
+            else:
+                learned = by_domain.get(d)
         if learned:
             item["url"] = learned
             item["listing_kind"] = "projects_index"

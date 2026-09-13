@@ -84,6 +84,7 @@ class SettingsBody(BaseModel):
     follow_the_money: bool | None = None
     max_partner_orgs: int | None = None
     discover_concurrency: int | None = None
+    listing_judge_concurrency: int | None = None
     saturation_limit: int | None = None
     rescan_after_days: float | None = None
     marina_search_radius_nm: float | None = None

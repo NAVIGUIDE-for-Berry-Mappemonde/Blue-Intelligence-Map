@@ -205,6 +205,24 @@ def test_apply_learned_listings_overlays_v1_home():
     assert needs_listing_hop(out[0]) is False
 
 
+def test_apply_learned_listings_does_not_stamp_hub_on_hosted_org():
+    seeds = [
+        {"name": "BMKG", "url": "https://oceandecade.org/", "listing_kind": "homepage"},
+        {"name": "Ocean Decade", "url": "https://oceandecade.org/", "listing_kind": "homepage"},
+    ]
+    extras = [{
+        "name": "Ocean Decade",
+        "url": "https://oceandecade.org/decade-actions/",
+        "domain": "oceandecade.org",
+        "listing_kind": "projects_index",
+    }]
+    out = {s["name"]: s for s in apply_learned_listings(seeds, extras)}
+    assert out["BMKG"]["url"] == "https://oceandecade.org/"
+    assert out["BMKG"]["listing_kind"] == "homepage"
+    assert out["Ocean Decade"]["url"] == "https://oceandecade.org/decade-actions/"
+    assert out["Ocean Decade"]["listing_kind"] == "projects_index"
+
+
 def test_apply_learned_listings_keeps_hygiene_not_leaf():
     seeds = [
         {"name": "Example Ocean", "url": "https://example.org/", "listing_kind": "homepage"},
@@ -297,6 +315,71 @@ def test_home_n1_finds_listing_then_fiches(monkeypatch):
     assert any(d.get("listing_kind") == "projects_index" for d in remembered)
     assert any(d.get("url") == "https://example.org/projects/" for d in remembered)
     assert sw.db.projects.docs == []
+
+
+def test_shared_hub_resolves_official_site_before_listing(monkeypatch):
+    sw = _swarm()
+    seen = {"official": [], "listing": []}
+    seed = {
+        "name": "Agency for Meteorology (BMKG) – Indonesia",
+        "url": "https://oceandecade.org/",
+        "listing_kind": "homepage",
+    }
+
+    async def fake_official(s):
+        seen["official"].append(s["url"])
+        assert s["name"] == seed["name"]
+        return "https://www.bmkg.go.id/"
+
+    async def fake_listing(s):
+        seen["listing"].append(s["url"])
+        assert s["url"] == "https://www.bmkg.go.id/"
+        return "https://www.bmkg.go.id/projects/"
+
+    async def fake_fiche_crawl(s, max_urls):
+        assert s["url"] == "https://www.bmkg.go.id/projects/"
+        return ["https://www.bmkg.go.id/projects/coral"]
+
+    async def boom(*a, **k):
+        raise AssertionError("should not fall back to hub search")
+
+    monkeypatch.setattr(sw, "_resolve_official_home", fake_official)
+    monkeypatch.setattr(sw, "_resolve_listing", fake_listing)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", boom)
+    monkeypatch.setattr(sp, "serper_search", boom)
+
+    queued = _run(_queued(sw, seed))
+    assert seen["official"] == ["https://oceandecade.org/"]
+    assert seen["listing"] == ["https://www.bmkg.go.id/"]
+    assert [i["url"] for i in queued] == ["https://www.bmkg.go.id/projects/coral"]
+    assert sw.db.projects.docs == []
+
+
+def test_ocean_decade_skips_official_site_search(monkeypatch):
+    sw = _swarm()
+    seed = {"name": "Ocean Decade", "url": "https://oceandecade.org/",
+            "listing_kind": "homepage"}
+    seen = {"official": 0}
+
+    async def fake_official(*a, **k):
+        seen["official"] += 1
+        raise AssertionError("Ocean Decade owns the hub")
+
+    async def fake_listing(s):
+        assert s["url"] == "https://oceandecade.org/"
+        return "https://oceandecade.org/decade-actions/"
+
+    async def fake_fiche_crawl(s, max_urls):
+        return ["https://oceandecade.org/actions/one"]
+
+    monkeypatch.setattr(sw, "_resolve_official_home", fake_official)
+    monkeypatch.setattr(sw, "_resolve_listing", fake_listing)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    queued = _run(_queued(sw, seed))
+    assert seen["official"] == 0
+    assert [i["url"] for i in queued] == ["https://oceandecade.org/actions/one"]
 
 
 def test_listing_search_retry_blacklists_eliminated(monkeypatch):
