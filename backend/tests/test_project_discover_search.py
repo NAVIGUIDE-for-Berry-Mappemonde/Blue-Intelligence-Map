@@ -111,6 +111,17 @@ def test_filter_exclude_urls_skips_already_eliminated():
     assert out == ["https://example.org/projects/kelp"]
 
 
+def test_filter_soft_keeps_research_when_no_project_path():
+    hits = [
+        {"url": "https://scripps.edu/science/earth-section/"},
+        {"url": "https://scripps.edu/news/expedition"},
+        {"url": "https://other.edu/science/ignored"},
+    ]
+    seed = {"name": "Scripps", "url": "https://scripps.edu/"}
+    out = filter_discover_urls(hits, seed, 10)
+    assert out == ["https://scripps.edu/science/earth-section/"]
+
+
 def test_filter_drops_news_and_other_domain():
     hits = [
         {"url": "https://example.org/projects/coral"},

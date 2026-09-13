@@ -21,8 +21,9 @@ from app.static_data.seeds import (
 )
 from app.services.master_seeds import (
     SKIP_LISTING_NETLOCS, domain_matches_org, domain_of, is_known_funder,
-    is_publisher_host, is_shared_hub, is_shared_hub_home, listing_url_for_name,
-    name_owns_hub, official_site_query, official_site_retry_query, seeds_for_run,
+    is_publisher_host, is_shared_hub, listing_url_for_name,
+    name_owns_hub, needs_official_home, official_site_query,
+    official_site_retry_query, seeds_for_run,
 )
 from app.core.tinyfish import (
     DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S,
@@ -153,7 +154,31 @@ def filter_discover_urls(hits, seed, max_urls, *, exclude_urls=None) -> list[str
         elif _is_skip_listing_domain(d):
             continue
         path = urlparse(href).path
-        if not is_project_fiche_path(path, apply_blacklist=True):
+        if href in seen:
+            continue
+        if is_project_fiche_path(path, apply_blacklist=True):
+            seen.add(href)
+            urls.append(href)
+            if cap and len(urls) >= cap:
+                break
+    if urls:
+        return urls[:cap]
+    # Même hôte, page profonde, pas news/donate : Scripps /research/… n'a pas /project/.
+    for hit in hits or []:
+        raw = _hit_url(hit)
+        if not raw.startswith("http"):
+            continue
+        href = raw.split("#")[0].split("?")[0]
+        key = href.rstrip("/")
+        if key in excluded or (seed_url and key == seed_url):
+            continue
+        d = domain_of(href)
+        if host and d != host:
+            continue
+        if not host and _is_skip_listing_domain(d):
+            continue
+        path = urlparse(href).path
+        if not _is_soft_fiche_path(path):
             continue
         if href in seen:
             continue
@@ -162,6 +187,17 @@ def filter_discover_urls(hits, seed, max_urls, *, exclude_urls=None) -> list[str
         if cap and len(urls) >= cap:
             break
     return urls[:cap]
+
+
+def _is_soft_fiche_path(path: str) -> bool:
+    """Page interne utilisable si aucun motif /project/ n'a matché."""
+    if not path:
+        return False
+    low = path.lower()
+    if any(b in low for b in CRAWL_BLACKLIST):
+        return False
+    parts = [p for p in path.strip("/").split("/") if p]
+    return len(parts) >= 2
 
 
 def official_site_from_hits(hits, funder_name: str = "") -> str:
@@ -177,7 +213,7 @@ def official_site_from_hits(hits, funder_name: str = "") -> str:
             continue
         href = raw.split("#")[0].split("?")[0]
         d = domain_of(href)
-        if _is_skip_listing_domain(d) or is_shared_hub(d) or is_publisher_host(d):
+        if _is_skip_listing_domain(d) or is_publisher_host(d):
             continue
         parsed = urlparse(href)
         if not parsed.netloc:
@@ -197,7 +233,7 @@ def agent_host_is_worthwhile(url: str, name: str) -> bool:
     if not (url or "").strip():
         return False
     d = domain_of(url)
-    if not d or _is_skip_listing_domain(d) or is_shared_hub(d) or is_publisher_host(d):
+    if not d or _is_skip_listing_domain(d) or is_publisher_host(d):
         return False
     return domain_matches_org(url, name)
 
@@ -655,12 +691,12 @@ class Swarm:
     # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
         seed = dict(seed or {})
-        if is_shared_hub_home(seed) or not (seed.get("url") or "").strip():
+        if needs_official_home(seed):
             home = await self._resolve_official_home(seed)
             if home:
                 seed["url"] = home
                 seed["listing_kind"] = "homepage"
-            elif is_shared_hub_home(seed) or not (seed.get("url") or "").strip():
+            else:
                 return
         start_url = (seed.get("url") or "").strip()
         if not start_url:

@@ -388,6 +388,37 @@ def test_ocean_decade_skips_official_site_search(monkeypatch):
     assert [i["url"] for i in queued] == ["https://oceandecade.org/actions/one"]
 
 
+def test_borrowed_surfrider_home_resolves_official_site(monkeypatch):
+    sw = _swarm()
+    seen = {"official": []}
+    seed = {
+        "name": "California Coastal Commission",
+        "url": "https://surfrider.org/",
+        "listing_kind": "homepage",
+    }
+
+    async def fake_official(s):
+        seen["official"].append(s["url"])
+        return "https://www.coastal.ca.gov/"
+
+    async def fake_listing(s):
+        assert s["url"] == "https://www.coastal.ca.gov/"
+        return None
+
+    async def fake_fiche_crawl(s, max_urls):
+        assert s["url"] == "https://www.coastal.ca.gov/"
+        return ["https://www.coastal.ca.gov/programs/whale-tail/"]
+
+    monkeypatch.setattr(sw, "_resolve_official_home", fake_official)
+    monkeypatch.setattr(sw, "_resolve_listing", fake_listing)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    queued = _run(_queued(sw, seed))
+    assert seen["official"] == ["https://surfrider.org/"]
+    assert [i["url"] for i in queued] == [
+        "https://www.coastal.ca.gov/programs/whale-tail/"]
+    assert sw.db.projects.docs == []
+
+
 def test_listing_search_retry_blacklists_eliminated(monkeypatch):
     sw = _swarm()
     queries = []
@@ -864,8 +895,8 @@ def test_publisher_or_missing_host_skips_tinyfish_agents(monkeypatch):
     queued = _run(_queued(sw, seed))
     assert queued == []
     msgs = " ".join(e["msg"] for e in sw.logs)
-    assert "TinyFish Agent listing sauté" in msgs
-    assert "TinyFish Agent fiches sauté" in msgs
+    assert "site officiel introuvable" in msgs
+    assert "TinyFish Agent listing" not in msgs or "sauté" in msgs
 
 
 def test_parse_listing_judge_rejects_invented():
