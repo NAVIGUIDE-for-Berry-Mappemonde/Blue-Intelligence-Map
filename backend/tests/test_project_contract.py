@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.core.llm import heuristic_gatekeeper
+from app.core.llm import heuristic_gatekeeper, s_ocean_meets_min
 from app.core.project_geo import site_publishable, valid_coords
 from app.services.swarm_pipeline import Swarm
 
@@ -96,6 +96,17 @@ def test_deploy_clear_db_raises():
             await sw.deploy("test", True, {}, False)
 
     asyncio.run(run())
+
+
+def test_s_ocean_meets_min_default_floor():
+    assert s_ocean_meets_min(None) is False
+    assert s_ocean_meets_min("x") is False
+    assert s_ocean_meets_min(0.1) is False
+    assert s_ocean_meets_min(0.49) is False
+    assert s_ocean_meets_min(0.5) is True
+    assert s_ocean_meets_min(0.91) is True
+    assert s_ocean_meets_min(0.4, {"min_marine_score": 0.3}) is True
+    assert s_ocean_meets_min(0.4, {"min_marine_score": 0.5}) is False
 
 
 def test_heuristic_gatekeeper_uses_min_marine_score():

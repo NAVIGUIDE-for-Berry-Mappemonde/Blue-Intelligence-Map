@@ -10,7 +10,9 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from app.core.llm import extract_project, gatekeeper_check, has_llm
+from app.core.llm import (
+    extract_project, gatekeeper_check, has_llm, s_ocean_meets_min,
+)
 from app.static_data.categories import normalize_category
 from app.core.dedup import is_duplicate
 from app.core.extract import extract_cascade
@@ -1863,6 +1865,28 @@ class Swarm:
 
             self.agent_log(aid, f"Extraction + S_ocean scoring ({'LLM cascade' if has_llm(self.settings) else 'heuristic'})")
             proj = await extract_project(page_title, llm_text, meta_desc, url, funder, self.settings, ext_links=ext_links)
+
+            if not s_ocean_meets_min(proj.get("s_ocean"), self.settings):
+                min_s = float(self.settings.get("min_marine_score", 0.5))
+                reason = (
+                    f"S_ocean {proj.get('s_ocean')} < min_marine_score {min_s}"
+                )
+                self.set_agent(aid, status="REJECTED")
+                self.agent_log(aid, f"REJECTED: {reason}")
+                await self._write_verdict(
+                    item, "rejected",
+                    title=proj.get("title") or page_title,
+                    reason=reason, engine=proj.get("engine"),
+                    s_ocean=proj.get("s_ocean"),
+                )
+                await self._emit("rejected", url=url, reason=reason,
+                                 engine=proj.get("engine"))
+                await self.telemetry(
+                    url, proj.get("engine") or "Extractor", "REJECTED",
+                    (time.time() - t0) * 1000, 0, reason)
+                await self.add_failed(url, source, funder, reason, "s_ocean")
+                self._bump_saturation(False)
+                return {"status": "rejected", "url": url}
 
             lat, lon = proj.get("latitude"), proj.get("longitude")
             geo_src = "extracted"
