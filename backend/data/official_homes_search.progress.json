@@ -1,0 +1,25 @@
+{
+  "updated_at": "2026-09-13T04:27:51.798577+00:00",
+  "phase": "b_official_homes",
+  "status": "done",
+  "done": 516,
+  "todo": 0,
+  "ok": 389,
+  "miss": 125,
+  "errors": 0,
+  "catalog": "/workspace/backend/data/master_seeds.json",
+  "journal": "/workspace/backend/data/official_homes_search.jsonl",
+  "summary": {
+    "n": 850,
+    "n_with_url": 567,
+    "n_crawl": 530,
+    "n_resolve": 315,
+    "n_skip": 5,
+    "n_official": 567,
+    "n_borrowed": 125,
+    "n_unknown_home": 158,
+    "n_compound": 190,
+    "n_projects_index": 42,
+    "n_home_only": 4
+  }
+}

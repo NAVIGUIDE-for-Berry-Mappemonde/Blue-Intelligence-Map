@@ -102,6 +102,12 @@ def test_needs_listing_hop_skips_known_and_curated():
     assert needs_listing_hop(rare) is False
     mer = next(s for s in CURATED_SEEDS if "fondationdelamer" in s["url"])
     assert needs_listing_hop(mer) is False
+    assert "nos-programmes" in mer["url"]
+    tagged_home = {"url": "https://example.org/", "listing_kind": "projects_index"}
+    assert needs_listing_hop(tagged_home) is True
+    ifremer = next(s for s in CURATED_SEEDS if s["name"] == "IFREMER")
+    assert needs_listing_hop(ifremer) is False
+    assert ifremer.get("listing_kind") == "home_only"
 
 
 def test_pick_listing_prefers_shortest_index():
@@ -361,6 +367,26 @@ def test_shared_hub_resolves_official_site_before_listing(monkeypatch):
     assert seen["listing"] == ["https://www.bmkg.go.id/"]
     assert [i["url"] for i in queued] == ["https://www.bmkg.go.id/projects/coral"]
     assert sw.db.projects.docs == []
+
+
+def test_classified_borrowed_hub_skips_live_official_search(monkeypatch):
+    sw = _swarm()
+    seed = {
+        "name": "Agency for Meteorology (BMKG) – Indonesia",
+        "url": "https://oceandecade.org/",
+        "listing_kind": "unknown",
+        "home_status": "borrowed_hub",
+        "queue": "resolve",
+    }
+
+    async def boom(*a, **k):
+        raise AssertionError("classified seed must not Search or Agent")
+
+    monkeypatch.setattr(sw, "_resolve_official_home", boom)
+    monkeypatch.setattr(sw, "_resolve_listing", boom)
+    monkeypatch.setattr(sw, "_crawl_discover", boom)
+    queued = _run(_queued(sw, seed))
+    assert queued == []
 
 
 def test_ocean_decade_skips_official_site_search(monkeypatch):

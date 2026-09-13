@@ -1,0 +1,26 @@
+{
+  "updated_at": "2026-09-13T05:58:08.550636+00:00",
+  "phase": "c_project_listings",
+  "status": "done",
+  "done": 480,
+  "todo": 0,
+  "ok": 0,
+  "miss": 2,
+  "errors": 53,
+  "summary": {
+    "n": 850,
+    "n_with_url": 567,
+    "n_crawl": 530,
+    "n_resolve": 315,
+    "n_skip": 5,
+    "n_official": 567,
+    "n_borrowed": 125,
+    "n_unknown_home": 158,
+    "n_compound": 190,
+    "n_projects_index": 145,
+    "n_home_only": 4,
+    "n_homepage": 418,
+    "n_listing_search": 103,
+    "n_split": 0
+  }
+}

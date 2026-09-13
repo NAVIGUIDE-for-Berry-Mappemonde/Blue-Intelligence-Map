@@ -21,9 +21,12 @@ from app.static_data.seeds import (
 )
 from app.services.master_seeds import (
     SKIP_LISTING_NETLOCS, domain_matches_org, domain_of, is_known_funder,
-    is_publisher_host, is_shared_hub, listing_url_for_name,
-    name_owns_hub, needs_official_home, official_site_query,
-    official_site_retry_query, seeds_for_run,
+    is_publisher_host, is_shared_hub, name_owns_hub, needs_official_home,
+    official_site_query, official_site_retry_query, seeds_for_run,
+)
+from app.services.seed_catalog import (
+    FTM_DISCOVER, FTM_SEARCH, decide_follow_the_money_partner,
+    find_catalog_seed,
 )
 from app.core.tinyfish import (
     DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S,
@@ -691,7 +694,30 @@ class Swarm:
     # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
         seed = dict(seed or {})
+        queue = (seed.get("queue") or "").strip().lower()
+        if queue in {"resolve", "skip"}:
+            self.log(
+                f"[{seed.get('name')}] skipped — file {queue} (pas d'Agent)",
+                "warn",
+            )
+            return
+        classified = bool(seed.get("home_status") or seed.get("queue"))
+        status = (seed.get("home_status") or "").strip().lower()
+        if classified and status in {
+            "borrowed_hub", "publisher", "social", "empty", "unknown",
+        }:
+            self.log(
+                f"[{seed.get('name')}] skipped — home_status={status}",
+                "warn",
+            )
+            return
         if needs_official_home(seed):
+            if classified:
+                self.log(
+                    f"[{seed.get('name')}] skipped — home déjà classée, pas de Search live",
+                    "warn",
+                )
+                return
             home = await self._resolve_official_home(seed)
             if home:
                 seed["url"] = home
@@ -984,23 +1010,32 @@ class Swarm:
         name = seed.get("name") or ""
         for item in self.master_seeds or []:
             same = domain and domain_of(item.get("url")) == domain
-            if same and is_shared_hub(domain) and not name_owns_hub(
-                    item.get("name") or "", domain):
+            if same and is_shared_hub(domain) and not (
+                name_owns_hub(item.get("name") or "", domain)
+                or domain_matches_org(domain, item.get("name") or "")
+            ):
                 same = False
             if same or (name and (item.get("name") or "") == name):
                 item["url"] = listing_url
+                item["listing_url"] = listing_url
                 item["listing_kind"] = "projects_index"
+                if item.get("queue") != "skip":
+                    item["queue"] = "crawl"
                 break
         if not domain:
             return
         try:
+            key = {"name": name} if name else {"domain": domain}
             await self.db.master_seeds.update_one(
-                {"domain": domain},
+                key,
                 {"$set": {
                     "name": name,
                     "url": listing_url,
+                    "listing_url": listing_url,
                     "domain": domain,
                     "listing_kind": "projects_index",
+                    "home_status": "official",
+                    "queue": "crawl",
                     "source": "listing_hop",
                     "ts": now_iso(),
                 },
@@ -1457,17 +1492,26 @@ class Swarm:
             retry_query=retry_query)
 
     async def _search_partner_site(self, name: str, log=None) -> str:
+        """Même Search que l'étape B : « official site », pas « marine conservation »."""
         seed = {"name": name, "url": ""}
-        query = project_search_query(seed)
+        query = official_site_query(name)
+        retry = official_site_retry_query(name)
         tf_hits, sp_hits = await asyncio.gather(
             self._tf_search_discover(query, seed, log=log),
             self._serper_discover(query, log=log),
         )
-        site = official_site_from_hits(
-            list(tf_hits or []) + list(sp_hits or []), funder_name=name)
+        hits = list(tf_hits or []) + list(sp_hits or [])
+        site = official_site_from_hits(hits, funder_name=name)
+        if not site and retry:
+            tf2, sp2 = await asyncio.gather(
+                self._tf_search_discover(retry, seed, log=log),
+                self._serper_discover(retry, log=log),
+            )
+            hits = list(tf2 or []) + list(sp2 or []) + hits
+            site = official_site_from_hits(hits, funder_name=name)
         self.log(
-            f"Follow the Money: Search '{name}' → {site or 'aucun site'} "
-            f"(serper {self._serper_queries})"
+            f"Follow the Money: Search official site '{name}' → "
+            f"{site or 'aucun site'} (serper {self._serper_queries})"
         )
         return site
 
@@ -1490,33 +1534,67 @@ class Swarm:
                     pass
 
     def _queue_partner(self, name: str, purl: str):
+        catalog = self.master_seeds or MASTER_SEEDS
+        decision = decide_follow_the_money_partner(name, purl, catalog=catalog)
+        if decision.get("action") != FTM_DISCOVER or not decision.get("seed"):
+            return
+        self._queue_partner_seed(decision["seed"])
+
+    def _ftm_new_org_blocked(self, name: str, url: str | None = None) -> bool:
+        catalog = self.master_seeds or MASTER_SEEDS
+        if find_catalog_seed(catalog, name, url):
+            return False
+        cap = int(self.settings.get("max_partner_orgs", 5))
+        return self.new_partner_count >= cap
+
+    def _queue_partner_seed(self, seed: dict):
         if not self.running or not self.settings.get("follow_the_money", True):
             return
+        purl = (seed.get("url") or "").strip()
+        name = (seed.get("name") or "").strip()
         domain = domain_of(purl)
-        if not domain:
+        if not domain or not name:
             return
         hosted_on_hub = is_shared_hub(domain) and not name_owns_hub(name, domain)
-        if domain in self.partner_domains and not hosted_on_hub:
+        if hosted_on_hub:
+            self.log(
+                f"Follow the Money: skip '{name}' — hub {domain} (pas de crawl)",
+                "warn",
+            )
             return
-        seeds = self.master_seeds or MASTER_SEEDS
-        known_seed = next((s for s in seeds if is_known_funder([s], name, purl)), None)
+        if domain in self.partner_domains:
+            return
+        catalog = self.master_seeds or MASTER_SEEDS
+        known_seed = find_catalog_seed(catalog, name, purl)
         known = known_seed is not None
         cap = int(self.settings.get("max_partner_orgs", 5))
         if not known:
             if self.new_partner_count >= cap:
                 return
             self.new_partner_count += 1
-            self.master_seeds.append({
-                "name": name, "url": purl,
-                "listing_kind": "homepage", "source": "follow_the_money",
+            stored = {
+                "name": name,
+                "url": purl,
+                "listing_kind": seed.get("listing_kind") or "homepage",
+                "home_status": seed.get("home_status") or "official",
+                "queue": seed.get("queue") or "crawl",
+                "source": "follow_the_money",
                 "project_count": 0,
-            })
+            }
+            if seed.get("home_url"):
+                stored["home_url"] = seed["home_url"]
+            if seed.get("listing_url"):
+                stored["listing_url"] = seed["listing_url"]
+            self.master_seeds.append(stored)
             try:
                 asyncio.create_task(self.db.master_seeds.update_one(
                     {"domain": domain},
                     {"$set": {
                         "name": name, "url": purl, "domain": domain,
                         "source": "follow_the_money",
+                        "listing_kind": stored["listing_kind"],
+                        "home_status": stored["home_status"],
+                        "queue": stored["queue"],
                         "ts": now_iso(),
                     },
                      "$setOnInsert": {"_id": str(uuid.uuid4())}},
@@ -1526,33 +1604,53 @@ class Swarm:
             kind = f"new org ({self.new_partner_count}/{cap})"
         else:
             kind = "known v1 — queued (cap does not apply)"
-        if not hosted_on_hub:
-            self.partner_domains.add(domain)
+        self.partner_domains.add(domain)
         self.partner_count = len(self.partner_domains)
-        self.log(f"Follow the Money: {kind} '{name}' ({domain}) → recursive discovery", "success")
-        label = known_seed["name"] if known_seed else f"{name} (partner)"
-        seed = {"name": label, "url": purl}
-        self.recursive_tasks.append(asyncio.create_task(self._discover(seed, 6, depth=1)))
+        self.log(
+            f"Follow the Money: {kind} '{name}' ({domain}) → recursive discovery",
+            "success",
+        )
+        if known_seed and known_seed.get("source") != "follow_the_money":
+            label = known_seed["name"]
+        elif known:
+            label = name
+        else:
+            label = f"{name} (partner)"
+        discover = {
+            "name": label,
+            "url": purl,
+            "listing_kind": seed.get("listing_kind") or "homepage",
+            "home_status": seed.get("home_status") or "official",
+            "queue": seed.get("queue") or "crawl",
+        }
+        if seed.get("listing_url"):
+            discover["listing_url"] = seed["listing_url"]
+        self.recursive_tasks.append(
+            asyncio.create_task(self._discover(discover, 6, depth=1)))
 
     async def _follow_the_money(self, proj: dict, depth: int):
         if depth != 0:
             return
-        seeds = self.master_seeds or MASTER_SEEDS
+        catalog = self.master_seeds or MASTER_SEEDS
         for p in (proj.get("partners") or []):
             if not isinstance(p, dict) or not p.get("name"):
                 continue
             name = p["name"]
-            purl = (p.get("url") or "").strip() or listing_url_for_name(seeds, name) or ""
-            if not purl:
-                known = is_known_funder(seeds, name, None)
-                if not known:
-                    cap = int(self.settings.get("max_partner_orgs", 5))
-                    if self.new_partner_count >= cap:
-                        continue
-                purl = await self._search_partner_site(name)
-                if not purl:
+            purl = (p.get("url") or "").strip() or None
+            decision = decide_follow_the_money_partner(name, purl, catalog=catalog)
+            if decision.get("action") == FTM_SEARCH or decision.get("needs_search"):
+                if self._ftm_new_org_blocked(name, purl):
                     continue
-            self._queue_partner(name, purl)
+                home = await self._search_partner_site(name)
+                decision = decide_follow_the_money_partner(
+                    name, purl, catalog=catalog,
+                    searched_home=home, did_search=True,
+                )
+            if decision.get("action") != FTM_DISCOVER or not decision.get("seed"):
+                reason = decision.get("reason") or "skip"
+                self.log(f"Follow the Money: skip '{name}' ({reason})")
+                continue
+            self._queue_partner_seed(decision["seed"])
 
     async def _process_url(self, item):
         if not self.run_id:

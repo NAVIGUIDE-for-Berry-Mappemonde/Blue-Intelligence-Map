@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Construit backend/data/master_seeds.json (CDC Projets C5).
 
-Union des financeurs v1 + 21 listings curés. Listing URL = domaine le plus
-fréquent des projets de ce financeur (sinon unknown).
+Préférer `enrich_master_seeds.py` : il classe homes / listes / file Complet.
+Cet export appelle le même enrichissement (plus le vote « domaine le plus
+fréquent » qui collait les organismes sur Decade / Surfrider).
 
 Usage :
+    python3 scripts/enrich_master_seeds.py --from-geojson ../seed/projects.geojson
     python3 scripts/export_master_seeds.py --from-geojson ../seed/projects.geojson
-    python3 scripts/export_master_seeds.py --from-api
-    python3 scripts/export_master_seeds.py --from-mongo
 """
 from __future__ import annotations
 
@@ -60,7 +60,10 @@ def main() -> int:
     seeds = build_master_seeds(projects)
     path = dump_master_seeds(seeds, args.out, source=source)
     queued = seeds_for_run(seeds)
-    print(f"Wrote {path} — {len(seeds)} financeurs ({len(queued)} avec URL → file run)")
+    print(
+        f"Wrote {path} — {len(seeds)} financeurs "
+        f"({len(queued)} file Complet / queue=crawl)"
+    )
     return 0
 
 

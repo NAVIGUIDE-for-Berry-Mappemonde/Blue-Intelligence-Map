@@ -63,7 +63,7 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_shared_hub_home(decade) is False
     assert ms.is_shared_hub_home(team) is False
     assert ms.is_shared_hub_home(aker) is True
-    assert ms.is_shared_hub_home(hub) is False
+    assert ms.is_shared_hub_home(hub) is True
     assert ms.is_shared_hub_home(own) is False
     ccc = {
         "name": "California Coastal Commission",
@@ -98,6 +98,10 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_publisher_host("https://www.bmkg.go.id/") is False
     assert "bmkg" in ms.official_name_tokens(bmkg["name"])
     assert ms.domain_matches_org("https://www.bmkg.go.id/", bmkg["name"]) is True
+    assert ms.domain_matches_org("bmkg.go.id", bmkg["name"]) is True
+    assert ms.domain_matches_org("saveourseas.com", "Save Our Seas Foundation") is True
+    assert ms.domain_matches_org("oceans5.org", "Oceans 5") is True
+    assert ms.domain_matches_org("oceandecade.org", "Ocean Decade Programme SMARTNET") is False
     assert ms.domain_matches_org("https://www.nature.com/", bmkg["name"]) is False
     assert "awi" in ms.official_name_tokens("Alfred Wegener Institute (AWI)")
     assert "awi" in ms.official_name_tokens("Alfred Wegener Institute")
@@ -135,16 +139,39 @@ def test_merge_curated_alias_no_priority():
     assert "priority" not in by["Blue Marine Foundation"]
 
 
-def test_seeds_for_run_keeps_name_only_skips_blank():
+def test_seeds_for_run_only_crawl_ready():
     seeds = [
-        {"name": "P2-big", "url": "https://b.org/", "priority": 2, "project_count": 99},
-        {"name": "P1", "url": "https://a.org/", "priority": 1, "project_count": 1},
-        {"name": "NoURL", "url": None, "priority": 2, "project_count": 50},
+        {"name": "P2-big", "url": "https://b.org/", "home_status": "official",
+         "queue": "crawl", "project_count": 99},
+        {"name": "P1", "url": "https://a.org/", "home_status": "official",
+         "queue": "crawl", "project_count": 1},
+        {"name": "NoURL", "url": None, "home_status": "unknown", "queue": "resolve"},
         {"name": "", "url": None, "project_count": 1},
-        {"name": "Alpha", "url": "https://z.org/", "project_count": 0},
+        {"name": "Alpha", "url": "https://z.org/", "home_status": "official",
+         "queue": "crawl"},
+        {"name": "BMKG", "url": "https://oceandecade.org/",
+         "home_status": "borrowed_hub", "queue": "resolve"},
     ]
     queued = ms.seeds_for_run(seeds)
-    assert [s["name"] for s in queued] == ["Alpha", "NoURL", "P1", "P2-big"]
+    assert [s["name"] for s in queued] == ["Alpha", "P1", "P2-big"]
+
+
+def test_merge_curated_keeps_hosted_on_cordis():
+    v1 = [
+        {"name": "Horizon Europe", "url": None, "project_count": 24,
+         "listing_kind": "unknown", "home_status": "borrowed_hub", "queue": "resolve"},
+        {"name": "CORDIS Europe", "url": "https://cordis.europa.eu/", "project_count": 1},
+    ]
+    curated = [{
+        "name": "CORDIS Europe", "url": "https://cordis.europa.eu/projects/en",
+        "listing_kind": "projects_index", "aliases": [],
+    }]
+    merged = ms.merge_curated(v1, curated)
+    names = {s["name"] for s in merged}
+    assert "CORDIS Europe" in names
+    assert "Horizon Europe" in names
+    hor = next(s for s in merged if s["name"] == "Horizon Europe")
+    assert hor.get("queue") == "resolve"
 
 
 def test_dump_and_load_strip_legacy_priority(tmp_path):
@@ -176,9 +203,19 @@ def test_loaded_catalog_has_v1_scale():
     assert len(CURATED_SEEDS) == 21
     assert CURATED_SEEDS[0]["name"] == "The Ocean Foundation"
     # Sans JSON : repli 21. Avec JSON généré : ~861.
-    assert len(MASTER_SEEDS) >= 700
+    assert len(MASTER_SEEDS) >= 800
     assert all("priority" not in s for s in MASTER_SEEDS)
     assert all("priority" not in s for s in CURATED_SEEDS)
+    queues = {s.get("queue") for s in MASTER_SEEDS}
+    assert "crawl" in queues and "resolve" in queues
+    crawl = [s for s in MASTER_SEEDS if s.get("queue") == "crawl"]
+    # Étape B : homes Search officielles — plus de plafond artificiel < 400.
+    assert len(crawl) >= 500
+    assert not any((s.get("home_status") or "") == "borrowed_hub" for s in crawl)
+    assert sum(
+        1 for s in MASTER_SEEDS
+        if s.get("home_source") in {"search", "review"}
+    ) >= 500
 
 
 def test_follow_the_money_caps_only_new_orgs():
@@ -205,12 +242,18 @@ def test_follow_the_money_caps_only_new_orgs():
         sw._queue_partner("Another New", "https://brand-new.example/")
         await asyncio.sleep(0)
 
-        assert "https://rare.org/our-work/" in discovered
+        assert "https://rare.org/program/fish-forever/" in discovered
+        assert "https://rare.org/our-work/" not in discovered
         assert "https://wild-oysters.org/" in discovered
         assert "https://brand-new.example/" not in discovered
         assert sw.new_partner_count == 1
         extras = sw.db.master_seeds.docs
-        assert any(d.get("domain") == "wild-oysters.org" for d in extras)
+        assert any(
+            d.get("domain") == "wild-oysters.org"
+            and d.get("home_status") == "official"
+            and d.get("queue") == "crawl"
+            for d in extras
+        )
         assert all("priority" not in d for d in extras)
 
     asyncio.run(run())
@@ -250,3 +293,55 @@ def test_follow_the_money_skips_already_queued_domain():
     sw.recursive_tasks = []
     sw._queue_partner("Wild Oysters", "https://wild-oysters.org/tyne/")
     assert sw.recursive_tasks == []
+
+
+def test_follow_the_money_skips_exclude_and_catalog_not_ready():
+    async def run():
+        sw = Swarm(_FakeDB())
+        sw.running = True
+        sw.settings = {"follow_the_money": True, "max_partner_orgs": 5}
+        sw.master_seeds = [{
+            "name": "Drake Enterprise Foundation",
+            "url": "https://drakespm.com/",
+            "home_status": "official",
+            "queue": "skip",
+            "review_action": "no_projects",
+            "listing_kind": "home_only",
+            "name_status": "ok",
+        }]
+        sw.partner_domains = set()
+        sw.recursive_tasks = []
+        discovered = []
+
+        async def fake_discover(seed, max_urls, depth=0):
+            discovered.append(seed["url"])
+
+        sw._discover = fake_discover
+        await sw._follow_the_money({
+            "partners": [
+                {"name": "Unknown", "url": None},
+                {"name": "CEA and CNRS", "url": "https://www.cnrs.fr/"},
+                {"name": "Drake Enterprise Foundation", "url": "https://drakespm.com/"},
+            ],
+        }, depth=0)
+        await asyncio.sleep(0)
+        assert discovered == []
+        assert sw.recursive_tasks == []
+        assert sw.new_partner_count == 0
+
+    asyncio.run(run())
+
+
+def test_follow_the_money_queue_rejects_hub_url():
+    sw = Swarm(_FakeDB())
+    sw.running = True
+    sw.settings = {"follow_the_money": True, "max_partner_orgs": 5}
+    sw.master_seeds = [
+        {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/",
+         "aliases": ["Rare"], "home_status": "official", "queue": "crawl"},
+    ]
+    sw.partner_domains = set()
+    sw.recursive_tasks = []
+    sw._queue_partner("BMKG", "https://oceandecade.org/actions/")
+    assert sw.recursive_tasks == []
+    assert sw.new_partner_count == 0

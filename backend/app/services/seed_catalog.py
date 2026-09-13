@@ -1,0 +1,1165 @@
+"""Catalogue MasterSeeds : audit hors Complet + homes / listes / file.
+
+Ne touche pas `projects`. Enrichit seulement la liste d'entrée (CDC C5 / §18).
+"""
+from __future__ import annotations
+
+import csv
+import json
+import os
+import re
+from collections import Counter, defaultdict
+from pathlib import Path
+from urllib.parse import urlparse
+
+from app.services.master_seeds import (
+    DATA_DIR, NOISE_NAMES, SKIP_LISTING_NETLOCS, domain_of, domain_matches_org,
+    funder_names_from_project, is_noise_name, is_publisher_host,
+    is_shared_hub, listing_url_from_project_urls, name_owns_hub,
+    names_soft_match, now_iso, norm_name,
+)
+from app.services.project_listing import (
+    infer_listing_from_project_urls, is_homepage_url, is_listing_url,
+)
+
+HOME_STATUS_OFFICIAL = "official"
+HOME_STATUS_BORROWED = "borrowed_hub"
+HOME_STATUS_PUBLISHER = "publisher"
+HOME_STATUS_SOCIAL = "social"
+HOME_STATUS_EMPTY = "empty"
+HOME_STATUS_UNKNOWN = "unknown"
+
+NAME_OK = "ok"
+NAME_COMPOUND = "compound"
+NAME_EXCLUDE = "exclude"
+
+QUEUE_CRAWL = "crawl"
+QUEUE_RESOLVE = "resolve"
+QUEUE_SKIP = "skip"
+
+FTM_DISCOVER = "discover"
+FTM_SKIP = "skip"
+FTM_SEARCH = "search"
+
+SEARCH_JOURNAL_PATH = DATA_DIR / "official_homes_search.jsonl"
+SEARCH_PROGRESS_PATH = DATA_DIR / "official_homes_search.progress.json"
+LISTING_JOURNAL_PATH = DATA_DIR / "official_listings_search.jsonl"
+LISTING_PROGRESS_PATH = DATA_DIR / "official_listings_search.progress.json"
+SPLITS_REPORT_PATH = DATA_DIR / "compound_splits.json"
+HOME_REVIEW_PATH = DATA_DIR / "home_reviews.json"
+AUDIT_PATH = DATA_DIR / "master_seeds_audit.json"
+HOME_SOURCE_SEARCH = "search"
+HOME_SOURCE_REVIEW = "review"
+REVIEW_REJECT = "reject"
+REVIEW_NO_PROJECTS = "no_projects"
+REVIEW_KEEP = "keep"
+LISTING_SOURCE_SEARCH = "search"
+LISTING_SOURCE_V1 = "v1_url"
+MIN_SPLIT_PART = 3
+
+SEARCH_HOME_STATUSES = {
+    HOME_STATUS_BORROWED,
+    HOME_STATUS_UNKNOWN,
+    HOME_STATUS_EMPTY,
+    HOME_STATUS_PUBLISHER,
+}
+
+_SEARCH_OVERLAY_FIELDS = (
+    "home_url", "url", "home_status", "home_source", "queue", "listing_kind",
+    "listing_url",
+)
+
+_EXCLUDE_EXACT = NOISE_NAMES | {
+    "in-kind", "in kind", "inkind",
+    "individual supporters and business partners",
+    "shippers, tankers and large vessels",
+    "donor funded, manta trust affiliate, barefoot manta resort, conservation international",
+}
+
+_KEEP_AND = (
+    "gordon and betty",
+    "david and lucile",
+    "jeremy and hannelore",
+    "parks and recreation",
+    "land and natural",
+    "science and technology",
+    "science and engineering",
+    "climate and environment",
+    "food and agriculture",
+    "disease control and prevention",
+    "city and county",
+    "fish and wildlife",
+    "ocean and atmospheric",
+    "oceanic and atmospheric",
+    "marine and environmental",
+    "marine and coastal",
+    "data and information",
+    "education and research",
+    "nature and people",
+    "arts and ",
+    "research and production",
+    "research and innovation",
+    "management and exploitation",
+    "fisheries and oceans",
+    "science and research",
+    "oil and gas",
+    "arctic and antarctic",
+    "conservation and climate",
+)
+
+_ORG_HINT = re.compile(
+    r"\b(foundation|fondation|fund|trust|institut|institute|university|"
+    r"universit|conservancy|alliance|commission|council|agency|society|"
+    r"association|ministry|ministere|centre|center|laboratory|lab)\b",
+    re.I,
+)
+
+def classify_name(name: str) -> str:
+    """ok / compound / exclude — avant tout Search « official site »."""
+    raw = (name or "").strip()
+    if is_noise_name(raw):
+        return NAME_EXCLUDE
+    n = norm_name(raw)
+    if n in _EXCLUDE_EXACT:
+        return NAME_EXCLUDE
+    if n.startswith("in kind") or n.startswith("in-kind") or n.startswith("inkind"):
+        return NAME_EXCLUDE
+    if raw.lower().startswith("multiple ("):
+        return NAME_EXCLUDE
+    display = re.sub(r"\s*\(partner\)\s*$", "", raw, flags=re.I).strip()
+    n = norm_name(display)
+    if display.count(",") >= 2:
+        return NAME_COMPOUND
+    if "," in display:
+        if re.search(
+            r",\s*(ministry|universit|helmholtz|department of|"
+            r"far eastern|mnr\b|gmbh|inc\.?|ltd\.?)\b",
+            display,
+            re.I,
+        ) and display.count(",") == 1:
+            pass
+        else:
+            parts = [p.strip() for p in display.split(",")]
+            if any(_ORG_HINT.search(p) for p in parts if p):
+                return NAME_COMPOUND
+    if re.search(r"\band\b", display, re.I):
+        low = n
+        if any(k in low for k in _KEEP_AND):
+            return NAME_OK
+        return NAME_COMPOUND
+    return NAME_OK
+
+
+def _best_own_domain(name: str, urls: list[str]) -> tuple[str, str]:
+    """(domaine propriétaire, raison) ou ('', '')."""
+    counts: Counter[str] = Counter()
+    social = 0
+    for u in urls or []:
+        d = domain_of(u)
+        if not d:
+            continue
+        if d in SKIP_LISTING_NETLOCS:
+            social += 1
+            continue
+        counts[d] += 1
+    if not counts and social:
+        return "", HOME_STATUS_SOCIAL
+    if not counts:
+        return "", HOME_STATUS_EMPTY
+    own = []
+    for d, n in counts.items():
+        if is_publisher_host(d):
+            continue
+        if domain_matches_org(d, name) or name_owns_hub(name, d):
+            own.append((n, -len(d), d))
+    if own:
+        own.sort(reverse=True)
+        return own[0][-1], HOME_STATUS_OFFICIAL
+    if all(is_publisher_host(d) for d in counts):
+        return "", HOME_STATUS_PUBLISHER
+    if all(is_shared_hub(d) for d in counts):
+        return "", HOME_STATUS_BORROWED
+    if any(is_shared_hub(d) for d in counts) and not own:
+        return "", HOME_STATUS_BORROWED
+    return "", HOME_STATUS_UNKNOWN
+
+
+def classify_home(name: str, urls: list[str]) -> dict:
+    """Classe la home sans écrire de catalogue emprunté."""
+    own, status = _best_own_domain(name, urls)
+    borrowed = ""
+    hubs = [
+        domain_of(u) for u in (urls or [])
+        if is_shared_hub(u) and domain_of(u)
+    ]
+    if hubs:
+        borrowed = Counter(hubs).most_common(1)[0][0]
+    home_url = f"https://{own}/" if own else None
+    if not home_url and status == HOME_STATUS_OFFICIAL:
+        status = HOME_STATUS_UNKNOWN
+    return {
+        "home_status": status,
+        "home_url": home_url,
+        "borrowed_domain": borrowed or None,
+        "home_source": "v1_url" if home_url else "",
+    }
+
+
+def infer_own_listing(name: str, urls: list[str], home_url: str | None) -> str | None:
+    """Préfixe commun des fiches *sur le domaine propriétaire*."""
+    host = domain_of(home_url)
+    if not host:
+        return None
+    if not domain_matches_org(home_url or host, name) and not name_owns_hub(name, host):
+        return None
+    own = [u for u in (urls or []) if domain_of(u) == host]
+    if len(own) < 2:
+        return None
+    # La home est déjà officielle : on ne refiltre pas via les hubs fréquents
+    # (fondationdelamer.org porterait sinon trop de noms v1).
+    inferred = infer_listing_from_project_urls(own, name, allow_shared_hub=True)
+    if not inferred:
+        return None
+    if domain_of(inferred) != host:
+        return None
+    if not is_listing_url(inferred):
+        return None
+    return inferred
+
+
+def _curated_listing_kind(c: dict) -> str:
+    kind = (c.get("listing_kind") or "").strip().lower()
+    if kind in {"projects_index", "home_only", "homepage", "unknown"}:
+        return kind
+    url = (c.get("url") or "").strip()
+    if url and is_listing_url(url) and not is_homepage_url(url):
+        return "projects_index"
+    return "homepage"
+
+
+def enrich_v1_seed(name: str, urls: list[str], project_count: int) -> dict:
+    name_status = classify_name(name)
+    home = classify_home(name, urls)
+    listing = None
+    if home["home_status"] == HOME_STATUS_OFFICIAL:
+        listing = infer_own_listing(name, urls, home["home_url"])
+        if not listing:
+            # Racine du domaine propriétaire (pas un hub).
+            listing = listing_url_from_project_urls(urls, name)
+            if listing and domain_of(listing) != domain_of(home["home_url"]):
+                listing = None
+            if listing and is_listing_url(listing):
+                pass
+            elif listing:
+                listing = None
+    if listing:
+        listing_kind = "projects_index"
+        url = listing
+    elif home["home_url"]:
+        listing_kind = "homepage"
+        url = home["home_url"]
+    else:
+        listing_kind = "unknown"
+        url = None
+    if name_status == NAME_EXCLUDE:
+        queue = QUEUE_SKIP
+    elif name_status == NAME_COMPOUND:
+        queue = QUEUE_RESOLVE
+    elif home["home_status"] == HOME_STATUS_OFFICIAL and url:
+        queue = QUEUE_CRAWL
+    else:
+        queue = QUEUE_RESOLVE
+    return {
+        "name": name,
+        "url": url,
+        "listing_kind": listing_kind,
+        "source": "v1",
+        "project_count": int(project_count or 0),
+        "home_url": home["home_url"],
+        "listing_url": listing,
+        "home_status": home["home_status"],
+        "name_status": name_status,
+        "queue": queue,
+        "borrowed_domain": home["borrowed_domain"],
+        "home_source": home["home_source"] or ("inferred" if listing else ""),
+    }
+
+
+def build_v1_catalog(projects: list[dict]) -> list[dict]:
+    buckets: dict[str, dict] = defaultdict(lambda: {"urls": [], "count": 0})
+    for doc in projects:
+        url = (doc.get("url") or "").strip()
+        for name in funder_names_from_project(doc):
+            if is_noise_name(name):
+                continue
+            buckets[name]["count"] += 1
+            if url:
+                buckets[name]["urls"].append(url)
+    return [
+        enrich_v1_seed(name, bucket["urls"], bucket["count"])
+        for name, bucket in buckets.items()
+    ]
+
+
+def merge_curated_catalog(v1_seeds: list[dict], curated: list[dict] | None = None) -> list[dict]:
+    """Union nom/alias seulement : un hébergé CORDIS n'est plus jeté."""
+    if curated is None:
+        from app.static_data.seeds import CURATED_SEEDS
+        curated = CURATED_SEEDS
+    out: list[dict] = []
+    used = set()
+
+    def _matches(v: dict, c: dict) -> bool:
+        return names_soft_match(c["name"], v.get("name") or "", c.get("aliases") or [])
+
+    for c in curated:
+        matches = [v for v in v1_seeds if _matches(v, c)]
+        kind = _curated_listing_kind(c)
+        listing_url = c["url"] if kind == "projects_index" else None
+        if kind == "projects_index" and is_homepage_url(c.get("url")):
+            kind = "homepage"
+            listing_url = None
+        home_url = None
+        d = domain_of(c.get("url"))
+        if d:
+            home_url = f"https://{d}/"
+        crawl_url = listing_url or c.get("url")
+        item = {
+            "name": c["name"],
+            "url": crawl_url,
+            "country": c.get("country"),
+            "category": c.get("category"),
+            "listing_kind": kind,
+            "source": "curated",
+            "project_count": sum(int(m.get("project_count") or 0) for m in matches),
+            "aliases": list(c.get("aliases") or []),
+            "home_url": home_url,
+            "listing_url": listing_url,
+            "home_status": HOME_STATUS_OFFICIAL,
+            "name_status": NAME_OK,
+            "queue": QUEUE_CRAWL if crawl_url else QUEUE_RESOLVE,
+            "borrowed_domain": None,
+            "home_source": "curated",
+        }
+        out.append(item)
+        for m in matches:
+            used.add(norm_name(m.get("name") or ""))
+
+    for v in v1_seeds:
+        if norm_name(v.get("name") or "") in used:
+            continue
+        if any(_matches(v, c) for c in curated):
+            continue
+        out.append({k: val for k, val in v.items() if k != "priority"})
+    return out
+
+
+def build_enriched_master_seeds(projects: list[dict], curated: list[dict] | None = None) -> list[dict]:
+    from app.services.master_seeds import set_frequent_hubs_from_projects
+    set_frequent_hubs_from_projects(projects)
+    return merge_curated_catalog(build_v1_catalog(projects), curated)
+
+
+def is_crawl_ready(seed: dict | None) -> bool:
+    """File Complet : home officielle ou page-liste. Pas de hub à résoudre."""
+    seed = seed or {}
+    name = (seed.get("name") or "").strip()
+    if not name:
+        return False
+    q = (seed.get("queue") or "").strip().lower()
+    if q in {QUEUE_RESOLVE, QUEUE_SKIP}:
+        return False
+    if (seed.get("name_status") or "") in {NAME_COMPOUND, NAME_EXCLUDE}:
+        return False
+    status = (seed.get("home_status") or "").strip().lower()
+    if status in {
+        HOME_STATUS_BORROWED, HOME_STATUS_PUBLISHER, HOME_STATUS_SOCIAL,
+        HOME_STATUS_EMPTY, HOME_STATUS_UNKNOWN,
+    }:
+        return False
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    if q == QUEUE_CRAWL:
+        return bool(url)
+    if status == HOME_STATUS_OFFICIAL:
+        return bool(url)
+    # Partenaire Follow the Money / graine legacy : URL propre, pas un hub.
+    if not url:
+        return False
+    from app.services.master_seeds import is_shared_hub_home, needs_official_home
+    if is_shared_hub_home(seed) or needs_official_home(seed):
+        return False
+    return True
+
+
+def catalog_summary(seeds: list[dict]) -> dict:
+    def _count(key, value):
+        return sum(1 for s in seeds if (s.get(key) or "") == value)
+
+    return {
+        "n": len(seeds),
+        "n_with_url": sum(1 for s in seeds if s.get("url")),
+        "n_crawl": sum(1 for s in seeds if is_crawl_ready(s)),
+        "n_resolve": _count("queue", QUEUE_RESOLVE),
+        "n_skip": _count("queue", QUEUE_SKIP),
+        "n_official": _count("home_status", HOME_STATUS_OFFICIAL),
+        "n_borrowed": _count("home_status", HOME_STATUS_BORROWED),
+        "n_unknown_home": _count("home_status", HOME_STATUS_UNKNOWN),
+        "n_compound": _count("name_status", NAME_COMPOUND),
+        "n_projects_index": _count("listing_kind", "projects_index"),
+        "n_home_only": _count("listing_kind", "home_only"),
+        "n_homepage": _count("listing_kind", "homepage"),
+        "n_listing_search": sum(
+            1 for s in seeds
+            if (s.get("listing_source") or "") == LISTING_SOURCE_SEARCH
+            and (s.get("listing_kind") or "") == "projects_index"
+        ),
+        "n_split": sum(1 for s in seeds if (s.get("source") or "") == "split"),
+    }
+
+
+def audit_rows(seeds: list[dict]) -> list[dict]:
+    rows = []
+    for s in seeds:
+        rows.append({
+            "name": s.get("name"),
+            "project_count": s.get("project_count") or 0,
+            "source": s.get("source"),
+            "name_status": s.get("name_status") or "",
+            "home_status": s.get("home_status") or "",
+            "listing_kind": s.get("listing_kind") or "",
+            "queue": s.get("queue") or "",
+            "home_url": s.get("home_url") or "",
+            "listing_url": s.get("listing_url") or "",
+            "url": s.get("url") or "",
+            "borrowed_domain": s.get("borrowed_domain") or "",
+            "home_source": s.get("home_source") or "",
+            "listing_source": s.get("listing_source") or "",
+            "split_into": ", ".join(s.get("split_into") or []),
+            "review_action": s.get("review_action") or "",
+        })
+    rows.sort(key=lambda r: (-int(r["project_count"] or 0), (r["name"] or "").lower()))
+    return rows
+
+
+def _atomic_write_text(path: Path, text: str) -> Path:
+    """Écriture tmp + fsync + replace : un crash laisse l'ancien fichier intact."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    tmp.replace(path)
+    return path
+
+
+def apply_official_site_result(seed: dict, site: str | None) -> dict:
+    """Applique un hit Search B. Conserve `borrowed_domain` pour l'audit."""
+    site = (site or "").strip()
+    if site:
+        listing = (seed.get("listing_url") or "").strip() or None
+        if listing and domain_of(listing) != domain_of(site):
+            listing = None
+            seed["listing_url"] = None
+        seed["home_url"] = site
+        seed["url"] = listing or site
+        seed["home_status"] = HOME_STATUS_OFFICIAL
+        seed["home_source"] = HOME_SOURCE_SEARCH
+        seed["queue"] = QUEUE_CRAWL
+        if not seed.get("listing_kind") or seed["listing_kind"] == "unknown":
+            seed["listing_kind"] = "homepage"
+        return seed
+    seed["home_status"] = HOME_STATUS_UNKNOWN
+    seed["queue"] = QUEUE_RESOLVE
+    seed["home_source"] = HOME_SOURCE_SEARCH
+    return seed
+
+
+def append_search_journal(path: Path, record: dict) -> Path:
+    """Append + fsync : chaque résultat B est consigné avant le checkpoint."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+    return path
+
+
+def load_search_journal(path: Path) -> dict[str, dict]:
+    """Dernier enregistrement par nom (journal append-only)."""
+    out: dict[str, dict] = {}
+    path = Path(path)
+    if not path.is_file():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        name = (rec.get("name") or "").strip()
+        if name:
+            out[name] = rec
+    return out
+
+
+def journal_done_names(
+    records: dict[str, dict],
+    *,
+    retry_unknown: bool = False,
+    result_key: str | None = None,
+) -> set[str]:
+    """Noms déjà Search-és. Les erreurs réseau ne sont pas « done » (reprise)."""
+    done: set[str] = set()
+    for name, rec in (records or {}).items():
+        if result_key:
+            result = rec.get(result_key)
+        else:
+            result = rec.get("site") if "site" in rec else rec.get("listing")
+        if rec.get("error") and not result:
+            continue
+        if result:
+            done.add(norm_name(name))
+        elif not retry_unknown:
+            done.add(norm_name(name))
+    return done
+
+
+def search_candidates(
+    seeds: list[dict],
+    *,
+    done_names: set[str] | None = None,
+    retry_unknown: bool = False,
+) -> list[dict]:
+    """Graines B : nom ok, home empruntée/inconnue, pas déjà consignées Search."""
+    done = {norm_name(n) for n in (done_names or set()) if n}
+    out = []
+    for s in seeds:
+        name = (s.get("name") or "").strip()
+        if not name:
+            continue
+        if (s.get("name_status") or NAME_OK) != NAME_OK:
+            continue
+        if (s.get("queue") or "") == QUEUE_SKIP:
+            continue
+        key = norm_name(name)
+        if key in done:
+            continue
+        source = (s.get("home_source") or "").strip()
+        status = (s.get("home_status") or "").strip()
+        if source == HOME_SOURCE_REVIEW:
+            continue
+        if source == HOME_SOURCE_SEARCH:
+            if retry_unknown and status == HOME_STATUS_UNKNOWN:
+                pass
+            else:
+                continue
+        if status not in SEARCH_HOME_STATUSES:
+            continue
+        out.append(s)
+    return out
+
+
+def overlay_search_results(
+    seeds: list[dict],
+    *,
+    previous: list[dict] | None = None,
+    journal: Path | dict | None = None,
+) -> int:
+    """Réapplique les homes Search (catalogue précédent + journal). Le journal gagne."""
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    touched: set[str] = set()
+    for old in previous or []:
+        if (old.get("home_source") or "") != HOME_SOURCE_SEARCH:
+            continue
+        key = norm_name(old.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        for field in _SEARCH_OVERLAY_FIELDS:
+            if field in old:
+                cur[field] = old[field]
+        if old.get("borrowed_domain") and not cur.get("borrowed_domain"):
+            cur["borrowed_domain"] = old["borrowed_domain"]
+        touched.add(key)
+    records: dict[str, dict]
+    if isinstance(journal, dict):
+        records = journal
+    elif journal is not None:
+        records = load_search_journal(Path(journal))
+    else:
+        records = {}
+    for rec in records.values():
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        if rec.get("error") and not rec.get("site"):
+            continue
+        apply_official_site_result(cur, rec.get("site") or "")
+        touched.add(key)
+    return len(touched)
+
+
+def write_search_progress(path: Path, payload: dict) -> Path:
+    body = {"updated_at": now_iso(), **payload}
+    return _atomic_write_text(Path(path), json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+
+
+def apply_listing_result(seed: dict, listing: str | None, *, source: str = LISTING_SOURCE_SEARCH) -> dict:
+    """Pose une page-liste sur le domaine de la home. Miss → homepage, toujours crawlable."""
+    listing = (listing or "").strip()
+    home = (seed.get("home_url") or seed.get("url") or "").strip()
+    if listing:
+        if home and domain_of(listing) != domain_of(home):
+            listing = ""
+        elif not is_listing_url(listing):
+            listing = ""
+    if listing:
+        seed["listing_url"] = listing
+        seed["url"] = listing
+        seed["listing_kind"] = "projects_index"
+        seed["listing_source"] = source
+        if (seed.get("home_status") or "") == HOME_STATUS_OFFICIAL:
+            seed["queue"] = QUEUE_CRAWL
+        return seed
+    seed["listing_source"] = source
+    if not seed.get("listing_kind") or seed["listing_kind"] == "unknown":
+        seed["listing_kind"] = "homepage"
+    if home and not seed.get("url"):
+        seed["url"] = home
+    return seed
+
+
+def listing_candidates(
+    seeds: list[dict],
+    *,
+    done_names: set[str] | None = None,
+    retry_unknown: bool = False,
+) -> list[dict]:
+    """Homes officielles sans page-liste déjà qualifiée."""
+    done = {norm_name(n) for n in (done_names or set()) if n}
+    out = []
+    for s in seeds:
+        name = (s.get("name") or "").strip()
+        if not name:
+            continue
+        if (s.get("name_status") or NAME_OK) != NAME_OK:
+            continue
+        if (s.get("home_status") or "") != HOME_STATUS_OFFICIAL:
+            continue
+        if (s.get("queue") or "") == QUEUE_SKIP:
+            continue
+        if (s.get("listing_kind") or "") == "home_only":
+            continue
+        key = norm_name(name)
+        if key in done:
+            continue
+        listing = (s.get("listing_url") or "").strip()
+        kind = (s.get("listing_kind") or "").strip()
+        if kind == "projects_index" and listing and is_listing_url(listing):
+            continue
+        source = (s.get("listing_source") or "").strip()
+        if source == LISTING_SOURCE_SEARCH and not listing and not retry_unknown:
+            continue
+        host = domain_of(s.get("home_url") or s.get("url"))
+        if not host:
+            continue
+        if is_shared_hub(host) and not name_owns_hub(name, host):
+            continue
+        out.append(s)
+    return out
+
+
+def overlay_listing_results(
+    seeds: list[dict],
+    *,
+    previous: list[dict] | None = None,
+    journal: Path | dict | None = None,
+) -> int:
+    """Réapplique les pages-listes (catalogue précédent + journal C)."""
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    touched: set[str] = set()
+    for old in previous or []:
+        src = (old.get("listing_source") or "").strip()
+        if src not in {LISTING_SOURCE_SEARCH, LISTING_SOURCE_V1}:
+            continue
+        if (old.get("listing_kind") or "") != "projects_index":
+            continue
+        key = norm_name(old.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        apply_listing_result(cur, old.get("listing_url") or "", source=src)
+        touched.add(key)
+    if isinstance(journal, dict):
+        records = journal
+    elif journal is not None:
+        records = load_search_journal(Path(journal))
+    else:
+        records = {}
+    for rec in records.values():
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        if rec.get("error") and not rec.get("listing"):
+            continue
+        src = rec.get("source") or LISTING_SOURCE_SEARCH
+        apply_listing_result(cur, rec.get("listing") or "", source=src)
+        touched.add(key)
+    return len(touched)
+
+
+def infer_listings_onto_official_homes(seeds: list[dict], projects: list[dict] | None) -> int:
+    """C hors Search : préfixe commun des fiches v1 sur la home officielle."""
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for doc in projects or []:
+        url = (doc.get("url") or "").strip()
+        if not url:
+            continue
+        for name in funder_names_from_project(doc):
+            if is_noise_name(name):
+                continue
+            buckets[norm_name(name)].append(url)
+    n = 0
+    for seed in listing_candidates(seeds):
+        inferred = infer_own_listing(
+            seed.get("name") or "",
+            buckets.get(norm_name(seed.get("name") or ""), []),
+            seed.get("home_url"),
+        )
+        if inferred:
+            apply_listing_result(seed, inferred, source=LISTING_SOURCE_V1)
+            n += 1
+    return n
+
+
+def apply_home_review(seed: dict, rec: dict) -> dict:
+    """Revue humaine d'une home B. Gagne sur Search."""
+    action = (rec.get("action") or REVIEW_REJECT).strip()
+    seed["review_action"] = action
+    seed["home_source"] = HOME_SOURCE_REVIEW
+    note = (rec.get("note") or "").strip()
+    if note:
+        seed["review_note"] = note
+    if action == REVIEW_REJECT:
+        seed["home_url"] = None
+        seed["url"] = None
+        seed["listing_url"] = None
+        seed["listing_kind"] = "unknown"
+        seed["listing_source"] = ""
+        seed["home_status"] = HOME_STATUS_UNKNOWN
+        seed["queue"] = QUEUE_RESOLVE
+        return seed
+    home = (rec.get("home_url") or seed.get("home_url") or "").strip() or None
+    listing = (rec.get("listing_url") or "").strip() or None
+    seed["home_url"] = home
+    if listing:
+        seed["listing_url"] = listing
+        seed["url"] = listing
+        seed["listing_kind"] = "projects_index"
+        seed["listing_source"] = HOME_SOURCE_REVIEW
+    elif rec.get("listing_kind") == "home_only" or action == REVIEW_NO_PROJECTS:
+        seed["listing_url"] = None
+        seed["url"] = home
+        seed["listing_kind"] = "home_only"
+        seed["listing_source"] = HOME_SOURCE_REVIEW
+    if home:
+        seed["home_status"] = HOME_STATUS_OFFICIAL
+    if action == REVIEW_NO_PROJECTS:
+        seed["queue"] = QUEUE_SKIP
+    else:
+        seed["queue"] = assign_queue(seed)
+    return seed
+
+
+def overlay_home_reviews(seeds: list[dict], reviews: list[dict] | Path | None) -> int:
+    """Réapplique la revue manuelle (gagne sur B/C)."""
+    if reviews is None:
+        return 0
+    if isinstance(reviews, Path):
+        if not reviews.is_file():
+            return 0
+        payload = json.loads(reviews.read_text(encoding="utf-8"))
+        rows = payload.get("reviews") if isinstance(payload, dict) else payload
+    else:
+        rows = reviews
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    n = 0
+    for rec in rows or []:
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        apply_home_review(cur, rec)
+        n += 1
+    return n
+
+
+def assign_queue(seed: dict) -> str:
+    """Étape E : file Complet = home officielle ou page-liste, nom simple."""
+    action = (seed.get("review_action") or "").strip()
+    if action == REVIEW_REJECT:
+        return QUEUE_RESOLVE
+    if action == REVIEW_NO_PROJECTS:
+        return QUEUE_SKIP
+    if seed.get("split_into"):
+        return QUEUE_SKIP
+    name_status = (seed.get("name_status") or NAME_OK).strip()
+    if name_status == NAME_EXCLUDE:
+        return QUEUE_SKIP
+    if name_status == NAME_COMPOUND:
+        return QUEUE_RESOLVE
+    status = (seed.get("home_status") or "").strip()
+    if status in {
+        HOME_STATUS_BORROWED, HOME_STATUS_PUBLISHER, HOME_STATUS_SOCIAL,
+        HOME_STATUS_EMPTY, HOME_STATUS_UNKNOWN,
+    }:
+        return QUEUE_RESOLVE
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    if status == HOME_STATUS_OFFICIAL and url:
+        return QUEUE_CRAWL
+    if url and status == HOME_STATUS_OFFICIAL:
+        return QUEUE_CRAWL
+    return QUEUE_RESOLVE
+
+
+def refresh_catalog_queues(seeds: list[dict]) -> list[dict]:
+    """Recalcule `queue` pour tout le catalogue (E)."""
+    for seed in seeds:
+        seed["queue"] = assign_queue(seed)
+    return seeds
+
+
+_AND_DELIM = re.compile(r"\s*(?:&|\band\b)\s*", re.I)
+_COMMA_DELIM = re.compile(r"\s*[,;]\s*")
+_ACRONYM_PART = re.compile(r"^[A-Z][A-Z0-9]{2,7}$")
+_ACRONYM_PREFIX = re.compile(r"^[A-Z]{2,8}\b")
+
+
+def _strip_partner(name: str) -> str:
+    return re.sub(r"\s*\(partner\)\s*$", "", (name or "").strip(), flags=re.I).strip()
+
+
+def _is_org_part(part: str, seeds: list[dict] | None = None) -> bool:
+    """Évite de scinder « Science, Technology and … » en faux organismes."""
+    part = _strip_partner(part)
+    if not part or classify_name(part) != NAME_OK:
+        return False
+    if seeds and _find_seed_by_name(seeds, part):
+        return True
+    if _ORG_HINT.search(part):
+        return True
+    if _ACRONYM_PART.match(part):
+        return True
+    if _ACRONYM_PREFIX.match(part) and len(part) >= 6:
+        return True
+    return False
+
+
+def split_compound_parts(name: str, seeds: list[dict] | None = None) -> list[str] | None:
+    """Découpe un nom collé. None si un seul organisme ou parties trop vagues."""
+    if classify_name(name) != NAME_COMPOUND:
+        return None
+    raw = _strip_partner(name)
+    and_parts = [p.strip(" .") for p in _AND_DELIM.split(raw) if p.strip(" .")]
+    if len(and_parts) >= 2 and all(_is_org_part(p, seeds) for p in and_parts):
+        return [_strip_partner(p) for p in and_parts]
+    comma_parts = [p.strip(" .") for p in _COMMA_DELIM.split(raw) if p.strip(" .")]
+    if len(comma_parts) >= 2 and all(_is_org_part(p, seeds) for p in comma_parts):
+        return [_strip_partner(p) for p in comma_parts]
+    return None
+
+
+def _find_seed_by_name(seeds: list[dict], name: str) -> dict | None:
+    for seed in seeds:
+        if names_soft_match(seed.get("name") or "", name, seed.get("aliases") or []):
+            return seed
+    return None
+
+
+def apply_compound_splits(seeds: list[dict]) -> dict:
+    """D : reclasse les faux composés, scinde les vrais, exclut la source scindée."""
+    report = {
+        "reclassified_ok": [],
+        "merged": [],
+        "created": [],
+        "split_sources": [],
+        "unsplittable": [],
+    }
+    for seed in list(seeds):
+        if (seed.get("name_status") or "") != NAME_COMPOUND:
+            continue
+        name = (seed.get("name") or "").strip()
+        if classify_name(name) == NAME_OK:
+            seed["name_status"] = NAME_OK
+            report["reclassified_ok"].append(name)
+            continue
+        parts = split_compound_parts(name, seeds)
+        if not parts:
+            report["unsplittable"].append(name)
+            continue
+        handled = []
+        leftover = []
+        for part in parts:
+            existing = _find_seed_by_name(seeds, part)
+            if existing:
+                aliases = list(existing.get("aliases") or [])
+                if name not in aliases and norm_name(name) != norm_name(existing.get("name") or ""):
+                    aliases.append(name)
+                    existing["aliases"] = aliases
+                report["merged"].append({"from": name, "into": existing.get("name"), "part": part})
+                handled.append(part)
+                continue
+            if len(norm_name(part)) < MIN_SPLIT_PART:
+                leftover.append(part)
+                continue
+            created = {
+                "name": part,
+                "url": None,
+                "listing_kind": "unknown",
+                "source": "split",
+                "project_count": 0,
+                "home_url": None,
+                "listing_url": None,
+                "home_status": HOME_STATUS_EMPTY,
+                "name_status": NAME_OK,
+                "queue": QUEUE_RESOLVE,
+                "borrowed_domain": None,
+                "home_source": "",
+                "split_from": name,
+            }
+            seeds.append(created)
+            report["created"].append({"from": name, "name": part})
+            handled.append(part)
+        if handled and not leftover and len(handled) == len(parts):
+            seed["split_into"] = parts
+            seed["queue"] = QUEUE_SKIP
+            report["split_sources"].append(name)
+        elif not handled:
+            report["unsplittable"].append(name)
+    refresh_catalog_queues(seeds)
+    report["counts"] = {
+        "reclassified_ok": len(report["reclassified_ok"]),
+        "merged": len(report["merged"]),
+        "created": len(report["created"]),
+        "split_sources": len(report["split_sources"]),
+        "unsplittable": len(report["unsplittable"]),
+        "n": len(seeds),
+    }
+    return report
+
+
+def persist_catalog(
+    seeds: list[dict],
+    catalog_path: Path,
+    audit_path: Path | None = None,
+    source: str = "",
+) -> Path:
+    """Checkpoint catalogue + audit (atomiques)."""
+    path = dump_catalog(seeds, catalog_path, source=source)
+    if audit_path is not None:
+        write_audit(seeds, audit_path, source=source)
+    return path
+
+
+def write_audit(seeds: list[dict], path: Path, source: str = "") -> Path:
+    path = Path(path)
+    payload = {
+        "generated_at": now_iso(),
+        "source": source,
+        "summary": catalog_summary(seeds),
+        "rows": audit_rows(seeds),
+    }
+    _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    csv_path = path.with_suffix(".csv")
+    rows = payload["rows"]
+    if rows:
+        tmp = csv_path.with_name(csv_path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(csv_path)
+    return path
+
+
+def dump_catalog(seeds: list[dict], path: Path | None = None, source: str = "") -> Path:
+    from app.services.master_seeds import MASTER_SEEDS_PATH
+    path = Path(path or MASTER_SEEDS_PATH)
+    extra = catalog_summary(seeds)
+    payload = {
+        "generated_at": now_iso(),
+        "source": source,
+        **extra,
+        "seeds": [{k: v for k, v in s.items() if k != "priority"} for s in seeds],
+    }
+    return _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def find_catalog_seed(
+    catalog: list[dict] | None,
+    name: str,
+    url: str | None = None,
+) -> dict | None:
+    """Même organisme que le partenaire : nom/alias, sinon domaine unique."""
+    seeds = catalog or []
+    found = _find_seed_by_name(seeds, name)
+    if found:
+        return found
+    domain = domain_of(url)
+    if not domain or is_shared_hub(domain):
+        return None
+    for seed in seeds:
+        for key in ("url", "listing_url", "home_url"):
+            if domain_of(seed.get(key)) == domain:
+                return seed
+    return None
+
+
+def accept_partner_url(name: str, url: str | None) -> dict | None:
+    """Home officielle (ou page-liste) : pas un journal, pas un hub emprunté."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return None
+    href = raw.split("#")[0].split("?")[0]
+    parsed = urlparse(href)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    domain = domain_of(href)
+    if not domain or domain in SKIP_LISTING_NETLOCS:
+        return None
+    if is_publisher_host(href):
+        return None
+    if is_shared_hub(domain) and not name_owns_hub(name, domain):
+        return None
+    if not domain_matches_org(href, name):
+        return None
+    home = f"{parsed.scheme}://{parsed.netloc}/"
+    listing = is_listing_url(href)
+    crawl = href if listing else home
+    return {
+        "name": (name or "").strip(),
+        "url": crawl,
+        "home_url": home,
+        "listing_url": crawl if listing else None,
+        "listing_kind": "projects_index" if listing else "homepage",
+        "home_status": HOME_STATUS_OFFICIAL,
+        "name_status": NAME_OK,
+        "queue": QUEUE_CRAWL,
+        "source": "follow_the_money",
+        "home_source": "partner_url",
+        "project_count": 0,
+    }
+
+
+def catalog_partner_seed(seed: dict) -> dict | None:
+    """Graine Complet : listing ou home déjà classés, pas l'URL partenaire brute."""
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    if not url:
+        return None
+    kind = (seed.get("listing_kind") or "").strip() or "homepage"
+    if (seed.get("listing_url") or "").strip() and is_listing_url(seed.get("listing_url")):
+        kind = "projects_index"
+    elif is_listing_url(url):
+        kind = "projects_index"
+    elif is_homepage_url(url) and kind == "projects_index":
+        kind = "homepage"
+    return {
+        "name": (seed.get("name") or "").strip(),
+        "url": url,
+        "home_url": (seed.get("home_url") or "").strip() or url,
+        "listing_url": (seed.get("listing_url") or "").strip() or None,
+        "listing_kind": kind,
+        "home_status": HOME_STATUS_OFFICIAL,
+        "name_status": NAME_OK,
+        "queue": QUEUE_CRAWL,
+        "source": seed.get("source") or "catalog",
+        "home_source": seed.get("home_source") or seed.get("source") or "catalog",
+        "aliases": list(seed.get("aliases") or []),
+        "project_count": int(seed.get("project_count") or 0),
+    }
+
+
+def decide_follow_the_money_partner(
+    name: str,
+    url: str | None = None,
+    *,
+    catalog: list[dict] | None = None,
+    searched_home: str | None = None,
+    did_search: bool = False,
+) -> dict:
+    """Même barème que le catalogue A–E : nom simple, home officielle, pas de hub.
+
+    `did_search` distingue « Search official site pas encore lancé » d'un
+    Search déjà tenté (vide ou rejeté).
+    """
+    raw_name = (name or "").strip()
+    raw_url = (url or "").strip() or None
+    home = (searched_home or "").strip() or None
+    empty = {
+        "action": FTM_SKIP, "reason": "empty_name",
+        "seed": None, "needs_search": False,
+    }
+    if not raw_name:
+        return empty
+    status = classify_name(raw_name)
+    if status == NAME_EXCLUDE:
+        return {**empty, "reason": "exclude"}
+    if status == NAME_COMPOUND:
+        return {**empty, "reason": "compound"}
+
+    found = find_catalog_seed(catalog, raw_name, raw_url)
+    if found:
+        if is_crawl_ready(found):
+            seed = catalog_partner_seed(found)
+            if seed:
+                return {
+                    "action": FTM_DISCOVER, "reason": "catalog",
+                    "seed": seed, "needs_search": False,
+                }
+        return {**empty, "reason": "catalog_not_ready"}
+
+    accepted = accept_partner_url(raw_name, raw_url) if raw_url else None
+    if accepted:
+        return {
+            "action": FTM_DISCOVER, "reason": "partner_url",
+            "seed": accepted, "needs_search": False,
+        }
+
+    if did_search:
+        if home:
+            accepted = accept_partner_url(raw_name, home)
+            if accepted:
+                accepted["home_source"] = "search"
+                return {
+                    "action": FTM_DISCOVER, "reason": "search",
+                    "seed": accepted, "needs_search": False,
+                }
+            return {**empty, "reason": "search_rejected"}
+        return {**empty, "reason": "search_empty"}
+
+    return {
+        "action": FTM_SEARCH, "reason": "needs_official_site",
+        "seed": None, "needs_search": True,
+    }
