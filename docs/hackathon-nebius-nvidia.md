@@ -7,7 +7,7 @@
 **Deadline soumission :** vendredi 30 octobre 2026, 10:00 PT
 **Jugement :** 1–15 décembre 2026 · résultats vers le 11 janvier 2027
 
-Ce document fige la discussion du 12–13 septembre 2026 : règles, recherches (Token Factory, Tavily, Nemotron, code), décision produit, contraintes réelles, et plan d’exécution. Ce n’est pas une soumission Devpost — c’est le cahier interne.
+Ce document fige la discussion du 12–13 septembre 2026 : règles, recherches (Token Factory, Tavily, Nemotron, code), décision produit, contraintes réelles, et plan d’exécution. Mis à jour le 13 septembre (crédits reçus, RDV Toronto). Ce n’est pas une soumission Devpost — c’est le cahier interne.
 
 ---
 
@@ -23,7 +23,7 @@ On soumet **un seul produit** (track Best Apps), pas la plateforme entière : un
 - **Page :** https://nebiusglobalaihackathon.devpost.com/
 - **Inscriptions :** ~3 660 au 12 septembre 2026
 - **Éligibilité :** majorité légale ; la France est OK (exclus : Brésil, Québec, Russie, Crimée, Cuba, Iran, Corée du Nord, sanctions OFAC).
-- **Événement IRL utile :** Builders & Brews Paris, jeudi 1er octobre (crédits extra + City Winner 500 $).
+- **Événement IRL :** Builders & Brews **Toronto, mardi 29 septembre 2026** (pas Paris). Crédits extra possibles + éligibilité City Winner 500 $.
 
 ### Obligation technique (étape 1, éliminatoire)
 
@@ -54,7 +54,7 @@ Les juges **n’ont pas l’obligation de tester le code**. Vidéo + texte + ima
 | Grand Prize / 2e / 3e | 20 000 $ / 10 000 $ / 6 000 $ | Objectif |
 | Gagnant de track | Jetson Orin Nano | Consolation si pas Overall |
 | Best Use of Tavily | 3 000 $ | Appel **runtime** Tavily |
-| City Winner | 500 $ × 20 | Paris 1er oct. — **un seul bonus** : Tavily **ou** City |
+| City Winner | 500 $ × 20 | Toronto 29 sept. — **un seul bonus** : Tavily **ou** City |
 | Most Valuable Feedback | 100 $ + swag × 10 | Section feedback soignée |
 
 On vise **Grand Prize + Tavily**. Le feedback se remplit quand même (peut ne pas stacker).
@@ -112,16 +112,22 @@ Le dépôt dédié se crée à la main (l’agent GitHub est en lecture seule). 
 
 **Pitch produit :** la review manuelle est lente ; l’agent produit des dossiers sourcés qui **accélèrent** Review → Gold. On ne prétend pas que les données sont officielles. Le disclaimer « ne convient pas à la navigation » reste.
 
-### 4.2 Crédits Token Factory pas encore reçus
+### 4.2 Crédits reçus (13 septembre 2026)
 
-À faire **côté Mac, navigateur**, dès maintenant :
+Comptes ouverts sur l’organisation **Berry-Mappemonde**. Inventaire lu dans les consoles :
 
-1. Compte [tokenfactory.nebius.com](https://tokenfactory.nebius.com) (Google / GitHub) → clé API.
-2. Formulaire Devpost Resources, code **`NEBIUS-DEVPOST-GLOBAL26`** → 25 $ TF.
-3. [Builders Program](https://dev.nebius.com/builders) → +25 $ TF, +25 $ Tavily.
-4. Paris, 1er octobre → crédits extra.
+| Service | État observé | Usage prévu |
+|---|---|---|
+| **Nebius Token Factory** | Solde **60 $** ; essai 29 j / 30 j encore à **1,00 $ / 1,00 $** | Inférence Nemotron (Nano/Lightning volume, Ultra juge). Variable d’env : `NEBIUS_API_KEY`. |
+| **Tavily** (plan Researcher) | **0 / 10 000** crédits du plan mensuel ; add-on **0 / 3 125** (Builders) ; clé déjà créée | Search + Extract + Research mini runtime. Ne pas allumer « Pay as you go » tant que le quota suffît. |
+| **Toloka** | Solde **50 $** (collecte / labélisation / fine-tune) | Hors cœur hackathon. Utile plus tard pour labéliser les 11 zones Gold vs sorties agent. |
+| **Tendem** | Promo **50 $** (12 sept. 2026) | Hors cœur hackathon. Ne pas en dépendre pour la soumission. |
 
-En attendant : on code l’adaptateur (OpenAI-compatible comme `nvidia.py`) avec **mocks**. Nano/Lightning = 0,06 $ / M tokens in — le volume est presque gratuit. Ultra (1 $ / 3 $ par M) : mocké en dev, réel pour tests finaux et démo. **Un Ultra par action utilisateur visible**, jamais dans la boucle d’outils.
+Discipline de dépense (inchangée) : Nano/Lightning = 0,06 $ / M tokens in — le volume est presque gratuit. Ultra (1 $ / 3 $ par M) : **un Ultra par action utilisateur visible**, jamais dans la boucle d’outils. Tavily : Research **mini** seulement, pas de `pro` au clic, pas de crawl sans `limit`.
+
+La clé Token Factory n’est **pas** encore dans le code (et ne doit jamais aller dans le frontend ni dans git). Créer la clé dans Token Factory → API keys, la poser en env sur le Mac / le VPS.
+
+Toronto (29 sept.) peut encore débloquer des crédits extra.
 
 ### 4.3 Moteur de routage NAVIGUIDE encore prototype
 
@@ -211,7 +217,7 @@ On **garde** SearXNG / TinyFish / trafilatura pour le volume. Tavily = vérité 
 4. Research **mini** (pas pro) + `files=[leg.json]` + `output_schema` + streaming
 5. **Ne pas** utiliser `include_answer` (ça court-circuite Nemotron)
 
-Un run démo : ~30–80 crédits. Envelope : ~1 000 free + ~3 000 (25 $ Builders) ≈ 4 000.
+Un run démo : ~30–80 crédits. Envelope réel (13 sept.) : **10 000** (plan Researcher) + **3 125** (add-on Builders) ≈ **13 000** crédits Tavily — largement suffisant si on reste en `mini` et on cache par jambe.
 `include_domains_mode=filter` pour toute affirmation réglementaire.
 
 ---
@@ -261,12 +267,12 @@ Tout en **anglais**, YouTube public.
 
 | Phase | Quoi | Qui |
 |---|---|---|
-| **Maintenant** | Formulaires crédits TF + Tavily + Discord | Humain (Mac) |
-| **Phase 1** | Branche `hackathon/clearance-brief`, adaptateur TF (mocks), module Tavily | Agent |
+| **Fait** | Comptes + crédits TF (60 $) + Tavily (10k + 3 125) | Humain |
+| **Phase 1** | Adaptateur Token Factory + module Tavily (clés en env, pas dans git) | Agent |
 | **Cœur** | Clearance Brief sur zones Gold + éval vs 11 polygones reviewés | Agent |
 | **Phase 2** | Copilote route NAVIGUIDE (mêmes adaptateur / outils) | Agent |
 | **Stretch** | ConTree 3 branches de vérif géo | Si le cœur est poli mi-octobre |
-| **1er oct.** | Builders & Brews Paris | Humain |
+| **29 sept.** | Builders & Brews **Toronto** | Humain |
 | **Fin octobre** | Gel, démo hébergée, README EN, vidéo, dépôt d’extraction, soumission | Les deux |
 
 Un seul projet Devpost, un seul README, une seule vidéo.
@@ -286,5 +292,5 @@ Un seul projet Devpost, un seul README, une seule vidéo.
 
 ## 11. Prochaine action
 
-1. Humain : créer les comptes / réclamer les crédits (section 4.2).
-2. Agent : adaptateur Token Factory + `tavily.py` avec mocks, puis Clearance Brief.
+1. Humain : créer la clé Token Factory (`NEBIUS_API_KEY`) si ce n’est pas déjà fait ; la garder hors git. Aller à Toronto le 29 septembre.
+2. Agent : adaptateur Token Factory + `tavily.py`, puis Clearance Brief (plus besoin de mocks pour les appels réels).
