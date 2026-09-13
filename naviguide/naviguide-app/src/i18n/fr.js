@@ -64,6 +64,7 @@ export default {
   clickNewImport:     "Cliquer pour importer une nouvelle route",
   showRoute:          "Afficher la route : {name}",
   briefingLoading:    "Préparation du briefing de la route…",
+  briefingDrawHint:   "Terminez le tracé pour obtenir le briefing de cette route — pas celui de Berry-Mappemonde.", // pragma: allowlist secret
   hideSidebar:        "Masquer le panneau",
   showExpeditionPanel: "Afficher le panneau expédition",
   totalDistance:      "Distance totale",

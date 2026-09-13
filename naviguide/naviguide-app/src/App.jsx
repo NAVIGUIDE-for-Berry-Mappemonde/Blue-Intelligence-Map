@@ -21,6 +21,8 @@ import { LayerFichePopup } from "./components/LayerFichePopup";
 import { BI_CLICK_LAYERS, kindFromLayer, featureContains } from "./utils/layerIdentify";
 import { summarizeRoute, featuresToSegments } from "./utils/geo";
 import { SEAMAP_ATTRIBUTION } from "./utils/seamapStyle";
+import { waypointsFromCollection } from "./utils/waypointsFromCollection.js";
+import { buildLocalCustomBriefing } from "./utils/customRouteBriefing.js";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
@@ -219,59 +221,88 @@ export default function App() {
   const [routeKind, setRouteKind] = useState("berry");
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [layerPopup, setLayerPopup] = useState(null);
+  const routeKindRef = useRef("berry");
+  routeKindRef.current = routeKind;
+  const berryFetchIdRef = useRef(0);
+  const customFetchIdRef = useRef(0);
+
+  const applyBerryBriefing = useCallback(() => {
+    const cached = getCachedPlan(lang);
+    setExpeditionPlan(cached);
+    setBriefingLoading(false);
+  }, [lang]);
 
   const handleRouteSwitchToBerry = () => {
+    customFetchIdRef.current += 1;
+    routeKindRef.current = "berry";
     setCustomRoute(null);
     setRouteKind("berry");
-    const cached = getCachedPlan(lang);
-    if (cached) setExpeditionPlan(cached);
-  };
-
-  const waypointsFromCollection = (geojson) => {
-    const wps = [];
-    for (const f of geojson?.features || []) {
-      if (f.geometry?.type === "Point") {
-        wps.push({
-          name: f.properties?.name || `Point ${wps.length + 1}`,
-          lat: f.geometry.coordinates[1],
-          lon: f.geometry.coordinates[0],
-          mandatory: true,
-        });
-      }
-    }
-    if (wps.length < 2) {
-      for (const f of geojson?.features || []) {
-        if (f.geometry?.type !== "LineString" || !f.geometry.coordinates?.length) continue;
-        const c = f.geometry.coordinates;
-        if (!wps.length) wps.push({ name: "Départ", lat: c[0][1], lon: c[0][0], mandatory: true });
-        const last = c[c.length - 1];
-        wps.push({ name: `Escale ${wps.length}`, lat: last[1], lon: last[0], mandatory: true });
-      }
-    }
-    return wps;
+    applyBerryBriefing();
   };
 
   const fetchCustomPlan = useCallback((geojson) => {
-    if (!ORCHESTRATOR_URL) return;
+    const applyFallback = () => {
+      const local = buildLocalCustomBriefing(geojson, lang);
+      setExpeditionPlan(local);
+    };
+
+    setExpeditionPlan(null);
     const wps = waypointsFromCollection(geojson);
-    if (wps.length < 2) return;
+    const hasLine = (geojson?.features || []).some(
+      (f) => f?.geometry?.type === "LineString" && f.geometry.coordinates?.length >= 2,
+    );
+    if (wps.length < 2 && !hasLine) {
+      setBriefingLoading(false);
+      applyFallback();
+      return;
+    }
+
+    const requestId = ++customFetchIdRef.current;
     setBriefingLoading(true);
+
+    const finish = (plan) => {
+      if (customFetchIdRef.current !== requestId) return;
+      if (routeKindRef.current !== "custom") return;
+      setExpeditionPlan(plan);
+      setBriefingLoading(false);
+    };
+
+    if (!ORCHESTRATOR_URL) {
+      finish(buildLocalCustomBriefing(geojson, lang));
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
     fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ language: lang, waypoints: wps }),
+      signal: ctrl.signal,
     })
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`plan ${r.status}`))))
       .then((data) => {
-        if (data?.expedition_plan) setExpeditionPlan(data.expedition_plan);
+        clearTimeout(timer);
+        if (data?.expedition_plan?.executive_briefing) {
+          finish(data.expedition_plan);
+        } else {
+          finish(buildLocalCustomBriefing(geojson, lang));
+        }
       })
-      .catch((err) => console.warn("Orchestrator custom plan:", err))
-      .finally(() => setBriefingLoading(false));
+      .catch((err) => {
+        clearTimeout(timer);
+        console.warn("Orchestrator custom plan:", err);
+        finish(buildLocalCustomBriefing(geojson, lang));
+      });
   }, [lang]);
 
   const handleRouteImport = (geojson) => {
+    berryFetchIdRef.current += 1;
+    routeKindRef.current = "custom";
     setCustomRoute(geojson);
     setRouteKind("custom");
+    setExpeditionPlan(null);
+    setBriefingLoading(true);
     fetchCustomPlan(geojson);
   };
 
@@ -304,6 +335,9 @@ export default function App() {
   const handleDrawStart = () => {
     setDrawingMode(true);
     _resetDrawState();
+    berryFetchIdRef.current += 1;
+    setExpeditionPlan(null);
+    setBriefingLoading(false);
   };
 
   // Called from BerryCard "Finish" — returns FeatureCollection to BerryCard
@@ -328,14 +362,17 @@ export default function App() {
 
   const handleDrawContinue = () => {
     setDrawingMode(true);
+    setExpeditionPlan(null);
+    setBriefingLoading(false);
   };
 
   const handleCustomDelete = () => {
+    customFetchIdRef.current += 1;
+    routeKindRef.current = "berry";
     setCustomRoute(null);
     setRouteKind("berry");
     _resetDrawState();
-    const cached = getCachedPlan(lang);
-    if (cached) setExpeditionPlan(cached);
+    applyBerryBriefing();
   };
 
   const fetchDrawnSegment = async (from, to) => {
@@ -455,16 +492,13 @@ export default function App() {
     setSelectedSatellite(null);
   };
 
-  // Fetch orchestrator plan — serve from localStorage cache instantly, refresh in background.
-  // Re-fetches when language changes to get briefing in the selected language.
+  // Briefing Berry uniquement sur la route Berry — jamais après un tracé perso.
   useEffect(() => {
+    if (routeKind !== "berry" || drawingMode) return;
     const cached = getCachedPlan(lang);
-    if (cached) {
-      setExpeditionPlan(cached);                             // instant render from cache
-    } else {
-      setExpeditionPlan(null);                              // clear stale plan from previous language
-    }
-    if (!ORCHESTRATOR_URL || routeKind !== "berry") return;
+    setExpeditionPlan(cached);
+    if (!ORCHESTRATOR_URL) return;
+    const requestId = ++berryFetchIdRef.current;
     fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -480,13 +514,22 @@ export default function App() {
     })
       .then((r) => r.json())
       .then((data) => {
+        if (routeKindRef.current !== "berry") return;
+        if (berryFetchIdRef.current !== requestId) return;
         if (data?.expedition_plan) {
           setExpeditionPlan(data.expedition_plan);
-          setCachedPlan(lang, data.expedition_plan);         // persist per language
+          setCachedPlan(lang, data.expedition_plan);
         }
       })
       .catch((err) => console.warn("Orchestrator unavailable:", err));
-  }, [lang, routeKind]);
+  }, [lang, routeKind, drawingMode]);
+
+  // Recalcule le briefing perso si la langue change (l'import appelle déjà fetchCustomPlan).
+  useEffect(() => {
+    if (routeKind !== "custom" || drawingMode || !customRoute) return;
+    fetchCustomPlan(customRoute);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lang seul
+  }, [lang]);
 
   // Points d'intérêt
   useEffect(() => {
@@ -750,19 +793,20 @@ export default function App() {
     setSatelliteLoading(false);
   };
 
-  // Construction GeoJSON — use customRoute (FeatureCollection) when a file has been imported
-  // Live drawn route (green) shown during drawing mode
-  const drawnLines = {
-    type: "FeatureCollection",
-    features: drawnSegments
-      .filter((s) => s.coords?.length > 0)
-      .map((s) => ({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: s.coords },
-      })),
-  };
-
   const EMPTY_FC = { type: "FeatureCollection", features: [] };
+
+  // Vert uniquement pendant le tracé. Après « Terminer », la route perso est bleue.
+  const drawnLines = drawingMode
+    ? {
+        type: "FeatureCollection",
+        features: drawnSegments
+          .filter((s) => s.coords?.length > 0)
+          .map((s) => ({
+            type: "Feature",
+            geometry: { type: "LineString", coordinates: s.coords },
+          })),
+      }
+    : EMPTY_FC;
 
   // Hide all existing routes while the user is actively drawing (segments stay in memory)
   const maritimeLines = drawingMode
@@ -810,6 +854,7 @@ export default function App() {
         onDrawFinish={handleDrawFinish}
         onCustomDelete={handleCustomDelete}
         canContinueDraw={drawnPoints.length > 0}
+        canFinishDraw={drawnPoints.length >= 2 && !drawingLoading}
         isCockpit={isCockpit}
         polarData={polarData}
         maritimeLayers={maritimeLayers}

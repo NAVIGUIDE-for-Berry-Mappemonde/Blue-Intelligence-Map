@@ -64,6 +64,7 @@ export default {
   clickNewImport:     "Click to import a new route",
   showRoute:          "Show route: {name}",
   briefingLoading:    "Preparing the route briefing…",
+  briefingDrawHint:   "Finish the drawing to get the briefing for this route — not Berry-Mappemonde.", // pragma: allowlist secret
   hideSidebar:        "Hide sidebar",
   showExpeditionPanel: "Show expedition panel",
   totalDistance:      "Total Distance",

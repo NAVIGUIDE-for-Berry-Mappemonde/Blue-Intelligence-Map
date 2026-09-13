@@ -239,6 +239,7 @@ function stemName(filename) {
 function BerryCard({
   onRouteImport, onRouteSwitchToBerry, isDrawing,
   onDrawStart, onDrawContinue, onDrawFinish, onCustomDelete, canContinueDraw,
+  canFinishDraw = true,
 }) {
   const { t } = useLang();
   const [cardMode, setCardMode]         = useState("berry-active");
@@ -361,8 +362,10 @@ function BerryCard({
         {isDrawing ? (
           <button
             onClick={handleFinishDrawing}
+            disabled={!canFinishDraw}
             className="w-full flex items-center justify-center gap-1.5 bg-green-600/30 hover:bg-green-600/50
-              border border-green-500/50 rounded-lg px-2 py-1.5 text-[10px] text-green-300 font-semibold"
+              border border-green-500/50 rounded-lg px-2 py-1.5 text-[10px] text-green-300 font-semibold
+              disabled:opacity-40 disabled:pointer-events-none"
           >
             <CheckCircle size={11} /> {t("finish")}
           </button>
@@ -442,6 +445,7 @@ function BerryCard({
 export function Sidebar({
   plan, open, onToggle, onRouteImport, onRouteSwitchToBerry, isDrawing,
   onDrawStart, onDrawContinue, onDrawFinish, onCustomDelete, canContinueDraw,
+  canFinishDraw,
   isCockpit, polarData, maritimeLayers, simulationMode, onSimulationToggle,
   legContext, onNext, canNext, onPrev, canPrev, briefingLoading,
 }) {
@@ -492,6 +496,7 @@ export function Sidebar({
             onDrawFinish={onDrawFinish}
             onCustomDelete={onCustomDelete}
             canContinueDraw={canContinueDraw}
+            canFinishDraw={canFinishDraw}
           />
 
           {maritimeLayers && (
@@ -572,7 +577,7 @@ export function Sidebar({
             </>
           )}
 
-          {!isCockpit && !plan && !briefingLoading && (
+          {!isCockpit && !plan && !briefingLoading && !isDrawing && (
             <div className="rounded-xl border border-blue-700/30 bg-blue-950/20 p-3">
               <div className="text-xs font-semibold text-blue-300 mb-1.5 flex items-center gap-1.5">
                 {t("gettingStarted")}
@@ -591,7 +596,21 @@ export function Sidebar({
             COCKPIT: always visible — shows placeholder when not yet loaded.
             ONBOARDING: shown only when plan data is available.
           */}
-          {(isCockpit || briefing || briefingLoading) && (
+          {isDrawing && (
+            <div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Shield size={12} className="text-blue-400" />
+                {t("briefing")}
+              </div>
+              <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                  {t("briefingDrawHint")}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!isDrawing && (isCockpit || briefing || briefingLoading) && (
             <div>
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Shield size={12} className="text-blue-400" />
