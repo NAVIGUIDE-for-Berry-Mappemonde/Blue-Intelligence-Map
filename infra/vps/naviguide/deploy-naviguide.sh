@@ -52,13 +52,26 @@ for svc in naviguide-api naviguide-orchestrator naviguide-polar; do
   sudo systemctl restart "$svc"
 done
 
+# ── Frontend publié hors de /home (www-data n'a pas à traverser le dépôt) ────
+WWW_ROOT=/var/www/naviguide
+sudo mkdir -p "$WWW_ROOT"
+sudo rsync -a --delete "$NAV/naviguide-app/dist/" "$WWW_ROOT/"
+sudo chown -R ubuntu:ubuntu "$WWW_ROOT"
+sudo chmod -R a+rX "$WWW_ROOT"
+
 # ── nginx : installé au premier passage seulement (certbot modifie le fichier) ─
 if [ ! -f /etc/nginx/sites-available/naviguide ]; then
   sudo cp "$APP/infra/vps/naviguide/nginx-naviguide.conf" /etc/nginx/sites-available/naviguide
   sudo ln -sf /etc/nginx/sites-available/naviguide /etc/nginx/sites-enabled/naviguide
 fi
-# nginx (www-data) doit pouvoir traverser ~ pour lire dist/ (bit x seulement)
-chmod o+x "$HOME"
+# Déploiements existants : basculer le root hors du dépôt si encore l'ancien chemin
+if grep -q 'root /home/ubuntu/blue-intelligence-map/naviguide/naviguide-app/dist;' \
+     /etc/nginx/sites-available/naviguide 2>/dev/null; then
+  sudo sed -i 's|root /home/ubuntu/blue-intelligence-map/naviguide/naviguide-app/dist;|root /var/www/naviguide;|' \
+    /etc/nginx/sites-available/naviguide
+fi
+# Bit x sur le chemin du dépôt : utile si un root nginx pointe encore vers dist/
+chmod o+x "$HOME" "$APP"
 sudo nginx -t && sudo systemctl reload nginx
 
 # ── Santé (naviguide-api charge xarray/copernicusmarine : ~10 s au démarrage) ──

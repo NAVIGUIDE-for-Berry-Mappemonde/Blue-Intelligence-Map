@@ -62,7 +62,10 @@ sudo systemctl restart naviguide-api   # libère le cache ZEE ; Blue Intelligenc
 
 ```bash
 cd ~/blue-intelligence-map
-# code à jour (rsync depuis un poste, ou git pull si un remote est configuré)
+# code à jour (rsync depuis un poste, ou git pull si un remote est configuré).
+# Après un rsync -a depuis un workspace en 700 : chmod o+x ~/blue-intelligence-map
+# (nginx NAVIGUIDE lit /var/www/naviguide, mais d'autres outils peuvent encore
+# traverser le dépôt).
 bash infra/vps/deploy-app.sh
 ```
 
@@ -153,7 +156,7 @@ Voir `infra/vps/naviguide/`.
 
 ```
 Internet → nginx (443, Let's Encrypt)
-   www.naviguide.fr        → dist/ statique (React + MapLibre)
+   www.naviguide.fr        → /var/www/naviguide (copie de naviguide-app/dist/)
    /route /wind /wave …    → uvicorn 127.0.0.1:9000  (naviguide-api)
    /api/v1/polar/*         → uvicorn 127.0.0.1:9004  (polar-api)
    /api/v1/*               → uvicorn 127.0.0.1:9008  (orchestrateur LangGraph)
@@ -163,6 +166,7 @@ Internet → nginx (443, Let's Encrypt)
 | Quoi | Où |
 |------|-----|
 | Code | `~/blue-intelligence-map/naviguide/` (venv partagé `.venv/`) |
+| Frontend servi par nginx | `/var/www/naviguide` (pas le `dist/` du dépôt) |
 | Secrets (cascade LLM NVIDIA/OpenRouter/Anthropic, Copernicus, StormGlass) | `~/.config/naviguide/naviguide.env` (chmod 600) |
 | Services | `naviguide-api`, `naviguide-orchestrator`, `naviguide-polar` (systemd) |
 | Reverse proxy | `/etc/nginx/sites-available/naviguide` (TLS certbot) |
@@ -179,7 +183,10 @@ www.naviguide.fr) préexistait sur le VPS et est réutilisé tel quel par
 `nginx-naviguide.conf` (renouvellement certbot inchangé). L'ancien site nginx
 `default` (placeholder `/var/www/html` + proxys vers des ports morts 8000/8001/3008)
 a été retiré de `sites-enabled` le 2026-09-10 — sauvegarde dans
-`sites-available/default`. `~ubuntu` est en `o+x` (751) pour que nginx lise `dist/`.
+`sites-available/default`. Le frontend est copié vers `/var/www/naviguide`
+(lisible par `www-data`) : un `rsync -a` ou `chmod 700` du dépôt ne doit plus
+faire tomber le site (incident du 2026-09-13 : nginx 500 / boucle `try_files`
+parce que `~/blue-intelligence-map` était `drwx------`).
 
 Les couches « Blue Intelligence » de la carte NAVIGUIDE consomment les exports
 GeoJSON du backend Blue Intelligence local via la route nginx `/bi/*` — aucun
