@@ -11,18 +11,27 @@ import { useLang } from "./i18n/LangContext.jsx";
 import {
   useMaritimeLayers,
   MaritimeLayers,
-  MaritimeLayersPanel,
   BalisageLayer,
 } from "./components/MaritimeLayers";
 import { useMarkerOffsets } from "./hooks/useMarkerOffsets";
+import { useSeamapStyle } from "./hooks/useSeamapStyle";
 import { CatamaranMarker } from "./components/CatamaranMarker";
 import { useLegContext } from "./hooks/useLegContext";
+import { LayerFichePopup } from "./components/LayerFichePopup";
+import { BI_CLICK_LAYERS, kindFromLayer, featureContains } from "./utils/layerIdentify";
+import { summarizeRoute, featuresToSegments } from "./utils/geo";
+import { SEAMAP_ATTRIBUTION } from "./utils/seamapStyle";
+import { waypointsFromCollection } from "./utils/waypointsFromCollection.js";
+import { buildLocalCustomBriefing } from "./utils/customRouteBriefing.js";
+import {
+  activeSimulationSegments,
+  activeSimulationStops,
+  buildSimTargets,
+  simulationStartPos,
+} from "./utils/simulationRoute.js";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL;
-
-// La Rochelle — position de départ du catamaran en mode simulation
-const LA_ROCHELLE_POS = { lat: 46.1541, lon: -1.167 };
 
 // ── Orchestrator plan cache (localStorage, 24 h TTL, per language) ───────────
 const PLAN_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -40,7 +49,7 @@ function getCachedPlan(lang) {
 }
 
 function setCachedPlan(lang, data) {
-  try { localStorage.setItem(planCacheKey(lang), JSON.stringify({ data, ts: Date.now() })); } catch {}
+  try { localStorage.setItem(planCacheKey(lang), JSON.stringify({ data, ts: Date.now() })); } catch { /* quota */ }
 }
 
 const SEGMENT_BATCH_SIZE = 4; // legs fetched in parallel per batch
@@ -74,68 +83,36 @@ export default function App() {
   const [polarData, setPolarData] = useState(null);
 
   // ── App-wide modes ──────────────────────────────────────────────────────────
-  const [isOffshore,  setIsOffshore]  = useState(true);  // always Offshore (toggles removed)
-  const [isCockpit,   setIsCockpit]   = useState(false); // always Onboarding (toggles removed)
-  const [isLightMode, setIsLightMode] = useState(false); // false=Dark, true=Light
+  const isOffshore = false;
+  const isCockpit = false;
+  const [isLightMode, setIsLightMode] = useState(false);
+  const mapStyle = useSeamapStyle();
 
   // ── Maritime data layers (ZEE, WPI Ports, SHOM Balisage) ────────────────────
-  const maritimeLayers = useMaritimeLayers();
+  const maritimeLayers = useMaritimeLayers(mapRef);
 
   // ── Simulation mode — catamaran draggable ────────────────────────────────────
   const [simulationMode, setSimulationMode] = useState(false);
   const [catamaranPos,   setCatamaranPos]   = useState(null);  // { lat, lon }
   const [simulationStep, setSimulationStep] = useState(0);
 
-  // Position par défaut : La Rochelle (point de départ maritime de l'expédition)
-  const initialCatamaranPos = LA_ROCHELLE_POS;
-  const activeCatamaranPos  = catamaranPos ?? initialCatamaranPos;
+  // Route perso déclarée tôt : la simulation s'aligne sur la route affichée.
+  const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
 
-  // Flat ordered list of simulation targets built from the REAL route polylines:
-  //   [departure(step 0), mid(seg0), end(seg0), mid(seg1), end(seg1), …]
-  // Using segments[] ensures midpoints lie ON the actual maritime route and
-  // handles all detours (Saint-Pierre, Marigot→Cayenne, etc.) automatically.
-  const simTargets = useMemo(() => {
-    const maritimeSegs = segments.filter(s => !s.nonMaritime && s.coords?.length >= 2);
-    if (maritimeSegs.length === 0) {
-      return [{ lat: LA_ROCHELLE_POS.lat, lon: LA_ROCHELLE_POS.lon }];
-    }
-    // Step 0 = first coord of first maritime segment (La Rochelle departure)
-    const firstCoord = maritimeSegs[0].coords[0];
-    const list = [{ lat: firstCoord[1], lon: firstCoord[0] }];
-    for (const seg of maritimeSegs) {
-      const coords = seg.coords; // [[lon, lat], …]
-      // Midpoint at 50% cumulative Euclidean distance along the polyline
-      let totalLen = 0;
-      const lengths = [];
-      for (let i = 0; i < coords.length - 1; i++) {
-        const l = Math.hypot(coords[i + 1][0] - coords[i][0], coords[i + 1][1] - coords[i][1]);
-        lengths.push(l);
-        totalLen += l;
-      }
-      const halfLen = totalLen / 2;
-      let acc = 0;
-      let mid = null;
-      for (let i = 0; i < lengths.length; i++) {
-        if (acc + lengths[i] >= halfLen) {
-          const t = lengths[i] > 0 ? (halfLen - acc) / lengths[i] : 0;
-          mid = {
-            lat: coords[i][1] + t * (coords[i + 1][1] - coords[i][1]),
-            lon: coords[i][0] + t * (coords[i + 1][0] - coords[i][0]),
-          };
-          break;
-        }
-        acc += lengths[i];
-      }
-      if (!mid) {
-        const m = Math.floor(coords.length / 2);
-        mid = { lat: coords[m][1], lon: coords[m][0] };
-      }
-      const last = coords[coords.length - 1];
-      list.push(mid);
-      list.push({ lat: last[1], lon: last[0] });
-    }
-    return list;
-  }, [segments]);
+  const activeStops = useMemo(
+    () => activeSimulationStops(customRoute, ITINERARY_POINTS),
+    [customRoute],
+  );
+  const activeSegments = useMemo(
+    () => activeSimulationSegments(customRoute, segments),
+    [customRoute, segments],
+  );
+  const simTargets = useMemo(
+    () => buildSimTargets(activeSegments, activeStops),
+    [activeSegments, activeStops],
+  );
+  const routeStartPos = useMemo(() => simulationStartPos(simTargets), [simTargets]);
+  const activeCatamaranPos = catamaranPos ?? routeStartPos;
 
   // flyTo helper — recenters map on catamaran with smooth animation
   const flyToPos = useCallback((lat, lon) => {
@@ -186,8 +163,8 @@ export default function App() {
   const legContext = useLegContext(
     simulationMode ? activeCatamaranPos.lat : null,
     simulationMode ? activeCatamaranPos.lon : null,
-    segments,
-    ITINERARY_POINTS,
+    activeSegments,
+    activeStops,
     undefined,                               // speedKnots — valeur par défaut
     simulationMode ? simulationStep : null,  // contrainte chronologique
   );
@@ -200,14 +177,112 @@ export default function App() {
     flyToPos(legContext.snappedPosition[1], legContext.snappedPosition[0]);
   }, [legContext, flyToPos]);
 
+  // Changement de route affichée : le bateau reprend le départ de cette route.
+  useEffect(() => {
+    if (!simulationMode) return;
+    setSimulationStep(0);
+    setCatamaranPos(routeStartPos);
+    pendingFlyTo.current = true;
+    // customRoute identifie la route perso ; on ne dépend pas de simTargets
+    // (les segments Berry se chargent progressivement).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customRoute]);
+
+  const routeCoords = useMemo(
+    () => segments.filter((s) => !s.nonMaritime).flatMap((s) => s.coords || []),
+    [segments],
+  );
+
   // ── Anti-overlap offsets pour les markers de drapeaux d'escales ──────────
-  const markerOffsets = useMarkerOffsets(points, mapRef);
+  const markerOffsets = useMarkerOffsets(points, mapRef, routeCoords);
 
-  // Custom imported route (null = show Berry-Mappemonde default route)
-  const [customRoute, setCustomRoute] = useState(null); // GeoJSON FeatureCollection
+  const [routeKind, setRouteKind] = useState("berry");
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [layerPopup, setLayerPopup] = useState(null);
+  const routeKindRef = useRef("berry");
+  routeKindRef.current = routeKind;
+  const berryFetchIdRef = useRef(0);
+  const customFetchIdRef = useRef(0);
 
-  const handleRouteImport = (geojson) => setCustomRoute(geojson);
-  const handleRouteSwitchToBerry = () => setCustomRoute(null);
+  const applyBerryBriefing = useCallback(() => {
+    const cached = getCachedPlan(lang);
+    setExpeditionPlan(cached);
+    setBriefingLoading(false);
+  }, [lang]);
+
+  const handleRouteSwitchToBerry = () => {
+    customFetchIdRef.current += 1;
+    routeKindRef.current = "berry";
+    setCustomRoute(null);
+    setRouteKind("berry");
+    applyBerryBriefing();
+  };
+
+  const fetchCustomPlan = useCallback((geojson) => {
+    const applyFallback = () => {
+      const local = buildLocalCustomBriefing(geojson, lang);
+      setExpeditionPlan(local);
+    };
+
+    setExpeditionPlan(null);
+    const wps = waypointsFromCollection(geojson);
+    const hasLine = (geojson?.features || []).some(
+      (f) => f?.geometry?.type === "LineString" && f.geometry.coordinates?.length >= 2,
+    );
+    if (wps.length < 2 && !hasLine) {
+      setBriefingLoading(false);
+      applyFallback();
+      return;
+    }
+
+    const requestId = ++customFetchIdRef.current;
+    setBriefingLoading(true);
+
+    const finish = (plan) => {
+      if (customFetchIdRef.current !== requestId) return;
+      if (routeKindRef.current !== "custom") return;
+      setExpeditionPlan(plan);
+      setBriefingLoading(false);
+    };
+
+    if (!ORCHESTRATOR_URL) {
+      finish(buildLocalCustomBriefing(geojson, lang));
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: lang, waypoints: wps }),
+      signal: ctrl.signal,
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`plan ${r.status}`))))
+      .then((data) => {
+        clearTimeout(timer);
+        if (data?.expedition_plan?.executive_briefing) {
+          finish(data.expedition_plan);
+        } else {
+          finish(buildLocalCustomBriefing(geojson, lang));
+        }
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        console.warn("Orchestrator custom plan:", err);
+        finish(buildLocalCustomBriefing(geojson, lang));
+      });
+  }, [lang]);
+
+  const handleRouteImport = (geojson) => {
+    berryFetchIdRef.current += 1;
+    routeKindRef.current = "custom";
+    setCustomRoute(geojson);
+    setRouteKind("custom");
+    setExpeditionPlan(null);
+    setBriefingLoading(true);
+    fetchCustomPlan(geojson);
+  };
 
   // ── Drawing mode ────────────────────────────────────────────────────────────
   const [drawingMode, setDrawingMode] = useState(false);
@@ -236,8 +311,14 @@ export default function App() {
   };
 
   const handleDrawStart = () => {
+    setSimulationMode(false);
+    setCatamaranPos(null);
+    setSimulationStep(0);
     setDrawingMode(true);
     _resetDrawState();
+    berryFetchIdRef.current += 1;
+    setExpeditionPlan(null);
+    setBriefingLoading(false);
   };
 
   // Called from BerryCard "Finish" — returns FeatureCollection to BerryCard
@@ -250,18 +331,32 @@ export default function App() {
         properties: {},
         geometry: { type: "LineString", coordinates: s.coords },
       }));
-    // Drawn waypoints with metadata as Point features (only if name or flags set)
-    const pointFeatures = drawnPointsRef.current
-      .filter((p) => p.name || (p.flags && p.flags.length > 0))
-      .map((p) => ({
-        type: "Feature",
-        properties: { name: p.name || "", flags: p.flags || [], naviguide_type: "drawn_waypoint" },
-        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-      }));
+    const pointFeatures = drawnPointsRef.current.map((p, i) => ({
+      type: "Feature",
+      properties: { name: p.name || `Point ${i + 1}`, flags: p.flags || [], naviguide_type: "drawn_waypoint" },
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+    }));
     const geojson = { type: "FeatureCollection", features: [...lineFeatures, ...pointFeatures] };
     setDrawingMode(false);
-    _resetDrawState();
     return geojson;
+  };
+
+  const handleDrawContinue = () => {
+    setSimulationMode(false);
+    setCatamaranPos(null);
+    setSimulationStep(0);
+    setDrawingMode(true);
+    setExpeditionPlan(null);
+    setBriefingLoading(false);
+  };
+
+  const handleCustomDelete = () => {
+    customFetchIdRef.current += 1;
+    routeKindRef.current = "berry";
+    setCustomRoute(null);
+    setRouteKind("berry");
+    _resetDrawState();
+    applyBerryBriefing();
   };
 
   const fetchDrawnSegment = async (from, to) => {
@@ -297,7 +392,6 @@ export default function App() {
     const { lng: lon, lat } = e.lngLat;
     const newPoint = { lat, lon };
     const updated = [...drawnPointsRef.current, newPoint];
-    const newIdx  = updated.length - 1;
     drawnPointsRef.current    = updated;
     // New action clears the redo stack
     undonePointsRef.current   = [];
@@ -307,8 +401,6 @@ export default function App() {
     if (updated.length >= 2) {
       fetchDrawnSegment(updated[updated.length - 2], newPoint);
     }
-    // Auto-open satellite popup on the Point Info tab for this waypoint
-    openSatelliteForDrawnPoint(lon, lat, newIdx);
   };
 
   const handleDrawUndo = () => {
@@ -368,38 +460,6 @@ export default function App() {
   const [pointInfoName, setPointInfoName]   = useState("");
   const [pointInfoFlags, setPointInfoFlags] = useState([null, null]);
 
-  /** Open satellite popup + Point Info tab for a newly placed drawn waypoint */
-  const openSatelliteForDrawnPoint = async (lon, lat, drawPointIndex) => {
-    const existing = drawnPointsRef.current[drawPointIndex];
-    setPointInfoName(existing?.name  || "");
-    setPointInfoFlags([existing?.flags?.[0] ?? null, existing?.flags?.[1] ?? null]);
-    setSatelliteLoading(true);
-    setSatelliteTab("point");
-    setSelectedSatellite({ lon, lat, wind: null, wave: null, current: null, drawPointIndex });
-
-    const fetchJson = (endpoint) =>
-      fetch(`${API_URL}/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ latitude: lat, longitude: lon }),
-      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-
-    const [windResult, waveResult, currentResult] = await Promise.allSettled([
-      fetchJson("wind"),
-      fetchJson("wave"),
-      fetchJson("current"),
-    ]);
-
-    setSelectedSatellite({
-      lon, lat,
-      wind:    windResult.status    === "fulfilled" ? windResult.value    : null,
-      wave:    waveResult.status    === "fulfilled" ? waveResult.value    : null,
-      current: currentResult.status === "fulfilled" ? currentResult.value : null,
-      drawPointIndex,
-    });
-    setSatelliteLoading(false);
-  };
-
   /** Save Point Info metadata (name + flags) to the drawn waypoint */
   const handleSaveDrawPointMeta = () => {
     if (selectedSatellite?.drawPointIndex != null) {
@@ -416,16 +476,13 @@ export default function App() {
     setSelectedSatellite(null);
   };
 
-  // Fetch orchestrator plan — serve from localStorage cache instantly, refresh in background.
-  // Re-fetches when language changes to get briefing in the selected language.
+  // Briefing Berry uniquement sur la route Berry — jamais après un tracé perso.
   useEffect(() => {
+    if (routeKind !== "berry" || drawingMode) return;
     const cached = getCachedPlan(lang);
-    if (cached) {
-      setExpeditionPlan(cached);                             // instant render from cache
-    } else {
-      setExpeditionPlan(null);                              // clear stale plan from previous language
-    }
+    setExpeditionPlan(cached);
     if (!ORCHESTRATOR_URL) return;
+    const requestId = ++berryFetchIdRef.current;
     fetch(`${ORCHESTRATOR_URL}/api/v1/expedition/plan/berry-mappemonde`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -441,12 +498,21 @@ export default function App() {
     })
       .then((r) => r.json())
       .then((data) => {
+        if (routeKindRef.current !== "berry") return;
+        if (berryFetchIdRef.current !== requestId) return;
         if (data?.expedition_plan) {
           setExpeditionPlan(data.expedition_plan);
-          setCachedPlan(lang, data.expedition_plan);         // persist per language
+          setCachedPlan(lang, data.expedition_plan);
         }
       })
       .catch((err) => console.warn("Orchestrator unavailable:", err));
+  }, [lang, routeKind, drawingMode]);
+
+  // Recalcule le briefing perso si la langue change (l'import appelle déjà fetchCustomPlan).
+  useEffect(() => {
+    if (routeKind !== "custom" || drawingMode || !customRoute) return;
+    fetchCustomPlan(customRoute);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lang seul
   }, [lang]);
 
   // Points d'intérêt
@@ -628,6 +694,49 @@ export default function App() {
     );
   }, [segments, segProgress]);
 
+  const handleMapClick = async (e) => {
+    if (drawingMode) {
+      handleDrawingClick(e);
+      return;
+    }
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    const present = BI_CLICK_LAYERS.filter((id) => map.getLayer(id));
+    const hits = present.length ? map.queryRenderedFeatures(e.point, { layers: present }) : [];
+    if (hits.length) {
+      const f = hits[0];
+      const kind = kindFromLayer(f.layer.id);
+      const coords = f.geometry?.type === "Point" ? f.geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
+      setSelectedSatellite(null);
+      setLayerPopup({ lon: coords[0], lat: coords[1], kind, props: f.properties || {} });
+      return;
+    }
+
+    const onRoute = map.queryRenderedFeatures(e.point, { layers: ["maritime-layer"] }).length > 0;
+    if (!onRoute && maritimeLayers.showZee) {
+      const lon = e.lngLat.lng;
+      const lat = e.lngLat.lat;
+      const d = 0.25;
+      try {
+        const res = await fetch(`${API_URL}/proxy/zee?bbox=${lon - d},${lat - d},${lon + d},${lat + d}&maxFeatures=20`);
+        if (res.ok) {
+          const fc = await res.json();
+          const hit = (fc.features || []).find((feat) => featureContains(feat, lon, lat)) || fc.features?.[0];
+          if (hit) {
+            setSelectedSatellite(null);
+            setLayerPopup({ lon, lat, kind: "zee", props: hit.properties || {} });
+            return;
+          }
+        }
+      } catch {
+        /* fallback route / rien */
+      }
+    }
+    setLayerPopup(null);
+    handleRouteClick(e);
+  };
+
   // ── Route-click: fetch satellite data for any clicked point on the route ────
   const handleRouteClick = async (e) => {
     const map = mapRef.current?.getMap();
@@ -668,19 +777,20 @@ export default function App() {
     setSatelliteLoading(false);
   };
 
-  // Construction GeoJSON — use customRoute (FeatureCollection) when a file has been imported
-  // Live drawn route (green) shown during drawing mode
-  const drawnLines = {
-    type: "FeatureCollection",
-    features: drawnSegments
-      .filter((s) => s.coords?.length > 0)
-      .map((s) => ({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: s.coords },
-      })),
-  };
-
   const EMPTY_FC = { type: "FeatureCollection", features: [] };
+
+  // Vert uniquement pendant le tracé. Après « Terminer », la route perso est bleue.
+  const drawnLines = drawingMode
+    ? {
+        type: "FeatureCollection",
+        features: drawnSegments
+          .filter((s) => s.coords?.length > 0)
+          .map((s) => ({
+            type: "Feature",
+            geometry: { type: "LineString", coordinates: s.coords },
+          })),
+      }
+    : EMPTY_FC;
 
   // Hide all existing routes while the user is actively drawing (segments stay in memory)
   const maritimeLines = drawingMode
@@ -714,7 +824,7 @@ export default function App() {
   return (
     <div
       style={{ height: "100vh", width: "100vw", position: "relative" }}
-      className={[isLightMode ? "light-mode" : "", isOffshore ? "offshore-mode" : ""].filter(Boolean).join(" ")}
+      className={[isLightMode ? "light-mode" : ""].filter(Boolean).join(" ")}
     >
       <Sidebar
         plan={expeditionPlan}
@@ -724,19 +834,23 @@ export default function App() {
         onRouteSwitchToBerry={handleRouteSwitchToBerry}
         isDrawing={drawingMode}
         onDrawStart={handleDrawStart}
+        onDrawContinue={handleDrawContinue}
         onDrawFinish={handleDrawFinish}
+        onCustomDelete={handleCustomDelete}
+        canContinueDraw={drawnPoints.length > 0}
+        canFinishDraw={drawnPoints.length >= 2 && !drawingLoading}
         isCockpit={isCockpit}
-        isOffshore={isOffshore}
         polarData={polarData}
         maritimeLayers={maritimeLayers}
+        briefingLoading={briefingLoading}
         simulationMode={simulationMode}
         onSimulationToggle={() => {
           const entering = !simulationMode;
           setSimulationMode(entering);
           if (entering) {
-            // Activation : positionner le catamaran sur La Rochelle
-            setCatamaranPos(LA_ROCHELLE_POS);
+            setCatamaranPos(routeStartPos);
             setSimulationStep(0);
+            flyToPos(routeStartPos.lat, routeStartPos.lon);
           } else {
             setCatamaranPos(null);
           }
@@ -748,18 +862,27 @@ export default function App() {
         legContext={legContext}
       />
       <ExportSidebar
-        segments={segments}
-        points={points}
+        segments={customRoute ? featuresToSegments(customRoute) : segments}
+        points={customRoute
+          ? (customRoute.features || [])
+            .filter((f) => f.geometry?.type === "Point")
+            .map((f) => ({
+              name: f.properties?.name || "",
+              lon: f.geometry.coordinates[0],
+              lat: f.geometry.coordinates[1],
+              flag: "",
+            }))
+          : points}
         open={exportSidebarOpen}
         onToggle={() => setExportSidebarOpen((o) => !o)}
-        isOffshore={isOffshore}
-        isCockpit={isCockpit}
         isLightMode={isLightMode}
-        onOffshoreChange={setIsOffshore}
-        onCockpitChange={setIsCockpit}
         onLightModeChange={setIsLightMode}
         polarData={polarData}
         onPolarDataLoaded={setPolarData}
+        routeDistanceNm={summarizeRoute(customRoute ? featuresToSegments(customRoute) : segments).nm}
+        routeSegmentCount={summarizeRoute(customRoute ? featuresToSegments(customRoute) : segments).segments}
+        exportName={customRoute ? "naviguide-route-personnalisee" : "naviguide-berry-mappemonde"}
+        routeCollectionName={customRoute ? "NAVIGUIDE — Route personnalisée" : "NAVIGUIDE - Berry-Mappemonde Expedition"}
       />
 
       {/* ── Slim loading phase: first-batch spinner, disappears quickly ───── */}
@@ -774,7 +897,7 @@ export default function App() {
 
       {/* ── Progress pill — stays visible while remaining batches load ─────── */}
       {!loading && segProgress.done < segProgress.total && (
-        <div className="absolute bottom-5 right-5 z-20 flex items-center gap-2 bg-slate-900/90 text-white text-xs font-medium px-3 py-2 rounded-full shadow-lg pointer-events-none">
+        <div className="absolute bottom-20 right-5 z-20 flex items-center gap-2 bg-slate-900/90 text-white text-xs font-medium px-3 py-2 rounded-full shadow-lg pointer-events-none">
           <div className="w-3.5 h-3.5 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />
           <span>{t("routesProgress", { done: segProgress.done, total: segProgress.total })}</span>
           {/* slim progress bar */}
@@ -833,13 +956,14 @@ export default function App() {
         ref={mapRef}
         initialViewState={{ latitude: 0, longitude: 10, zoom: 1.5 }}
         style={{ width: "100%", height: "100%" }}
-        mapStyle="https://demotiles.maplibre.org/style.json"
+        mapStyle={mapStyle || "https://demotiles.maplibre.org/style.json"}
+        attributionControl={{ compact: false, customAttribution: SEAMAP_ATTRIBUTION }}
         doubleClickZoom={false}
         dragRotate={false}
         touchZoomRotate={false}
         cursor={drawingMode ? "crosshair" : routeCursor}
-        interactiveLayerIds={drawingMode ? [] : ["maritime-layer"]}
-        onClick={(e) => { if (drawingMode) { handleDrawingClick(e); } else { handleRouteClick(e); } }}
+        interactiveLayerIds={drawingMode ? [] : ["maritime-layer", ...BI_CLICK_LAYERS]}
+        onClick={handleMapClick}
         onMouseEnter={() => { if (!drawingMode) setRouteCursor("pointer"); }}
         onMouseLeave={() => { if (!drawingMode) setRouteCursor("crosshair"); }}
         onLoad={(event) => {
@@ -1552,15 +1676,41 @@ export default function App() {
           />
         )}
 
-        {/* Escales obligatoires — drapeaux toujours visibles, tooltip au survol (hidden during drawing) */}
-        {!drawingMode && points.map((p, i) =>
+        {layerPopup && (
+          <LayerFichePopup popup={layerPopup} onClose={() => setLayerPopup(null)} />
+        )}
+
+        {/* Escales — drapeaux + trait vers l'ancre (masqués en dessin / route perso) */}
+        {!drawingMode && !customRoute && points.map((p, i) =>
           p.flag !== "" ? (
-            <Marker key={i} longitude={p.lon} latitude={p.lat} anchor="bottom" offset={markerOffsets[i]}>
+            <Marker key={i} longitude={p.lon} latitude={p.lat} anchor="bottom" offset={markerOffsets[i] || [0, 0]}>
               <div
                 onMouseEnter={() => setHoveredPoint(i)}
                 onMouseLeave={() => setHoveredPoint(null)}
-                style={{ position: "relative", cursor: "default" }}
+                style={{ position: "relative", width: 36, height: 26, cursor: "default" }}
               >
+                {markerOffsets[i] && Math.hypot(markerOffsets[i][0], markerOffsets[i][1]) > 4 && (
+                  <svg
+                    width="1"
+                    height="1"
+                    style={{
+                      position: "absolute",
+                      left: 18,
+                      top: 26,
+                      overflow: "visible",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <line
+                      x1="0"
+                      y1="0"
+                      x2={-markerOffsets[i][0]}
+                      y2={-markerOffsets[i][1]}
+                      stroke="#111"
+                      strokeWidth="1.4"
+                    />
+                  </svg>
+                )}
                 <img
                   src={p.flag}
                   alt={p.name}

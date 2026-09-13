@@ -24,6 +24,7 @@
  */
 
 import { useMemo } from "react";
+import { nextEscaleStop } from "../utils/escales";
 
 // Vitesse par défaut du catamaran (nœuds)
 const DEFAULT_SPEED_KNOTS = 7;
@@ -273,6 +274,15 @@ export function useLegContext(
           fromIdx  = i > 0 ? i - 1 : 0;
           break;
         }
+      }
+    }
+
+    // Destination briefing = prochaine escale, jamais un point intermédiaire
+    if (toStop && !toStop.flag) {
+      const resolved = nextEscaleStop(stops, toIdx);
+      if (resolved.stop) {
+        toStop = resolved.stop;
+        toIdx = resolved.index;
       }
     }
 

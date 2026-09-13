@@ -79,7 +79,7 @@ export function SimulationPanel({ legContext, onClose, onPrev, canPrev, onNext, 
         <div className="text-xs text-slate-400 text-center">
           {t("simulationDragPrompt")}
         </div>
-        {/* Boutons nav visibles même sans legContext (catamaran sur La Rochelle) */}
+        {/* Boutons nav visibles même sans legContext (départ de la route affichée) */}
         <div className="mt-2">
           <PrevNextButtons onPrev={onPrev} canPrev={canPrev} onNext={onNext} canNext={canNext} />
         </div>

@@ -110,6 +110,7 @@ class ExpeditionRequestIn(BaseModel):
     vessel_specs:  Dict[str, Any] = {}
     constraints:   Dict[str, Any] = {}
     expedition_id: Optional[str]  = None  # links to polar data for real VMG-based ETAs
+    language:      Optional[str]  = "fr"
 
 
 # ── Helper: build initial OrchestratorState ───────────────────────────────────
@@ -181,6 +182,7 @@ async def plan_expedition(request: ExpeditionRequestIn):
         vessel_specs  = request.vessel_specs,
         constraints   = request.constraints,
         expedition_id = request.expedition_id,
+        language      = request.language or "fr",
     )
 
     try:
