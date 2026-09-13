@@ -10,6 +10,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.services.master_seeds import (
     DATA_DIR, NOISE_NAMES, SKIP_LISTING_NETLOCS, domain_of, domain_matches_org,
@@ -35,6 +36,10 @@ NAME_EXCLUDE = "exclude"
 QUEUE_CRAWL = "crawl"
 QUEUE_RESOLVE = "resolve"
 QUEUE_SKIP = "skip"
+
+FTM_DISCOVER = "discover"
+FTM_SKIP = "skip"
+FTM_SEARCH = "search"
 
 SEARCH_JOURNAL_PATH = DATA_DIR / "official_homes_search.jsonl"
 SEARCH_PROGRESS_PATH = DATA_DIR / "official_homes_search.progress.json"
@@ -1006,3 +1011,155 @@ def dump_catalog(seeds: list[dict], path: Path | None = None, source: str = "") 
         "seeds": [{k: v for k, v in s.items() if k != "priority"} for s in seeds],
     }
     return _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def find_catalog_seed(
+    catalog: list[dict] | None,
+    name: str,
+    url: str | None = None,
+) -> dict | None:
+    """Même organisme que le partenaire : nom/alias, sinon domaine unique."""
+    seeds = catalog or []
+    found = _find_seed_by_name(seeds, name)
+    if found:
+        return found
+    domain = domain_of(url)
+    if not domain or is_shared_hub(domain):
+        return None
+    for seed in seeds:
+        for key in ("url", "listing_url", "home_url"):
+            if domain_of(seed.get(key)) == domain:
+                return seed
+    return None
+
+
+def accept_partner_url(name: str, url: str | None) -> dict | None:
+    """Home officielle (ou page-liste) : pas un journal, pas un hub emprunté."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return None
+    href = raw.split("#")[0].split("?")[0]
+    parsed = urlparse(href)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    domain = domain_of(href)
+    if not domain or domain in SKIP_LISTING_NETLOCS:
+        return None
+    if is_publisher_host(href):
+        return None
+    if is_shared_hub(domain) and not name_owns_hub(name, domain):
+        return None
+    if not domain_matches_org(href, name):
+        return None
+    home = f"{parsed.scheme}://{parsed.netloc}/"
+    listing = is_listing_url(href)
+    crawl = href if listing else home
+    return {
+        "name": (name or "").strip(),
+        "url": crawl,
+        "home_url": home,
+        "listing_url": crawl if listing else None,
+        "listing_kind": "projects_index" if listing else "homepage",
+        "home_status": HOME_STATUS_OFFICIAL,
+        "name_status": NAME_OK,
+        "queue": QUEUE_CRAWL,
+        "source": "follow_the_money",
+        "home_source": "partner_url",
+        "project_count": 0,
+    }
+
+
+def catalog_partner_seed(seed: dict) -> dict | None:
+    """Graine Complet : listing ou home déjà classés, pas l'URL partenaire brute."""
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    if not url:
+        return None
+    kind = (seed.get("listing_kind") or "").strip() or "homepage"
+    if (seed.get("listing_url") or "").strip() and is_listing_url(seed.get("listing_url")):
+        kind = "projects_index"
+    elif is_listing_url(url):
+        kind = "projects_index"
+    elif is_homepage_url(url) and kind == "projects_index":
+        kind = "homepage"
+    return {
+        "name": (seed.get("name") or "").strip(),
+        "url": url,
+        "home_url": (seed.get("home_url") or "").strip() or url,
+        "listing_url": (seed.get("listing_url") or "").strip() or None,
+        "listing_kind": kind,
+        "home_status": HOME_STATUS_OFFICIAL,
+        "name_status": NAME_OK,
+        "queue": QUEUE_CRAWL,
+        "source": seed.get("source") or "catalog",
+        "home_source": seed.get("home_source") or seed.get("source") or "catalog",
+        "aliases": list(seed.get("aliases") or []),
+        "project_count": int(seed.get("project_count") or 0),
+    }
+
+
+def decide_follow_the_money_partner(
+    name: str,
+    url: str | None = None,
+    *,
+    catalog: list[dict] | None = None,
+    searched_home: str | None = None,
+    did_search: bool = False,
+) -> dict:
+    """Même barème que le catalogue A–E : nom simple, home officielle, pas de hub.
+
+    `did_search` distingue « Search official site pas encore lancé » d'un
+    Search déjà tenté (vide ou rejeté).
+    """
+    raw_name = (name or "").strip()
+    raw_url = (url or "").strip() or None
+    home = (searched_home or "").strip() or None
+    empty = {
+        "action": FTM_SKIP, "reason": "empty_name",
+        "seed": None, "needs_search": False,
+    }
+    if not raw_name:
+        return empty
+    status = classify_name(raw_name)
+    if status == NAME_EXCLUDE:
+        return {**empty, "reason": "exclude"}
+    if status == NAME_COMPOUND:
+        return {**empty, "reason": "compound"}
+
+    found = find_catalog_seed(catalog, raw_name, raw_url)
+    if found:
+        if is_crawl_ready(found):
+            seed = catalog_partner_seed(found)
+            if seed:
+                return {
+                    "action": FTM_DISCOVER, "reason": "catalog",
+                    "seed": seed, "needs_search": False,
+                }
+        return {**empty, "reason": "catalog_not_ready"}
+
+    accepted = accept_partner_url(raw_name, raw_url) if raw_url else None
+    if accepted:
+        return {
+            "action": FTM_DISCOVER, "reason": "partner_url",
+            "seed": accepted, "needs_search": False,
+        }
+
+    if did_search:
+        if home:
+            accepted = accept_partner_url(raw_name, home)
+            if accepted:
+                accepted["home_source"] = "search"
+                return {
+                    "action": FTM_DISCOVER, "reason": "search",
+                    "seed": accepted, "needs_search": False,
+                }
+            return {**empty, "reason": "search_rejected"}
+        return {**empty, "reason": "search_empty"}
+
+    return {
+        "action": FTM_SEARCH, "reason": "needs_official_site",
+        "seed": None, "needs_search": True,
+    }

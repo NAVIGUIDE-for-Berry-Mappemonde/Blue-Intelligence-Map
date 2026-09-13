@@ -470,9 +470,9 @@ def test_ftm_name_without_url_searches_then_discovers(monkeypatch):
         await asyncio.sleep(0)
 
     _run(go())
-    assert search_q[0][1] == '"Wild Oysters" marine conservation'
-    assert ("tf", '"Wild Oysters" marine conservation', None) in search_q
-    assert ("sp", '"Wild Oysters" marine conservation') in search_q
+    assert search_q[0][1] == '"Wild Oysters" official site'
+    assert ("tf", '"Wild Oysters" official site', None) in search_q
+    assert ("sp", '"Wild Oysters" official site') in search_q
     assert sw._serper_queries == 1
     assert discovered == [("Wild Oysters (partner)", "https://wild-oysters.org/", 1)]
     assert sw.db.projects.docs == []
@@ -502,6 +502,68 @@ def test_ftm_without_search_hit_ignores_partner(monkeypatch):
     assert discovered == []
     assert sw.recursive_tasks == []
     assert sw.db.projects.docs == []
+
+
+def test_ftm_exclude_name_does_not_search(monkeypatch):
+    sw = _swarm()
+    sw.master_seeds = [
+        {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/",
+         "aliases": ["Rare"], "home_status": "official", "queue": "crawl"},
+    ]
+    sw.partner_domains = set()
+    sw.recursive_tasks = []
+    search = []
+
+    async def track(*a, **k):
+        search.append(1)
+        return []
+
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", track)
+    monkeypatch.setattr(sp, "serper_search", track)
+
+    _run(sw._follow_the_money(
+        {"partners": [{"name": "Unknown", "url": None}]}, depth=0))
+    assert search == []
+    assert sw.recursive_tasks == []
+
+
+def test_ftm_hub_url_searches_official_site(monkeypatch):
+    sw = _swarm()
+    sw.master_seeds = [
+        {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/",
+         "aliases": ["Rare"], "home_status": "official", "queue": "crawl"},
+    ]
+    sw.partner_domains = set()
+    sw.recursive_tasks = []
+    discovered = []
+    search_q = []
+
+    async def fake_discover(seed, max_urls, depth=0):
+        discovered.append((seed["name"], seed["url"], seed.get("home_status")))
+
+    async def fake_tf(query, key, **kw):
+        search_q.append(query)
+        return [{"url": "https://oceandecade.org/actions/x"}, {"url": "https://bmkg.go.id/"}]
+
+    async def fake_sp(query, key, **kw):
+        return []
+
+    sw._discover = fake_discover
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_search", fake_tf)
+    monkeypatch.setattr(sp, "serper_search", fake_sp)
+
+    async def go():
+        await sw._follow_the_money({
+            "partners": [{"name": "BMKG", "url": "https://oceandecade.org/actions/foo"}],
+        }, depth=0)
+        await asyncio.sleep(0)
+
+    _run(go())
+    assert search_q[0] == '"BMKG" official site'
+    assert discovered == [("BMKG (partner)", "https://bmkg.go.id/", "official")]
+    assert all("oceandecade.org" not in (u or "") for _, u, _ in discovered)
 
 
 def test_known_v1_name_without_url_does_not_search(monkeypatch):

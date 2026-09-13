@@ -14,9 +14,11 @@ from app.services.project_listing import (
     is_listing_url, listing_from_hits, needs_listing_hop, parent_listing_url,
 )
 from app.services.seed_catalog import (
+    FTM_DISCOVER, FTM_SEARCH, FTM_SKIP, accept_partner_url,
     append_search_journal, apply_compound_splits, apply_home_review,
     apply_listing_result, apply_official_site_result, assign_queue,
-    build_enriched_master_seeds, classify_home, classify_name, dump_catalog,
+    build_enriched_master_seeds, classify_home, classify_name,
+    decide_follow_the_money_partner, dump_catalog,
     infer_listings_onto_official_homes, infer_own_listing, is_crawl_ready,
     journal_done_names, listing_candidates, load_search_journal,
     overlay_home_reviews, overlay_listing_results, overlay_search_results,
@@ -527,3 +529,101 @@ def test_home_review_reject_keep_and_no_projects():
     overlay_home_reviews(seeds, [{"name": "Monaco", "action": "reject"}])
     assert seeds[0]["home_status"] == "unknown"
     assert search_candidates(seeds) == []
+
+
+def test_accept_partner_url_rejects_hub_publisher_and_mismatch():
+    listing = accept_partner_url(
+        "Wild Oysters", "https://wild-oysters.org/projects/")
+    assert listing["url"] == "https://wild-oysters.org/projects/"
+    assert listing["listing_kind"] == "projects_index"
+    assert listing["home_status"] == "official"
+    home = accept_partner_url("Wild Oysters", "https://wild-oysters.org/about/")
+    assert home["url"] == "https://wild-oysters.org/"
+    assert home["listing_kind"] == "homepage"
+    owner = accept_partner_url("Ocean Decade", "https://oceandecade.org/actions/")
+    assert owner and owner["listing_kind"] == "projects_index"
+    assert accept_partner_url("BMKG", "https://oceandecade.org/actions/") is None
+    assert accept_partner_url("BMKG", "https://www.nature.com/articles/x") is None
+    assert accept_partner_url("Another New", "https://brand-new.example/") is None
+    assert accept_partner_url("Wild Oysters", "https://facebook.com/wild") is None
+
+
+def test_decide_ftm_uses_catalog_or_skips():
+    catalog = [{
+        "name": "Rare Fish Forever",
+        "url": "https://rare.org/program/fish-forever/",
+        "listing_url": "https://rare.org/program/fish-forever/",
+        "home_url": "https://rare.org/",
+        "home_status": "official",
+        "name_status": "ok",
+        "queue": "crawl",
+        "listing_kind": "projects_index",
+        "aliases": ["Rare"],
+        "source": "curated",
+    }]
+    hit = decide_follow_the_money_partner(
+        "Rare", "https://rare.org/our-work/", catalog=catalog)
+    assert hit["action"] == FTM_DISCOVER
+    assert hit["reason"] == "catalog"
+    assert hit["seed"]["url"] == "https://rare.org/program/fish-forever/"
+    assert hit["needs_search"] is False
+
+    borrowed = [{
+        "name": "BMKG",
+        "url": "https://oceandecade.org/",
+        "home_status": "borrowed_hub",
+        "queue": "resolve",
+        "name_status": "ok",
+    }]
+    skip_hub = decide_follow_the_money_partner(
+        "BMKG", "https://bmkg.go.id/", catalog=borrowed)
+    assert skip_hub["action"] == FTM_SKIP
+    assert skip_hub["reason"] == "catalog_not_ready"
+    assert skip_hub["needs_search"] is False
+
+    rejected = [{
+        "name": "Monaco",
+        "home_status": "unknown",
+        "queue": "resolve",
+        "review_action": "reject",
+        "name_status": "ok",
+    }]
+    skip_rev = decide_follow_the_money_partner(
+        "Monaco", "https://www.asmonaco.com/", catalog=rejected)
+    assert skip_rev["action"] == FTM_SKIP
+    assert skip_rev["reason"] == "catalog_not_ready"
+
+    drake = [{
+        "name": "Drake Enterprise Foundation",
+        "url": "https://drakespm.com/",
+        "home_status": "official",
+        "queue": "skip",
+        "review_action": "no_projects",
+        "listing_kind": "home_only",
+        "name_status": "ok",
+    }]
+    skip_np = decide_follow_the_money_partner(
+        "Drake Enterprise Foundation", "https://drakespm.com/", catalog=drake)
+    assert skip_np["action"] == FTM_SKIP
+    assert not is_crawl_ready(drake[0])
+
+
+def test_decide_ftm_name_and_search_gates():
+    assert decide_follow_the_money_partner("Unknown", "https://unknown.org/")["reason"] == "exclude"
+    assert decide_follow_the_money_partner("CEA and CNRS", "https://cnrs.fr/")["reason"] == "compound"
+    need = decide_follow_the_money_partner("Wild Oysters", None)
+    assert need["action"] == FTM_SEARCH
+    assert need["needs_search"] is True
+    bad = decide_follow_the_money_partner("BMKG", "https://oceandecade.org/actions/")
+    assert bad["action"] == FTM_SEARCH
+    found = decide_follow_the_money_partner(
+        "BMKG", "https://oceandecade.org/actions/",
+        searched_home="https://bmkg.go.id/", did_search=True,
+    )
+    assert found["action"] == FTM_DISCOVER
+    assert found["reason"] == "search"
+    assert found["seed"]["url"] == "https://bmkg.go.id/"
+    empty = decide_follow_the_money_partner(
+        "Wild Oysters", None, searched_home="", did_search=True)
+    assert empty["action"] == FTM_SKIP
+    assert empty["reason"] == "search_empty"

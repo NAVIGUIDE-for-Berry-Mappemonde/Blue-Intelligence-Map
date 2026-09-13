@@ -242,12 +242,18 @@ def test_follow_the_money_caps_only_new_orgs():
         sw._queue_partner("Another New", "https://brand-new.example/")
         await asyncio.sleep(0)
 
-        assert "https://rare.org/our-work/" in discovered
+        assert "https://rare.org/program/fish-forever/" in discovered
+        assert "https://rare.org/our-work/" not in discovered
         assert "https://wild-oysters.org/" in discovered
         assert "https://brand-new.example/" not in discovered
         assert sw.new_partner_count == 1
         extras = sw.db.master_seeds.docs
-        assert any(d.get("domain") == "wild-oysters.org" for d in extras)
+        assert any(
+            d.get("domain") == "wild-oysters.org"
+            and d.get("home_status") == "official"
+            and d.get("queue") == "crawl"
+            for d in extras
+        )
         assert all("priority" not in d for d in extras)
 
     asyncio.run(run())
@@ -287,3 +293,55 @@ def test_follow_the_money_skips_already_queued_domain():
     sw.recursive_tasks = []
     sw._queue_partner("Wild Oysters", "https://wild-oysters.org/tyne/")
     assert sw.recursive_tasks == []
+
+
+def test_follow_the_money_skips_exclude_and_catalog_not_ready():
+    async def run():
+        sw = Swarm(_FakeDB())
+        sw.running = True
+        sw.settings = {"follow_the_money": True, "max_partner_orgs": 5}
+        sw.master_seeds = [{
+            "name": "Drake Enterprise Foundation",
+            "url": "https://drakespm.com/",
+            "home_status": "official",
+            "queue": "skip",
+            "review_action": "no_projects",
+            "listing_kind": "home_only",
+            "name_status": "ok",
+        }]
+        sw.partner_domains = set()
+        sw.recursive_tasks = []
+        discovered = []
+
+        async def fake_discover(seed, max_urls, depth=0):
+            discovered.append(seed["url"])
+
+        sw._discover = fake_discover
+        await sw._follow_the_money({
+            "partners": [
+                {"name": "Unknown", "url": None},
+                {"name": "CEA and CNRS", "url": "https://www.cnrs.fr/"},
+                {"name": "Drake Enterprise Foundation", "url": "https://drakespm.com/"},
+            ],
+        }, depth=0)
+        await asyncio.sleep(0)
+        assert discovered == []
+        assert sw.recursive_tasks == []
+        assert sw.new_partner_count == 0
+
+    asyncio.run(run())
+
+
+def test_follow_the_money_queue_rejects_hub_url():
+    sw = Swarm(_FakeDB())
+    sw.running = True
+    sw.settings = {"follow_the_money": True, "max_partner_orgs": 5}
+    sw.master_seeds = [
+        {"name": "Rare Fish Forever", "url": "https://rare.org/program/fish-forever/",
+         "aliases": ["Rare"], "home_status": "official", "queue": "crawl"},
+    ]
+    sw.partner_domains = set()
+    sw.recursive_tasks = []
+    sw._queue_partner("BMKG", "https://oceandecade.org/actions/")
+    assert sw.recursive_tasks == []
+    assert sw.new_partner_count == 0
