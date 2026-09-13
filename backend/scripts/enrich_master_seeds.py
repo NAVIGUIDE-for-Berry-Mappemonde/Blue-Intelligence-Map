@@ -21,7 +21,8 @@ from app.services.master_seeds import (  # noqa: E402
     seeds_for_run,
 )
 from app.services.seed_catalog import (  # noqa: E402
-    build_enriched_master_seeds, catalog_summary, dump_catalog, write_audit,
+    SEARCH_JOURNAL_PATH, build_enriched_master_seeds, catalog_summary,
+    dump_catalog, overlay_search_results, write_audit,
 )
 
 AUDIT_PATH = BACKEND / "data" / "master_seeds_audit.json"
@@ -43,6 +44,11 @@ def main() -> int:
     src.add_argument("--from-mongo", action="store_true")
     p.add_argument("--out", type=Path, default=MASTER_SEEDS_PATH)
     p.add_argument("--audit-out", type=Path, default=AUDIT_PATH)
+    p.add_argument(
+        "--reset-search",
+        action="store_true",
+        help="Ne pas réappliquer les homes Search B (journal + catalogue actuel)",
+    )
     args = p.parse_args()
 
     if args.from_geojson:
@@ -57,6 +63,13 @@ def main() -> int:
         source = "mongo:projects"
 
     seeds = build_enriched_master_seeds(projects)
+    if not args.reset_search:
+        previous = []
+        if args.out.is_file():
+            previous = json.loads(args.out.read_text(encoding="utf-8")).get("seeds") or []
+        journal = SEARCH_JOURNAL_PATH if SEARCH_JOURNAL_PATH.is_file() else None
+        kept = overlay_search_results(seeds, previous=previous, journal=journal)
+        print(f"  overlay Search B : {kept} graines préservées (journal + catalogue)")
     path = dump_catalog(seeds, args.out, source=source)
     audit = write_audit(seeds, args.audit_out, source=source)
     summary = catalog_summary(seeds)

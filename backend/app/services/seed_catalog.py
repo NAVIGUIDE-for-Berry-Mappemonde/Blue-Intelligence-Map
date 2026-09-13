@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from app.services.master_seeds import (
-    NOISE_NAMES, SKIP_LISTING_NETLOCS, domain_of, domain_matches_org,
+    DATA_DIR, NOISE_NAMES, SKIP_LISTING_NETLOCS, domain_of, domain_matches_org,
     funder_names_from_project, is_noise_name, is_publisher_host,
     is_shared_hub, listing_url_from_project_urls, name_owns_hub,
     names_soft_match, now_iso, norm_name,
@@ -34,6 +35,23 @@ NAME_EXCLUDE = "exclude"
 QUEUE_CRAWL = "crawl"
 QUEUE_RESOLVE = "resolve"
 QUEUE_SKIP = "skip"
+
+SEARCH_JOURNAL_PATH = DATA_DIR / "official_homes_search.jsonl"
+SEARCH_PROGRESS_PATH = DATA_DIR / "official_homes_search.progress.json"
+AUDIT_PATH = DATA_DIR / "master_seeds_audit.json"
+HOME_SOURCE_SEARCH = "search"
+
+SEARCH_HOME_STATUSES = {
+    HOME_STATUS_BORROWED,
+    HOME_STATUS_UNKNOWN,
+    HOME_STATUS_EMPTY,
+    HOME_STATUS_PUBLISHER,
+}
+
+_SEARCH_OVERLAY_FIELDS = (
+    "home_url", "url", "home_status", "home_source", "queue", "listing_kind",
+    "listing_url",
+)
 
 _EXCLUDE_EXACT = NOISE_NAMES | {
     "in-kind", "in kind", "inkind",
@@ -398,6 +416,178 @@ def audit_rows(seeds: list[dict]) -> list[dict]:
     return rows
 
 
+def _atomic_write_text(path: Path, text: str) -> Path:
+    """Écriture tmp + fsync + replace : un crash laisse l'ancien fichier intact."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    tmp.replace(path)
+    return path
+
+
+def apply_official_site_result(seed: dict, site: str | None) -> dict:
+    """Applique un hit Search B. Conserve `borrowed_domain` pour l'audit."""
+    site = (site or "").strip()
+    if site:
+        listing = (seed.get("listing_url") or "").strip() or None
+        if listing and domain_of(listing) != domain_of(site):
+            listing = None
+            seed["listing_url"] = None
+        seed["home_url"] = site
+        seed["url"] = listing or site
+        seed["home_status"] = HOME_STATUS_OFFICIAL
+        seed["home_source"] = HOME_SOURCE_SEARCH
+        seed["queue"] = QUEUE_CRAWL
+        if not seed.get("listing_kind") or seed["listing_kind"] == "unknown":
+            seed["listing_kind"] = "homepage"
+        return seed
+    seed["home_status"] = HOME_STATUS_UNKNOWN
+    seed["queue"] = QUEUE_RESOLVE
+    seed["home_source"] = HOME_SOURCE_SEARCH
+    return seed
+
+
+def append_search_journal(path: Path, record: dict) -> Path:
+    """Append + fsync : chaque résultat B est consigné avant le checkpoint."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+    return path
+
+
+def load_search_journal(path: Path) -> dict[str, dict]:
+    """Dernier enregistrement par nom (journal append-only)."""
+    out: dict[str, dict] = {}
+    path = Path(path)
+    if not path.is_file():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        name = (rec.get("name") or "").strip()
+        if name:
+            out[name] = rec
+    return out
+
+
+def journal_done_names(records: dict[str, dict], *, retry_unknown: bool = False) -> set[str]:
+    """Noms déjà Search-és. Les erreurs réseau ne sont pas « done » (reprise)."""
+    done: set[str] = set()
+    for name, rec in (records or {}).items():
+        if rec.get("error") and not rec.get("site"):
+            continue
+        if rec.get("site"):
+            done.add(norm_name(name))
+        elif not retry_unknown:
+            done.add(norm_name(name))
+    return done
+
+
+def search_candidates(
+    seeds: list[dict],
+    *,
+    done_names: set[str] | None = None,
+    retry_unknown: bool = False,
+) -> list[dict]:
+    """Graines B : nom ok, home empruntée/inconnue, pas déjà consignées Search."""
+    done = {norm_name(n) for n in (done_names or set()) if n}
+    out = []
+    for s in seeds:
+        name = (s.get("name") or "").strip()
+        if not name:
+            continue
+        if (s.get("name_status") or NAME_OK) != NAME_OK:
+            continue
+        if (s.get("queue") or "") == QUEUE_SKIP:
+            continue
+        key = norm_name(name)
+        if key in done:
+            continue
+        source = (s.get("home_source") or "").strip()
+        status = (s.get("home_status") or "").strip()
+        if source == HOME_SOURCE_SEARCH:
+            if retry_unknown and status == HOME_STATUS_UNKNOWN:
+                pass
+            else:
+                continue
+        if status not in SEARCH_HOME_STATUSES:
+            continue
+        out.append(s)
+    return out
+
+
+def overlay_search_results(
+    seeds: list[dict],
+    *,
+    previous: list[dict] | None = None,
+    journal: Path | dict | None = None,
+) -> int:
+    """Réapplique les homes Search (catalogue précédent + journal). Le journal gagne."""
+    by = {norm_name(s.get("name") or ""): s for s in seeds}
+    touched: set[str] = set()
+    for old in previous or []:
+        if (old.get("home_source") or "") != HOME_SOURCE_SEARCH:
+            continue
+        key = norm_name(old.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        for field in _SEARCH_OVERLAY_FIELDS:
+            if field in old:
+                cur[field] = old[field]
+        if old.get("borrowed_domain") and not cur.get("borrowed_domain"):
+            cur["borrowed_domain"] = old["borrowed_domain"]
+        touched.add(key)
+    records: dict[str, dict]
+    if isinstance(journal, dict):
+        records = journal
+    elif journal is not None:
+        records = load_search_journal(Path(journal))
+    else:
+        records = {}
+    for rec in records.values():
+        key = norm_name(rec.get("name") or "")
+        cur = by.get(key)
+        if not cur:
+            continue
+        if rec.get("error") and not rec.get("site"):
+            continue
+        apply_official_site_result(cur, rec.get("site") or "")
+        touched.add(key)
+    return len(touched)
+
+
+def write_search_progress(path: Path, payload: dict) -> Path:
+    body = {"updated_at": now_iso(), **payload}
+    return _atomic_write_text(Path(path), json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+
+
+def persist_catalog(
+    seeds: list[dict],
+    catalog_path: Path,
+    audit_path: Path | None = None,
+    source: str = "",
+) -> Path:
+    """Checkpoint catalogue + audit (atomiques)."""
+    path = dump_catalog(seeds, catalog_path, source=source)
+    if audit_path is not None:
+        write_audit(seeds, audit_path, source=source)
+    return path
+
+
 def write_audit(seeds: list[dict], path: Path, source: str = "") -> Path:
     path = Path(path)
     payload = {
@@ -406,20 +596,24 @@ def write_audit(seeds: list[dict], path: Path, source: str = "") -> Path:
         "summary": catalog_summary(seeds),
         "rows": audit_rows(seeds),
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     csv_path = path.with_suffix(".csv")
     rows = payload["rows"]
     if rows:
-        with csv_path.open("w", encoding="utf-8", newline="") as fh:
+        tmp = csv_path.with_name(csv_path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
             w.writeheader()
             w.writerows(rows)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(csv_path)
     return path
 
 
 def dump_catalog(seeds: list[dict], path: Path | None = None, source: str = "") -> Path:
     from app.services.master_seeds import MASTER_SEEDS_PATH
-    path = path or MASTER_SEEDS_PATH
+    path = Path(path or MASTER_SEEDS_PATH)
     extra = catalog_summary(seeds)
     payload = {
         "generated_at": now_iso(),
@@ -427,5 +621,4 @@ def dump_catalog(seeds: list[dict], path: Path | None = None, source: str = "") 
         **extra,
         "seeds": [{k: v for k, v in s.items() if k != "priority"} for s in seeds],
     }
-    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return Path(path)
+    return _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")

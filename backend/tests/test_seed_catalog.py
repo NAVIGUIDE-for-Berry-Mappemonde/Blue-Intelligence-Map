@@ -1,4 +1,5 @@
 """Audit / enrichissement MasterSeeds hors Complet."""
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,8 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.services import master_seeds as ms
 from app.services.project_listing import is_listing_url, needs_listing_hop
 from app.services.seed_catalog import (
-    build_enriched_master_seeds, classify_home, classify_name,
-    infer_own_listing, is_crawl_ready,
+    append_search_journal, apply_official_site_result, build_enriched_master_seeds,
+    classify_home, classify_name, dump_catalog, infer_own_listing, is_crawl_ready,
+    journal_done_names, load_search_journal, overlay_search_results,
+    search_candidates, write_audit,
 )
 from app.static_data.seeds import CURATED_SEEDS
 
@@ -154,3 +157,163 @@ def test_curated_homes_are_not_fake_indexes():
     assert mer["listing_kind"] == "projects_index"
     assert needs_listing_hop(mer) is False
     assert not needs_listing_hop({"listing_kind": "home_only", "url": "https://www.ifremer.fr/fr"})
+
+
+def test_apply_official_site_keeps_borrowed_domain():
+    seed = {
+        "name": "BMKG",
+        "home_status": "borrowed_hub",
+        "borrowed_domain": "oceandecade.org",
+        "listing_url": "https://oceandecade.org/actions/",
+        "listing_kind": "unknown",
+        "queue": "resolve",
+    }
+    apply_official_site_result(seed, "https://bmkg.go.id/")
+    assert seed["home_status"] == "official"
+    assert seed["home_source"] == "search"
+    assert seed["queue"] == "crawl"
+    assert seed["home_url"] == "https://bmkg.go.id/"
+    assert seed["url"] == "https://bmkg.go.id/"
+    assert seed["listing_url"] is None
+    assert seed["borrowed_domain"] == "oceandecade.org"
+    miss = {
+        "name": "Obscure Org",
+        "home_status": "unknown",
+        "borrowed_domain": "surfrider.org",
+        "queue": "resolve",
+    }
+    apply_official_site_result(miss, "")
+    assert miss["home_status"] == "unknown"
+    assert miss["home_source"] == "search"
+    assert miss["queue"] == "resolve"
+    assert miss["borrowed_domain"] == "surfrider.org"
+
+
+def test_search_journal_append_resume_and_overlay(tmp_path):
+    journal = tmp_path / "official_homes_search.jsonl"
+    append_search_journal(journal, {
+        "name": "BMKG", "site": "https://bmkg.go.id/", "ok": True, "error": None,
+    })
+    append_search_journal(journal, {
+        "name": "Ghost Fund", "site": None, "ok": False, "error": None,
+    })
+    append_search_journal(journal, {
+        "name": "Flaky", "site": None, "ok": False, "error": "tinyfish_empty",
+    })
+    loaded = load_search_journal(journal)
+    assert loaded["BMKG"]["site"] == "https://bmkg.go.id/"
+    done = journal_done_names(loaded)
+    assert "bmkg" in done
+    assert "ghost fund" in done
+    assert "flaky" not in done
+    done_retry = journal_done_names(loaded, retry_unknown=True)
+    assert "ghost fund" not in done_retry
+    assert "bmkg" in done_retry
+
+    seeds = [
+        {
+            "name": "BMKG",
+            "name_status": "ok",
+            "home_status": "borrowed_hub",
+            "queue": "resolve",
+            "borrowed_domain": "oceandecade.org",
+        },
+        {
+            "name": "Ghost Fund",
+            "name_status": "ok",
+            "home_status": "unknown",
+            "queue": "resolve",
+        },
+        {
+            "name": "Still Todo",
+            "name_status": "ok",
+            "home_status": "borrowed_hub",
+            "queue": "resolve",
+        },
+    ]
+    n = overlay_search_results(seeds, journal=loaded)
+    assert n == 2
+    by = {s["name"]: s for s in seeds}
+    assert by["BMKG"]["home_url"] == "https://bmkg.go.id/"
+    assert by["BMKG"]["home_source"] == "search"
+    assert by["Ghost Fund"]["home_source"] == "search"
+    assert by["Ghost Fund"]["queue"] == "resolve"
+    todo = search_candidates(seeds, done_names=done)
+    assert [s["name"] for s in todo] == ["Still Todo"]
+
+
+def test_search_candidates_skip_already_searched():
+    seeds = [
+        {"name": "A", "name_status": "ok", "home_status": "borrowed_hub", "queue": "resolve"},
+        {"name": "B", "name_status": "ok", "home_status": "official", "home_source": "search", "queue": "crawl"},
+        {"name": "C", "name_status": "compound", "home_status": "unknown", "queue": "resolve"},
+        {"name": "D", "name_status": "ok", "home_status": "unknown", "home_source": "search", "queue": "resolve"},
+    ]
+    names = {s["name"] for s in search_candidates(seeds)}
+    assert names == {"A"}
+    retry = {s["name"] for s in search_candidates(seeds, retry_unknown=True)}
+    assert retry == {"A", "D"}
+
+
+def test_dump_catalog_atomic_and_overlay_survives_rebuild(tmp_path):
+    catalog = tmp_path / "master_seeds.json"
+    seeds = [
+        {
+            "name": "Save Our Seas Foundation",
+            "url": "https://saveourseas.com/",
+            "home_url": "https://saveourseas.com/",
+            "home_status": "official",
+            "home_source": "v1_url",
+            "name_status": "ok",
+            "queue": "crawl",
+            "listing_kind": "homepage",
+            "project_count": 2,
+        },
+        {
+            "name": "BMKG",
+            "url": "https://bmkg.go.id/",
+            "home_url": "https://bmkg.go.id/",
+            "home_status": "official",
+            "home_source": "search",
+            "name_status": "ok",
+            "queue": "crawl",
+            "listing_kind": "homepage",
+            "borrowed_domain": "oceandecade.org",
+            "project_count": 2,
+        },
+    ]
+    dump_catalog(seeds, catalog, source="test")
+    assert catalog.is_file()
+    assert not (tmp_path / "master_seeds.json.tmp").exists()
+    data = json.loads(catalog.read_text(encoding="utf-8"))
+    assert data["n"] == 2
+    audit = tmp_path / "audit.json"
+    write_audit(seeds, audit, source="test")
+    assert audit.with_suffix(".csv").is_file()
+
+    rebuilt = [
+        {
+            "name": "BMKG",
+            "home_status": "borrowed_hub",
+            "home_url": None,
+            "url": None,
+            "home_source": "",
+            "queue": "resolve",
+            "name_status": "ok",
+            "borrowed_domain": "oceandecade.org",
+        },
+        {
+            "name": "Save Our Seas Foundation",
+            "home_status": "official",
+            "home_source": "v1_url",
+            "queue": "crawl",
+            "name_status": "ok",
+        },
+    ]
+    previous = data["seeds"]
+    overlay_search_results(rebuilt, previous=previous)
+    bmkg = next(s for s in rebuilt if s["name"] == "BMKG")
+    assert bmkg["home_source"] == "search"
+    assert bmkg["home_url"] == "https://bmkg.go.id/"
+    assert bmkg["queue"] == "crawl"
+    assert bmkg["borrowed_domain"] == "oceandecade.org"
