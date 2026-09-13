@@ -65,8 +65,42 @@ def test_shared_hub_home_not_for_owner():
     assert ms.is_shared_hub_home(aker) is True
     assert ms.is_shared_hub_home(hub) is False
     assert ms.is_shared_hub_home(own) is False
+    ccc = {
+        "name": "California Coastal Commission",
+        "url": "https://surfrider.org/",
+    }
+    surfrider = {
+        "name": "Surfrider Foundation",
+        "url": "https://surfrider.org/",
+    }
+    bloom = {
+        "name": "Bloomberg Philanthropies",
+        "url": "https://archive.oceanx.org/",
+    }
+    assert ms.is_shared_hub("https://surfrider.org/") is True
+    assert ms.is_shared_hub_home(ccc) is True
+    assert ms.needs_official_home(ccc) is True
+    assert ms.is_shared_hub_home(surfrider) is False
+    assert ms.needs_official_home(surfrider) is False
+    assert ms.is_shared_hub_home(bloom) is True
+    assert "pew" in ms.official_name_tokens("The Pew Charitable Trusts")
+    assert "wwf" in ms.official_name_tokens("WWF Oceans")
+    assert "msc" in ms.official_name_tokens("MSC Ocean Stewardship Fund")
+    assert ms.domain_matches_org("https://www.pew.org/", "The Pew Charitable Trusts")
+    assert ms.domain_matches_org(
+        "https://www.msc.org/", "MSC Ocean Stewardship Fund") is True
+    assert ms.domain_matches_org(
+        "https://bluenaturalcapital.org/", "Blue Carbon Accelerator Fund (BCAF)"
+    ) is False
     assert ms.official_site_query(bmkg["name"]) == f'"{bmkg["name"]}" official site'
     assert ms.official_site_retry_query(bmkg["name"]) == '"BMKG" official website'
+    assert ms.is_publisher_host("https://www.nature.com/articles/x") is True
+    assert ms.is_publisher_host("https://www.bmkg.go.id/") is False
+    assert "bmkg" in ms.official_name_tokens(bmkg["name"])
+    assert ms.domain_matches_org("https://www.bmkg.go.id/", bmkg["name"]) is True
+    assert ms.domain_matches_org("https://www.nature.com/", bmkg["name"]) is False
+    assert "awi" in ms.official_name_tokens("Alfred Wegener Institute (AWI)")
+    assert "awi" in ms.official_name_tokens("Alfred Wegener Institute")
     assert ms.is_known_funder(
         [decade], "BMKG", "https://oceandecade.org/actions/x") is False
     assert ms.is_known_funder(

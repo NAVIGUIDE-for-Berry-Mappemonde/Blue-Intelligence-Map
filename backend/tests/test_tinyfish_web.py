@@ -191,14 +191,19 @@ class TestTfPoeAgent:
         calls = []
 
         async def fake_sse(url, goal, schema, key, **kw):
-            calls.append((kw.get("browser_profile"), (kw.get("agent_config") or {}).get("max_steps")))
+            cfg = kw.get("agent_config") or {}
+            calls.append((
+                kw.get("browser_profile"),
+                cfg.get("max_steps"),
+                cfg.get("max_duration_seconds"),
+            ))
             if kw.get("browser_profile") == "lite":
                 raise ValueError("blocked")
             return {"is_poe": True, "confidence": 80, "reason": "liste"}
 
         monkeypatch.setattr(tf, "tf_run_sse", fake_sse)
         out = _run(tf.tf_poe_agent("https://gov.nc/ports", "Nouméa", "NC", "k"))
-        assert calls == [("lite", 40), ("stealth", 40)]
+        assert calls == [("lite", None, 180), ("stealth", None, 180)]
         assert out["is_poe"] is True
         assert out["_agent_profile"] == "stealth"
         assert tf.POE_JUDGE_SCHEMA["required"] == ["is_poe", "confidence", "reason"]
@@ -233,4 +238,65 @@ class TestProjectsAgents:
         assert tf.PROJECTS_LISTING_PURPOSE != tf.PROJECTS_DISCOVERY_PURPOSE
         assert "index page" in tf.PROJECTS_LISTING_PURPOSE.lower()
         assert "not an individual" in tf.PROJECTS_LISTING_PURPOSE.lower()
-        assert tf.LISTING_AGENT_DURATION_S < tf.FICHE_AGENT_DURATION_S
+        assert 60 <= tf.LISTING_AGENT_DURATION_S <= 90
+        assert 60 <= tf.FICHE_AGENT_DURATION_S <= 90
+        assert tf.LISTING_AGENT_DURATION_S <= tf.FICHE_AGENT_DURATION_S
+
+
+class TestAgentConfigAndPoll:
+    def test_retry_after_from_header(self):
+        req = httpx.Request("POST", "https://agent.tinyfish.ai/v1/automation/run-sse")
+        resp = httpx.Response(429, request=req, headers={"Retry-After": "12"})
+        err = httpx.HTTPStatusError("429", request=req, response=resp)
+        assert tf.retry_after_s(err) == 12.0
+        assert tf.is_http_status(err, 429) is True
+
+    def test_public_config_strips_beta_fields(self):
+        assert tf.public_agent_config({
+            "max_steps": 40, "mode": "strict", "max_duration_seconds": 75,
+        }) == {"max_duration_seconds": 75}
+        assert tf.public_agent_config({"max_steps": 40}) is None
+        t = tf.sse_http_timeout()
+        assert t.read is None
+        assert t.connect == 30.0
+        assert tf.sse_wall_budget_s(75) == 75 + tf.POLL_GRACE_S
+        assert tf.sse_wall_budget_s(90) == 90 + tf.POLL_GRACE_S
+        assert tf.sse_wall_budget_s(75) == 120
+        assert tf.is_sse_stream_end(TimeoutError("SSE stream ended without COMPLETE event"))
+        assert tf.is_sse_stream_end(TimeoutError()) is False
+
+    def test_poll_same_run_completes(self, monkeypatch):
+        async def no_sleep(_):
+            return None
+
+        monkeypatch.setattr(tf.asyncio, "sleep", no_sleep)
+        _FakeClient.queue = [
+            _FakeResp(200, {"status": "RUNNING"}),
+            _FakeResp(200, {"status": "COMPLETED", "result": {"listing_url": "https://x/"}}),
+        ]
+        out = _run(tf.tf_poll_run("run_same", "k", budget_s=12, sleep_s=0))
+        assert out["listing_url"] == "https://x/"
+
+    def test_poll_timeout_cancels(self, monkeypatch):
+        posts = []
+        clock = {"t": 0.0}
+
+        class _Client(_FakeClient):
+            async def post(self, url, **kwargs):
+                posts.append(url)
+                return _FakeClient.queue.pop(0)
+
+        async def no_sleep(_):
+            clock["t"] += 100
+
+        monkeypatch.setattr(tf.httpx, "AsyncClient", _Client)
+        monkeypatch.setattr(tf.asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(tf.time, "monotonic", lambda: clock["t"])
+        _FakeClient.queue = [
+            _FakeResp(200, {"status": "RUNNING"}),
+            _FakeResp(200, {"status": "RUNNING"}),
+            _FakeResp(200, {"status": "CANCELLED"}),
+        ]
+        with pytest.raises(TimeoutError, match="timed out"):
+            _run(tf.tf_poll_run("run_slow", "k", budget_s=10, sleep_s=0))
+        assert any("/cancel" in u for u in posts)

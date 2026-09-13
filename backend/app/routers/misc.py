@@ -71,6 +71,7 @@ class SettingsBody(BaseModel):
     serper_api_key: str | None = None
     tinyfish_agents: int | None = None
     extract_concurrency: int | None = None
+    nvidia_max_concurrency: int | None = None
     max_coast_km: float | None = None
     max_inland_km: float | None = None
     min_marine_score: float | None = None

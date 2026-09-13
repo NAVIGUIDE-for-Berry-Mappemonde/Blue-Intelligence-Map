@@ -373,6 +373,56 @@ class TestTrackedFallback:
             nvidia.PRIMARY_MODEL, nvidia.GPT_OSS_MODEL, nvidia.SECONDARY_MODEL,
         ]
 
+    def test_complete_one_429_does_not_retry_same_model(self, monkeypatch):
+        sleeps = []
+        posts = []
+
+        async def fake_sleep(s):
+            sleeps.append(s)
+
+        class _Resp:
+            status_code = 429
+            text = "rate limited"
+
+        class _Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def post(self, *a, **k):
+                posts.append(1)
+                return _Resp()
+
+        monkeypatch.setattr(nvidia.httpx, "AsyncClient", _Client)
+        monkeypatch.setattr(nvidia.asyncio, "sleep", fake_sleep)
+        with pytest.raises(RuntimeError, match="429"):
+            _run(nvidia._complete_one(
+                "k", {"model": nvidia.PRIMARY_MODEL}, max_tokens=8))
+        assert posts == [1]
+        assert sleeps == []
+
+    def test_json_chain_429_hops_to_gpt_oss(self, monkeypatch):
+        calls = []
+
+        async def fake_one(key, payload, *, max_tokens, log=None):
+            calls.append(payload["model"])
+            if payload["model"] == nvidia.PRIMARY_MODEL:
+                raise RuntimeError("nvidia HTTP 429: rate limited")
+            return {"ok": True}
+
+        monkeypatch.setattr(nvidia, "_complete_one", fake_one)
+        monkeypatch.setattr(nvidia, "get_nvidia_key", lambda s=None: "k")
+        data, used = _run(nvidia.complete_json_nvidia_tracked(
+            "sys", "user", role="json"))
+        assert used == nvidia.GPT_OSS_MODEL
+        assert data == {"ok": True}
+        assert calls == [nvidia.PRIMARY_MODEL, nvidia.GPT_OSS_MODEL]
+
 
 class TestAskJsonCascade:
     def test_nvidia_then_openrouter_then_claude(self, monkeypatch):
