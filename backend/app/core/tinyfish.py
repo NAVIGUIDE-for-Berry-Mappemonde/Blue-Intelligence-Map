@@ -48,7 +48,10 @@ FETCH_LEVEL = "N3-mirror-tinyfish"
 SEARCH_RPM = 30
 FETCH_RPM = 150
 AGENT_CONCURRENCY = 2
-AGENT_CREDIT_CAP = 40          # max_steps = crédits, pas la file
+# Plafond historique (crédits / steps). Ne PAS l'envoyer : max_steps est
+# bêta-gate et TinyFish répond 403 FORBIDDEN (docs.tinyfish.ai/agent-api/reference).
+AGENT_CREDIT_CAP = 40
+POLL_GRACE_S = 45              # file PENDING + arrêt max_duration côté TinyFish
 FETCH_URL_CAP = 10             # max URLs / requête Fetch
 SEARCH_PAGE_CAP = 3            # ~10 hits/page → jusqu'à 30 URLs / graine
 SEARCH_PAGE_MAX = 10           # plafond API TinyFish
@@ -149,10 +152,35 @@ def _headers(key: str) -> dict:
     return {"X-API-Key": key, "Content-Type": "application/json"}
 
 
+def public_agent_config(cfg: dict | None) -> dict | None:
+    """Champs sûrs hors bêta. max_steps / mode → 403 FORBIDDEN (doc TinyFish)."""
+    if not cfg:
+        return None
+    raw = cfg.get("max_duration_seconds")
+    if raw is None:
+        return None
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if seconds < 1:
+        return None
+    return {"max_duration_seconds": seconds}
+
+
+def sse_http_timeout(timeout=None) -> httpx.Timeout:
+    """Agent SSE : timeout client N/A (docs.tinyfish.ai/for-coding-agents)."""
+    if isinstance(timeout, httpx.Timeout):
+        return timeout
+    return httpx.Timeout(connect=30.0, read=None, write=60.0, pool=30.0)
+
+
 async def tf_run_async(url: str, goal: str, schema: dict, key: str, max_duration_s: int | None = None) -> dict:
     payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
-    if max_duration_s:
-        payload["agent_config"] = {"max_duration_seconds": int(max_duration_s)}
+    cfg = public_agent_config(
+        {"max_duration_seconds": max_duration_s} if max_duration_s else None)
+    if cfg:
+        payload["agent_config"] = cfg
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{BASE}/automation/run-async", headers=_headers(key), json=payload)
         r.raise_for_status()
@@ -160,15 +188,66 @@ async def tf_run_async(url: str, goal: str, schema: dict, key: str, max_duration
 
 
 async def tf_get_run(run_id: str, key: str) -> dict:
+    """GET /v1/runs/{id}. screenshots=none : polls légers (doc Runs)."""
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(f"{BASE}/runs/{run_id}", headers=_headers(key))
+        r = await client.get(
+            f"{BASE}/runs/{run_id}", headers=_headers(key),
+            params={"screenshots": "none", "html": "none"})
         r.raise_for_status()
         return r.json()
 
 
+async def tf_cancel_run(run_id: str, key: str) -> dict:
+    """POST /v1/runs/{id}/cancel — run-async et run-sse seulement."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(f"{BASE}/runs/{run_id}/cancel", headers=_headers(key))
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
+async def tf_poll_run(run_id: str, key: str, *, budget_s: int, sleep_s: float = 3.0,
+                      log=None, on_run=None, should_stop=None) -> dict:
+    """Reprend un run SSE/async jusqu'à COMPLETED / FAILED / CANCELLED."""
+    log = log or (lambda m: None)
+    deadline = time.monotonic() + max(1, int(budget_s))
+    last: dict = {}
+    while time.monotonic() < deadline:
+        if should_stop and should_stop():
+            try:
+                await tf_cancel_run(run_id, key)
+            except Exception:
+                pass
+            return {}
+        last = await tf_get_run(run_id, key)
+        if on_run:
+            await on_run(last)
+        st = str(last.get("status") or "").upper()
+        if st == "COMPLETED":
+            return last.get("result") or {}
+        if st in ("FAILED", "CANCELLED"):
+            err = last.get("error") or {}
+            if isinstance(err, dict):
+                detail = err.get("code") or err.get("message") or err
+            else:
+                detail = err
+            raise ValueError(f"run {st}: {str(detail)[:100]}")
+        await asyncio.sleep(sleep_s)
+    last = await tf_get_run(run_id, key)
+    st = str(last.get("status") or "").upper()
+    if st == "COMPLETED":
+        return last.get("result") or {}
+    try:
+        await tf_cancel_run(run_id, key)
+    except Exception:
+        pass
+    raise TimeoutError(f"TinyFish run timed out ({budget_s}s) status={st or '?'}")
+
+
 async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int = 360) -> dict:
-    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite",
-               "agent_config": {"max_duration_seconds": 300}}
+    payload = {"url": url, "goal": goal, "output_schema": schema, "browser_profile": "lite"}
+    cfg = public_agent_config({"max_duration_seconds": 300})
+    if cfg:
+        payload["agent_config"] = cfg
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(f"{BASE}/automation/run", headers=_headers(key), json=payload)
         r.raise_for_status()
@@ -176,16 +255,17 @@ async def tf_run_sync(url: str, goal: str, schema: dict, key: str, timeout: int 
 
 
 async def tf_run_sse(url: str, goal: str, schema: dict, key: str, on_event=None,
-                     timeout: int = 420, browser_profile: str = "lite",
+                     timeout=None, browser_profile: str = "lite",
                      agent_config: dict | None = None) -> dict:
-    """Stream a TinyFish run via SSE; returns final result dict, raises on failure."""
+    """Stream TinyFish /run-sse. Ne pas envoyer max_steps (403 hors bêta)."""
     payload = {
         "url": url, "goal": goal, "output_schema": schema,
         "browser_profile": browser_profile or "lite",
     }
-    if agent_config:
-        payload["agent_config"] = agent_config
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=30)) as client:
+    cfg = public_agent_config(agent_config)
+    if cfg:
+        payload["agent_config"] = cfg
+    async with httpx.AsyncClient(timeout=sse_http_timeout(timeout)) as client:
         async with client.stream("POST", f"{BASE}/automation/run-sse", headers=_headers(key), json=payload) as r:
             r.raise_for_status()
             async for line in r.aiter_lines():
@@ -495,21 +575,20 @@ def poe_agent_goal(name: str, zone_name: str, iso2: str | None = None) -> str:
 async def tf_poe_agent(url: str, name: str, zone_name: str, key: str, *,
                        iso2: str | None = None, log=None,
                        credit_cap: int = AGENT_CREDIT_CAP) -> dict:
-    """Un Agent par graine : lite puis stealth. 2 concurrents, max_steps=crédits."""
+    """Un Agent par graine : lite puis stealth. 2 concurrents. Pas de max_steps (403)."""
     log = log or (lambda m: None)
     if not (key or "").strip() or not (url or "").startswith("http"):
         return {}
     goal = poe_agent_goal(name, zone_name, iso2)
-    cap = max(1, min(500, int(credit_cap or AGENT_CREDIT_CAP)))
-    cfg = {"max_steps": cap, "max_duration_seconds": 180}
+    cfg = public_agent_config({"max_duration_seconds": 180})
     last_err = None
     async with _agent_sem:
         for profile in ("lite", "stealth"):
             try:
-                log(f"TinyFish Agent {profile} cap={cap} {url[:80]}")
+                log(f"TinyFish Agent {profile} {url[:80]}")
                 result = await tf_run_sse(
                     url, goal, POE_JUDGE_SCHEMA, key,
-                    browser_profile=profile, agent_config=cfg, timeout=240)
+                    browser_profile=profile, agent_config=cfg)
                 if isinstance(result, dict) and result:
                     out = dict(result)
                     out["_agent_profile"] = profile

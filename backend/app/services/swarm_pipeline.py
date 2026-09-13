@@ -25,10 +25,11 @@ from app.services.master_seeds import (
     name_owns_hub, official_site_query, official_site_retry_query, seeds_for_run,
 )
 from app.core.tinyfish import (
-    AGENT_CREDIT_CAP, DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S,
-    LISTING_AGENT_DURATION_S, LISTING_SCHEMA, PROJECTS_DISCOVERY_PURPOSE,
+    DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S,
+    LISTING_SCHEMA, POLL_GRACE_S, PROJECTS_DISCOVERY_PURPOSE,
     PROJECTS_LISTING_PURPOSE, discovery_goal, listing_goal, find_live_url,
-    tf_fetch, tf_get_run, tf_run_async, tf_run_sse, tf_search,
+    public_agent_config, tf_fetch, tf_poll_run, tf_run_async, tf_run_sse,
+    tf_search,
 )
 from app.services.project_listing import (
     LISTING_JUDGE_CAP, accept_listing_url, apply_learned_listings,
@@ -1085,21 +1086,63 @@ class Swarm:
                 self.agent_log(aid, str(ev["purpose"])[:110])
         return on_event
 
+    def _tf_poll_hooks(self, aid):
+        ticks = {"n": 0}
+
+        async def on_run(run):
+            live = find_live_url(run)
+            if live:
+                self.set_agent(aid, live_url=live)
+            ticks["n"] += 1
+            if ticks["n"] == 1 or ticks["n"] % 5 == 0:
+                st = run.get("status") or "PENDING"
+                self.agent_log(aid, f"status {st} — même run TinyFish")
+
+        def should_stop():
+            a = self.agents.get(aid) or {}
+            return a.get("status") == "CANCELLED"
+
+        return on_run, should_stop
+
+    async def _tf_agent_run(self, aid, seed, key, goal, schema, max_duration_s):
+        """SSE puis, si le flux coupe, poll du même run_id (doc TinyFish)."""
+        cfg = public_agent_config({"max_duration_seconds": max_duration_s})
+        run_id = {"id": None}
+        inner = self._tf_agent_on_event(aid)
+
+        async def on_event(ev):
+            rid = ev.get("run_id")
+            if rid:
+                run_id["id"] = rid
+            await inner(ev)
+
+        try:
+            return await tf_run_sse(
+                seed["url"], goal, schema, key,
+                on_event=on_event, agent_config=cfg)
+        except (httpx.HTTPError, TimeoutError) as e:
+            if run_id["id"]:
+                self.agent_log(
+                    aid,
+                    f"SSE coupé ({type(e).__name__}) → poll {run_id['id'][:8]} "
+                    f"(même run, pas un 2ᵉ Agent)")
+                on_run, should_stop = self._tf_poll_hooks(aid)
+                return await tf_poll_run(
+                    run_id["id"], key,
+                    budget_s=int(max_duration_s) + POLL_GRACE_S,
+                    log=lambda m: self.agent_log(aid, m),
+                    on_run=on_run, should_stop=should_stop)
+            self.agent_log(aid, f"SSE refusé ({str(e)[:80]}) → run-async")
+            return await self._tinyfish_discover_poll(
+                aid, seed, key, goal, schema=schema,
+                max_duration_s=max_duration_s)
+
     async def _tinyfish_listing_discover(self, aid, seed, key):
         """Agent TinyFish n°1 : une URL catalogue, pas de fiches individuelles."""
         self.set_agent(aid, status="RUNNING")
         goal = listing_goal(seed["name"])
-        cfg = {"max_duration_seconds": LISTING_AGENT_DURATION_S, "max_steps": AGENT_CREDIT_CAP}
-        try:
-            result = await tf_run_sse(
-                seed["url"], goal, LISTING_SCHEMA, key,
-                on_event=self._tf_agent_on_event(aid),
-                timeout=240, agent_config=cfg)
-        except (httpx.HTTPError, TimeoutError) as e:
-            self.agent_log(aid, f"SSE listing dropped ({str(e)[:60]}) → polling fallback")
-            result = await self._tinyfish_discover_poll(
-                aid, seed, key, goal, schema=LISTING_SCHEMA,
-                max_duration_s=LISTING_AGENT_DURATION_S)
+        result = await self._tf_agent_run(
+            aid, seed, key, goal, LISTING_SCHEMA, LISTING_AGENT_DURATION_S)
         raw = ((result or {}).get("listing_url") or "").strip()
         self.agent_log(aid, f"agent listing finished: {raw or 'empty'}")
         if not raw.startswith("http"):
@@ -1108,21 +1151,11 @@ class Swarm:
         return accept_listing_url(href, seed)
 
     async def _tinyfish_discover(self, aid, seed, key, max_urls, known_urls=None):
-        """Agent TinyFish n°2 : fiches individuelles (SSE puis polling)."""
+        """Agent TinyFish n°2 : fiches individuelles (SSE puis poll du même run)."""
         self.set_agent(aid, status="RUNNING")
         goal = discovery_goal(seed["name"], known_urls)
-        cfg = {"max_duration_seconds": FICHE_AGENT_DURATION_S, "max_steps": AGENT_CREDIT_CAP}
-
-        try:
-            result = await tf_run_sse(
-                seed["url"], goal, DISCOVERY_SCHEMA, key,
-                on_event=self._tf_agent_on_event(aid),
-                agent_config=cfg)
-        except (httpx.HTTPError, TimeoutError) as e:
-            self.agent_log(aid, f"SSE dropped ({str(e)[:60]}) → polling fallback")
-            result = await self._tinyfish_discover_poll(
-                aid, seed, key, goal, schema=DISCOVERY_SCHEMA,
-                max_duration_s=FICHE_AGENT_DURATION_S)
+        result = await self._tf_agent_run(
+            aid, seed, key, goal, DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S)
         projects = (result or {}).get("projects") or []
         self.agent_log(aid, f"agent fiches finished: {len(projects)} candidates")
         urls, seen = [], set()
@@ -1146,24 +1179,12 @@ class Swarm:
         if live:
             self.set_agent(aid, live_url=live)
         self.agent_log(aid, f"run_id {run_id[:12]}… agent navigating")
-        budget = int(max_duration_s or 360)
-        rounds = max(1, budget // 3)
-        for i in range(rounds):
-            await asyncio.sleep(3)
-            run = await tf_get_run(run_id, key)
-            st = run.get("status", "")
-            if not self.agents.get(aid) or self.agents[aid]["status"] == "CANCELLED":
-                return {}
-            live2 = find_live_url(run)
-            if live2:
-                self.set_agent(aid, live_url=live2)
-            if st in ("COMPLETED", "FAILED", "CANCELLED"):
-                if st != "COMPLETED":
-                    raise ValueError(f"run {st}: {str(run.get('error'))[:100]}")
-                return run.get("result") or {}
-            if i % 5 == 0:
-                self.agent_log(aid, f"status {st or 'PENDING'} — navigating pagination/forms")
-        raise TimeoutError(f"TinyFish run timed out ({budget}s)")
+        on_run, should_stop = self._tf_poll_hooks(aid)
+        return await tf_poll_run(
+            run_id, key,
+            budget_s=int(max_duration_s or 120) + POLL_GRACE_S,
+            log=lambda m: self.agent_log(aid, m),
+            on_run=on_run, should_stop=should_stop)
 
     async def _crawl_page_links(self, seed):
         async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=UA) as client:

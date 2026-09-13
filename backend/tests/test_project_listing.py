@@ -480,6 +480,8 @@ def test_two_distinct_tinyfish_agents(monkeypatch):
     assert calls[1]["url"] == "https://example.org/projects/"
     assert calls[0]["cfg"].get("max_duration_seconds") == LISTING_AGENT_DURATION_S
     assert calls[1]["cfg"].get("max_duration_seconds") == FICHE_AGENT_DURATION_S
+    assert "max_steps" not in calls[0]["cfg"]
+    assert "max_steps" not in calls[1]["cfg"]
     assert 60 <= LISTING_AGENT_DURATION_S <= 90
     assert 60 <= FICHE_AGENT_DURATION_S <= 90
     assert LISTING_SCHEMA["required"] == ["listing_url"]
@@ -647,6 +649,56 @@ def test_listing_judge_none_then_agent_keeps_our_programmes(monkeypatch):
     assert "TinyFish Agent listing" in msgs
     remembered = sw.db.master_seeds.docs
     assert any(d.get("url") == "https://example.org/our-programmes" for d in remembered)
+
+
+def test_sse_drop_after_started_polls_same_run(monkeypatch):
+    sw = _swarm()
+    seen = {"async": 0, "polls": []}
+
+    async def empty(*a, **k):
+        return []
+
+    async def none(*a, **k):
+        return None
+
+    async def empty_search(*a, **k):
+        return [], 0, 0
+
+    async def fake_sse(url, goal, schema, key, on_event=None, **kw):
+        assert "max_steps" not in (kw.get("agent_config") or {})
+        if on_event:
+            await on_event({"type": "STARTED", "run_id": "run_same_1"})
+        raise TimeoutError("SSE stream ended without COMPLETE event")
+
+    async def boom_async(*a, **k):
+        seen["async"] += 1
+        raise AssertionError("must not start a second TinyFish run")
+
+    async def fake_poll_run(run_id, key, **kw):
+        seen["polls"].append(run_id)
+        return {"listing_url": "https://example.org/projects/"}
+
+    async def fake_fiche_crawl(seed, max_urls):
+        assert seed["url"] == "https://example.org/projects/"
+        return ["https://example.org/projects/coral"]
+
+    monkeypatch.setattr(sw, "_crawl_listing", empty)
+    monkeypatch.setattr(sw, "_fetch_listing", empty)
+    monkeypatch.setattr(sw, "_infer_listing_from_live", none)
+    monkeypatch.setattr(sw, "_search_listing", empty_search)
+    monkeypatch.setattr(sw, "_crawl_discover", fake_fiche_crawl)
+    import app.services.swarm_pipeline as sp
+    monkeypatch.setattr(sp, "tf_run_sse", fake_sse)
+    monkeypatch.setattr(sp, "tf_run_async", boom_async)
+    monkeypatch.setattr(sp, "tf_poll_run", fake_poll_run)
+
+    queued = _run(_queued(sw, HOME))
+    assert seen["async"] == 0
+    assert seen["polls"] == ["run_same_1"]
+    assert [i["url"] for i in queued] == ["https://example.org/projects/coral"]
+    agent_text = " ".join(
+        line for a in sw.agents.values() for line in (a.get("logs") or []))
+    assert "même run" in agent_text
 
 
 def test_publisher_or_missing_host_skips_tinyfish_agents(monkeypatch):
