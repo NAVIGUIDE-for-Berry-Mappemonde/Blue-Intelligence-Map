@@ -372,6 +372,7 @@ def test_naviguide_query_not_painted():
 
 
 def test_meteo_agent_cites_ibtracs_integer():
+    pytest.importorskip("langgraph")
     ng_api = Path(__file__).resolve().parents[2] / "naviguide" / "naviguide-api"
     sys.path.insert(0, str(ng_api))
     from agents.meteo_agent import fetch_ibtracs_node, get_streaming_prompt
