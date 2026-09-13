@@ -10,10 +10,20 @@ os.environ.setdefault("DB_NAME", "bi_test_master_seeds")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest
+
 from app.services import master_seeds as ms
 from app.services.swarm_pipeline import Swarm
 from app.static_data.seeds import CURATED_SEEDS, MASTER_SEEDS, TEST_SEED_COUNT
 from tests.test_project_runs import _FakeDB
+
+
+@pytest.fixture(autouse=True)
+def _ftm_sites_reachable(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.swarm_pipeline.partner_site_reachable",
+        lambda url, timeout=5.0: True,
+    )
 
 
 CURATED = [
@@ -209,8 +219,8 @@ def test_loaded_catalog_has_v1_scale():
     queues = {s.get("queue") for s in MASTER_SEEDS}
     assert "crawl" in queues and "resolve" in queues
     crawl = [s for s in MASTER_SEEDS if s.get("queue") == "crawl"]
-    # Étape B : homes Search officielles — plus de plafond artificiel < 400.
-    assert len(crawl) >= 500
+    # Virgules composées + sièges trop larges sortent de Complet, pas un cap artificiel.
+    assert len(crawl) >= 450
     assert not any((s.get("home_status") or "") == "borrowed_hub" for s in crawl)
     assert sum(
         1 for s in MASTER_SEEDS
@@ -345,3 +355,36 @@ def test_follow_the_money_queue_rejects_hub_url():
     sw._queue_partner("BMKG", "https://oceandecade.org/actions/")
     assert sw.recursive_tasks == []
     assert sw.new_partner_count == 0
+
+
+def test_prefer_official_home_drops_borrowed_hub():
+    seed = {
+        "name": "Aker Biomarine",
+        "url": "https://hubocean.earth/data",
+        "home_url": "https://www.akerbiomarine.com/",
+        "home_status": "official",
+        "listing_kind": "projects_index",
+        "listing_url": "https://hubocean.earth/data",
+    }
+    out = ms.prefer_official_home(seed)
+    assert out["url"] == "https://www.akerbiomarine.com/"
+    assert out["listing_kind"] == "homepage"
+
+
+def test_follow_the_money_unreachable_site_does_not_burn_cap(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.swarm_pipeline.partner_site_reachable",
+        lambda url, timeout=5.0: False,
+    )
+    sw = Swarm(_FakeDB())
+    sw.running = True
+    sw.settings = {"follow_the_money": True, "max_partner_orgs": 1}
+    sw.master_seeds = []
+    sw.partner_domains = set()
+    sw.recursive_tasks = []
+    sw._queue_partner("Wild Oysters", "https://wild-oysters.org/")
+    assert sw.recursive_tasks == []
+    assert sw.new_partner_count == 0
+    msgs = " ".join(e["msg"] for e in sw.logs)
+    assert "injoignable" in msgs
+    assert "plafond intact" in msgs

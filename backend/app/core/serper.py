@@ -51,7 +51,7 @@ def _map_organic(payload: dict) -> list[dict]:
 
 async def serper_search(query: str, key: str, *, gl: str | None = None,
                         hl: str = "en", log=None) -> list[dict]:
-    """POST google.serper.dev/search. 401/402/429/timeout → [] (pas d'exception)."""
+    """POST google.serper.dev/search. 400/401/402/429/timeout → [] (pas d'exception)."""
     log = log or (lambda m: None)
     if not (key or "").strip() or not (query or "").strip():
         return []
@@ -77,8 +77,9 @@ async def serper_search(query: str, key: str, *, gl: str | None = None,
                 log("Serper: 429 — retry")
                 await asyncio.sleep(SEARCH_RETRY_SLEEP_S)
                 continue
-            if r.status_code in (401, 402, 403, 404, 429, 500, 503):
-                log(f"Serper: HTTP {r.status_code} — ignoré")
+            if r.status_code in (400, 401, 402, 403, 404, 429, 500, 503):
+                snippet = (getattr(r, "text", None) or "")[:120]
+                log(f"Serper: HTTP {r.status_code} — ignoré {snippet}".rstrip())
                 return []
             r.raise_for_status()
             hits = _map_organic(r.json() if r.content else {})

@@ -114,6 +114,11 @@ _ORG_HINT = re.compile(
     re.I,
 )
 
+_LAND_NAME_RE = re.compile(
+    r"\b(chasse|chasseur|chasseurs|hunt|hunting|hunter|hunters)\b",
+    re.I,
+)
+
 def classify_name(name: str) -> str:
     """ok / compound / exclude — avant tout Search « official site »."""
     raw = (name or "").strip()
@@ -128,6 +133,8 @@ def classify_name(name: str) -> str:
         return NAME_EXCLUDE
     display = re.sub(r"\s*\(partner\)\s*$", "", raw, flags=re.I).strip()
     n = norm_name(display)
+    if _LAND_NAME_RE.search(display):
+        return NAME_EXCLUDE
     if display.count(",") >= 2:
         return NAME_COMPOUND
     if "," in display:
@@ -139,8 +146,10 @@ def classify_name(name: str) -> str:
         ) and display.count(",") == 1:
             pass
         else:
-            parts = [p.strip() for p in display.split(",")]
-            if any(_ORG_HINT.search(p) for p in parts if p):
+            parts = [p.strip() for p in display.split(",") if p.strip()]
+            if any(_ORG_HINT.search(p) for p in parts):
+                return NAME_COMPOUND
+            if len(parts) == 2 and all(_looks_like_org_part(p) for p in parts):
                 return NAME_COMPOUND
     if re.search(r"\band\b", display, re.I):
         low = n
@@ -148,6 +157,102 @@ def classify_name(name: str) -> str:
             return NAME_OK
         return NAME_COMPOUND
     return NAME_OK
+
+
+WIDE_CORP_NETLOCS = frozenset({
+    "axa.com", "bloomberg.org", "bloomberg.com",
+})
+
+
+def _looks_like_org_part(part: str) -> bool:
+    """« BlueInvest » ou « Corals for Conservation » : un organisme, pas un suffixe."""
+    raw = (part or "").strip()
+    if not raw or classify_name(raw) == NAME_EXCLUDE:
+        return False
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9'\-]*", raw) if w]
+    if len(words) >= 2:
+        return True
+    return bool(re.match(r"^[A-ZÀ-Ÿ][A-Za-zÀ-ÿ0-9\-]{3,}$", raw))
+
+
+def is_terrestrial_noise_name(name: str) -> bool:
+    """Chasse / hunt : hors Follow the Money et hors Complet."""
+    display = re.sub(r"\s*\(partner\)\s*$", "", (name or "").strip(), flags=re.I)
+    return bool(_LAND_NAME_RE.search(display))
+
+
+def _syllable_count(word: str) -> int:
+    w = re.sub(r"[^a-zà-ÿ]", "", (word or "").lower())
+    if not w:
+        return 0
+    if w.endswith("e") and len(w) > 2:
+        w = w[:-1]
+    groups = re.findall(r"[aeiouyàâäéèêëïîôùûü]+", w)
+    return max(1, len(groups)) if groups else 1
+
+
+def name_needs_official_search(name: str) -> bool:
+    """Nom trop court ou une syllabe → Search « official site », pas l'URL brute."""
+    display = re.sub(r"\s*\(partner\)\s*$", "", (name or "").strip(), flags=re.I)
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9]+", display)
+    if not words:
+        return True
+    if len(words) != 1:
+        return False
+    w = words[0]
+    if len(w) <= 5:
+        return True
+    return _syllable_count(w) <= 1
+
+
+def is_wide_corporate_home(seed: dict | None) -> bool:
+    """Siège de groupe (axa.com) sans page océan / projets → hors Complet."""
+    seed = seed or {}
+    url = (
+        (seed.get("listing_url") or "").strip()
+        or (seed.get("url") or "").strip()
+        or (seed.get("home_url") or "").strip()
+    )
+    d = domain_of(url)
+    if d not in WIDE_CORP_NETLOCS:
+        return False
+    if is_homepage_url(url):
+        return True
+    if re.search(r"ocean|marine|project|projet|fund|philanthrop", url, re.I):
+        return False
+    return True
+
+
+def partner_site_reachable(url: str, timeout: float = 5.0) -> bool:
+    """HTTPS/HTTP répond. Certificat cassé ou timeout → False (ne brûle pas le plafond)."""
+    raw = (url or "").strip()
+    if not raw.startswith("http"):
+        return False
+    import ssl
+    from urllib.error import URLError
+    from urllib.request import Request, urlopen
+
+    headers = {"User-Agent": "BlueIntelligence/1.0 (+https://blueintelligence.online)"}
+    ctx = ssl.create_default_context()
+    for method in ("HEAD", "GET"):
+        try:
+            req = Request(raw, method=method, headers=headers)
+            with urlopen(req, timeout=timeout, context=ctx) as resp:
+                code = getattr(resp, "status", None) or resp.getcode()
+                if 200 <= int(code or 0) < 400:
+                    return True
+                if int(code or 0) in {401, 403, 405}:
+                    return True
+        except ssl.SSLError:
+            return False
+        except URLError as exc:
+            reason = str(getattr(exc, "reason", exc) or "")
+            if "SSL" in reason or "certificate" in reason.lower():
+                return False
+            continue
+        except Exception:
+            continue
+    return False
 
 
 def _best_own_domain(name: str, urls: list[str]) -> tuple[str, str]:
@@ -365,6 +470,8 @@ def is_crawl_ready(seed: dict | None) -> bool:
     seed = seed or {}
     name = (seed.get("name") or "").strip()
     if not name:
+        return False
+    if is_terrestrial_noise_name(name) or is_wide_corporate_home(seed):
         return False
     q = (seed.get("queue") or "").strip().lower()
     if q in {QUEUE_RESOLVE, QUEUE_SKIP}:
@@ -815,10 +922,14 @@ def assign_queue(seed: dict) -> str:
         return QUEUE_SKIP
     if seed.get("split_into"):
         return QUEUE_SKIP
+    if is_terrestrial_noise_name(seed.get("name") or ""):
+        return QUEUE_SKIP
     name_status = (seed.get("name_status") or NAME_OK).strip()
     if name_status == NAME_EXCLUDE:
         return QUEUE_SKIP
     if name_status == NAME_COMPOUND:
+        return QUEUE_RESOLVE
+    if is_wide_corporate_home(seed):
         return QUEUE_RESOLVE
     status = (seed.get("home_status") or "").strip()
     if status in {
@@ -841,6 +952,15 @@ def assign_queue(seed: dict) -> str:
 def refresh_catalog_queues(seeds: list[dict]) -> list[dict]:
     """Recalcule `queue` pour tout le catalogue (E)."""
     for seed in seeds:
+        seed["queue"] = assign_queue(seed)
+    return seeds
+
+
+def refresh_catalog_classifications(seeds: list[dict]) -> list[dict]:
+    """Recalcule `name_status` (sauf curés) puis `queue`. Pas de splits D."""
+    for seed in seeds:
+        if (seed.get("source") or "") != "curated":
+            seed["name_status"] = classify_name(seed.get("name") or "")
         seed["queue"] = assign_queue(seed)
     return seeds
 
@@ -1123,6 +1243,8 @@ def decide_follow_the_money_partner(
     }
     if not raw_name:
         return empty
+    if is_terrestrial_noise_name(raw_name):
+        return {**empty, "reason": "exclude"}
     status = classify_name(raw_name)
     if status == NAME_EXCLUDE:
         return {**empty, "reason": "exclude"}
@@ -1139,6 +1261,25 @@ def decide_follow_the_money_partner(
                     "seed": seed, "needs_search": False,
                 }
         return {**empty, "reason": "catalog_not_ready"}
+
+    # Nom trop court / une syllabe : Search obligatoire, jamais l'URL brute
+    # (Wacan → wacan.com, chasse → chasseurdefrance.com).
+    if name_needs_official_search(raw_name):
+        if not did_search:
+            return {
+                "action": FTM_SEARCH, "reason": "short_name",
+                "seed": None, "needs_search": True,
+            }
+        if home:
+            accepted = accept_partner_url(raw_name, home)
+            if accepted:
+                accepted["home_source"] = "search"
+                return {
+                    "action": FTM_DISCOVER, "reason": "search",
+                    "seed": accepted, "needs_search": False,
+                }
+            return {**empty, "reason": "search_rejected"}
+        return {**empty, "reason": "search_empty"}
 
     accepted = accept_partner_url(raw_name, raw_url) if raw_url else None
     if accepted:

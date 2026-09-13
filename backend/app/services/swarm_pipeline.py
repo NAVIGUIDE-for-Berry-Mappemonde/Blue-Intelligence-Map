@@ -22,11 +22,12 @@ from app.static_data.seeds import (
 from app.services.master_seeds import (
     SKIP_LISTING_NETLOCS, domain_matches_org, domain_of, is_known_funder,
     is_publisher_host, is_shared_hub, name_owns_hub, needs_official_home,
-    official_site_query, official_site_retry_query, seeds_for_run,
+    official_site_query, official_site_retry_query, prefer_official_home,
+    seeds_for_run,
 )
 from app.services.seed_catalog import (
     FTM_DISCOVER, FTM_SEARCH, decide_follow_the_money_partner,
-    find_catalog_seed,
+    find_catalog_seed, partner_site_reachable,
 )
 from app.core.tinyfish import (
     DISCOVERY_SCHEMA, FICHE_AGENT_DURATION_S, LISTING_AGENT_DURATION_S,
@@ -38,8 +39,8 @@ from app.core.tinyfish import (
     tf_search,
 )
 from app.services.project_listing import (
-    LISTING_JUDGE_CAP, accept_listing_url, apply_learned_listings,
-    fiche_search_retry_query, hygiene_listing_urls,
+    LISTING_JUDGE_CAP, ListingJudgeQuotaError, accept_listing_url,
+    apply_learned_listings, fiche_search_retry_query, hygiene_listing_urls,
     infer_listing_from_project_urls, is_listing_url, listing_search_query,
     listing_search_retry_query, llm_judge_listing, merge_listing_candidates,
     needs_listing_hop, pick_listing_url,
@@ -276,6 +277,7 @@ class Swarm:
         self.master_seeds = []
         self._tf_sem = None
         self._judge_sem = None
+        self._serper_sem = None
         self.no_new_streak = 0
         self.saturated = False
         self.run_id = None
@@ -586,10 +588,13 @@ class Swarm:
                 extras = await self.db.master_seeds.find({}).to_list(2000)
             except Exception:
                 extras = []
-            self.master_seeds = apply_learned_listings(list(MASTER_SEEDS), extras) + [
-                e for e in extras
-                if (e.get("url") or e.get("name"))
-                and not is_known_funder(MASTER_SEEDS, e.get("name"), e.get("url"))
+            self.master_seeds = [
+                prefer_official_home(s)
+                for s in apply_learned_listings(list(MASTER_SEEDS), extras) + [
+                    e for e in extras
+                    if (e.get("url") or e.get("name"))
+                    and not is_known_funder(MASTER_SEEDS, e.get("name"), e.get("url"))
+                ]
             ]
             if self.mode == "test":
                 seeds = list(CURATED_SEEDS[:TEST_SEED_COUNT])
@@ -617,7 +622,7 @@ class Swarm:
             discover_n = max(1, min(12, int(self.settings.get("discover_concurrency", 8))))
             judge_n = max(1, min(4, int(get_rule(
                 "projects.listing_judge_concurrency",
-                self.settings.get("listing_judge_concurrency", 2)))))
+                self.settings.get("listing_judge_concurrency", 1)))))
             nv_n = max(1, min(4, int(get_rule(
                 "projects.nvidia_max_concurrency",
                 self.settings.get("nvidia_max_concurrency", 2)))))
@@ -649,6 +654,7 @@ class Swarm:
                 self.settings.get("tinyfish_agents", 2)))))
             self._tf_sem = asyncio.Semaphore(tf_agents)
             self._judge_sem = asyncio.Semaphore(judge_n)
+            self._serper_sem = asyncio.Semaphore(2)
             discover_sem = asyncio.Semaphore(discover_n)
 
             async def guarded(seed):
@@ -693,7 +699,7 @@ class Swarm:
 
     # ---------- discovery (home→catalogue, puis N1 → Fetch → Search → Agent fiches) ----------
     async def _discover(self, seed, max_urls, depth=0):
-        seed = dict(seed or {})
+        seed = prefer_official_home(dict(seed or {}))
         queue = (seed.get("queue") or "").strip().lower()
         if queue in {"resolve", "skip"}:
             self.log(
@@ -844,6 +850,7 @@ class Swarm:
             self.set_agent(aid, status="RUNNING")
             crawled = fetched = searched = []
             pool: list[str] = []
+            judge_quota = False
             self.agent_log(aid, "Listing N1: crawler (hygiène + feuilles curées)")
             try:
                 crawled = await self._crawl_listing(seed, LISTING_JUDGE_CAP)
@@ -907,6 +914,12 @@ class Swarm:
                         async with sem:
                             found = await llm_judge_listing(
                                 seed, pool, settings=self.settings, log=log_fn)
+                    except ListingJudgeQuotaError as e:
+                        found = None
+                        judge_quota = True
+                        self.agent_log(
+                            aid, f"Listing juge quota 429: {str(e)[:80]}")
+                        self.log(f"[{name}] Listing juge quota 429 — pas d'Agent")
                     except Exception as e:
                         found = None
                         self.agent_log(
@@ -915,12 +928,21 @@ class Swarm:
                     if found:
                         self.agent_log(aid, f"Listing juge → {found}")
                         self.log(f"[{name}] Listing juge → {found}")
-                    else:
+                    elif not judge_quota:
                         self.agent_log(
                             aid, f"Listing juge: aucune des {len(pool)} URLs")
                         self.log(f"[{name}] Listing juge: aucune des {len(pool)} URLs")
 
-            if not found and key and self.settings.get("allow_tinyfish_agent", True):
+            allow_agent = bool(key) and bool(self.settings.get("allow_tinyfish_agent", True))
+            if not found and allow_agent and judge_quota:
+                reason = "TinyFish Agent listing sauté — quota juge 429"
+                self.agent_log(aid, reason)
+                self.log(f"[{name}] {reason}")
+            elif not found and allow_agent and not pool:
+                reason = "TinyFish Agent listing sauté — aucun candidat"
+                self.agent_log(aid, reason)
+                self.log(f"[{name}] {reason}")
+            elif not found and allow_agent:
                 if not agent_host_is_worthwhile(seed.get("url") or "", seed.get("name") or ""):
                     reason = (
                         "TinyFish Agent listing sauté — "
@@ -931,12 +953,7 @@ class Swarm:
                 else:
                     used_engine = "TinyFish listing"
                     self.set_agent(aid, engine="TinyFish Agent listing")
-                    if (n_tf + n_sp) == 0 and not crawled and not fetched:
-                        reason = "Listing Search: 0 hit → TinyFish Agent listing"
-                    elif pool:
-                        reason = "Listing juge: aucune → TinyFish Agent listing"
-                    else:
-                        reason = "Listing Search: hits hygiène 0 → TinyFish Agent listing"
+                    reason = "Listing juge: aucune → TinyFish Agent listing"
                     self.agent_log(aid, reason)
                     self.log(f"[{name}] {reason}")
                     try:
@@ -1445,8 +1462,10 @@ class Swarm:
         key = self._serper_key()
         if not key:
             return []
-        self._serper_queries += 1
-        return await serper_search(query, key, log=log or (lambda m: None))
+        sem = self._serper_sem or asyncio.Semaphore(2)
+        async with sem:
+            self._serper_queries += 1
+            return await serper_search(query, key, log=log or (lambda m: None))
 
     async def _search_with_filter(self, seed, query, max_urls, *,
                                   filter_fn, purpose, log=None,
@@ -1544,7 +1563,7 @@ class Swarm:
         catalog = self.master_seeds or MASTER_SEEDS
         if find_catalog_seed(catalog, name, url):
             return False
-        cap = int(self.settings.get("max_partner_orgs", 5))
+        cap = int(self.settings.get("max_partner_orgs", 15))
         return self.new_partner_count >= cap
 
     def _queue_partner_seed(self, seed: dict):
@@ -1567,9 +1586,16 @@ class Swarm:
         catalog = self.master_seeds or MASTER_SEEDS
         known_seed = find_catalog_seed(catalog, name, purl)
         known = known_seed is not None
-        cap = int(self.settings.get("max_partner_orgs", 5))
+        cap = int(self.settings.get("max_partner_orgs", 15))
         if not known:
             if self.new_partner_count >= cap:
+                return
+            if not partner_site_reachable(purl):
+                self.log(
+                    f"Follow the Money: skip '{name}' — site injoignable "
+                    f"({purl}) — plafond intact",
+                    "warn",
+                )
                 return
             self.new_partner_count += 1
             stored = {
