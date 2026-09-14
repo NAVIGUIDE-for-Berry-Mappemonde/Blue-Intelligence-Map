@@ -4,7 +4,7 @@ Le cahier `docs/CAHIER_DES_CHARGES_REVIEW.md` v1.1 est le **contrat de relecture
 
 Ce document propose le **même geste Review**, adapté à chaque mode produit. Review reste le **troisième onglet** (Map / Console / Review) : il ouvre la file du **mode actif**.
 
-Formalités est le **mode de référence déjà implémenté** (documents, pas les ports ; Proposer ; leçons Gold ; extract après Gold). On calque **le geste**, pas l’objet, pas les jetons `habilitados` / `jorf`, pas le filtre EN·FR·ES. Avant d’écrire un Proposer AMP / Projets / marinas, on met à jour **cette** page.
+Formalités est le **mode de référence** (documents, pas les ports ; Proposer ; leçons Gold ; extract après Gold). Les autres files calquent **le geste**, pas l’objet, pas les jetons `habilitados` / `jorf`, pas le filtre EN·FR·ES. AMP / Projets ont un lot Proposer ; marinas / capitaineries un juge de champs **par fiche** (pas de lot OSM).
 
 **Science** et **Climatologie** n’ont **pas** de file Review en V1 (plan C8) : moisson / snapshot, pas un run Gold. L’onglet Review y affiche un placeholder. Ce document ne les couvre pas.
 
@@ -54,7 +54,7 @@ Ces règles viennent du contrat Formalités déjà en prod (Gold documents, juge
 | **Blacklist au grain du chemin / de l’objet** | Une actu `gob.mx` nulle n’interdit pas le PDF officiel du même domaine. On blackliste un **chemin** ou un `mrgid`, pas un hostname entier par défaut. |
 | **Local ∥ LLM, liste fermée** | L’heuristique tourne en parallèle du LLM. Le LLM **n’invente aucune URL** hors des candidats déjà sur la fiche. Vision utile si la preuve est une page / un PDF ; inutile pour un tag OSM. |
 | **HITL** | Proposer écrit `review_suggest`. Gold écrit `review_lessons` (écart keep/drop). Le lot suivant relit ces leçons (few-shot + score de chemin). Le rapport dit « Proposer s’est trompé ici » — **il n’écrit pas les règles**. |
-| **Clés par `kind`** | Aujourd’hui `review_lessons` / `review_suggest` sont préfixés `eez:`. En copiant : `project:`, `amp:`, etc. Pas un fourre-tout Formalités. |
+| **Clés par `kind`** | `review_lessons` / `review_suggest` : `eez:`, `amp:`, `project:`, `marina:`, `capitainerie:`. Pas un fourre-tout Formalités. |
 
 ### Ce qu’on ne copie pas (métier Formalités)
 
@@ -65,11 +65,11 @@ Ces règles viennent du contrat Formalités déjà en prod (Gold documents, juge
 - Une QA LLM qui **rejoue** Proposer (même pages, même question) au lieu d’auditer l’humain.
 - Relancer un crawl, SearXNG, ou écrire `poe_ports` / live « pour voir la carte tout de suite ».
 
-### Ordre d’implémentation (quand on copiera)
+### Ordre suivi (déjà implémenté)
 
-1. **AMP** — même geste « parmi ces URLs, laquelle est *la* preuve de *cet* objet ». `visit_candidates` + `no_visit` déjà là. Un Proposer + leçons s’y branche presque tel quel.
-2. **Projets** — deux questions (URL projet + site `site_ok`). Gold déjà plus strict. Le juge refuse `snap_to_ocean` / HQ et n’invente aucune URL.
-3. **Marinas / Capitaineries** — d’abord le méta-contrat (Gold = clic identité + GPS). Ensuite un petit juge de **champs sourcés**, pas un lot mondial sur tout le dump OSM.
+1. **AMP** — même geste « parmi ces URLs, laquelle est *la* preuve de *cet* objet ». Lot `scope=all`, clés `amp:`, `no_visit`.
+2. **Projets** — deux questions (URL projet + site `site_ok`). Lot `scope=all`, clés `project:`. Le juge refuse `snap_to_ocean` / HQ et n’invente aucune URL.
+3. **Marinas / Capitaineries** — juge de **champs sourcés** sur **une fiche** (`scope=one`). `POST /review/suggest` `scope=all` → 400. Clés `marina:` / `capitainerie:`.
 
 Infrastructure à **factoriser** (pas le prompt) : job `TaskState` + `GET /review/suggest/status`, `compare_verdicts`, few-shot par proximité (pays / façade / souverain), cascade vision déjà dans `complete_json_cascade`, rapport en lecture seule.
 
@@ -152,9 +152,9 @@ Files d’entrée (CDC phase D) : `snapped`, `fallback`, `unlocated`, `hq_suspec
 
 Relancer le swarm. Purger `projects`. Traiter un financeur comme un projet. Croiser projet ↔ PoE (hors périmètre CDC).
 
-### 3.7 Ce qu’on calque de Formalités (pas encore implémenté)
+### 3.7 Ce qu’on calque de Formalités (implémenté)
 
-Deuxième file à doter d’un Proposer, **après AMP** (§0.1).
+Lot Proposer `kind=project` (`review_project_picker.py`), **après AMP** (§0.1).
 
 - **Question du juge.** Parmi les URLs déjà sur la fiche, lesquelles sont une **page projet** ? Parmi les `sites[]`, lesquels sont un **lieu d’action** `site_ok` (pas HQ, pas snapped, pas fallback) ?
 - **Liste fermée.** Aucune URL inventée. Aucun GPS inventé. `unlocated` reste en file.
@@ -212,9 +212,9 @@ L’enrichissement (VHF, places visiteurs, tirant, tél) est-il **lu** sur une p
 
 `GOLD_KINDS` contient `marina`. `gold_pressed` ignore le pré-Gold (Gold = override allumé). `is_pre_gold_marina` range encore **tout le dump OSM avec GPS** dans le filtre « pré-Gold » de la file : ça reste un **interrupteur de file trop large**, pas un certificat. Le contrat exige un **clic** (identité + GPS vus). Ne pas relire « pré-Gold » comme « déjà certifié ».
 
-### 4.7 Ce qu’on calque de Formalités (pas encore implémenté)
+### 4.7 Ce qu’on calque de Formalités (implémenté)
 
-**Dernière** file pour un juge automatique. L’objet est un point OSM, pas une page d’État.
+Juge de champs **par fiche** (`review_field_picker.py`). L’objet est un point OSM, pas une page d’État. Pas de lot mondial.
 
 - **Pas de lot mondial** sur tout le dump OSM (coût, bruit, geste différent).
 - **Oui** : un petit juge de **champs sourcés** (VHF, places, tirant, tél) — garder le tag / la page, écarter l’hallucination. Liste fermée de champs déjà affichés.
@@ -269,9 +269,9 @@ Une fiche = **un bureau** (le bâtiment), pas le plan d’eau, pas la marina. Id
 
 `gold_pressed` n’allume plus Gold tout seul. `is_pre_gold_capitainerie` = bâtiment + GPS : **filtre de file**, pas certificat. Vérifier qu’aucune UI / API ne repose encore `gold_on: true` par défaut (ancien écart : toutes les capitaineries certifiées sans geste).
 
-### 5.7 Ce qu’on calque de Formalités (pas encore implémenté)
+### 5.7 Ce qu’on calque de Formalités (implémenté)
 
-Même priorité que les marinas (§4.7) : pas un lot mondial.
+Même juge de champs que les marinas (`kind=capitainerie`) : pas un lot mondial. Overlay SHOM/NOAA accepté ou écarté.
 
 - Juge de **champs** (tél / VHF) : sourcé (tag, page officielle) vs inventé / TripAdvisor.
 - Overlay : accepter ou **détacher** (deux bâtiments). Ne pas élargir `merge_km` parce que le juge « a fusionné ».
@@ -282,7 +282,7 @@ Même priorité que les marinas (§4.7) : pas un lot mondial.
 
 ## 6. AMP — contrat de Review proposé
 
-Mode produit. Fiche UI déjà là (`AmpFiche`) : `visit_candidates`, keep/drop visite, case « pas de visite ». `GOLD_KINDS` contient `amp`. **Pas** encore de Proposer ni de `review_lessons` kind `amp`.
+Mode produit. Fiche UI déjà là (`AmpFiche`) : `visit_candidates`, keep/drop visite, case « pas de visite ». `GOLD_KINDS` contient `amp`. Proposer + leçons kind `amp` (`review_amp_picker.py`).
 
 ### 6.1 Objet
 
@@ -324,7 +324,7 @@ Même esprit que les TD Formalités : **montrer tout, choisir**. Le pipeline pro
 
 ### 6.6 Écart code
 
-La fiche montre les candidats et persiste `review_choices.visit` / `no_visit`. L’écart restant : **pas de Proposer**, pas de leçons kind `amp`, le rapport n’a pas encore « Proposer s’est trompé ici » hors Formalités. Si un run n’écrit pas `visit_candidates`, l’UI retombe sur une seule `visit_url` — le pipeline doit **toujours** exposer la liste.
+Proposer + leçons `amp:` + rapport multi-kind sont en place. Si un run n’écrit pas `visit_candidates`, l’UI retombe sur une seule `visit_url` — le pipeline doit **toujours** exposer la liste.
 
 ### 6.7 Ce qu’on calque de Formalités (première file à doter)
 
@@ -348,8 +348,8 @@ Geste le plus proche : « parmi ces URLs, laquelle est *la* visite de **ce** `si
 | Tranche l’objet | pages / PDF d’État (pas chaque port) | sites keep/drop/édit GPS→Gold | marina vs non | bureau vs plan d’eau | visite vs manager |
 | « Aucune preuve » goldisable | UNCLOS / `none` | non (`unlocated` reste en file) | « pas une marina » | « pas un bureau » | `no_visit` |
 | Blacklist → règles | chemin / `mrgid` (pas le domaine entier) | chemins listing | OTA (chemin) | OTA / réseaux | homepages visite (chemin) |
-| Proposer (juge) | **oui** (lot, ne Gold pas) | à faire (après AMP) | juge de champs, pas un lot OSM | juge de champs, pas un lot | **première copie** |
-| Leçons HITL / rapport écarts | **oui** (`eez`) | à faire (`project:`) | plus tard | plus tard | à faire (`amp:`) |
+| Proposer (juge) | **oui** (lot, ne Gold pas) | **oui** (lot, ne Gold pas) | **oui** (fiche, pas de lot OSM) | **oui** (fiche, pas de lot) | **oui** (lot, ne Gold pas) |
+| Leçons HITL / rapport écarts | **oui** (`eez:`) | **oui** (`project:`) | **oui** (`marina:`) | **oui** (`capitainerie:`) | **oui** (`amp:`) |
 | Relancer un crawl | non | non | non | non | non |
 | Inventer un GPS / une URL | non | non | non | non | non |
 | Écrire la live sans Gold | non | non | non | non | non |
@@ -428,12 +428,12 @@ Pas de régime « publication exclusive Formalités ». Pas de « filtre skipper
 
 ## 12. Rapport de review
 
-La base garde déjà tout : `review_comments` (clé `{mode}:{entity_id}`), `review_choices`, `review_gold`, et côté Formalités `review_suggest` / `review_lessons`. Le rapport (`GET /api/review/report`, bouton **Rapport** de l'onglet Review, export JSON ou Markdown) agrège ces collections **en lecture seule** pour préparer les améliorations du pipeline :
+La base garde déjà tout : `review_comments` (clé `{mode}:{entity_id}`), `review_choices`, `review_gold`, `review_suggest` / `review_lessons` **par kind**. Le rapport (`GET /api/review/report`, bouton **Rapport** de l'onglet Review, export JSON ou Markdown) agrège ces collections **en lecture seule** pour préparer les améliorations du pipeline :
 
 - **URLs proposées** : toute URL collée dans un commentaire (ex. liste PoE d'un polygone ZEE trouvée à la main via Gemini) ressort en tête de rapport — candidate à lecture / récupération par le pipeline au run suivant.
 - **Écartés** : TD, URLs, sites et champs enrichis écartés — candidats blacklist de **chemin** / correctifs moteur (pas un hostname entier par réflexe).
 - **Gold** : fiches certifiées, avec la date.
-- **« Proposer s’est trompé ici »** (Formalités aujourd’hui ; même section par `kind` quand on copiera) : écarts keep/drop, accords, indices pour le code. Matière à few-shot / jetons — **pas** une écriture automatique de `_JUNK_PATH_TOKENS`.
+- **« Proposer s’est trompé ici »** (tous les kinds) : écarts keep/drop, accords, indices pour le code. Matière à few-shot / jetons — **pas** une écriture automatique de `_JUNK_PATH_TOKENS`.
 
 Le rapport n'écrit rien : ni règle, ni collection live, ni Gold. C'est la matière première d'une décision humaine.
 
