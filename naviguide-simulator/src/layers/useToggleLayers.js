@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import { ampStyle } from "./styles.js";
 import { circleOpts, makePointGroup } from "./points.js";
+import { filterScienceFeatures } from "./scienceSource.js";
+import { SCIENCE_WMS_LAYERS } from "./scienceWms.js";
 
 const BI_BASE = import.meta.env.VITE_BI_BASE ?? "/bi";
 const EMPTY = { type: "FeatureCollection", features: [] };
@@ -49,6 +51,41 @@ function useFetchLayer(url, { lazy = true } = {}) {
   return { show, setShow: toggle, loading, error, data };
 }
 
+function useLazyJson(enabled, url) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const fetched = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || !url || fetched.current) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((json) => {
+        if (cancelled) return;
+        fetched.current = true;
+        setData(json);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err.message || err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, url]);
+
+  return { data, loading, error };
+}
+
 function addPointLayer(map, fc, color, kind, onFeature) {
   const group = makePointGroup();
   const zoom = map.getZoom();
@@ -67,6 +104,46 @@ function addPointLayer(map, fc, color, kind, onFeature) {
   return group;
 }
 
+function addScienceSourceLayer(map, fc, source, color, onFeature) {
+  const filtered = filterScienceFeatures(fc, source);
+  const group = makePointGroup();
+  const zoom = map.getZoom();
+  const renderer = group._biRenderer;
+  (filtered.features || []).forEach((f) => {
+    const props = f.properties || {};
+    const geom = f.geometry || {};
+    if (geom.type === "LineString") {
+      const latlngs = (geom.coordinates || [])
+        .filter((pt) => Array.isArray(pt) && pt.length >= 2)
+        .map(([lon, lat]) => [lat, lon]);
+      if (latlngs.length < 2) return;
+      const line = L.polyline(latlngs, {
+        color,
+        weight: 2.5,
+        opacity: 0.85,
+        pane: "science-tracks",
+      });
+      line.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        onFeature?.({ lon: e.latlng.lng, lat: e.latlng.lat, kind: "science", props });
+      });
+      group.addLayer(line);
+      return;
+    }
+    if (geom.type !== "Point") return;
+    const [lon, lat] = geom.coordinates;
+    const fill = props.kind === "argo_float" ? 0.25 : props.kind === "cruise" ? 0.45 : 0.85;
+    const m = L.circleMarker([lat, lon], circleOpts(color, { zoom, fillOpacity: fill, renderer }));
+    m.on("click", (e) => {
+      L.DomEvent.stopPropagation(e);
+      onFeature?.({ lon, lat, kind: "science", props });
+    });
+    group.addLayer(m);
+  });
+  group.addTo(map);
+  return group;
+}
+
 export function useToggleLayers(mapRef, onFeature, mapReady = 0) {
   const zee = useFetchLayer(null);
   const [showZee, setShowZee] = useState(true);
@@ -78,7 +155,17 @@ export function useToggleLayers(mapRef, onFeature, mapReady = 0) {
   const marinas = useFetchLayer(`${BI_BASE}/export/marinas.geojson`);
   const capitaineries = useFetchLayer(`${BI_BASE}/export/capitaineries.geojson`);
   const poe = useFetchLayer(`${BI_BASE}/export/poe.geojson`);
-  const science = useFetchLayer(`${BI_BASE}/export/science.geojson`);
+
+  const [showSextant, setShowSextant] = useState(false);
+  const [showArgo, setShowArgo] = useState(false);
+  const [showOdatis, setShowOdatis] = useState(false);
+  const [showEdmed, setShowEdmed] = useState(false);
+  const [showCsr, setShowCsr] = useState(false);
+  const [showBathymetry, setShowBathymetry] = useState(false);
+  const [showFonds, setShowFonds] = useState(false);
+  const [showCables, setShowCables] = useState(false);
+  const scienceCatalogOn = showSextant || showArgo || showOdatis || showEdmed || showCsr;
+  const scienceCatalog = useLazyJson(scienceCatalogOn, `${BI_BASE}/export/science.geojson`);
 
   const [showBalisage, setShowBalisage] = useState(false);
   const [showAmp, setShowAmp] = useState(false);
@@ -187,10 +274,44 @@ export function useToggleLayers(mapRef, onFeature, mapReady = 0) {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !science.show || !science.data) return undefined;
-    const g = addPointLayer(map, science.data, "#a78bfa", "science", onFeature);
-    return () => map.removeLayer(g);
-  }, [mapRef, mapReady, science.show, science.data, onFeature]);
+    if (!map || !mapReady || !scienceCatalog.data) return undefined;
+    const added = [];
+    const specs = [
+      [showSextant, "sextant", "#a78bfa"],
+      [showArgo, "argo", "#c4b5fd"],
+      [showOdatis, "odatis", "#8b5cf6"],
+      [showEdmed, "edmed", "#7c3aed"],
+      [showCsr, "csr", "#6d28d9"],
+    ];
+    specs.forEach(([on, source, color]) => {
+      if (!on) return;
+      added.push(addScienceSourceLayer(map, scienceCatalog.data, source, color, onFeature));
+    });
+    return () => added.forEach((g) => map.removeLayer(g));
+  }, [mapRef, mapReady, scienceCatalog.data, showSextant, showArgo, showOdatis, showEdmed, showCsr, onFeature]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return undefined;
+    const enabled = { bathymetry: showBathymetry, substrate: showFonds, cables: showCables };
+    const added = [];
+    SCIENCE_WMS_LAYERS.forEach((spec) => {
+      if (!enabled[spec.id]) return;
+      const lyr = L.tileLayer.wms(spec.url, {
+        layers: spec.layers,
+        format: "image/png",
+        transparent: true,
+        version: "1.1.1",
+        opacity: spec.opacity,
+        pane: spec.pane,
+        attribution: spec.attribution,
+        maxZoom: 18,
+      });
+      lyr.addTo(map);
+      added.push(lyr);
+    });
+    return () => added.forEach((lyr) => map.removeLayer(lyr));
+  }, [mapRef, mapReady, showBathymetry, showFonds, showCables]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -281,10 +402,30 @@ export function useToggleLayers(mapRef, onFeature, mapReady = 0) {
     setShowBiAmp: setShowAmp,
     loadingBiAmp: loadingAmp,
     errorBiAmp: errorAmp,
-    showScience: science.show,
-    setShowScience: science.setShow,
-    loadingScience: science.loading,
-    errorScience: science.error,
+    showSextant,
+    setShowSextant,
+    showArgo,
+    setShowArgo,
+    showOdatis,
+    setShowOdatis,
+    showEdmed,
+    setShowEdmed,
+    showCsr,
+    setShowCsr,
+    loadingScienceCatalog: scienceCatalog.loading,
+    errorScienceCatalog: scienceCatalog.error,
+    showBathymetry,
+    setShowBathymetry,
+    loadingBathymetry: false,
+    errorBathymetry: null,
+    showFonds,
+    setShowFonds,
+    loadingFonds: false,
+    errorFonds: null,
+    showCables,
+    setShowCables,
+    loadingCables: false,
+    errorCables: null,
     showClimatology,
     setShowClimatology,
     loadingClimatology: false,

@@ -5,7 +5,7 @@ import { SimulationPanel } from "./SimulationPanel";
 import { ALL_LAYER_CONFIG } from "../constants/layers.js";
 import { ici } from "../engine/ici.js";
 
-const NAVIGUIDE_LOGO = "/logo-naviguide.svg";
+const NAVIGUIDE_LOGO = "/logo-naviguide.png";
 const BERRY_LOGO = "/logo-berry-mappemonde.svg";
 
 function BerryCard({
@@ -173,8 +173,8 @@ export function Sidebar({
       >
         <div className="px-3 pt-2 pb-2 border-b border-slate-700/60 flex-shrink-0">
           <div className="flex items-center gap-2 mb-1.5">
-            <img src={NAVIGUIDE_LOGO} alt="NAVIGUIDE" className="h-10 w-10 object-contain rounded-full drop-shadow" />
-            <span className="text-white font-bold text-xs tracking-widest">NAVIGUIDE</span>
+            <img src={NAVIGUIDE_LOGO} alt={t("brandTitle")} className="h-12 w-12 object-contain drop-shadow" />
+            <span className="text-white font-bold text-[11px] leading-tight tracking-wide">{t("brandTitle")}</span>
           </div>
 
           <BerryCard

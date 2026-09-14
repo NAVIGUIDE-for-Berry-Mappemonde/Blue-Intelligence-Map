@@ -72,8 +72,15 @@ export function LayerFichePopup({ popup, onClose }) {
   } else if (kind === "port") {
     subtitle = [props.country, props.region].filter(Boolean).join(" · ");
   } else if (kind === "science") {
-    title = props.title || props.name || "Science";
-    extra = props.url ? <a href={props.url} target="_blank" rel="noreferrer">{hostLabel(props.url)}</a> : null;
+    title = props.name || props.title || "Science";
+    subtitle = [props.source, props.kind, props.provider].filter(Boolean).join(" · ");
+    extra = (
+      <>
+        {props.wmo ? <Row label="WMO">{String(props.wmo)}</Row> : null}
+        {props.ship ? <Row label="Navire">{props.ship}</Row> : null}
+        {props.url ? <a href={props.url} target="_blank" rel="noreferrer">{hostLabel(props.url)}</a> : null}
+      </>
+    );
   }
 
   return (
