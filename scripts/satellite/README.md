@@ -135,7 +135,19 @@ L’eau est plus sombre en SWIR qu’en vert. On calcule :
 
 Puis on garde le **bord** eau / terre.
 
-**Chemin simple (QGIS, débutant)**
+**Chemin simple (Terminal, environnement ACOLITE)**
+
+```bash
+conda activate acolite
+cd ~/Blue-Intelligence-Map/scripts/satellite
+python3 mndwi_coastline.py
+```
+
+Le fichier arrive sur le Bureau :
+`~/Desktop/sentinel-pilot/coastline-raw.geojson`.
+Aucune profondeur n’est inventée.
+
+**Autre chemin (QGIS)**
 
 1. Installez [QGIS](https://qgis.org) (Mac).
 2. Ouvrez les deux bandes ACOLITE (vert et SWIR).
