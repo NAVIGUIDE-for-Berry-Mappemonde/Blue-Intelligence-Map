@@ -3,14 +3,17 @@
   "month": 4,
   "period": "1994-2020",
   "source_ids": [
-    "WIND_GLO_PHY_CLIMATE_L4_MY_012_003"
+    "WIND_GLO_PHY_L4_MY_012_006"
   ],
-  "doi": null,
-  "dataset": "cmems_obs-wind_glo_phy_my_l4_P1M",
-  "stat": "average",
-  "note": "V0 AVERAGE arrows \u2014 not a rose. Roses need gen_wind_atlas.py (6 h MY).",
+  "doi": "10.48670/moi-00183",
+  "dataset": [
+    "cmems_obs-wind_glo_phy_my_l4_0.25deg_PT1H",
+    "cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H"
+  ],
+  "note": "0.25deg Jun 1994\u2013Oct 2009, then 0.125deg to 2020. Jan\u2013May 1994 absent.",
+  "stat": "rose",
+  "subsample": "6h",
   "grid_spacing_deg": 0.5,
   "years": "1994-2020",
-  "n_months_used": 26,
-  "generated_at": "2026-09-13T11:18:28Z"
+  "generated_at": "2026-09-14T00:40:45Z"
 }
