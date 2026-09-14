@@ -41,6 +41,8 @@ bash scripts/climatology/gen_wind_atlas_mac.sh
 Les 12 mois prennent souvent **plusieurs heures**. `caffeinate` empêche
 le Mac de s'endormir. Si ça s'arrête, relance **la même commande** : le
 mois en cours reprend à l'année suivante. Un mois déjà en rose est sauté.
+Si Copernicus reste figé, le script tue l'année au bout de 40 minutes
+et la relance tout seul.
 
 Le vent horaire CMEMS est en deux jeux du même produit : 0,25° jusqu'en
 octobre 2009, puis 0,125° jusqu'en 2020. Le script les enchaîne et

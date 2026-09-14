@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import socket
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -32,6 +34,8 @@ DOI = "10.48670/moi-00183"
 MS_TO_KN = 1.94384
 SECTORS = 8
 ACC_KEYS = ("lats", "lons", "count", "calm", "gale", "sec_n", "sec_spd", "u_sum", "v_sum")
+# CMEMS peut rester figé sur un HTTPS sans timeout ; on tue l'année et on reprend.
+YEAR_TIMEOUT_S = 40 * 60
 
 
 def pick_dataset(year: int, month: int) -> tuple[str, float] | None:
@@ -164,6 +168,73 @@ def _accumulate(acc: dict, u, v) -> None:
         acc["sec_spd"][:, :, k] += np.nansum(np.where(mask, spd, 0.0), axis=0)
 
 
+def process_one_year(month: int, year: int, spacing: float, out: Path) -> None:
+    """Une année seulement — processus fils, tuable si CMEMS se fige."""
+    import numpy as np
+
+    socket.setdefaulttimeout(180)
+    partial = out / f"wind-{month:02d}.partial.npz"
+    loaded = _load_partial(partial)
+    acc = loaded[0] if loaded else None
+    picked = pick_dataset(year, month)
+    label = picked[0] if picked else "skip"
+    print(f"mois {month:02d}  année {year}  {label}", file=sys.stderr)
+    opened = _open_year(
+        month, year, spacing,
+        target_lats=None if acc is None else acc["lats"],
+        target_lons=None if acc is None else acc["lons"],
+    )
+    if opened is None:
+        if acc is not None:
+            _save_partial(partial, acc, year + 1)
+        return
+    ds, u_name, v_name, _dataset_id = opened
+    u = ds[u_name].values.astype("float32", copy=False)
+    v = ds[v_name].values.astype("float32", copy=False)
+    lat_name = "latitude" if "latitude" in ds.coords else "lat"
+    lon_name = "longitude" if "longitude" in ds.coords else "lon"
+    lats = ds[lat_name].values.astype("float32")
+    lons = ds[lon_name].values.astype("float32")
+    if acc is None:
+        acc = _new_acc(u, lats, lons)
+    _accumulate(acc, u, v)
+    del ds, u, v, np
+    gc.collect()
+    _save_partial(partial, acc, year + 1)
+
+
+def _run_year_worker(month: int, year: int, spacing: float, out: Path) -> None:
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--worker",
+        "--month", str(month),
+        "--year", str(year),
+        "--spacing", str(spacing),
+        "--out", str(out),
+    ]
+    last_err: BaseException | None = None
+    for attempt in range(1, 4):
+        try:
+            subprocess.run(cmd, check=True, timeout=YEAR_TIMEOUT_S)
+            return
+        except subprocess.TimeoutExpired as exc:
+            last_err = exc
+            print(
+                f"  timeout {YEAR_TIMEOUT_S}s année {year} — retry {attempt}/3",
+                file=sys.stderr,
+            )
+        except subprocess.CalledProcessError as exc:
+            last_err = exc
+            wait = 4 * (2 ** (attempt - 1))
+            print(
+                f"  worker exit {exc.returncode} année {year} — retry {attempt}/3 dans {wait}s",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"échec année {year} mois {month:02d}") from last_err
+
+
 def generate_month(
     month: int,
     year_start: int,
@@ -179,11 +250,10 @@ def generate_month(
     years = list(range(year_start, year_end + 1))
     loaded = _load_partial(partial)
     if loaded:
-        acc, year_next = loaded
+        _acc, year_next = loaded
         todo = [y for y in years if y >= year_next]
         print(f"reprise mois {month:02d} à l'année {year_next}", file=sys.stderr)
     else:
-        acc = None
         todo = years
 
     t0 = time.time()
@@ -191,29 +261,15 @@ def generate_month(
         picked = pick_dataset(year, month)
         label = picked[0] if picked else "skip"
         print(f"mois {month:02d}  année {year}  ({i}/{len(todo)})  {label}", file=sys.stderr)
-        opened = _open_year(
-            month, year, spacing,
-            target_lats=None if acc is None else acc["lats"],
-            target_lons=None if acc is None else acc["lons"],
-        )
-        if opened is None:
-            if acc is not None:
-                _save_partial(partial, acc, year + 1)
+        if picked is None:
+            loaded_skip = _load_partial(partial)
+            if loaded_skip:
+                _save_partial(partial, loaded_skip[0], year + 1)
             continue
-        ds, u_name, v_name, _dataset_id = opened
-        u = ds[u_name].values.astype("float32", copy=False)
-        v = ds[v_name].values.astype("float32", copy=False)
-        lat_name = "latitude" if "latitude" in ds.coords else "lat"
-        lon_name = "longitude" if "longitude" in ds.coords else "lon"
-        lats = ds[lat_name].values.astype("float32")
-        lons = ds[lon_name].values.astype("float32")
-        if acc is None:
-            acc = _new_acc(u, lats, lons)
-        _accumulate(acc, u, v)
-        del ds, u, v
-        gc.collect()
-        _save_partial(partial, acc, year + 1)
+        _run_year_worker(month, year, spacing, out)
 
+    loaded = _load_partial(partial)
+    acc = loaded[0] if loaded else None
     if acc is None:
         raise SystemExit(f"aucune année téléchargée pour le mois {month}")
 
@@ -273,9 +329,17 @@ def main() -> int:
                     help="saute un mois déjà en rose (pas une moyenne AVERAGE)")
     ap.add_argument("--year-start", type=int, default=1994)
     ap.add_argument("--year-end", type=int, default=2020)
+    ap.add_argument("--year", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--spacing", type=float, default=0.5)
     ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
+    if args.worker:
+        if args.month is None or args.year is None:
+            raise SystemExit("worker: --month et --year requis")
+        login()
+        process_one_year(args.month, args.year, args.spacing, args.out)
+        return 0
     if args.all:
         months = list(range(1, 13))
     elif args.month is not None:
