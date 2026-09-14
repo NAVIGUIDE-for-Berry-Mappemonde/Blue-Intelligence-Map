@@ -647,6 +647,7 @@ def _marina_fiche(doc: dict) -> dict:
         "services_disponibles": doc.get("services_disponibles"),
         "telephone_capitainerie": doc.get("telephone_capitainerie"),
         "resume_avis": doc.get("resume_avis"),
+        "field_sources": doc.get("field_sources") or {},
         "website": website,
         "website_status": doc.get("website_status"),
         "maps_place_url": maps_place,
@@ -681,6 +682,7 @@ def _capitainerie_fiche(doc: dict) -> dict:
         "enrichment_source": doc.get("enrichment_source"),
         "canal_vhf": doc.get("canal_vhf"),
         "telephone": doc.get("telephone"),
+        "field_sources": doc.get("field_sources") or {},
         "website": doc.get("website"),
         "maps_url": (
             google_maps_url(doc.get("name"), doc["lat"], doc["lon"])

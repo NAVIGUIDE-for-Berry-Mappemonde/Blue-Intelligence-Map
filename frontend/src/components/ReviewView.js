@@ -25,6 +25,16 @@ function kindLabelKey(kind) {
   return "reviewKindProject";
 }
 
+const SUGGEST_BATCH = new Set(["eez", "amp", "project"]);
+const SUGGEST_ONE = new Set(["marina", "capitainerie"]);
+
+function suggestHintKey(kind) {
+  if (kind === "amp") return "reviewSuggestHintAmp";
+  if (kind === "project") return "reviewSuggestHintProject";
+  if (kind === "marina" || kind === "capitainerie") return "reviewSuggestHintField";
+  return "reviewSuggestHint";
+}
+
 export default function ReviewView({ t, mode, onMapDirty }) {
   const kind = kindFromMode(mode);
   const [runId, setRunId] = useState("published");
@@ -309,7 +319,21 @@ export default function ReviewView({ t, mode, onMapDirty }) {
   };
 
   const suggestDocs = async () => {
-    if (suggestBusy || kind !== "eez") return;
+    if (suggestBusy) return;
+    if (SUGGEST_ONE.has(kind)) {
+      if (!current?.id) return;
+      try {
+        setSuggestBusy(true);
+        await api.post("/review/suggest", { kind, scope: "one", id: current.id });
+        setFicheTick((n) => n + 1);
+      } catch (e) {
+        /* transient */
+      } finally {
+        setSuggestBusy(false);
+      }
+      return;
+    }
+    if (!SUGGEST_BATCH.has(kind)) return;
     try {
       setSuggestBusy(true);
       await api.post("/review/suggest", { kind, scope: "all" });
@@ -532,19 +556,21 @@ export default function ReviewView({ t, mode, onMapDirty }) {
             >
               {saving ? t("reviewSaving") : t("reviewSave")}
             </button>
-            {kind === "eez" ? (
+            {SUGGEST_BATCH.has(kind) || SUGGEST_ONE.has(kind) ? (
               <button
                 type="button"
                 data-testid="review-suggest"
-                title={t("reviewSuggestHint")}
+                title={t(suggestHintKey(kind))}
                 onClick={suggestDocs}
-                disabled={suggestBusy}
+                disabled={suggestBusy || (SUGGEST_ONE.has(kind) && !current)}
                 className="px-3 py-1.5 text-[11px] font-semibold border border-line rounded-sm text-slate-300 hover:bg-raised disabled:opacity-40"
               >
                 {suggestBusy
-                  ? `${t("reviewSuggesting")} ${suggestJob?.total
-                    ? `${suggestJob.progress || 0}/${suggestJob.total}`
-                    : ""}`.trim()
+                  ? (SUGGEST_ONE.has(kind)
+                    ? t("reviewSuggestingOne")
+                    : `${t("reviewSuggesting")} ${suggestJob?.total
+                      ? `${suggestJob.progress || 0}/${suggestJob.total}`
+                      : ""}`.trim())
                   : t("reviewSuggest")}
               </button>
             ) : null}

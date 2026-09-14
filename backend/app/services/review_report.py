@@ -183,16 +183,23 @@ async def build_report(db, kind: str | None = None) -> dict:
             actions["no_visit"].append(base)
     actions["domains_dropped"] = sorted(d for d in domains if d)
 
-    if "eez" in kinds:
-        lessons = await load_lessons(db)
-        titles = {
-            _sid(row["id"]): row["title"]
-            for (k, _eid), row in by_key.items() if k == "eez"
-        }
-        prop = report_rows_from_lessons(lessons, titles)
-        actions["proposer_errors"] = prop["proposer_errors"]
-        actions["proposer_agreed"] = prop["proposer_agreed"]
-        actions["proposer_code_hints"] = prop["proposer_code_hints"]
+    lessons = await load_lessons(db, kind="all")
+    lessons = [
+        les for les in lessons
+        if (les.get("kind") or "eez") in kinds
+    ]
+    titles = {
+        f"{k}:{eid}": row["title"]
+        for (k, eid), row in by_key.items()
+    }
+    titles.update({
+        _sid(row["id"]): row["title"]
+        for (k, _eid), row in by_key.items() if k == "eez"
+    })
+    prop = report_rows_from_lessons(lessons, titles)
+    actions["proposer_errors"] = prop["proposer_errors"]
+    actions["proposer_agreed"] = prop["proposer_agreed"]
+    actions["proposer_code_hints"] = prop["proposer_code_hints"]
 
     order = {k: i for i, k in enumerate(REPORT_KINDS)}
     items = sorted(
@@ -208,8 +215,13 @@ async def build_report(db, kind: str | None = None) -> dict:
             s["comments"] += 1
         if row["gold_on"]:
             s["gold"] += 1
-    if "eez" in summary:
-        summary["eez"]["proposer_errors"] = len(actions.get("proposer_errors") or [])
+    for err in actions.get("proposer_errors") or []:
+        k = err.get("kind")
+        if not k:
+            continue
+        s = summary.setdefault(k, {"fiches": 0, "comments": 0, "gold": 0,
+                                   "proposer_errors": 0})
+        s["proposer_errors"] = s.get("proposer_errors", 0) + 1
 
     return {
         "generated_at": _now_iso(),
@@ -235,13 +247,15 @@ def report_markdown(report: dict) -> str:
     lines.append(f"Généré le {report.get('generated_at')} — modes : "
                  + ", ".join(_label(k) for k in kinds) + ".")
     lines += ["", "## Synthèse", "",
-              "| Mode | Fiches touchées | Commentaires | Gold |",
-              "|------|-----------------|--------------|------|"]
+              "| Mode | Fiches touchées | Commentaires | Gold | Écarts Proposer |",
+              "|------|-----------------|--------------|------|-----------------|"]
     summary = report.get("summary") or {}
     for k in kinds:
-        s = summary.get(k) or {"fiches": 0, "comments": 0, "gold": 0}
-        lines.append(f"| {_label(k)} | {s['fiches']} | {s['comments']} "
-                     f"| {s['gold']} |")
+        s = summary.get(k) or {
+            "fiches": 0, "comments": 0, "gold": 0, "proposer_errors": 0}
+        lines.append(
+            f"| {_label(k)} | {s['fiches']} | {s['comments']} "
+            f"| {s['gold']} | {s.get('proposer_errors') or 0} |")
 
     actions = report.get("pipeline_actions") or {}
     lines += ["", "## URLs proposées par le réviseur "
@@ -300,16 +314,17 @@ def report_markdown(report: dict) -> str:
     agreed_n = len(actions.get("proposer_agreed") or [])
     if misses or hints or agreed_n:
         lines += ["## Proposer s'est trompé ici", "",
-                  "Le juge automatique (lot **Proposer**) a divergé du Gold "
-                  "humain. Ces écarts servent à corriger `local_pick`, "
-                  "`list_url_bonus` et le prompt.", ""]
+                  "Le juge automatique (**Proposer**) a divergé du Gold "
+                  "humain. Ces écarts servent à corriger le juge local "
+                  "et le prompt du mode.", ""]
         if misses:
             lines.append("### Écarts keep / drop")
             lines.append("")
             for r in misses:
                 lines.append(
-                    f"- **{r.get('title')}** ({r.get('id')}) — "
-                    f"<{r.get('url')}> : Proposer `{r.get('proposer')}`, "
+                    f"- [{_label(r.get('kind'))}] **{r.get('title')}** "
+                    f"({r.get('id')}) — <{r.get('url')}> : "
+                    f"Proposer `{r.get('proposer')}`, "
                     f"humain `{r.get('human')}`")
             lines.append("")
         else:
