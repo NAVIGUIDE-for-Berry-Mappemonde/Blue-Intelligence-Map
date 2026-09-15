@@ -6,7 +6,7 @@ const API = import.meta.env.VITE_API_URL ?? "";
 /**
  * Voyage officiel unique. Pas de localStorage visiteur.
  * Position = horloge locale à maintenant (1 s = 1 s).
- * GRIB du jour = overlay vent, jamais un nouveau trait.
+ * Dernier GRIB = overlay vent, jamais un nouveau trait, jamais de climatologie.
  */
 export function useOfficialExpedition({
   enabled,
@@ -85,10 +85,7 @@ export function useOfficialExpedition({
   }, [enabled, points, putOfficial]);
 
   const refreshGrib = useCallback(async (lat, lon) => {
-    const qs = lat != null && lon != null
-      ? `?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`
-      : "";
-    const res = await fetch(`${API}/voyage/official/grib${qs}`);
+    const res = await fetch(`${API}/voyage/official/grib`);
     const data = await res.json().catch(() => null);
     if (res.ok && data) setGrib(data);
     return data;
@@ -113,21 +110,32 @@ export function useOfficialExpedition({
     if (!sample) return null;
     const wind = grib?.wind;
     if (grib?.status === "ready" && wind) {
+      const models = (grib.products || [])
+        .filter((p) => p.status === "ready")
+        .map((p) => p.model);
       return {
         ...sample,
         kind: "forecast",
-        model: grib.model || wind.model || "GFS",
-        windKnots: wind.windKnots ?? sample.windKnots,
-        dirFromDeg: wind.dirFromDeg ?? sample.dirFromDeg,
+        model: models[0] || grib.model || wind.model || "GFS",
+        waveModel: grib.waveModel || wind.waveModel || null,
+        currentModel: grib.currentModel || wind.currentModel || null,
+        windKnots: wind.windKnots,
+        dirFromDeg: wind.dirFromDeg,
+        pressHpa: wind.pressHpa,
+        rainMm: wind.rainMm,
+        hs: wind.hs,
         gribStatus: "ready",
         gribWarning: null,
       };
     }
     return {
       ...sample,
+      kind: "absent",
+      model: null,
+      windKnots: null,
+      dirFromDeg: null,
       gribStatus: grib?.status || "absent",
-      gribWarning: "prévision du jour absente",
-      model: sample.kind === "forecast" ? sample.model : null,
+      gribWarning: "dernière prévision absente",
     };
   }, [enabled, clock, nowMs, grib]);
 
@@ -138,8 +146,12 @@ export function useOfficialExpedition({
     live,
     grib,
     gribStatus: grib?.status || (enabled ? "absent" : null),
-    gribModel: grib?.model || null,
-    gribWarning: grib?.status === "ready" ? null : (enabled ? "prévision du jour absente" : null),
+    gribModel: (grib?.products || [])
+      .filter((p) => p.status === "ready")
+      .map((p) => p.model)
+      .filter(Boolean)
+      .join(" · ") || grib?.model || null,
+    gribWarning: grib?.status === "ready" ? null : (enabled ? "dernière prévision absente" : null),
     refreshGrib,
   };
 }

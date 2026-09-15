@@ -245,7 +245,7 @@ export default {
   followExpeditionButton: "Suivre l’expédition Berry-Mappemonde",
   simulationButton: "Simulation",
   officialDepartureLocked: "Départ officiel : 15 mai 2026, 08:00 UTC (non éditable)",
-  gribMissing:      "prévision du jour absente",
+  gribMissing:      "dernière prévision absente",
   gribModel:        "{model}",
   previewBadge:     "aperçu",
   returnToLive:     "Revenir au live (L)",

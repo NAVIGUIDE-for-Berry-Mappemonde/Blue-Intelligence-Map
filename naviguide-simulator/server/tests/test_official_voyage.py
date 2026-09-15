@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +16,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("NAVIGUIDE_FORECAST_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("NAVIGUIDE_GRIB_DIR", str(tmp_path / "grib"))
     monkeypatch.setenv("NAVIGUIDE_SAILDOCS_INBOX", str(tmp_path / "inbox"))
+    monkeypatch.setenv("NAVIGUIDE_GRIB_AUTO", "0")
     voyage_store._DIR = tmp_path / "voyages"
     forecast_cube.CACHE_DIR = tmp_path / "cache"
     saildocs.GRIB_DIR = tmp_path / "grib"
@@ -64,6 +65,18 @@ def test_official_september_has_moved(client):
     assert float(sample.get("tHours") or 0) > 24
 
 
+def test_grib_absent_keeps_dest_corridor(client):
+    client.put("/voyage/official", json=_payload())
+    grib = client.get("/voyage/official/grib").json()
+    dest = (grib.get("around") or {}).get("dest") or grib.get("dest")
+    assert dest is not None
+    assert dest.get("lat") is not None
+    assert dest.get("lon") is not None
+    south, north, west, east = saildocs.bbox_from_around(grib["around"])
+    assert south <= dest["lat"] <= north
+    assert west <= dest["lon"] <= east
+
+
 def test_official_at_now_and_grib_absent(client):
     client.put("/voyage/official", json=_payload())
     sample = client.get("/voyage/official/at").json()
@@ -71,7 +84,11 @@ def test_official_at_now_and_grib_absent(client):
     assert sample["status"] in ("live", "waiting", "arrived")
     grib = client.get("/voyage/official/grib", params={"lat": 46.15, "lon": -1.16}).json()
     assert grib["status"] == "absent"
-    assert grib["warning"] == "prévision du jour absente"
+    assert grib["warning"] == "dernière prévision absente"
+    sample = client.get("/voyage/official/at").json()
+    assert sample["kind"] != "climatology"
+    assert sample["kind"] == "absent"
+    assert sample["windKnots"] is None
 
 
 def test_daily_grib_around_boat(client):
@@ -120,3 +137,26 @@ def test_scan_inbox_json(client, tmp_path, monkeypatch):
     scanned = client.post("/voyage/official/grib/scan").json()
     assert scanned["status"] == "ready"
     assert scanned["model"] == "GFS"
+
+
+def test_saildocs_query_covers_eta_next_download(client):
+    client.put("/voyage/official", json=_payload())
+    now = datetime.now(timezone.utc)
+    here = client.get("/voyage/official/at", params={"t": now.strftime("%Y-%m-%dT%H:%M:%SZ")}).json()
+    body = client.get("/voyage/official/saildocs-query").json()
+    dest = body["around"]["dest"]
+    assert dest is not None
+    later = client.get("/voyage/official/at", params={"t": body["nextDownloadAt"]}).json()
+    assert body["query"].startswith("GFS:")
+    assert "WIND" in body["query"]
+    assert "PRMSL" in body["query"]
+    codes = [q["query"].split(":")[0] for q in body["queries"]]
+    assert codes == ["GFS", "WW3", "RTOFS"]
+    assert abs(dest["lat"] - later["lat"]) < 0.5
+    assert abs(dest["lon"] - later["lon"]) < 0.5
+    south, north, west, east = saildocs.bbox_from_around(body["around"])
+    assert south <= dest["lat"] <= north
+    assert west <= dest["lon"] <= east
+    assert north - south < 12
+    if here.get("status") == "live":
+        assert (dest["lat"], dest["lon"]) != (here["lat"], here["lon"])

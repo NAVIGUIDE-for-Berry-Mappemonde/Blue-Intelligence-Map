@@ -308,9 +308,11 @@ export default function App() {
       ...legContext,
       etaHours: officialClock ? clockEtaHours : legContext.etaHours,
       speedKnots: sailing ? Math.round(local * 10) / 10 : (officialClock ? null : legContext.speedKnots),
-      kind: clockSample?.kind || (officialClock ? "climatology" : legContext.kind),
+        kind: clockSample?.kind === "forecast"
+          ? "forecast"
+          : (isSuivre ? "absent" : (clockSample?.kind || (officialClock ? "climatology" : legContext.kind))),
     };
-  }, [legContext, clockSample, officialClock, clockEtaHours]);
+  }, [legContext, clockSample, officialClock, clockEtaHours, isSuivre]);
 
   const jambe = useMemo(() => {
     if (!hudLeg) return null;
@@ -342,12 +344,14 @@ export default function App() {
     : "";
   const climatologyLabel = clockSample?.kind === "forecast"
     ? t("voyageKindForecast", {
-      model: clockSample.model || vessel.voyage?.forecastModel || "GFS",
+      model: clockSample.model || official.gribModel || vessel.voyage?.forecastModel || "GFS",
       lead: clockSample.leadHours != null ? Math.round(clockSample.leadHours) : "—",
     })
-    : officialClock && monthLabel
-      ? t("voyageKindClimatology", { month: monthLabel })
-      : "";
+    : isSuivre
+      ? ""
+      : officialClock && monthLabel
+        ? t("voyageKindClimatology", { month: monthLabel })
+        : "";
   const quayDays = clockSample?.holdHours > 0
     ? Math.round(clockSample.holdHours / 24)
     : 0;
@@ -1232,8 +1236,8 @@ export default function App() {
         quayDays={quayDays}
         twa={clockSample?.twa}
         liveBadge={isSuivre ? (previewing ? t("previewBadge") : "LIVE") : null}
-        windKind={clockSample?.kind || expeditionSpeed.kind}
-        windModel={clockSample?.model || official.gribModel}
+        windKind={clockSample?.kind === "forecast" ? "forecast" : (isSuivre ? null : (clockSample?.kind || expeditionSpeed.kind))}
+        windModel={isSuivre ? official.gribModel : (clockSample?.model || official.gribModel)}
         showSpeeds={isSimulation}
         showWindProfile={isSimulation}
         stopAuto={stopAuto}

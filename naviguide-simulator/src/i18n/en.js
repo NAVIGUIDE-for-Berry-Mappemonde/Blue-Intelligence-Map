@@ -245,7 +245,7 @@ export default {
   followExpeditionButton: "Follow the Berry-Mappemonde expedition",
   simulationButton: "Simulation",
   officialDepartureLocked: "Official departure: 15 May 2026, 08:00 UTC (not editable)",
-  gribMissing:      "today’s forecast missing",
+  gribMissing:      "latest forecast missing",
   gribModel:        "{model}",
   previewBadge:     "preview",
   returnToLive:     "Back to live (L)",

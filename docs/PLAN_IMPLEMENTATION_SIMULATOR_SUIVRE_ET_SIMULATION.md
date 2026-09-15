@@ -24,10 +24,11 @@ interrupteur. Deux boutons seulement.
 ## 1. En une phrase
 
 Deux boutons : **Suivre l’expédition Berry-Mappemonde** (le bateau de
-l’expédition, parti le 15 mai, 1 s = 1 s, GRIB2 du jour autour de lui)
+l’expédition, parti le 15 mai, 1 s = 1 s, dernier GRIB2 autour de lui)
 et **Simulation** (même idée de voyage, vent du mois, on peut
 recalculer une jambe). Pas d’autre mode. Plus de bouton
-« Mode simulation » / « Quitter ».
+« Mode simulation » / « Quitter ». En Suivre : dernier GFS, pas
+le vent du mois.
 
 ---
 
@@ -39,7 +40,7 @@ recalculer une jambe). Pas d’autre mode. Plus de bouton
 | Qui est le bateau | **Un seul** bateau pour tout le monde | Ton bateau de test (onglet / route perso) |
 | Départ | **15 mai 2026, 08:00 UTC**, La Rochelle. Déjà en mer. Date **non** éditable. | Date **modifiable**. Route officielle **ou** trait dessiné. |
 | Comment ça avance | Tout seul, **vitesse réelle** : 1 seconde à l’écran = 1 seconde en mer | Play. 4 vitesses : réelle / lecture / normale / accéléré |
-| Vent | **GRIB2 du jour**, là où est le bateau, **chargé 1 fois par jour** (Saildocs), injecté en live | **Climatologie** (vent typique du mois). Pas de GRIB |
+| Vent | **Dernier GRIB2**, couloir ici → ETA du prochain fetch (GFS + GFS-Wave + RTOFS si déposé). **Jamais** de climatologie | **Climatologie** (vent typique du mois). Pas de GRIB |
 | Escales Bmap | **3 jours à quai** (Ajaccio, Cayenne, Papeete, Mata Utu, NC…) | Pareil dans l’horloge, plus le bouton **Stop auto** sur le film |
 | Recalculer l’itinéraire | **Non.** Le trait officiel ne bouge pas. | **Oui.** Une jambe, jusqu’à la prochaine escale. |
 | Route personnalisée | **Non.** C’est Berry-Mappemonde. | **Oui.** |
@@ -56,9 +57,9 @@ d’« allumer » un mode.
 
 **Suivre l’expédition Berry-Mappemonde** — « Où est le Léopard 46 de
 Berry **en ce moment** ? » Un voyage officiel, toujours le même.
-Chaque matin : GRIB2 du coin où il se trouve. Le bateau avance tout
-seul. Revenir demain : il a avancé d’un jour (ou il est à quai 3
-jours).
+Dès qu’un cycle GFS est prêt : dernier GRIB2 sur le couloir jusqu’à
+l’ETA du prochain fetch. Le bateau avance tout seul. Revenir demain :
+il a avancé d’un jour (ou il est à quai 3 jours).
 
 **Simulation** — « Je veux **jouer** l’expédition. » Vent du mois,
 Play, Stop auto, tracer une route, recalculer une jambe. Ça ne
@@ -72,26 +73,34 @@ Tracer une **route personnalisée** bascule (ou reste) en
 
 ---
 
-## 4. GRIB2 journalier (dans ce plan)
+## 4. GRIB2 — dernier cycle, pas le globe
 
 Pas un GRIB de toute la Terre. Le VPS (8 Go) n’a pas la RAM.
 
-**Chaque jour**, autour **de la position actuelle du bateau** :
+**Dès qu’un nouveau cycle NOAA est prêt**, autour du **couloir
+horloge** : position actuelle **et** point d’arrivée du bateau à
+l’ETA du **prochain** téléchargement.
 
-1. Import skipper **Saildocs** (fichier GRIB2 du jour).
-2. On le range sur le serveur, lié au voyage officiel.
-3. L’horloge lit ce fichier **en temps réel** : à cette heure, ici,
-   ce vent.
-4. Demain : nouveau fichier, nouvelle zone (le bateau a bougé).
+1. Fetch auto **Open-Meteo** : GFS (vent, PRESS, pluie) + GFS-Wave
+   (vagues). On écrase le fichier `*_latest.json`.
+2. Requêtes **Saildocs** prêtes pour le skipper : `GFS` (WIND,
+   PRMSL, RAIN), `WW3` (vagues), `RTOFS` (courants).
+3. RTOFS binaire n’est pas parsé sur le VPS ; le courant entre
+   s’il est déposé (inbox / POST).
+4. L’horloge lit **ce** fichier. Pas de climatologie en Suivre.
 
-Fenêtre : un **couloir** autour du bateau (quelques jours / ~200 nm),
-pas le globe.
+Rythme NOAA (pas un cron à nous inventé) :
 
-Si l’import du jour échoue : le bateau reste, vent du mois, **une**
-phrase d’avertissement. Le modèle a un **nom** à l’écran (ex. GFS).
-Pas de vent inventé par un chat.
+| Produit | Cycles | Prêt vers |
+|---|---|---|
+| GFS + GFS-Wave / WW3 | 00 / 06 / 12 / 18 UTC | cycle + ~4 h |
+| RTOFS | 1×/jour (00Z) | ~11–17 UTC |
 
-L’import GRIB skipper (Saildocs) **journalier est dans ce scope**.
+On interroge Open-Meteo dès que `last_ready_cycle` a avancé
+(plus tôt = mieux). Couloir ~200 nm, max 12° × 20°, pas le globe.
+
+Si le dernier fichier manque : bateau visible, **pas** de vent du
+mois, **une** ligne « dernière prévision absente ».
 
 ---
 
@@ -126,7 +135,7 @@ un deuxième.
 - Un voyage **officiel**, un seul id (ex.
   `berry-mappemonde-2026-officiel`).
 - Tous les visiteurs regardent **ce** bateau.
-- Chaque jour : recevoir / ranger le GRIB2 du jour.
+- Ranger le **dernier** GRIB2 (GFS + vagues ; RTOFS si déposé).
 - Le site demande « où est le bateau **maintenant** ? »
 - **Interdit** de demander un nouveau trait (recalcul).
 
@@ -151,7 +160,8 @@ un deuxième.
 8. Plus de dump JSON « dossier cockpit » pour le public.
 9. Cinéma = range les sidebars (et peut cacher la barre). La caméra
    revient sur le bateau en lecture.
-10. Saildocs **journalier** = **dans** le plan.
+10. Dernier GRIB2 (Open-Meteo + Saildocs) = **dans** le plan.
+    Jamais de climatologie en Suivre.
 
 ---
 
@@ -163,7 +173,7 @@ un deuxième.
 | **U1** | Plus de bouton Mode simulation ; player toujours là | On ouvre le site, la barre est là |
 | **U2** | Deux boutons exclusifs ; on enlève les vieux interrupteurs | Plus que ces deux noms à l’écran |
 | **U3** | Voyage officiel + live `maintenant` + 1 s = 1 s | Revenir demain → le bateau a bougé ; Recalculer **absent** |
-| **U4** | GRIB2 **1×/jour**, zone du bateau, Saildocs | Un fichier du jour ; pas de globe ; HUD avec le nom du modèle |
+| **U4** | Dernier GRIB2, zone ici→ETA prochain fetch, GFS/WW3/RTOFS | Dernier fichier ; pas de globe ; pas de climo Suivre |
 | **U5** | Simulation : climo, 4 vitesses, Recalculer, route perso | Recalculer **visible** ; le bateau officiel **inchangé** |
 | **U6** | Barre : largeur = entre les sidebars ; plus basse ; nm+jours ; chiffres fixes | Elle s’aligne sur les deux panneaux, plus un pavé haut |
 | **U7** | Stop auto + Go to next stop | ON → pause à Ajaccio |
@@ -194,7 +204,8 @@ AIS du vrai bateau.
    Stop auto.
 5. Tracer une route → Simulation ; le bateau officiel ne change pas.
 6. Barre = largeur entre les deux sidebars, plus basse.
-7. Un GRIB2 du **jour**, autour du bateau, pas le monde.
+7. Le **dernier** GRIB2, couloir jusqu’à l’ETA du prochain fetch,
+   pas le monde. Suivre n’affiche pas la climatologie.
 8. `www` et `blueintelligence.online` inchangés.
 
 ---
