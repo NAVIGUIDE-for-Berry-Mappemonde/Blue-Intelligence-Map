@@ -1,4 +1,4 @@
-import { Anchor, Clock, ScrollText, Search } from "lucide-react";
+import { Anchor, Clock, ScrollText, Search, Flag } from "lucide-react";
 import { useMemo, useState } from "react";
 import ZoneFiche from "./ZoneFiche";
 import { zoneDisplayName, zoneSearchHaystack, zoneSubtitle } from "./map/zoneLabel";
@@ -27,7 +27,7 @@ const flagEmoji = (iso2) => {
   return String.fromCodePoint(0x1f1e6 + cc.charCodeAt(0) - 65, 0x1f1e6 + cc.charCodeAt(1) - 65);
 };
 
-export default function FormalitiesPanel({ t, zones, zonesLoading, selectedZone, onSelectZone, fiche, ficheLoading, onFlyToPort }) {
+export default function FormalitiesPanel({ t, zones, zonesLoading, selectedZone, onSelectZone, fiche, ficheLoading, onFlyToPort, onReportPoE }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
@@ -203,12 +203,22 @@ export default function FormalitiesPanel({ t, zones, zonesLoading, selectedZone,
           );
         })}
       </div>
-
-      {/* Attributions */}
+{/* Attributions */}
       <div className="px-4 py-2 border-t border-line">
         <p className="font-mono text-[10px] text-slate-300 leading-relaxed">
           {t("poeEezAttribution")} · {t("poeGeocodeAttribution")}
         </p>
+      </div>
+
+      {/* Action de pied — signaler un port d'entrée manquant */}
+      <div className="shrink-0 p-3 border-t border-line bg-surface">
+        <button
+          data-testid="report-poe-btn"
+          onClick={onReportPoE}
+          className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold border border-amberx/40 text-amberx rounded-sm hover:bg-amberx/10"
+        >
+          <Flag size={12} /> {t("reportPoEBtn")}
+        </button>
       </div>
     </aside>
   );

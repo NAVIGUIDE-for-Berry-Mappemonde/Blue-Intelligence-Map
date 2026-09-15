@@ -14,6 +14,7 @@ import AuditView from "./components/AuditView";
 import ReviewView from "./components/ReviewView";
 import SettingsPanel from "./components/SettingsPanel";
 import ReportModal from "./components/ReportModal";
+import ReportPoEModal from "./components/ReportPoEModal";
 import NotForNavModal from "./components/map/NotForNavModal";
 import { DEFAULT_SCIENCE_WMS } from "./components/MapLayersSidebar";
 import { DEFAULT_SAFETY_M } from "./components/map/safetyIsobathSpec";
@@ -81,6 +82,7 @@ export default function App() {
     try { localStorage.setItem("bi.lang", l); } catch (_) { /* ignore */ }
   }, []);
   const [view, setView] = useState("map");
+  const [isReportPoEOpen, setIsReportPoEOpen] = useState(false);
   // Mode admin — Console et Review ne sont visibles qu'après validation de la
   // clé (?admin=<clé> dans l'URL, mémorisée par api.js) par le backend.
   const [isAdmin, setIsAdmin] = useState(false);
@@ -736,7 +738,7 @@ export default function App() {
             onRefresh={fetchCapitaineries}
           />
         )}
-        {view !== "review" && mode === "formalities" && (
+   {view !== "review" && mode === "formalities" && (
           <FormalitiesPanel
             t={t}
             zones={poeZones}
@@ -746,6 +748,7 @@ export default function App() {
             fiche={zoneFiche}
             ficheLoading={ficheLoading}
             onFlyToPort={handleFlyToPoe}
+            onReportPoE={() => setIsReportPoEOpen(true)}
           />
         )}
         {view !== "review" && mode === "amp" && (
@@ -869,9 +872,21 @@ export default function App() {
             onProjectsCleared={() => fetchProjects(true)} onClose={() => setShowSettings(false)} />
         )}
       </div>
-      {showReport && (
+     {showReport && (
         <ReportModal t={t} onClose={() => setShowReport(false)} onSubmitted={() => { setShowReport(false); }} />
       )}
+      
+      {isReportPoEOpen && (
+        <ReportPoEModal 
+          t={t} 
+          onClose={() => setIsReportPoEOpen(false)} 
+          onSubmit={(data) => {
+            console.log("Port of Entry reported:", data);
+            setIsReportPoEOpen(false);
+          }} 
+        />
+      )}
+
       <NotForNavModal
         t={t}
         open={notForNavOpen}
