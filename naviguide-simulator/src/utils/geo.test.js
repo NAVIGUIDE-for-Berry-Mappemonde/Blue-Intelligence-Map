@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { haversineNm, summarizeRoute, featuresToSegments, splitAntimeridianCoords, unwrapLon } from "./geo.js";
+import { haversineNm, summarizeRoute, featuresToSegments, splitAntimeridianCoords, unwrapLon, worldCopyCoords, worldCopyParts } from "./geo.js";
 
 describe("summarizeRoute", () => {
   it("counts segments and a distance > 0", () => {
@@ -28,6 +28,14 @@ describe("antimeridian geo", () => {
   it("splits a polyline at 180°", () => {
     const parts = splitAntimeridianCoords([[179, 0], [179.9, 0], [-179.9, 0], [-179, 0]]);
     assert.equal(parts.length, 2);
+  });
+
+  it("copies a track at ±360° so Africa stays visible from the Pacific", () => {
+    const copies = worldCopyCoords([[166, -22], [45, -13]]);
+    assert.equal(copies.length, 3);
+    assert.equal(copies[1][0][0], 526);
+    assert.equal(copies[2][0][0], -194);
+    assert.equal(worldCopyParts(copies.slice(0, 1)).length, 3);
   });
 });
 

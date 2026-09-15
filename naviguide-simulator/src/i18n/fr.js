@@ -204,7 +204,7 @@ export default {
   speedRealHint:    "1 s = 1 s en mer",
   speedLivePolar:   "polaire live",
   cinema:           "Cinéma",
-  cinemaTooltip:    "Ranger les panneaux pour voir la carte en grand",
+  cinemaTooltip:    "Cinéma : suit le bateau. Zoom ou déplacement libère la carte ; recliquer recentre.",
   hideFilmBar:      "Masquer la barre",
   showFilmBar:      "Afficher la barre",
   filmArrived:      "Arrivée à {name}",

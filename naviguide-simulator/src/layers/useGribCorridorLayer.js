@@ -1,37 +1,38 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { corridorForBoat } from "../utils/gribCorridor.js";
+import { wrapLon } from "../utils/geo.js";
+import {
+  gribBarbSvg,
+  gribDisplayPoints,
+  waveHsColor,
+  worldCopyLngs,
+} from "../utils/gribSymbols.js";
 
-function barbPoints(samples, whenIso) {
-  const byKey = new Map();
-  const target = whenIso ? Date.parse(whenIso) : NaN;
-  for (const s of samples || []) {
-    if (s.lat == null || s.lon == null || s.windKnots == null) continue;
-    const key = `${Number(s.lat).toFixed(2)},${Number(s.lon).toFixed(2)}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, s);
-      continue;
-    }
-    if (!Number.isFinite(target)) continue;
-    const dt = Math.abs(Date.parse(s.t) - target);
-    const prevDt = Math.abs(Date.parse(prev.t) - target);
-    if (dt < prevDt) byKey.set(key, s);
-  }
-  return [...byKey.values()].slice(0, 24);
+function lonNearBox(lon, west, east) {
+  const x = Number(lon);
+  const w = Number(west);
+  const e = Number(east);
+  if (w <= e) return x >= w - 2 && x <= e + 2;
+  return x >= w - 2 || x <= e + 2;
 }
 
-function windColor(knots) {
-  const k = Number(knots) || 0;
-  if (k < 8) return "#7dd3fc";
-  if (k < 16) return "#38bdf8";
-  if (k < 25) return "#fbbf24";
-  return "#fb7185";
+function sampleNearBox(s, south, north, west, east) {
+  if (s.lat == null || s.lon == null) return false;
+  if (s.lat < south - 1 || s.lat > north + 1) return false;
+  const copies = worldCopyLngs(s.lon).concat(wrapLon(s.lon));
+  return copies.some((lng) => lonNearBox(lng, west, east) || lonNearBox(lng, wrapLon(west), wrapLon(east)));
 }
 
-/** Teinte + barbules autour du bateau. Pas un globe. */
+function cellKey(value) {
+  return value == null ? null : Math.round(Number(value) * 20) / 20;
+}
+
+/** Barbules OMM + disques Hs en stencil. Jamais un rectangle de couloir. */
 export function useGribCorridorLayer(mapRef, { grib, mapReady, visible, whenIso, lat, lon }) {
   const groupRef = useRef(null);
+  const latCell = cellKey(lat);
+  const lonCell = cellKey(lon == null ? null : wrapLon(lon));
 
   useEffect(() => {
     const map = mapRef.current;
@@ -40,40 +41,51 @@ export function useGribCorridorLayer(mapRef, { grib, mapReady, visible, whenIso,
       groupRef.current = null;
     }
     if (!map || !mapReady || !visible || grib?.status !== "ready") return undefined;
-    const box = corridorForBoat(grib.bbox, lat, lon);
+    const box = corridorForBoat(grib.bbox, latCell, lonCell);
     if (!box) return undefined;
     const [south, north, west, east] = box;
 
     const group = L.layerGroup().addTo(map);
     groupRef.current = group;
-    L.rectangle([[south, west], [north, east]], {
-      color: "#38bdf8",
-      weight: 2,
-      fillColor: "#0ea5e9",
-      fillOpacity: 0.16,
-      pane: "overlayPane",
-      interactive: false,
-    }).addTo(group);
 
-    const near = (grib.samples || []).filter((s) => (
-      s.lat != null && s.lat >= south - 1 && s.lat <= north + 1
-      && s.lon != null && s.lon >= west - 1 && s.lon <= east + 1
-    ));
-    for (const s of barbPoints(near.length ? near : grib.samples, whenIso)) {
-      const going = ((Number(s.dirFromDeg) || 0) + 180) % 360;
-      const rad = (going * Math.PI) / 180;
-      const len = 0.18 + Math.min(0.35, (Number(s.windKnots) || 0) / 80);
-      const dest = L.latLng(s.lat + Math.cos(rad) * len, s.lon + Math.sin(rad) * len);
-      L.polyline([[s.lat, s.lon], dest], {
-        color: windColor(s.windKnots),
-        weight: 2,
-        opacity: 0.85,
-        interactive: false,
-      }).addTo(group);
+    const near = (grib.samples || []).filter((s) => sampleNearBox(s, south, north, west, east));
+    const slice = gribDisplayPoints(near.length ? near : grib.samples, {
+      lat: latCell,
+      lon: lonCell,
+      whenIso,
+    });
+    const pane = map.getPane("boat") ? "boat" : "overlayPane";
+    for (const s of slice) {
+      const baseLon = wrapLon(s.lon);
+      for (const lng of worldCopyLngs(baseLon)) {
+        if (s.hs != null) {
+          L.circleMarker([s.lat, lng], {
+            radius: 10,
+            color: waveHsColor(s.hs),
+            fillColor: waveHsColor(s.hs),
+            fillOpacity: 0.38,
+            weight: 0,
+            pane,
+            interactive: false,
+          }).addTo(group);
+        }
+        if (s.windKnots == null) continue;
+        L.marker([s.lat, lng], {
+          icon: L.divIcon({
+            className: "grib-barb",
+            html: gribBarbSvg(s),
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+          }),
+          pane,
+          interactive: false,
+          keyboard: false,
+        }).addTo(group);
+      }
     }
     return () => {
       group.remove();
       groupRef.current = null;
     };
-  }, [mapRef, mapReady, visible, grib, whenIso, lat, lon]);
+  }, [mapRef, mapReady, visible, grib, whenIso, latCell, lonCell]);
 }

@@ -304,14 +304,15 @@ describe("filmBarTicks", () => {
     assert.notEqual(fallbackJ, clockDay);
   });
 
-  it("SimulationFilmBar n’importe plus clockTickLabels", () => {
+  it("SimulationFilmBar n’affiche plus ticks ni profil vent", () => {
     const src = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../components/SimulationFilmBar.jsx"),
       "utf8",
     );
     assert.equal(src.includes("clockTickLabels"), false);
-    assert.equal(src.includes("seaTime.js"), false);
-    assert.match(src, /filmBarTicks/);
+    assert.equal(src.includes("filmBarTicks"), false);
+    assert.equal(src.includes("FilmSpeedProfile"), false);
+    assert.equal(src.includes("film-clock-ticks"), false);
   });
 });
 

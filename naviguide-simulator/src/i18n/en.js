@@ -204,7 +204,7 @@ export default {
   speedRealHint:    "1 s = 1 s at sea",
   speedLivePolar:   "live polar",
   cinema:           "Cinema",
-  cinemaTooltip:    "Tuck the side panels away to watch the map",
+  cinemaTooltip:    "Cinema follows the boat. Zoom or pan frees the map; click again to recapture.",
   hideFilmBar:      "Hide the bar",
   showFilmBar:      "Show the bar",
   filmArrived:      "Arrived at {name}",

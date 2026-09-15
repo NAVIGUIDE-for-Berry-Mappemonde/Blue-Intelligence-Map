@@ -16,7 +16,7 @@ function unwrapPair(prev, lon) {
   return unwrapLon(prev, lon);
 }
 
-/** Follow the active actor, or frame the air hop to see Cayenne and Halifax. */
+/** Suit le bateau seulement si follow (cinéma). Le zoom utilisateur n’est pas volé. */
 export function useFilmCamera({
   mapRef,
   mapReady,
@@ -30,6 +30,9 @@ export function useFilmCamera({
   hopFrom,
   hopTo,
   resetKey = "",
+  follow = false,
+  recaptureToken = 0,
+  onProgrammaticMove,
 }) {
   const lastFollow = useRef(0);
   const lastJump = useRef(0);
@@ -37,6 +40,7 @@ export function useFilmCamera({
   const followLon = useRef(null);
   const lastPhase = useRef(null);
   const lastReset = useRef(resetKey);
+  const lastRecapture = useRef(recaptureToken);
 
   if (lastReset.current !== resetKey) {
     lastReset.current = resetKey;
@@ -61,35 +65,43 @@ export function useFilmCamera({
     if (tokenJump) lastJump.current = jumpToken;
     const phaseChanged = phase && phase !== lastPhase.current;
     if (phase) lastPhase.current = phase;
+    const recapture = recaptureToken !== lastRecapture.current;
+    if (recapture) lastRecapture.current = recaptureToken;
+
+    const move = (fn) => {
+      onProgrammaticMove?.();
+      fn();
+    };
 
     if (isAirPhase(phase) && hopFrom && hopTo) {
-      if (phaseChanged || tokenJump) {
+      if (follow && (phaseChanged || tokenJump || recapture)) {
         const lonA = unwrapPair(followLon.current, hopFrom.lon);
         const lonB = unwrapPair(lonA, hopTo.lon);
         followLon.current = lonB;
-        map.fitBounds(
+        move(() => map.fitBounds(
           [
             [hopFrom.lat, lonA],
             [hopTo.lat, lonB],
           ],
           { padding: [72, 96], maxZoom: 3.15, animate: true, duration: 0.9 },
-        );
+        ));
         lastFollow.current = Date.now();
         lastPos.current = null;
       }
       return;
     }
 
-    const firstFix = prev == null;
-    if (firstFix) {
-      map.setView([lat, lonCam], z, { animate: false });
+    if (recapture || prev == null) {
+      move(() => map.setView([lat, lonCam], z, { animate: false }));
       lastFollow.current = Date.now();
       return;
     }
 
+    if (!follow) return;
+
     const teleport = tokenJump || phaseChanged || movedNm >= TELEPORT_NM;
     if (teleport) {
-      map.flyTo([lat, lonCam], z, { duration: movedNm >= TELEPORT_NM || phaseChanged ? 0.7 : 1.05 });
+      move(() => map.flyTo([lat, lonCam], z, { duration: movedNm >= TELEPORT_NM || phaseChanged ? 0.7 : 1.05 }));
       lastFollow.current = Date.now();
       return;
     }
@@ -100,6 +112,6 @@ export function useFilmCamera({
     lastFollow.current = now;
     const cur = map.getZoom();
     const zoom = Math.abs(cur - z) >= 1.25 ? z : cur;
-    map.setView([lat, lonCam], zoom, { animate: true, duration: 0.55 });
-  }, [mapRef, mapReady, enabled, lat, lon, remainingNm, playing, jumpToken, phase, hopFrom?.lat, hopFrom?.lon, hopTo?.lat, hopTo?.lon, resetKey]);
+    move(() => map.setView([lat, lonCam], zoom, { animate: true, duration: 0.55 }));
+  }, [mapRef, mapReady, enabled, lat, lon, remainingNm, playing, jumpToken, phase, hopFrom?.lat, hopFrom?.lon, hopTo?.lat, hopTo?.lon, resetKey, follow, recaptureToken, onProgrammaticMove]);
 }

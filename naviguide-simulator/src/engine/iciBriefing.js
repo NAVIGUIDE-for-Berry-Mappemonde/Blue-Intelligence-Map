@@ -79,8 +79,8 @@ function zeeSentence(dossier, lang) {
   const zee = dossier?.zee;
   if (!zee) {
     return en
-      ? "Here, the exclusive economic zone could not be named."
-      : "Ici, on n’a pas pu nommer la ZEE.";
+      ? "Here the boat is on the high seas — no exclusive economic zone, no port of entry to clear."
+      : "Ici, le bateau est en haute mer — aucune ZEE, pas de port d’entrée à déclarer.";
   }
   if (zee.ashore || String(zee.name || "").startsWith("À terre")) {
     const extra = String(zee.name || "").startsWith("À terre")
@@ -212,7 +212,7 @@ function sourceSentence(dossier, lang) {
   const bi = dossier?.sources?.bi;
   const zee = dossier?.sources?.zee;
   const notes = [];
-  if (zee === "error") {
+  if (zee === "error" && dossier?.zee?.mrgid) {
     notes.push(en
       ? "MarineRegions did not answer for the EEZ."
       : "MarineRegions n’a pas répondu pour la ZEE.");

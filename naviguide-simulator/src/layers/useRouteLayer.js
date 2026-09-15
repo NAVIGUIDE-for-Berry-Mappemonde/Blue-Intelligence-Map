@@ -1,13 +1,15 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
-import { splitAntimeridianCoords } from "../utils/geo.js";
+import { splitAntimeridianCoords, worldCopyCoords } from "../utils/geo.js";
 import { ROUTE_CASING_COLOR, ROUTE_CASING_WEIGHT, ROUTE_MAIN_COLOR, ROUTE_MAIN_WEIGHT } from "./styles.js";
 
 function addLine(group, coords, { color, weight, dash, pane = "route" }) {
   if (!coords || coords.length < 2) return;
   for (const part of splitAntimeridianCoords(coords)) {
-    const latlngs = part.map(([lon, lat]) => [lat, lon]);
-    L.polyline(latlngs, { color, weight, dashArray: dash, pane, interactive: true }).addTo(group);
+    for (const copy of worldCopyCoords(part)) {
+      const latlngs = copy.map(([lon, lat]) => [lat, lon]);
+      L.polyline(latlngs, { color, weight, dashArray: dash, pane, interactive: true }).addTo(group);
+    }
   }
 }
 

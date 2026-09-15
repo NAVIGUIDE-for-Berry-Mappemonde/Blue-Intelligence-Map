@@ -180,9 +180,9 @@ export function Sidebar({
           ${open ? "translate-x-0" : "-translate-x-full"}`}
         style={{ width: 320 }}
       >
-        <div className="px-3 pt-2 pb-2 border-b border-slate-700/60 flex-shrink-0">
-          <div className="flex items-center gap-2 mb-1.5">
-            <img src={NAVIGUIDE_LOGO} alt={t("brandTitle")} className="h-12 w-12 object-contain drop-shadow" />
+        <div className="px-2.5 pt-1.5 pb-1.5 border-b border-slate-700/60 flex-shrink-0">
+          <div className="flex items-center gap-2 mb-1">
+            <img src={NAVIGUIDE_LOGO} alt={t("brandTitle")} className="h-9 w-9 object-contain drop-shadow" />
             <span className="text-white font-bold text-[11px] leading-tight tracking-wide">{t("brandTitle")}</span>
           </div>
 
@@ -199,7 +199,7 @@ export function Sidebar({
           />
 
           {maritimeLayers && (
-            <div className="flex flex-wrap gap-1 mt-2">
+            <div className="flex flex-wrap gap-1 mt-1">
               {ALL_LAYER_CONFIG.map(({ key, labelKey, titleKey, color, showKey, toggleKey, loadingKey, errorKey }) => {
                 const active = maritimeLayers[showKey];
                 const loading = maritimeLayers[loadingKey];
@@ -234,9 +234,9 @@ export function Sidebar({
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-2 space-y-2">
+        <div className="flex-1 overflow-y-auto sidebar-scroll px-2.5 py-1.5 space-y-1.5">
           {isSuivre && (
-            <p className="text-[10px] text-sky-100/80 border border-white/10 rounded-lg px-2 py-1.5">
+            <p className="text-[10px] text-sky-100/80 border border-white/10 rounded-md px-2 py-1">
               {t("officialDepartureLocked")}
             </p>
           )}
@@ -272,38 +272,38 @@ export function Sidebar({
           <EscaleLegend marks={escaleMarks} filmNm={filmNm} onSeek={onSeekEscale} />
 
           {officialFallback && (
-            <p className="text-[10px] text-amber-300/90 border border-amber-500/30 rounded-lg px-2 py-1.5">
+            <p className="text-[10px] text-amber-300/90 border border-amber-500/30 rounded-md px-2 py-1">
               {t("searouteUnavailable")}
             </p>
           )}
 
           {!isCockpit && !plan && !briefingLoading && !isDrawing && (
-            <div className="rounded-xl border border-blue-700/30 bg-blue-950/20 p-3">
-              <div className="text-xs font-semibold text-blue-300 mb-1.5">{t("gettingStarted")}</div>
-              <p className="text-xs text-slate-400 leading-relaxed">{t("gettingStartedText")}</p>
+            <div className="rounded-lg border border-blue-700/30 bg-blue-950/20 p-2">
+              <div className="text-[10px] font-semibold text-blue-300 mb-1">{t("gettingStarted")}</div>
+              <p className="text-[11px] text-slate-400 leading-snug">{t("gettingStartedText")}</p>
             </div>
           )}
 
           {isDrawing && (
             <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Shield size={12} className="text-blue-400" />
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Shield size={11} className="text-blue-400" />
                 {t("briefing")}
               </div>
-              <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
-                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{t("briefingDrawHint")}</p>
+              <div className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50">
+                <p className="text-[11px] text-slate-300 leading-snug whitespace-pre-line">{t("briefingDrawHint")}</p>
               </div>
             </div>
           )}
 
           {!isDrawing && (isCockpit || briefing || briefingLoading) && (
             <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Shield size={12} className="text-blue-400" />
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                <Shield size={11} className="text-blue-400" />
                 {t("briefing")}
               </div>
-              <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
-                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+              <div className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50">
+                <p className="text-[11px] text-slate-300 leading-snug whitespace-pre-line">
                   {briefingLoading
                     ? t("iciBriefingLoading")
                     : (briefing || t("iciBriefingFallback"))}

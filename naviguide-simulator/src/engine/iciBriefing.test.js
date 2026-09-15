@@ -66,6 +66,18 @@ describe("narrateIci", () => {
     assert.doesNotMatch(text, /ports d’entrée officiels les plus proches/);
   });
 
+  it("null ZEE = haute mer, pas une erreur de nommage", () => {
+    const text = narrateIci({
+      zee: null,
+      poe: [],
+      nearby: { marinas: [], capitaineries: [], wpi: [] },
+      sources: { zee: "error", bi: "ok" },
+    }, "fr");
+    assert.match(text, /haute mer/i);
+    assert.doesNotMatch(text, /pas pu nommer/);
+    assert.doesNotMatch(text, /MarineRegions n’a pas répondu/);
+  });
+
   it("says high seas without inventing ports of entry", () => {
     const text = narrateIci({
       zee: { name: "Haute mer", mrgid: null, gold: false },

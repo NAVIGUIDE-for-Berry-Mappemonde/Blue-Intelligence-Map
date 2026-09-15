@@ -46,7 +46,7 @@ function PrevNextButtons({ onPrev, canPrev, onNext, canNext }) {
   const btnActive = "text-white cursor-pointer";
   const btnDisabled = "bg-slate-700/30 text-white/25 border-white/5 cursor-not-allowed";
   return (
-    <div className="px-2 pb-2 pt-1 flex gap-1.5">
+    <div className="px-1.5 pb-1.5 pt-0.5 flex gap-1">
       <button
         onClick={onPrev}
         disabled={!canPrev}
@@ -96,12 +96,11 @@ export function SimulationPanel({
 
   if (!legContext) {
     return (
-      <div className="bg-slate-800/60 rounded-xl p-3 border border-blue-700/30">
-        <div className="text-xs text-slate-400 text-center">
+      <div className="bg-slate-800/60 rounded-lg p-2 border border-blue-700/30">
+        <div className="text-[10px] text-slate-400 text-center">
           {t("simulationDragPrompt")}
         </div>
-        {/* Nav buttons visible even without legContext (start of the displayed route) */}
-        <div className="mt-2">
+        <div className="mt-1">
           <PrevNextButtons onPrev={onPrev} canPrev={canPrev} onNext={onNext} canNext={canNext} />
         </div>
       </div>
@@ -116,12 +115,11 @@ export function SimulationPanel({
   } = legContext;
 
   return (
-    <div className="bg-slate-800/70 rounded-xl border border-blue-600/30 overflow-hidden">
+    <div className="bg-slate-800/70 rounded-lg border border-blue-600/30 overflow-hidden">
 
-      {/* Active-leg header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-blue-900/30 border-b border-blue-700/20">
-        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-          <Navigation size={11} className="text-blue-400 flex-shrink-0" />
+      <div className="flex items-center justify-between px-2 py-1 bg-blue-900/30 border-b border-blue-700/20">
+        <div className="flex items-center gap-1 min-w-0 flex-wrap">
+          <Navigation size={10} className="text-blue-400 flex-shrink-0" />
           <span className="text-[10px] font-semibold text-blue-300 leading-tight">
             {finished ? t("filmArrived", { name: fromStop }) : fromStop}
           </span>
@@ -136,30 +134,27 @@ export function SimulationPanel({
         </div>
       </div>
 
-      {/* Metrics grid */}
-      <div className="grid grid-cols-2 gap-px bg-slate-700/20 p-0.5">
+      <div className="grid grid-cols-2 gap-px bg-slate-700/20">
 
-        {/* NM remaining */}
-        <div className="bg-slate-800/60 rounded-lg p-2.5 flex flex-col gap-0.5">
+        <div className="bg-slate-800/60 px-2 py-1 flex flex-col">
           <div className="flex items-center gap-1">
-            <MapIcon size={10} className="text-cyan-400" />
-            <span className="text-[9px] text-slate-400 uppercase tracking-wider">
+            <MapIcon size={9} className="text-cyan-400" />
+            <span className="text-[8px] text-slate-400 uppercase tracking-wider">
               {t("nmRemaining")}
             </span>
           </div>
-          <span className="text-sm font-bold text-white">{formatNm(nmRemainingToStop)}</span>
+          <span className="text-xs font-bold text-white leading-tight">{formatNm(nmRemainingToStop)}</span>
         </div>
 
-        {/* ETA */}
-        <div className="bg-slate-800/60 rounded-lg p-2.5 flex flex-col gap-0.5">
+        <div className="bg-slate-800/60 px-2 py-1 flex flex-col">
           <div className="flex items-center gap-1">
-            <Clock size={10} className="text-amber-400" />
-            <span className="text-[9px] text-slate-400 uppercase tracking-wider">
+            <Clock size={9} className="text-amber-400" />
+            <span className="text-[8px] text-slate-400 uppercase tracking-wider">
               {t("eta")}
             </span>
           </div>
-          <span className="text-sm font-bold text-white">{formatEta(etaHours)}</span>
-          <span className="text-[9px] text-slate-500">
+          <span className="text-xs font-bold text-white leading-tight">{formatEta(etaHours)}</span>
+          <span className="text-[8px] text-slate-500 leading-tight">
             {clockSample?.vehicle === "plane"
               ? t("filmAirVehicle")
               : clockSample?.speedKnots != null
@@ -170,32 +165,30 @@ export function SimulationPanel({
           </span>
         </div>
 
-        {/* NM covered */}
-        <div className="bg-slate-800/60 rounded-lg p-2.5 flex flex-col gap-0.5">
+        <div className="bg-slate-800/60 px-2 py-1 flex flex-col">
           <div className="flex items-center gap-1">
-            <Navigation size={10} className="text-green-400" />
-            <span className="text-[9px] text-slate-400 uppercase tracking-wider">
+            <Navigation size={9} className="text-green-400" />
+            <span className="text-[8px] text-slate-400 uppercase tracking-wider">
               {t("nmCovered")}
             </span>
           </div>
-          <span className="text-sm font-bold text-white">{formatNm(nmCovered)}</span>
+          <span className="text-xs font-bold text-white leading-tight">{formatNm(nmCovered)}</span>
         </div>
 
-        {/* Heading */}
-        <div className="bg-slate-800/60 rounded-lg p-2.5 flex flex-col gap-0.5">
+        <div className="bg-slate-800/60 px-2 py-1 flex flex-col">
           <div className="flex items-center gap-1">
-            <Compass size={10} className="text-purple-400" />
-            <span className="text-[9px] text-slate-400 uppercase tracking-wider">
+            <Compass size={9} className="text-purple-400" />
+            <span className="text-[8px] text-slate-400 uppercase tracking-wider">
               {t("bearing")}
             </span>
           </div>
-          <span className="text-sm font-bold text-white">{formatBearing(bearing)}</span>
+          <span className="text-xs font-bold text-white leading-tight">{formatBearing(bearing)}</span>
         </div>
 
       </div>
 
       {(civilDate || kindLabel || clockSample?.twa != null || atQuay) && (
-        <div className="px-3 py-1.5 text-[10px] text-sky-100/90 border-t border-white/5 space-y-0.5">
+        <div className="px-2 py-1 text-[9px] text-sky-100/90 border-t border-white/5 space-y-0 leading-tight">
           {civilDate ? <div>{civilDate}</div> : null}
           <div className="flex flex-wrap gap-x-2 text-white/55">
             {kindLabel ? <span>{kindLabel}</span> : null}
@@ -218,7 +211,7 @@ export function SimulationPanel({
       )}
 
       {liveFollow && (
-        <div className="px-3 py-1.5 border-t border-white/5 flex items-center justify-between gap-2">
+        <div className="px-2 py-1 border-t border-white/5 flex items-center justify-between gap-2">
           <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${
             previewing ? "bg-slate-600/40 text-slate-300" : "bg-emerald-500/20 text-emerald-300"
           }`}
@@ -244,19 +237,19 @@ export function SimulationPanel({
       )}
 
       {forecastStatus === "pending" && (
-        <div className="px-3 py-1.5 text-[9px] text-sky-200/80 bg-sky-950/40">{t("forecastPending")}</div>
+        <div className="px-2 py-1 text-[9px] text-sky-200/80 bg-sky-950/40">{t("forecastPending")}</div>
       )}
       {forecastStatus === "unavailable" && (
-        <div className="px-3 py-1.5 text-[9px] text-amber-200/80 bg-amber-950/30">{t("forecastUnavailable")}</div>
+        <div className="px-2 py-1 text-[9px] text-amber-200/80 bg-amber-950/30">{t("forecastUnavailable")}</div>
       )}
 
       {showRecompute && (
-        <div className="px-2 pb-2">
+        <div className="px-1.5 pb-1.5">
           <button
             type="button"
             disabled={!canRecompute || recomputeBusy || forecastStatus === "pending"}
             onClick={onRecompute}
-            className="w-full rounded-lg border border-cyan-500/40 bg-cyan-900/30 py-1.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-800/40 disabled:opacity-40"
+            className="w-full rounded-md border border-cyan-500/40 bg-cyan-900/30 py-1 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-800/40 disabled:opacity-40"
           >
             {recomputeBusy ? t("recomputeBusy") : t("recomputeButton")}
           </button>

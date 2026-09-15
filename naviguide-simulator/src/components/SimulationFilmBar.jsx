@@ -1,7 +1,5 @@
 import { ChevronRight, Clapperboard, Pause, Play } from "lucide-react";
 import { useLang } from "../i18n/LangContext.jsx";
-import { filmBarTicks } from "../engine/voyageClock.js";
-import { FilmSpeedProfile } from "./FilmSpeedProfile.jsx";
 import { filmBarInsets } from "../utils/filmBarLayout.js";
 
 const PROFILES = [
@@ -60,7 +58,7 @@ export function SimulationFilmBar({
   clockCurrent = null,
   disclaimer = "",
 }) {
-  const { t, lang } = useLang();
+  const { t } = useLang();
   const insets = filmBarInsets({ sidebarOpen, toolsOpen });
   const barTotal = playheadTotal ?? totalNm;
   const barNm = playhead ?? nm;
@@ -72,8 +70,6 @@ export function SimulationFilmBar({
       : phase === "side-sail"
         ? t("filmPhaseSide")
         : "";
-  const ticks = filmBarTicks(clock, lang, clockCurrent);
-
   const onBarClick = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const t0 = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -181,39 +177,8 @@ export function SimulationFilmBar({
             />
           ))}
         </button>
-        <div data-testid="film-clock-ticks" className="relative h-3 mb-0.5 text-[9px] text-white/50 tabular-nums">
-          {ticks.map((tick, i) => {
-            const align = i === 0
-              ? "left-0"
-              : i === ticks.length - 1
-                ? "right-0"
-                : "-translate-x-1/2";
-            const left = i === ticks.length - 1
-              ? undefined
-              : `${barTotal > 0 ? (tick.filmNm / barTotal) * 100 : 0}%`;
-            return (
-              <span
-                key={`${tick.filmNm}-${tick.label}`}
-                className={`absolute top-0 whitespace-nowrap ${align}`}
-                style={left != null ? { left } : undefined}
-              >
-                {tick.label}
-              </span>
-            );
-          })}
-        </div>
 
-        {showWindProfile ? (
-          <FilmSpeedProfile
-            series={windSeries}
-            filmNm={barNm}
-            playheadTotal={barTotal}
-            onSeek={onSeekNm}
-            loading={windLoading}
-          />
-        ) : null}
-
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 mt-1">
           <button
             type="button"
             onClick={onTogglePlay}

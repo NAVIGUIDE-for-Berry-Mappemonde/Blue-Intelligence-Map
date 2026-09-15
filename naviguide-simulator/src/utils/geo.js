@@ -53,6 +53,25 @@ export function splitAntimeridianCoords(coords) {
   return parts.filter((p) => p.length >= 2);
 }
 
+/** Copies ±360° pour que le tour du monde reste visible (Afrique + Pacifique). */
+export function worldCopyCoords(coords) {
+  if (!coords || coords.length < 2) return [];
+  return [
+    coords,
+    coords.map(([lon, lat]) => [lon + 360, lat]),
+    coords.map(([lon, lat]) => [lon - 360, lat]),
+  ];
+}
+
+/** Triple chaque polyligne (monde 0 / +360 / −360). */
+export function worldCopyParts(parts) {
+  const out = [];
+  for (const coords of parts || []) {
+    out.push(...worldCopyCoords(coords));
+  }
+  return out;
+}
+
 /**
  * Distance nautique + nombre de segments d'une liste de polylignes
  * `segments` : [{ coords: [[lon, lat], ...] }]

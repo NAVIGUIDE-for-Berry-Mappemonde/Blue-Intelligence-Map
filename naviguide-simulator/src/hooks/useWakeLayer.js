@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { remainingParts, wakeParts } from "../engine/filmWake.js";
+import { worldCopyParts } from "../utils/geo.js";
 import { WAKE_DONE_COLOR, WAKE_REST_COLOR } from "../layers/styles.js";
 
 const WAKE_STYLE = {
@@ -62,7 +63,7 @@ export function useWakeLayer(mapRef, { flat, sailNm, enabled, mapReady }) {
   useEffect(() => {
     const group = groupRef.current;
     if (!group || !enabled) return;
-    syncLines(restRef, remainingParts(flat, sailNm), REST_STYLE, group);
-    syncLines(wakeRef, wakeParts(flat, sailNm), WAKE_STYLE, group);
+    syncLines(restRef, worldCopyParts(remainingParts(flat, sailNm)), REST_STYLE, group);
+    syncLines(wakeRef, worldCopyParts(wakeParts(flat, sailNm)), WAKE_STYLE, group);
   }, [flat, sailNm, enabled]);
 }

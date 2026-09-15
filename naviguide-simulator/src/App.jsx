@@ -69,7 +69,7 @@ import {
   isNonMaritimeLeg,
   orientCoords,
 } from "./utils/berryLegs.js";
-import { routeFromOfficial } from "./utils/routeFromOfficial.js";
+import { loadOfficialBerryRoute } from "./utils/routeFromOfficial.js";
 import L from "leaflet";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
@@ -119,7 +119,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [segProgress, setSegProgress] = useState({ done: 0, total: 0 });
   const [officialFallback, setOfficialFallback] = useState(false);
-  const boundsApplied = useRef(false);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toolsOpen, setToolsOpen] = useState(true);
@@ -130,7 +129,9 @@ export default function App() {
   const [view, setView] = useState(VIEW_SUIVRE);
   const [cinemaMode, setCinemaMode] = useState(false);
   const [hideFilmBar, setHideFilmBar] = useState(false);
-  const [stopAuto, setStopAuto] = useState(true);
+  const [stopAuto, setStopAuto] = useState(false);
+  const [cameraFollow, setCameraFollow] = useState(false);
+  const [cinemaRecapture, setCinemaRecapture] = useState(0);
   const [userPreview, setUserPreview] = useState(false);
   const isSuivre = view === VIEW_SUIVRE;
   const isSimulation = view === VIEW_SIMULATION;
@@ -292,7 +293,7 @@ export default function App() {
     sailNm: isSuivre && official.live && !previewing
       ? (official.live.sailNm ?? 0)
       : (cast?.sailNm ?? 0),
-    enabled: sceneReady,
+    enabled: sceneReady && !drawingMode && !customRoute,
     mapReady,
   });
 
@@ -486,26 +487,34 @@ export default function App() {
     playback.seek(sailNmToFilmNm(flatRoute, nearestNm(flatRoute, pos.lat, pos.lon)));
   }, [playback.pause, playback.seek, flatRoute]);
 
+  const recaptureBoat = useCallback(() => {
+    setCameraFollow(true);
+    setCinemaRecapture((n) => n + 1);
+  }, []);
+
   const leaveCinema = useCallback(() => {
     setSidebarOpen(cinemaSavedRef.current.sidebar);
     setToolsOpen(cinemaSavedRef.current.tools);
     setCinemaMode(false);
     setHideFilmBar(false);
+    setCameraFollow(false);
   }, []);
 
   const toggleCinema = useCallback(() => {
-    setCinemaMode((on) => {
-      if (!on) {
-        cinemaSavedRef.current = { sidebar: sidebarOpen, tools: toolsOpen };
-        setSidebarOpen(false);
-        setToolsOpen(false);
-        return true;
-      }
-      setSidebarOpen(cinemaSavedRef.current.sidebar);
-      setToolsOpen(cinemaSavedRef.current.tools);
-      return false;
-    });
-  }, [sidebarOpen, toolsOpen]);
+    if (!cinemaMode) {
+      cinemaSavedRef.current = { sidebar: sidebarOpen, tools: toolsOpen };
+      setSidebarOpen(false);
+      setToolsOpen(false);
+      setCinemaMode(true);
+      recaptureBoat();
+      return;
+    }
+    if (!cameraFollow) {
+      recaptureBoat();
+      return;
+    }
+    leaveCinema();
+  }, [cinemaMode, cameraFollow, sidebarOpen, toolsOpen, recaptureBoat, leaveCinema]);
 
   const selectView = useCallback((next) => {
     setView(next);
@@ -535,10 +544,28 @@ export default function App() {
     if (isSuivre) playback.setProfile("real");
   }, [isSuivre, playback.setProfile]);
 
+  const placedRef = useRef(false);
+  const ignoreUserNavRef = useRef(false);
+  const ignoreUserNavTimer = useRef(0);
+  const armProgrammaticNav = useCallback(() => {
+    ignoreUserNavRef.current = true;
+    window.clearTimeout(ignoreUserNavTimer.current);
+    ignoreUserNavTimer.current = window.setTimeout(() => {
+      ignoreUserNavRef.current = false;
+    }, 120);
+  }, []);
+  useEffect(() => {
+    placedRef.current = false;
+  }, [view]);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !routeReady || !flatRoute.points?.length) {
       setCameraPlaced(false);
+      return;
+    }
+    if (placedRef.current) {
+      setCameraPlaced(true);
       return;
     }
     if (isSuivre) {
@@ -546,14 +573,34 @@ export default function App() {
         setCameraPlaced(false);
         return;
       }
+      armProgrammaticNav();
       map.setView([live.lat, live.lon], 6.5, { animate: false });
+      placedRef.current = true;
       setCameraPlaced(true);
       return;
     }
     const start = flatRoute.points[0];
+    armProgrammaticNav();
     map.setView([start.lat, start.lon], 8, { animate: false });
+    placedRef.current = true;
     setCameraPlaced(true);
-  }, [routeReady, isSuivre, live?.lat, live?.lon, mapReady, mapRef, flatRoute.points]);
+  }, [routeReady, isSuivre, live?.lat, live?.lon, mapReady, mapRef, flatRoute.points, view, armProgrammaticNav]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return undefined;
+    const onUserNav = () => {
+      if (ignoreUserNavRef.current) return;
+      map.stop();
+      setCameraFollow(false);
+    };
+    map.on("zoomstart", onUserNav);
+    map.on("dragstart", onUserNav);
+    return () => {
+      map.off("zoomstart", onUserNav);
+      map.off("dragstart", onUserNav);
+    };
+  }, [mapRef, mapReady]);
 
   useEffect(() => {
     if (!isSimulation) return;
@@ -641,16 +688,19 @@ export default function App() {
   useFilmCamera({
     mapRef,
     mapReady,
-    enabled: sceneReady && Boolean(cast?.follow || (isSuivre && live)),
+    enabled: sceneReady && cameraFollow && Boolean(cast?.follow || (isSuivre && live)),
     lat: isSuivre && live && !previewing ? live.lat : cast?.follow?.lat,
     lon: isSuivre && live && !previewing ? live.lon : cast?.follow?.lon,
     remainingNm: legContext?.remainingNm ?? playback.sailTotalNm,
-    playing: isSuivre && !previewing ? false : playback.playing,
+    playing: cameraFollow && (isSuivre && !previewing ? true : playback.playing),
     jumpToken: isSuivre && !previewing ? 0 : playback.jumpToken,
     phase: cast?.phase,
     hopFrom: cast?.hopFrom,
     hopTo: cast?.hopTo,
-    resetKey: `${view}-${sceneReady ? "ready" : "load"}`,
+    resetKey: `${view}-${sceneReady ? "ready" : "load"}-${cinemaRecapture}`,
+    follow: cameraFollow,
+    recaptureToken: cinemaRecapture,
+    onProgrammaticMove: armProgrammaticNav,
   });
 
   useAirHopLine(mapRef, {
@@ -956,9 +1006,17 @@ export default function App() {
     const legs = buildBerryLegs(points);
     let cancelled = false;
     (async () => {
-      boundsApplied.current = false;
       setLoading(true);
       setOfficialFallback(false);
+      try {
+        const official = await loadOfficialBerryRoute();
+        if (cancelled) return;
+        setSegments(official.segments);
+        setOfficialFallback(false);
+        setLoading(false);
+        setSegProgress({ done: official.segments.length, total: official.segments.length });
+        return;
+      } catch { /* searoute si le geojson officiel manque */ }
       setSegProgress({ done: 0, total: legs.length });
       const accumulated = [];
       const fetchLeg = async (leg) => {
@@ -981,20 +1039,6 @@ export default function App() {
       };
       for (let i = 0; i < legs.length && !cancelled; i += SEGMENT_BATCH_SIZE) {
         const batch = await Promise.all(legs.slice(i, i + SEGMENT_BATCH_SIZE).map(fetchLeg));
-        const maritimeFailed = batch.filter((r) => !r.nonMaritime);
-        if (i === 0 && maritimeFailed.length && maritimeFailed.every((r) => !r.coords?.length || r.error)) {
-          try {
-            const fc = await fetch("/route.geojson").then((r) => r.json());
-            const official = routeFromOfficial(fc);
-            if (!cancelled) {
-              setSegments(official.segments);
-              setOfficialFallback(true);
-              setLoading(false);
-              setSegProgress({ done: official.segments.length, total: official.segments.length });
-            }
-            return;
-          } catch { /* keep going */ }
-        }
         accumulated.push(...batch);
         if (!cancelled) {
           setSegments(accumulated.filter((r) => r.coords?.length));
@@ -1002,19 +1046,13 @@ export default function App() {
           if (i === 0) setLoading(false);
         }
       }
-      if (!cancelled) setLoading(false);
+      if (!cancelled) {
+        setOfficialFallback(accumulated.every((r) => r.nonMaritime || !r.coords?.length || r.error));
+        setLoading(false);
+      }
     })();
     return () => { cancelled = true; };
   }, [points]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady || !segments.length || boundsApplied.current || !routeReady) return;
-    boundsApplied.current = true;
-    if (isSuivre) return;
-    const start = segments[0]?.coords?.[0];
-    if (start) map.setView([start[1], start[0]], 8, { animate: false });
-  }, [segments, routeReady, isSuivre, mapRef, mapReady]);
 
   const fetchSatellite = async (lat, lon, extra = {}) => {
     setSatelliteLoading(true);
@@ -1319,7 +1357,7 @@ export default function App() {
         windKind={clockSample?.kind === "forecast" ? "forecast" : (isSuivre ? null : (clockSample?.kind || expeditionSpeed.kind))}
         windModel={isSuivre ? official.gribModel : (clockSample?.model || official.gribModel)}
         showSpeeds={isSimulation}
-        showWindProfile={isSimulation}
+        showWindProfile={false}
         stopAuto={stopAuto}
         onStopAuto={setStopAuto}
         showStopAuto={isSimulation}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { haversineNm } from "../utils/geo.js";
+import { haversineNm, wrapLon } from "../utils/geo.js";
 import {
   boatPositionFromCast,
   emptyDossier,
@@ -41,7 +41,8 @@ export function useIciDossier({
       return undefined;
     }
 
-    const { lat, lon } = boat;
+    const lat = boat.lat;
+    const lon = wrapLon(boat.lon);
     const last = lastFetchRef.current;
     if (last && haversineNm(last.lat, last.lon, lat, lon) < MOVE_NM) {
       return undefined;

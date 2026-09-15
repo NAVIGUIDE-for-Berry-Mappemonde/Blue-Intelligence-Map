@@ -1,4 +1,4 @@
-/** Convertit public/route.geojson (fallback interne) en segments + stops. */
+/** Convertit public/route.geojson (source officielle Berry) en segments + stops. */
 
 export function routeFromOfficial(fc) {
   const segments = [];
@@ -28,6 +28,15 @@ export function routeFromOfficial(fc) {
     }
   }
   return { segments, stops };
+}
+
+export async function loadOfficialBerryRoute(fetchImpl = fetch) {
+  const res = await fetchImpl("/route.geojson");
+  if (!res.ok) throw new Error(`route.geojson ${res.status}`);
+  const fc = await res.json();
+  const parsed = routeFromOfficial(fc);
+  if (!parsed.segments.length) throw new Error("route.geojson vide");
+  return parsed;
 }
 
 export function antimeridianLineCount(fc) {

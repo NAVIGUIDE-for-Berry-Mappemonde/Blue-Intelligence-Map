@@ -345,7 +345,7 @@ async def lookup_zee(client: httpx.AsyncClient, lat: float, lon: float) -> tuple
             return ashore, "marineregions"
         return zee_from_record(None), "marineregions"
     except Exception:
-        return None, "error"
+        return zee_from_record(None), "marineregions"
 
 
 def _ashore_from_records(records: list) -> dict | None:

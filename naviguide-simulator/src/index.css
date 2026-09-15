@@ -12,7 +12,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; }
   z-index: 2010 !important;
 }
 
-.catamaran-divicon, .flag-divicon, .plane-divicon { background: none !important; border: none !important; }
+.catamaran-divicon, .flag-divicon, .plane-divicon, .grib-barb { background: none !important; border: none !important; }
+.grib-barb { pointer-events: none; }
 .catamaran-divicon--side img { filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.9)); }
 .catamaran-divicon--live img { filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.95)); }
 .catamaran-divicon--ghost img {
