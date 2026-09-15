@@ -255,6 +255,8 @@ def maybe_refresh_official(
     voyage_id: str,
     around: Optional[dict],
     when: Optional[datetime] = None,
+    *,
+    force: bool = False,
 ) -> Optional[Dict[str, Any]]:
     if not around or around.get("lat") is None:
         return load_latest(voyage_id)
@@ -265,10 +267,11 @@ def maybe_refresh_official(
     if not auto_enabled():
         return latest
     prev = _last_try.get(voyage_id)
-    if prev and (now - prev).total_seconds() < STALE_RETRY_S and latest and not is_stale(latest, now):
-        return latest
-    if latest and not is_stale(latest, now):
-        return latest
+    if not force:
+        if prev and (now - prev).total_seconds() < STALE_RETRY_S and latest and not is_stale(latest, now):
+            return latest
+        if latest and not is_stale(latest, now):
+            return latest
     _last_try[voyage_id] = now
     try:
         return refresh_latest(voyage_id, around, now)

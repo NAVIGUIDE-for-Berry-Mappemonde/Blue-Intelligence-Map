@@ -232,7 +232,7 @@ export function Sidebar({
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-3 space-y-4">
+        <div className="flex-1 overflow-y-auto sidebar-scroll px-4 py-2 space-y-2">
           {isSuivre && (
             <p className="text-[10px] text-sky-100/80 border border-white/10 rounded-lg px-2 py-1.5">
               {t("officialDepartureLocked")}

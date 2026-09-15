@@ -10,6 +10,7 @@ import {
   mapEscalesOnRoute,
   nearestNm,
   nextEscaleNm,
+  playheadOnPlay,
   prevEscaleNm,
 } from "./routePlayhead.js";
 
@@ -59,6 +60,7 @@ describe("escales", () => {
     assert.equal(ch.to.name, "B");
     assert.equal(nextEscaleNm(marks, 0), marks[1].nm);
     assert.equal(prevEscaleNm(marks, marks[1].nm), marks[0].nm);
+    assert.equal(nextEscaleNm(marks, marks[1].nm), marks[1].nm);
   });
 });
 
@@ -123,5 +125,14 @@ describe("filmLegContext", () => {
     assert.equal(hud.etaHours, 15);
     assert.equal(hud.finished, false);
     assert.deepEqual(hud.snappedPosition, [1, 46]);
+  });
+});
+
+describe("playheadOnPlay", () => {
+  it("repart de 0 si on est à la fin", () => {
+    assert.equal(playheadOnPlay(12000, 12000), 0);
+    assert.equal(playheadOnPlay(11999.999999, 12000), 0);
+    assert.equal(playheadOnPlay(400, 12000), 400);
+    assert.equal(playheadOnPlay(0, 12000), 0);
   });
 });

@@ -8,6 +8,7 @@ import {
   OFFICIAL_VOYAGE_ID,
   SAINT_MAUR_LAND_HOURS,
   buildVoyageClock,
+  clockTickLabelsFromClock,
   formatFilmClockLine,
   lookupVoyageClock,
   parseDepartureUtc,
@@ -235,6 +236,17 @@ describe("U0 horloge officielle", () => {
     const fdf = fdfMark(clock);
     assert.ok(fdf);
     assert.equal(fdf.holdHours, 72);
+  });
+});
+
+describe("clockTickLabelsFromClock", () => {
+  it("reprend nm et jours de l’horloge, pas un 2ᵉ barème", () => {
+    const { clock } = clockFor(DEFAULT_T0_ISO);
+    const ticks = clockTickLabelsFromClock(clock, "fr");
+    assert.equal(ticks.length, 3);
+    const last = lookupVoyageClock(clock, clock.vertices.at(-1).filmNm);
+    assert.match(ticks[2].label, new RegExp(`j${Math.floor(last.seaHours / 24)}`));
+    assert.match(ticks[0].label, /0 nm · j0/);
   });
 });
 

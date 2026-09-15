@@ -58,11 +58,35 @@ def test_official_unique_t0_and_no_recompute(client):
     assert rec.status_code == 403
 
 
+def test_official_put_updates_when_polar_arrives(client):
+    first = _payload()
+    first["expedition_id"] = "tmp-no-polar"
+    client.put("/voyage/official", json=first)
+    again = _payload()
+    again["expedition_id"] = "berry-mappemonde-2026"
+    again["points"] = again["points"] + [{
+        "lat": -13.28, "lon": -176.17, "cumNm": 10200, "filmCum": 10200,
+        "jump": False, "nonMaritime": False,
+    }]
+    r = client.put("/voyage/official", json=again)
+    assert r.status_code == 200
+    got = client.get("/voyage/official").json()
+    assert len(got["points"]) == 4
+    assert got.get("expedition_id") == "berry-mappemonde-2026"
+
+
 def test_official_september_has_moved(client):
     client.put("/voyage/official", json=_payload())
     sample = client.get("/voyage/official/at", params={"t": "2026-09-15T12:00:00Z"}).json()
     assert sample["status"] in ("live", "arrived")
     assert float(sample.get("tHours") or 0) > 24
+
+
+def test_grib_refresh_endpoint(client):
+    client.put("/voyage/official", json=_payload())
+    r = client.post("/voyage/official/grib/refresh")
+    assert r.status_code == 200
+    assert r.json()["status"] in ("absent", "ready")
 
 
 def test_grib_absent_keeps_dest_corridor(client):
@@ -110,6 +134,7 @@ def test_daily_grib_around_boat(client):
     body = r.json()
     assert body["status"] == "ready"
     assert body["model"] == "GFS"
+    assert body["samples"][0]["windKnots"] == 12
     south, north, _west, _east = body["bbox"]
     assert north - south < 12
     bad = client.post("/voyage/official/grib", json={

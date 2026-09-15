@@ -29,12 +29,23 @@ export function useFilmCamera({
   phase,
   hopFrom,
   hopTo,
+  resetKey = "",
 }) {
   const lastFollow = useRef(0);
   const lastJump = useRef(0);
   const lastPos = useRef(null);
   const followLon = useRef(null);
   const lastPhase = useRef(null);
+  const lastReset = useRef(resetKey);
+
+  if (lastReset.current !== resetKey) {
+    lastReset.current = resetKey;
+    lastFollow.current = 0;
+    lastJump.current = 0;
+    lastPos.current = null;
+    followLon.current = null;
+    lastPhase.current = null;
+  }
 
   useEffect(() => {
     const map = mapRef.current;
@@ -83,5 +94,5 @@ export function useFilmCamera({
     const cur = map.getZoom();
     const zoom = Math.abs(cur - z) >= 1.25 ? z : cur;
     map.setView([lat, lonCam], zoom, { animate: true, duration: 0.55 });
-  }, [mapRef, mapReady, enabled, lat, lon, remainingNm, playing, jumpToken, phase, hopFrom?.lat, hopFrom?.lon, hopTo?.lat, hopTo?.lon]);
+  }, [mapRef, mapReady, enabled, lat, lon, remainingNm, playing, jumpToken, phase, hopFrom?.lat, hopFrom?.lon, hopTo?.lat, hopTo?.lon, resetKey]);
 }

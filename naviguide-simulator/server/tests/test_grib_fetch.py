@@ -116,3 +116,8 @@ def test_save_latest_overwrites(tmp_path, monkeypatch):
     loaded = saildocs.load_latest("berry-mappemonde-2026-officiel")
     assert loaded["issued"] == newer["issued"]
     assert loaded["samples"][0]["windKnots"] == 15
+    stale = tmp_path / "berry-mappemonde-2026-officiel_2026-09-01.json"
+    stale.write_text("{}", encoding="utf-8")
+    saildocs.purge_old_grib_files("berry-mappemonde-2026-officiel")
+    assert not stale.exists()
+    assert saildocs.latest_path("berry-mappemonde-2026-officiel").exists()

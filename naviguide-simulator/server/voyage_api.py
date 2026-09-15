@@ -309,12 +309,21 @@ def _build_official(body: VoyageCreate) -> dict:
     return voy
 
 
+def _kick_official_grib() -> None:
+    voy = load_voyage(OFFICIAL_VOYAGE_ID)
+    if not voy:
+        return
+    around = _grib_around_from_live(voy, _now())
+    maybe_refresh_official(OFFICIAL_VOYAGE_ID, around, _now(), force=True)
+
+
 @router.put("/voyage/official")
-def ensure_official(body: VoyageCreate):
+def ensure_official(body: VoyageCreate, background: BackgroundTasks):
     if not body.points:
         raise HTTPException(400, "points requis")
     existing = load_voyage(OFFICIAL_VOYAGE_ID)
     if existing and existing.get("points"):
+        changed = False
         if (
             len(body.points) > len(existing["points"])
             and int(existing.get("routeRev") or 0) == 0
@@ -323,10 +332,17 @@ def ensure_official(body: VoyageCreate):
             existing["marks"] = body.marks
             existing["t0"] = OFFICIAL_T0
             existing["official"] = True
+            changed = True
+        if body.expedition_id and body.expedition_id != existing.get("expedition_id"):
+            existing["expedition_id"] = body.expedition_id
+            changed = True
+        if changed:
             existing["clock"] = _climo_clock(existing)
             save_voyage(existing)
+        background.add_task(_kick_official_grib)
         return {**_public_meta(existing), "clock": existing.get("clock") or _climo_clock(existing)}
     voy = _build_official(body)
+    background.add_task(_kick_official_grib)
     return {**_public_meta(voy), "clock": voy["clock"]}
 
 
@@ -459,6 +475,16 @@ def post_official_grib(body: DailyGribIn):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return public_grib(record, OFFICIAL_VOYAGE_ID, around or body.around, _now())
+
+
+@router.post("/voyage/official/grib/refresh")
+def refresh_official_grib():
+    voy = load_voyage(OFFICIAL_VOYAGE_ID)
+    around = _grib_around_from_live(voy, _now()) if voy else None
+    record = maybe_refresh_official(OFFICIAL_VOYAGE_ID, around, _now(), force=True)
+    if record is None and around:
+        record = scan_inbox(OFFICIAL_VOYAGE_ID, utc_day(), around)
+    return public_grib(record, OFFICIAL_VOYAGE_ID, around, _now())
 
 
 @router.post("/voyage/official/grib/scan")

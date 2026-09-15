@@ -225,6 +225,14 @@ export function nextEscaleNm(marks, nm) {
   return nxt ? markPlayhead(nxt) : (marks?.length ? markPlayhead(marks.at(-1)) : x);
 }
 
+/** Play depuis la fin : on repart au premier point, on ne vrille pas. */
+export function playheadOnPlay(filmNm, total) {
+  const max = Number(total) || 0;
+  const x = Number(filmNm) || 0;
+  if (max > 0 && x >= max - 1e-6) return 0;
+  return x;
+}
+
 export function prevEscaleNm(marks, nm) {
   const x = Number(nm) || 0;
   let prev = marks?.length ? markPlayhead(marks[0]) : 0;

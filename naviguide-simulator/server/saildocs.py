@@ -420,29 +420,36 @@ def latest_path(voyage_id: str) -> Path:
     return grib_dir() / f"{_safe_id(voyage_id)}_latest.json"
 
 
-def load_daily(voyage_id: str, day: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    dest = daily_path(voyage_id, day or utc_day())
-    if not dest.exists():
-        return None
-    return json.loads(dest.read_text(encoding="utf-8"))
-
-
 def load_latest(voyage_id: str, day: Optional[str] = None) -> Optional[Dict[str, Any]]:
     dest = latest_path(voyage_id)
     if dest.exists():
         return json.loads(dest.read_text(encoding="utf-8"))
-    return load_daily(voyage_id, day)
+    day_path = daily_path(voyage_id, day or utc_day())
+    if day_path.exists():
+        return json.loads(day_path.read_text(encoding="utf-8"))
+    return None
+
+
+def load_daily(voyage_id: str, day: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    return load_latest(voyage_id, day)
+
+
+def purge_old_grib_files(voyage_id: str) -> None:
+    keep = latest_path(voyage_id).name
+    prefix = f"{_safe_id(voyage_id)}_"
+    folder = grib_dir()
+    for path in folder.glob(f"{prefix}*.json"):
+        if path.name != keep:
+            path.unlink(missing_ok=True)
 
 
 def save_daily(record: Dict[str, Any]) -> Dict[str, Any]:
-    dest = daily_path(record["voyageId"], record["day"])
-    tmp = dest.with_suffix(".tmp")
-    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(dest)
     latest = latest_path(record["voyageId"])
+    latest.parent.mkdir(parents=True, exist_ok=True)
     latest_tmp = latest.with_suffix(".tmp")
     latest_tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     latest_tmp.replace(latest)
+    purge_old_grib_files(record["voyageId"])
     return record
 
 
@@ -635,6 +642,7 @@ def public_grib(record: Optional[dict], voyage_id: str = OFFICIAL_VOYAGE_ID,
             "horizonHours": record.get("horizonHours") or (around or {}).get("horizonHours"),
             "query": record.get("query"),
             "queries": record.get("queries"),
+            "samples": list(record.get("samples") or [])[:80],
             "warning": record.get("warning"),
         }
     wind = None

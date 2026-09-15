@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { atlanticSpanNm } from "../engine/routePlayhead.js";
+import { atlanticSpanNm, playheadOnPlay } from "../engine/routePlayhead.js";
 import { airHopSeconds, nmPerSecond } from "../engine/playSpeeds.js";
 import { edgeAtFilmNm, filmLength } from "../engine/filmCast.js";
 import { dwellMsForProfile, shouldPauseAtStop, stepPlayback } from "../engine/stationDwell.js";
@@ -76,11 +76,17 @@ export function useRoutePlayback({ flat, marks, boatKnots, enabled, stopAuto = f
   }, []);
   const toggle = useCallback(() => {
     setPlaying((p) => {
-      if (!p && nmRef.current >= playheadLength(flat) - 1e-6) {
-        nmRef.current = 0;
-        setNm(0);
-        dwellLeftRef.current = 0;
-        setHoldingStation(null);
+      if (!p) {
+        const total = playheadLength(flat);
+        const next = playheadOnPlay(nmRef.current, total);
+        if (next !== nmRef.current) {
+          nmRef.current = next;
+          setNm(next);
+          dwellLeftRef.current = 0;
+          setHoldingStation(null);
+          skipDwellRef.current = true;
+          setJumpToken((n) => n + 1);
+        }
       }
       return !p;
     });

@@ -146,7 +146,7 @@ function addScienceSourceLayer(map, fc, source, color, onFeature) {
 
 export function useToggleLayers(mapRef, onFeature, mapReady = 0, gateRef) {
   const zee = useFetchLayer(null);
-  const [showZee, setShowZee] = useState(true);
+  const [showZee, setShowZee] = useState(false);
   const [loadingZee] = useState(false);
   const [errorZee, setErrorZee] = useState(null);
 

@@ -524,6 +524,24 @@ export function formatMonthName(month, lang = "fr") {
   return months[m - 1];
 }
 
+/** Graduations barre = la même horloge (pas un 2ᵉ compteur nm/j). */
+export function clockTickLabelsFromClock(clock, lang = "fr") {
+  if (!clock?.vertices?.length) return [];
+  const last = clock.vertices[clock.vertices.length - 1];
+  const maxFilm = Number(last.filmNm) || 0;
+  if (maxFilm <= 0) return [];
+  return [0, 0.5, 1].map((frac) => {
+    const sample = lookupVoyageClock(clock, maxFilm * frac);
+    const sail = Math.round(Number(sample?.sailNm) || 0);
+    const days = Math.max(0, Math.floor((Number(sample?.seaHours) || 0) / 24));
+    const loc = lang === "en" ? "en-US" : "fr-FR";
+    return {
+      filmNm: maxFilm * frac,
+      label: `${sail.toLocaleString(loc)} nm · j${days}`,
+    };
+  });
+}
+
 export function formatFilmClockLine({ sailNm, seaHours, iso, lang = "fr" }) {
   const days = Math.max(0, Math.floor((Number(seaHours) || 0) / 24));
   const nm = Math.round(Number(sailNm) || 0).toLocaleString(lang === "en" ? "en-US" : "fr-FR");

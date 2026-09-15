@@ -1,6 +1,7 @@
 import { ChevronRight, Clapperboard, Pause, Play } from "lucide-react";
 import { useLang } from "../i18n/LangContext.jsx";
 import { clockTickLabels } from "../engine/seaTime.js";
+import { clockTickLabelsFromClock } from "../engine/voyageClock.js";
 import { FilmSpeedProfile } from "./FilmSpeedProfile.jsx";
 import { filmBarInsets } from "../utils/filmBarLayout.js";
 
@@ -56,6 +57,8 @@ export function SimulationFilmBar({
   sidebarOpen = true,
   toolsOpen = true,
   gribLine = "",
+  clock = null,
+  disclaimer = "",
 }) {
   const { t } = useLang();
   const insets = filmBarInsets({ sidebarOpen, toolsOpen });
@@ -69,12 +72,14 @@ export function SimulationFilmBar({
       : phase === "side-sail"
         ? t("filmPhaseSide")
         : "";
-  const ticks = clockTickLabels({
-    playheadTotal: barTotal,
-    sailTotalNm: totalNm,
-    knots: boatKnots,
-    scale: "both",
-  });
+  const ticks = clock
+    ? clockTickLabelsFromClock(clock)
+    : clockTickLabels({
+      playheadTotal: barTotal,
+      sailTotalNm: totalNm,
+      knots: boatKnots,
+      scale: "both",
+    });
 
   const onBarClick = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -120,6 +125,11 @@ export function SimulationFilmBar({
             {phaseLabel ? <span className="text-[10px] font-normal text-cyan-300/80 ml-2">{phaseLabel}</span> : null}
           </div>
           <div className="flex flex-shrink-0 items-center gap-1">
+            {disclaimer ? (
+              <span data-testid="nav-disclaimer" className="text-[9px] text-amber-100/80 leading-tight max-w-[9rem] text-right">
+                {disclaimer}
+              </span>
+            ) : null}
             {cinema && onHideBar ? (
               <button
                 type="button"
